@@ -5,14 +5,13 @@ paths:
         - Avatar
       summary: Mint a short-lived avatar provider Session Token
       description: |
-        Verifies that the current Bearer actor owns the requested formal
-        Practice Session and that it is a starting or in-progress WORKPLACE or
-        DAILY session. The server exchanges its private provider API key for a
+        Verifies that the current Bearer actor owns the requested Practice
+        Session and that it is starting or in progress. The server exchanges
+        its private provider API key for a
         short-lived Session Token. The API key is never returned to the client.
 
         The operation accepts an empty request body. Paused, terminal, and
-        unsupported scene sessions must resume or continue without avatar
-        rendering before another Token can be requested.
+        terminal sessions must continue without avatar rendering.
       operationId: createAvatarSessionToken
       parameters:
         - $ref: '#/components/parameters/PracticeSessionId'

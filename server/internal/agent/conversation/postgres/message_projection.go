@@ -7,9 +7,9 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const agentMessageWithAudioSelectColumns = `
+const agentMessageWithAttachmentSelectColumns = `
     message.id::text,
-    message.owner_user_id::text,
+    thread.user_id::text,
     message.thread_id::text,
     message.sequence_no,
     message.role,
@@ -18,38 +18,31 @@ const agentMessageWithAudioSelectColumns = `
     message.modality,
     message.content,
     message.created_at,
-    audio.audio_id::text,
-    audio.candidate_id::text,
-    audio.object_key,
+    audio.id::text,
     audio.content_type,
     audio.size_bytes,
-    audio.checksum_sha256,
     audio.duration_ns,
-    audio.sample_rate,
-    audio.etag,
-    audio.status,
-    audio.created_at,
-    audio.updated_at,
-    audio.deleted_at`
+    audio_attachment.created_at`
 
-func scanMessageWithAudio(row rowScanner) (conversation.Message, error) {
+const audioAttachmentJoin = `
+LEFT JOIN (
+    agent_message_attachments AS audio_attachment
+    JOIN media_assets AS audio
+      ON audio.id = audio_attachment.asset_id
+     AND audio.kind = 'audio'
+     AND audio.status = 'ready'
+) ON audio_attachment.message_id = message.id`
+
+func scanMessageWithAttachment(row rowScanner) (conversation.Message, error) {
 	var message conversation.Message
 	var role string
 	var modality string
 	var audioID pgtype.Text
-	var candidateID pgtype.Text
-	var objectKey pgtype.Text
 	var contentType pgtype.Text
 	var size pgtype.Int8
-	var checksum pgtype.Text
 	var duration pgtype.Int8
-	var sampleRate pgtype.Int4
-	var etag pgtype.Text
-	var status pgtype.Text
-	var audioCreatedAt pgtype.Timestamptz
-	var audioUpdatedAt pgtype.Timestamptz
-	var audioDeletedAt pgtype.Timestamptz
-	err := row.Scan(
+	var attachedAt pgtype.Timestamptz
+	if err := row.Scan(
 		&message.ID,
 		&message.OwnerID,
 		&message.ThreadID,
@@ -61,20 +54,11 @@ func scanMessageWithAudio(row rowScanner) (conversation.Message, error) {
 		&message.Content,
 		&message.CreatedAt,
 		&audioID,
-		&candidateID,
-		&objectKey,
 		&contentType,
 		&size,
-		&checksum,
 		&duration,
-		&sampleRate,
-		&etag,
-		&status,
-		&audioCreatedAt,
-		&audioUpdatedAt,
-		&audioDeletedAt,
-	)
-	if err != nil {
+		&attachedAt,
+	); err != nil {
 		return conversation.Message{}, err
 	}
 	message.Role = conversation.MessageRole(role)
@@ -82,31 +66,13 @@ func scanMessageWithAudio(row rowScanner) (conversation.Message, error) {
 	if !audioID.Valid {
 		return message, nil
 	}
-	if !candidateID.Valid || !objectKey.Valid || !contentType.Valid ||
-		!size.Valid || !checksum.Valid || !duration.Valid ||
-		!sampleRate.Valid || !etag.Valid || !status.Valid ||
-		!audioCreatedAt.Valid || !audioUpdatedAt.Valid {
+	if !contentType.Valid || !size.Valid || !duration.Valid || !attachedAt.Valid {
 		return conversation.Message{}, conversation.ErrRepository
 	}
-	message.Audio = &conversation.MessageAudio{
-		ID:             audioID.String,
-		OwnerID:        message.OwnerID,
-		ThreadID:       message.ThreadID,
-		MessageID:      message.ID,
-		CandidateID:    candidateID.String,
-		ObjectKey:      objectKey.String,
-		ContentType:    contentType.String,
-		Size:           size.Int64,
-		ChecksumSHA256: checksum.String,
-		Duration:       time.Duration(duration.Int64),
-		SampleRate:     int(sampleRate.Int32),
-		ETag:           etag.String,
-		Status:         conversation.MessageAudioStatus(status.String),
-		CreatedAt:      audioCreatedAt.Time,
-		UpdatedAt:      audioUpdatedAt.Time,
-	}
-	if audioDeletedAt.Valid {
-		message.Audio.DeletedAt = audioDeletedAt.Time
+	message.Audio = &conversation.AudioAttachment{
+		ID: audioID.String, MessageID: message.ID,
+		ContentType: contentType.String, Size: size.Int64,
+		Duration: time.Duration(duration.Int64), CreatedAt: attachedAt.Time,
 	}
 	return message, nil
 }

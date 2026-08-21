@@ -4,10 +4,14 @@ package benchmark
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
+	agentclientaction "github.com/1024XEngineer/XE3-ESL/server/internal/agent/clientaction"
 	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
 	contextpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context/postgres"
 	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
@@ -16,12 +20,12 @@ import (
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	runhttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/http"
 	runpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run/postgres"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
-	goalagentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcontext"
-	goalagentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentconversation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/app"
+	coachingagentinstruction "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/agentinstruction"
+	preparationcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpresponse"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/1024XEngineer/XE3-ESL/server/test/agent/capabilityfixture"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -35,12 +39,13 @@ func NewHandler(
 	database *pgxpool.Pool,
 	logger *slog.Logger,
 	generator agentrun.TextGenerator,
+	turnIntentGenerator preparationcapability.PracticeTurnIntentGenerator,
 	configuration agentrun.Configuration,
 	trustedProxyCIDRs []string,
 	trustedProxyHeader string,
 ) (http.Handler, error) {
 	if ctx == nil || database == nil || logger == nil || generator == nil ||
-		!configuration.Valid() {
+		turnIntentGenerator == nil || !configuration.Valid() {
 		return nil, errors.New("agent benchmark: dependencies are required")
 	}
 
@@ -54,29 +59,12 @@ func NewHandler(
 		return nil, err
 	}
 	ids := identity.NewUUIDv4Generator(nil)
-	goalRepository, err := goal.NewPostgresRepository(database, ids)
-	if err != nil {
-		return nil, err
-	}
-	goalService, err := goal.NewService(goalRepository)
-	if err != nil {
-		return nil, err
-	}
-	conversationGoals, err := goalagentconversation.New(goalService)
-	if err != nil {
-		return nil, err
-	}
-	contextGoals, err := goalagentcontext.New(goalService)
-	if err != nil {
-		return nil, err
-	}
 	conversationRepository, err := conversationpostgres.New(database, ids)
 	if err != nil {
 		return nil, err
 	}
 	conversationService, err := agentconversation.NewService(
 		conversationRepository,
-		conversationGoals,
 	)
 	if err != nil {
 		return nil, err
@@ -87,11 +75,8 @@ func NewHandler(
 	}
 	contextAssembler, err := agentcontext.NewAssembler(
 		contextRepository,
-		contextGoals,
-		emptyLearningProfileReader{},
-		emptyStableProfileReader{},
-		emptyMemorySearcher{},
-		readyMemoryExtractionBarrier{},
+		coachingagentinstruction.Provider{},
+		emptyCoachingProfileContributor{},
 	)
 	if err != nil {
 		return nil, err
@@ -100,16 +85,29 @@ func NewHandler(
 	if err != nil {
 		return nil, err
 	}
-	fixtureRegistry, err := capabilityfixture.NewRegistry(
-		capabilityfixture.NewStore(),
+	fixtureTools := capabilityfixture.Tools(capabilityfixture.NewStore())
+	previewPort, err := newRuntimeBenchmarkPreviewPort(
+		logger, conversationRepository, turnIntentGenerator,
 	)
+	if err != nil {
+		return nil, err
+	}
+	previewTool, err := preparationcapability.NewPreviewTool(previewPort)
+	if err != nil {
+		return nil, err
+	}
+	fixtureTools = append(
+		fixtureTools,
+		preparationcapability.NewIELTSWarmUpTool(),
+		previewTool,
+	)
+	fixtureRegistry, err := capability.NewRegistry(fixtureTools...)
 	if err != nil {
 		return nil, err
 	}
 	runService, err := agentrun.NewService(
 		runRepository,
 		conversationRepository,
-		contextRepository,
 		contextAssembler,
 		generator,
 		configuration,
@@ -123,7 +121,7 @@ func NewHandler(
 	conversationHandler, err := conversationhttp.NewHandler(
 		conversationService,
 		renderer,
-		conversationhttp.WithToolCalls(runService),
+		conversationhttp.WithClientActions(runService),
 	)
 	if err != nil {
 		return nil, err
@@ -137,11 +135,244 @@ func NewHandler(
 		conversation: conversationHandler,
 		runs:         runHandler,
 	}
-	return bootstrap.NewRouterWithReadinessAndRoutes(
+	return app.NewRouterWithReadinessAndRoutes(
 		logger,
 		database,
-		[]bootstrap.RouteRegistrar{routes},
+		[]app.RouteRegistrar{routes},
 	), nil
+}
+
+type benchmarkPreviewPort struct {
+	logger           *slog.Logger
+	manifest         preparationcapability.PreviewCatalogManifest
+	messages         preparationcapability.TrustedMessageReader
+	turnIntents      *preparationcapability.PracticeTurnIntentResolver
+	authorizedIntent preparationcapability.PracticeTurnIntent
+}
+
+func newBenchmarkPreviewPort(
+	logger *slog.Logger,
+) (*benchmarkPreviewPort, error) {
+	manifest, err := previewCatalogManifestFixture()
+	if err != nil {
+		return nil, err
+	}
+	return &benchmarkPreviewPort{
+		logger: logger, manifest: manifest,
+		authorizedIntent: preparationcapability.PracticeTurnIntentRequestCreate,
+	}, nil
+}
+
+func newRuntimeBenchmarkPreviewPort(
+	logger *slog.Logger,
+	messages preparationcapability.TrustedMessageReader,
+	generator preparationcapability.PracticeTurnIntentGenerator,
+) (*benchmarkPreviewPort, error) {
+	if messages == nil || generator == nil {
+		return nil, errors.New("agent benchmark: practice turn dependencies are required")
+	}
+	port, err := newBenchmarkPreviewPort(logger)
+	if err != nil {
+		return nil, err
+	}
+	resolver, err := preparationcapability.NewPracticeTurnIntentResolver(generator)
+	if err != nil {
+		return nil, err
+	}
+	port.messages = messages
+	port.turnIntents = resolver
+	port.authorizedIntent = ""
+	return port, nil
+}
+
+func (port *benchmarkPreviewPort) AuthorizePracticeTurn(
+	ctx context.Context,
+	request capability.ExposureRequest,
+) (preparationcapability.PracticeTurnIntent, error) {
+	if port == nil || ctx == nil || !request.Actor.Valid() ||
+		request.ThreadID == "" || request.RunID == "" ||
+		request.InputMessageID == "" {
+		return "", capability.ErrExecutionRejected
+	}
+	if port.authorizedIntent != "" {
+		return port.authorizedIntent, nil
+	}
+	if port.messages == nil || port.turnIntents == nil {
+		return "", capability.ErrExecutionRejected
+	}
+	message, err := port.messages.FindMessage(
+		ctx, request.Actor.UserID, request.ThreadID, request.InputMessageID,
+	)
+	if err != nil || message.Role != agentconversation.MessageRoleUser ||
+		message.ID != request.InputMessageID || message.ThreadID != request.ThreadID ||
+		message.OwnerID != request.Actor.UserID || message.Sequence < 1 {
+		return "", capability.ErrExecutionRejected
+	}
+	return port.turnIntents.Resolve(ctx, message.Content, false)
+}
+
+func (port *benchmarkPreviewPort) PreviewCatalogManifest() preparationcapability.PreviewCatalogManifest {
+	return port.manifest
+}
+
+func (port *benchmarkPreviewPort) catalogCandidates(
+	ids []string,
+) []preparationcapability.CatalogCandidate {
+	candidates := make([]preparationcapability.CatalogCandidate, 0, len(ids))
+	for _, id := range ids {
+		for _, scene := range port.manifest.Scenes {
+			if scene.SceneID != id {
+				continue
+			}
+			candidates = append(candidates, preparationcapability.CatalogCandidate{
+				SceneID:            scene.SceneID,
+				Name:               scene.Name,
+				PracticeExperience: scene.PracticeExperience,
+			})
+			break
+		}
+	}
+	return candidates
+}
+
+func benchmarkClarificationText(
+	candidates []preparationcapability.CatalogCandidate,
+) string {
+	if len(candidates) == 1 && candidates[0].PracticeExperience == "IELTS_SPEAKING" {
+		return "你想练 IELTS 口语的哪种形式：Part 1、Part 2、Part 3，还是完整模考？"
+	}
+	names := make([]string, len(candidates))
+	for index, candidate := range candidates {
+		names[index] = "“" + candidate.Name + "”"
+	}
+	return "你最近更想练哪种情况：" + strings.Join(names, "、") + "？"
+}
+
+func (port *benchmarkPreviewPort) PreviewPractice(
+	_ context.Context,
+	call capability.CallContext,
+	input preparationcapability.PreviewInput,
+) (preparationcapability.PreviewResult, error) {
+	port.logger.Info(
+		"agent.benchmark.preview.input",
+		"run_id", call.RunID,
+		"thread_id", call.ThreadID,
+		"tool_call_id", call.ToolCallID,
+		"kind", string(input.SceneResolution.Kind),
+		"catalog_scene_id", input.SceneResolution.CatalogSceneID,
+		"candidate_scene_ids", append(
+			[]string{},
+			input.SceneResolution.CandidateSceneIDs...,
+		),
+		"ielts_practice_mode", input.IELTSPracticeMode,
+		"ielts_topic_choice", input.IELTSTopicChoice,
+	)
+	if input.SceneResolution.Kind == preparationcapability.SceneResolutionKindNeedsClarification {
+		status := preparationcapability.PreviewOutcomeAmbiguous
+		resolution := preparationcapability.SceneResolutionAmbiguous
+		candidates := port.catalogCandidates(input.SceneResolution.CandidateSceneIDs)
+		if len(candidates) == 1 {
+			status = preparationcapability.PreviewOutcomeNeedsDetails
+			resolution = preparationcapability.SceneResolutionNeedsDetails
+		}
+		return preparationcapability.PreviewResult{
+			Status:                status,
+			SceneResolution:       resolution,
+			CatalogCandidateCount: len(candidates),
+			Candidates:            candidates,
+			AssistantText:         benchmarkClarificationText(candidates),
+		}, nil
+	}
+	if input.SceneResolution.Kind == preparationcapability.SceneResolutionKindCatalog {
+		candidates := port.catalogCandidates(
+			[]string{input.SceneResolution.CatalogSceneID},
+		)
+		if len(candidates) == 1 {
+			missing := preparationcapability.MissingIELTSPreviewFields(
+				candidates[0].PracticeExperience,
+				input.IELTSPracticeMode,
+				input.IELTSTopicChoice,
+			)
+			if len(missing) > 0 {
+				return preparationcapability.PreviewResult{
+					Status:                preparationcapability.PreviewOutcomeNeedsDetails,
+					SceneResolution:       preparationcapability.SceneResolutionNeedsDetails,
+					CatalogCandidateCount: 1,
+					RequiredMissingFields: missing,
+					Candidates:            candidates,
+					AssistantText:         benchmarkCatalogDetailsQuestion(missing),
+				}, nil
+			}
+		}
+	}
+	if input.ActionIntent == preparationcapability.PracticeTurnIntentProposeCreate {
+		return preparationcapability.PreviewResult{
+			Status:          preparationcapability.PreviewOutcomeActionPending,
+			SceneResolution: preparationcapability.SceneResolutionNotRequested,
+			AssistantText:   "你是想现在创建这个练习吗？",
+		}, nil
+	}
+	if input.SceneResolution.Kind == preparationcapability.SceneResolutionKindCustom &&
+		(input.SceneIntent.ExperienceHint == "INTERVIEW" ||
+			input.SceneIntent.ExperienceHint == "IELTS_SPEAKING") {
+		return preparationcapability.PreviewResult{
+			Status:           preparationcapability.PreviewOutcomeRequiresSpecializedFlow,
+			SceneResolution:  preparationcapability.SceneResolutionRejected,
+			ResolutionReason: preparationcapability.ResolutionReasonSpecializedFlowRequired,
+			AssistantText: "面试和雅思练习使用各自的正式准备流程。" +
+				"请选择目录中的面试或雅思场景。",
+		}, nil
+	}
+	action, err := agentclientaction.New(
+		preparationcapability.ConfirmPracticePlanActionType,
+		json.RawMessage(`{
+  "label": "确认并开始练习",
+  "practice_plan_id": "00000000-0000-4000-8000-000000000001",
+  "plan_version": 1,
+  "scene_id": "benchmark_scene",
+  "scene_name": "Agent Routing Benchmark",
+  "user_role": "练习者",
+  "ai_roles": ["对话角色"],
+  "practice_goal": "验证 Agent 场景路由",
+  "practice_experience": "WORKPLACE",
+  "scene_category": "WORKPLACE_GENERAL",
+  "practice_mode": "FULL_SIMULATION",
+  "practice_scope": "完整模拟",
+  "suggested_duration_seconds": 480,
+  "min_effective_turns": 1,
+  "max_effective_turns": 5,
+  "confirmation_prompt": "确认后将创建练习会话；确认前不会开始练习。"
+}`),
+	)
+	if err != nil {
+		return preparationcapability.PreviewResult{}, err
+	}
+	resolution := preparationcapability.SceneResolutionCatalogResolved
+	source := preparationcapability.PreviewPlanSourceCatalog
+	if input.SceneResolution.Kind == preparationcapability.SceneResolutionKindCustom {
+		resolution = preparationcapability.SceneResolutionCustomResolved
+		source = preparationcapability.PreviewPlanSourceCustom
+	}
+	return preparationcapability.PreviewResult{
+		Status:          preparationcapability.PreviewOutcomeReady,
+		SceneResolution: resolution,
+		PlanID:          "00000000-0000-4000-8000-000000000001",
+		PlanSource:      source,
+		ClientAction:    action,
+		AssistantText:   "练习已准备好，请确认开始。",
+	}, nil
+}
+
+func benchmarkCatalogDetailsQuestion(missing []string) string {
+	for _, field := range missing {
+		switch field {
+		case "ielts_practice_mode":
+			return "你想练 IELTS 口语的哪种形式：Part 1、Part 2、Part 3，还是完整模考？"
+		case "ielts_topic_choice":
+			return "请选择一个话题类型：随机、人物、地点、事物或经历。"
+		}
+	}
+	return "请补充这个练习所需的具体信息。"
 }
 
 func newIdentityHandler(
@@ -193,6 +424,7 @@ func newIdentityHandler(
 	return identity.NewHTTPHandler(
 		service,
 		service,
+		service,
 		rateLimits,
 		nil,
 		identity.WithSourceIPResolver(sourceIPs),
@@ -213,42 +445,11 @@ func (routes *benchmarkRoutes) RegisterRoutes(router *gin.Engine) {
 	routes.runs.RegisterRoutes(protected)
 }
 
-type emptyLearningProfileReader struct{}
+type emptyCoachingProfileContributor struct{}
 
-func (emptyLearningProfileReader) ReadLearningProfile(
+func (emptyCoachingProfileContributor) Contribute(
 	context.Context,
-	agentcontext.LearningProfileReadRequest,
-) ([]agentcontext.LearningProfileDimension, error) {
-	return []agentcontext.LearningProfileDimension{}, nil
-}
-
-type emptyStableProfileReader struct{}
-
-func (emptyStableProfileReader) ReadStableProfile(
-	context.Context,
-	agentcontext.StableProfileReadRequest,
-) ([]agentcontext.StableProfileMemory, error) {
-	return []agentcontext.StableProfileMemory{}, nil
-}
-
-type emptyMemorySearcher struct{}
-
-func (emptyMemorySearcher) Search(
-	context.Context,
-	agentcontext.MemorySearchRequest,
-) ([]agentcontext.MemorySearchHit, error) {
-	return []agentcontext.MemorySearchHit{}, nil
-}
-
-type readyMemoryExtractionBarrier struct{}
-
-func (readyMemoryExtractionBarrier) Await(
-	_ context.Context,
-	request agentcontext.MemoryExtractionBarrierRequest,
-) (agentcontext.MemoryExtractionBarrierResult, error) {
-	return agentcontext.MemoryExtractionBarrierResult{
-		PolicyVersion: agentcontext.MemoryExtractionBarrierPolicyV1,
-		Cutoff:        request.Cutoff,
-		Status:        agentcontext.MemoryExtractionBarrierReady,
-	}, nil
+	requestcontext.Actor,
+) (agentcontext.CoachingProfileContribution, error) {
+	return agentcontext.CoachingProfileContribution{Enabled: true}, nil
 }

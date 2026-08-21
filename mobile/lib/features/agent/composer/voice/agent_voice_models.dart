@@ -1,15 +1,6 @@
 import 'package:speakup/features/agent/conversation/agent_models.dart';
 
-enum AgentVoiceCandidateStatus {
-  staged,
-  transcribing,
-  candidateReady,
-  failed,
-  confirming,
-  confirmed,
-  deleting,
-  deleted,
-}
+enum AgentVoiceDraftStatus { transcribing, ready, failed, confirmed }
 
 final class AgentVoiceLocalRecording {
   const AgentVoiceLocalRecording({
@@ -59,59 +50,52 @@ final class AgentVoiceTranscript {
   final String? finishReason;
 }
 
-final class AgentVoiceCandidateFailure {
-  const AgentVoiceCandidateFailure({
-    required this.kind,
-    required this.retryable,
-  });
+final class AgentVoiceDraftFailure {
+  const AgentVoiceDraftFailure({required this.kind, required this.retryable});
 
   final String kind;
   final bool retryable;
 }
 
-final class AgentVoiceCandidate {
-  const AgentVoiceCandidate({
+final class AgentVoiceDraft {
+  const AgentVoiceDraft({
     required this.id,
     required this.threadId,
     required this.status,
     required this.asrAttempt,
     required this.version,
     required this.recording,
-    required this.expiresAt,
     required this.createdAt,
     required this.updatedAt,
+    this.expiresAt,
     this.transcript,
     this.failure,
     this.confirmedMessageId,
     this.confirmedRunId,
     this.messageAudioId,
     this.confirmedAt,
-    this.deletedAt,
   });
 
   final String id;
   final String threadId;
-  final AgentVoiceCandidateStatus status;
+  final AgentVoiceDraftStatus status;
   final int asrAttempt;
   final int version;
   final AgentVoiceRecordingMetadata recording;
   final AgentVoiceTranscript? transcript;
-  final AgentVoiceCandidateFailure? failure;
-  final DateTime expiresAt;
+  final AgentVoiceDraftFailure? failure;
+  final DateTime? expiresAt;
   final String? confirmedMessageId;
   final String? confirmedRunId;
   final String? messageAudioId;
   final DateTime? confirmedAt;
-  final DateTime? deletedAt;
   final DateTime createdAt;
   final DateTime updatedAt;
 
-  bool get isAsrPending =>
-      status == AgentVoiceCandidateStatus.staged ||
-      status == AgentVoiceCandidateStatus.transcribing;
+  bool get isAsrPending => status == AgentVoiceDraftStatus.transcribing;
 
   bool get isReady =>
-      status == AgentVoiceCandidateStatus.candidateReady &&
+      status == AgentVoiceDraftStatus.ready &&
       transcript != null &&
       version >= 1;
 }
@@ -130,47 +114,24 @@ final class AgentVoiceTranscriptUpdated extends AgentVoiceTranscriptionEvent {
   final bool finalResult;
 }
 
-final class AgentVoiceCandidateCompleted extends AgentVoiceTranscriptionEvent {
-  const AgentVoiceCandidateCompleted(this.candidate);
+final class AgentVoiceDraftCompleted extends AgentVoiceTranscriptionEvent {
+  const AgentVoiceDraftCompleted(this.draft);
 
-  final AgentVoiceCandidate candidate;
+  final AgentVoiceDraft draft;
 }
 
-enum AgentVoiceRunStatus { pending, running, completed, failed }
-
-final class AgentVoiceRun {
-  const AgentVoiceRun({
-    required this.id,
-    required this.threadId,
-    required this.inputMessageId,
-    required this.status,
-    this.assistantMessageId,
-    this.failureKind,
-    this.failureRetryable = false,
-  });
-
-  final String id;
-  final String threadId;
-  final String inputMessageId;
-  final AgentVoiceRunStatus status;
-  final String? assistantMessageId;
-  final String? failureKind;
-  final bool failureRetryable;
-
-  bool get isTerminal =>
-      status == AgentVoiceRunStatus.completed ||
-      status == AgentVoiceRunStatus.failed;
-}
+typedef AgentVoiceRunStatus = AgentRunStatus;
+typedef AgentVoiceRun = AgentRun;
 
 final class AgentVoiceConfirmation {
   const AgentVoiceConfirmation({
-    required this.candidate,
+    required this.draft,
     required this.message,
     required this.run,
     this.assistantMessage,
   });
 
-  final AgentVoiceCandidate candidate;
+  final AgentVoiceDraft draft;
   final AgentMessage message;
   final AgentVoiceRun run;
   final AgentMessage? assistantMessage;
@@ -186,18 +147,59 @@ final class AgentVoiceInputCommitted extends AgentVoiceConfirmationStreamEvent {
   final AgentVoiceConfirmation confirmation;
 }
 
-final class AgentVoiceAssistantStarted
-    extends AgentVoiceConfirmationStreamEvent {
-  const AgentVoiceAssistantStarted({required this.runId});
+enum AgentVoiceToolStepStatus { started, completed, failed }
+
+final class AgentVoiceToolStepEvent extends AgentVoiceConfirmationStreamEvent {
+  const AgentVoiceToolStepEvent({
+    required this.runId,
+    required this.stepId,
+    required this.name,
+    required this.status,
+  });
 
   final String runId;
+  final String stepId;
+  final String name;
+  final AgentVoiceToolStepStatus status;
 }
 
-final class AgentVoiceAssistantDelta extends AgentVoiceConfirmationStreamEvent {
-  const AgentVoiceAssistantDelta({required this.runId, required this.delta});
+final class AgentVoiceAssistantOutputStarted
+    extends AgentVoiceConfirmationStreamEvent {
+  const AgentVoiceAssistantOutputStarted({
+    required this.runId,
+    required this.outputId,
+  });
 
   final String runId;
+  final String outputId;
+}
+
+final class AgentVoiceAssistantOutputDelta
+    extends AgentVoiceConfirmationStreamEvent {
+  const AgentVoiceAssistantOutputDelta({
+    required this.runId,
+    required this.outputId,
+    required this.sequence,
+    required this.delta,
+  });
+
+  final String runId;
+  final String outputId;
+  final int sequence;
   final String delta;
+}
+
+final class AgentVoiceAssistantOutputCompleted
+    extends AgentVoiceConfirmationStreamEvent {
+  const AgentVoiceAssistantOutputCompleted({
+    required this.runId,
+    required this.outputId,
+    required this.text,
+  });
+
+  final String runId;
+  final String outputId;
+  final String text;
 }
 
 final class AgentVoiceRunCompleted extends AgentVoiceConfirmationStreamEvent {
@@ -211,11 +213,13 @@ final class AgentVoiceRunFailed extends AgentVoiceConfirmationStreamEvent {
     required this.runId,
     required this.kind,
     required this.retryable,
+    this.run,
   });
 
   final String runId;
   final String kind;
   final bool retryable;
+  final AgentRun? run;
 }
 
 enum AgentVoiceComposerState {

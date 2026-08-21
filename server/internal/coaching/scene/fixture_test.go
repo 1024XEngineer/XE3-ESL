@@ -107,6 +107,15 @@ func mustTestCatalog(t *testing.T, definitions ...SceneDefinition) *Catalog {
 	return catalog
 }
 
+func mustBuiltinCatalog(t *testing.T) *Catalog {
+	t.Helper()
+	catalog, err := NewBuiltinCatalog(testPolicyValidator())
+	if err != nil {
+		t.Fatalf("NewBuiltinCatalog() error = %v", err)
+	}
+	return catalog
+}
+
 func reparentTestScene(definition *SceneDefinition) {
 	for index := range definition.Roles {
 		definition.Roles[index].ID = definition.ID + "-role-" + string(rune('a'+index))

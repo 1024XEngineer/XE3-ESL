@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
+	agentclientaction "github.com/1024XEngineer/XE3-ESL/server/internal/agent/clientaction"
 	agentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/agent/context"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
@@ -20,21 +21,20 @@ const (
 	runPersistenceTimeout    = 5 * time.Second
 	maxPersistedTokenCount   = 1<<31 - 1
 	defaultMaxIterations     = 3
-	defaultMaxToolCalls      = 4
-	defaultMaxWriteCalls     = 1
+	MaxToolCallsPerRun       = 4
 	defaultToolTimeout       = 5 * time.Second
 	defaultLoopTimeout       = 25 * time.Second
 	defaultMaxToolResult     = 16 * 1024
 	streamReplayPollInterval = 100 * time.Millisecond
 	toolSchemaVersionV1      = "tool-schema-v1"
 	maxImagesPerMessage      = 4
+	finalResponseToolName    = "agent.final_response.v1"
 )
 
 type Service struct {
 	repository       Repository
 	messages         MessageReader
 	imageSubmissions ImageSubmissionRepository
-	manifests        agentcontext.ManifestRepository
 	assembler        *agentcontext.Assembler
 	generator        TextGenerator
 	configuration    Configuration
@@ -48,7 +48,6 @@ type Service struct {
 type LoopLimits struct {
 	MaxIterations      int
 	MaxToolCalls       int
-	MaxWriteToolCalls  int
 	ToolTimeout        time.Duration
 	LoopTimeout        time.Duration
 	MaxToolResultBytes int
@@ -65,21 +64,18 @@ type Option func(*Service) error
 func NewService(
 	repository Repository,
 	messages MessageReader,
-	manifests agentcontext.ManifestRepository,
 	assembler *agentcontext.Assembler,
 	generator TextGenerator,
 	configuration Configuration,
 	options ...Option,
 ) (*Service, error) {
-	if repository == nil || messages == nil || manifests == nil ||
-		assembler == nil || generator == nil ||
+	if repository == nil || messages == nil || assembler == nil || generator == nil ||
 		!configuration.Valid() {
 		return nil, errors.New("agent: run dependency or configuration is invalid")
 	}
 	service := &Service{
 		repository:    repository,
 		messages:      messages,
-		manifests:     manifests,
 		assembler:     assembler,
 		generator:     generator,
 		configuration: configuration,
@@ -148,10 +144,11 @@ func WithLoopLimits(limits LoopLimits) Option {
 		normalized := normalizeLoopLimits(limits)
 		if normalized.MaxIterations <= 0 ||
 			normalized.MaxToolCalls <= 0 ||
-			normalized.MaxWriteToolCalls < 0 ||
+			normalized.MaxToolCalls > MaxToolCallsPerRun ||
 			normalized.ToolTimeout <= 0 ||
 			normalized.LoopTimeout <= 0 ||
-			normalized.MaxToolResultBytes <= 0 {
+			normalized.MaxToolResultBytes <= 0 ||
+			normalized.MaxToolResultBytes > 64*1024 {
 			return errors.New("agent: loop limits are invalid")
 		}
 		service.loopLimits = normalized
@@ -229,13 +226,7 @@ func (service *Service) SubmitTextStream(
 	if err := observer.OnInputCommitted(ctx, submission); err != nil {
 		return Submission{}, err
 	}
-	if submission.Run.Status == StatusPending {
-		if err := observer.OnAssistantStarted(ctx, submission.Run); err != nil {
-			return Submission{}, err
-		}
-	}
-	deltas := &countingDeltaObserver{delegate: observer}
-	submission.Run, err = service.process(ctx, actor, submission.Run, deltas)
+	submission.Run, err = service.process(ctx, actor, submission.Run, observer)
 	if err == nil {
 		submission.Run, err = service.waitForTerminalRun(
 			ctx,
@@ -367,13 +358,7 @@ func (service *Service) RetryTextStream(
 	}); err != nil {
 		return Retry{}, err
 	}
-	if retry.Run.Status == StatusPending {
-		if err := observer.OnAssistantStarted(ctx, retry.Run); err != nil {
-			return Retry{}, err
-		}
-	}
-	deltas := &countingDeltaObserver{delegate: observer}
-	retry.Run, err = service.process(ctx, actor, retry.Run, deltas)
+	retry.Run, err = service.process(ctx, actor, retry.Run, observer)
 	if err == nil {
 		retry.Run, err = service.waitForTerminalRun(
 			ctx,
@@ -426,29 +411,11 @@ func (service *Service) GetRun(
 	return service.repository.Find(ctx, actor.UserID, runID)
 }
 
-func (service *Service) GetContextManifest(
+func (service *Service) GetClientActions(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	runID string,
-) (agentcontext.Manifest, error) {
-	if !actor.Valid() || !ValidUUID(runID) {
-		return agentcontext.Manifest{}, ErrNotFound
-	}
-	if _, err := service.repository.Find(
-		ctx,
-		actor.UserID,
-		runID,
-	); err != nil {
-		return agentcontext.Manifest{}, err
-	}
-	return service.manifests.FindManifest(ctx, actor.UserID, runID)
-}
-
-func (service *Service) GetToolCalls(
-	ctx context.Context,
-	actor requestcontext.Actor,
-	runID string,
-) ([]ToolCall, error) {
+) ([]agentclientaction.Action, error) {
 	if !actor.Valid() || !ValidUUID(runID) {
 		return nil, ErrNotFound
 	}
@@ -459,7 +426,7 @@ func (service *Service) GetToolCalls(
 	); err != nil {
 		return nil, err
 	}
-	return service.repository.ListToolCalls(ctx, actor.UserID, runID)
+	return service.repository.ListClientActions(ctx, actor.UserID, runID)
 }
 
 func (service *Service) RecoverInterrupted(
@@ -487,7 +454,8 @@ func (service *Service) ProcessPending(
 }
 
 // ProcessPendingStream resumes a Run created by another Agent input workflow
-// while forwarding model output to that workflow's live response.
+// while forwarding typed tool steps and the committed Assistant Output to that
+// workflow's live response.
 func (service *Service) ProcessPendingStream(
 	ctx context.Context,
 	actor requestcontext.Actor,
@@ -501,13 +469,7 @@ func (service *Service) ProcessPendingStream(
 		!ValidUUID(run.InputMessageID) {
 		return Run{}, ErrInvalidRequest
 	}
-	if run.Status == StatusPending {
-		if err := observer.OnAssistantStarted(ctx, run); err != nil {
-			return Run{}, err
-		}
-	}
-	deltas := &countingDeltaObserver{delegate: observer}
-	processed, err := service.process(ctx, actor, run, deltas)
+	processed, err := service.process(ctx, actor, run, observer)
 	if err == nil {
 		processed, err = service.waitForTerminalRun(
 			ctx,
@@ -522,7 +484,7 @@ func (service *Service) process(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	run Run,
-	observer *countingDeltaObserver,
+	observer StreamObserver,
 ) (Run, error) {
 	if run.Status != StatusPending {
 		return run, nil
@@ -578,11 +540,6 @@ func (service *Service) process(
 		case errors.Is(err, agentcontext.ErrInvalidContext):
 			kind = FailureInvalidContext
 			retryable = false
-		case errors.Is(err, agentcontext.ErrMemoryConsistencyUnavailable):
-			kind = FailureMemoryConsistencyUnavailable
-		case errors.Is(err, agentcontext.ErrMemoryConsistencyRejected):
-			kind = FailureMemoryConsistencyUnavailable
-			retryable = false
 		}
 		failed, failErr := service.persistFailure(
 			ctx,
@@ -595,6 +552,14 @@ func (service *Service) process(
 		service.logRunFailed(claimed, kind, retryable, claimed.StartedAt)
 		service.logGenerationFailureDetail(claimed, err)
 		return failed, failErr
+	}
+	if manifest.CoachingProfileContextStatus ==
+		agentcontext.CoachingProfileContextUnavailableError {
+		service.logContextDegradation(
+			claimed,
+			"coaching_profile",
+			manifest.CoachingProfileContextStatus,
+		)
 	}
 	request, err := textRequestFromContext(modelInput)
 	if err != nil {
@@ -614,10 +579,8 @@ func (service *Service) process(
 		)
 		return failed, failErr
 	}
-	if _, err := service.manifests.SaveManifest(
-		ctx,
-		manifest,
-	); err != nil {
+	outputID, err := service.repository.NewAssistantMessageID()
+	if err != nil || !ValidUUID(outputID) {
 		failed, failErr := service.persistFailure(
 			ctx,
 			actor.UserID,
@@ -626,13 +589,11 @@ func (service *Service) process(
 			FailureInternal,
 			true,
 		)
-		if failErr != nil {
-			return Run{}, err
-		}
-		return failed, nil
+		return failed, failErr
 	}
-
+	output := AssistantOutput{ID: outputID, RunID: claimed.ID}
 	var result TextResult
+	var finalDeltas []string
 	if observer == nil {
 		result, err = service.generate(
 			ctx,
@@ -642,13 +603,14 @@ func (service *Service) process(
 			request,
 		)
 	} else {
-		result, err = service.generateObserved(
+		result, finalDeltas, err = service.generateObserved(
 			ctx,
 			actor,
 			claimed,
 			manifest,
 			request,
 			observer,
+			output,
 		)
 	}
 	if err != nil {
@@ -662,12 +624,14 @@ func (service *Service) process(
 			retryable,
 		)
 		service.logRunFailed(claimed, kind, retryable, claimed.StartedAt)
+		service.logGenerationFailureDetail(claimed, err)
 		return failed, failErr
 	}
 	if !validFinalTextResult(result) ||
-		result.Provider != service.configuration.Provider ||
-		result.Model != service.configuration.Model ||
-		result.Usage.OutputTokens > service.configuration.MaxOutputTokens {
+		(result.CompletionSource != CompletionSourceDomain &&
+			(result.Provider != service.configuration.Provider ||
+				result.Model != service.configuration.Model ||
+				result.Usage.OutputTokens > service.configuration.MaxOutputTokens)) {
 		failed, failErr := service.persistFailure(
 			ctx,
 			actor.UserID,
@@ -684,15 +648,16 @@ func (service *Service) process(
 		)
 		return failed, failErr
 	}
-	if observer != nil && observer.count == 0 {
-		if err := observer.OnTextDelta(ctx, result.Content); err != nil {
+	output.Content = result.Content
+	if observer != nil && result.CompletionSource != CompletionSourceDomain {
+		if len(finalDeltas) == 0 || joinedTextDeltas(finalDeltas) != result.Content {
 			failed, failErr := service.persistFailure(
 				ctx,
 				actor.UserID,
 				claimed.ID,
 				claimed.WorkerLeaseToken,
-				string(ErrorCancelled),
-				true,
+				string(ErrorInvalidResponse),
+				ErrorInvalidResponse.Retryable(),
 			)
 			return failed, failErr
 		}
@@ -704,10 +669,25 @@ func (service *Service) process(
 		actor.UserID,
 		claimed.ID,
 		claimed.WorkerLeaseToken,
-		result.Content,
+		output,
 		result,
 	)
-	return completed, err
+	if err != nil || observer == nil {
+		return completed, err
+	}
+	if result.CompletionSource == CompletionSourceDomain {
+		stream := &assistantOutputDeltaStream{observer: observer, output: output}
+		if err := stream.start(ctx); err != nil {
+			return completed, err
+		}
+		if err := stream.OnTextDelta(ctx, output.Content); err != nil {
+			return completed, err
+		}
+	}
+	if err := observer.OnAssistantOutputCompleted(ctx, output); err != nil {
+		return completed, err
+	}
+	return completed, nil
 }
 
 func (service *Service) generate(
@@ -717,7 +697,10 @@ func (service *Service) generate(
 	manifest agentcontext.Manifest,
 	request TextRequest,
 ) (TextResult, error) {
-	return service.generateObserved(ctx, actor, run, manifest, request, nil)
+	result, _, err := service.generateObserved(
+		ctx, actor, run, manifest, request, nil, AssistantOutput{},
+	)
+	return result, err
 }
 
 func (service *Service) generateObserved(
@@ -726,40 +709,94 @@ func (service *Service) generateObserved(
 	run Run,
 	manifest agentcontext.Manifest,
 	request TextRequest,
-	observer *countingDeltaObserver,
-) (TextResult, error) {
-	var deltaObserver TextDeltaObserver
-	if observer != nil {
-		deltaObserver = observer
-	}
+	observer StreamObserver,
+	output AssistantOutput,
+) (TextResult, []string, error) {
 	if service.registry == nil || service.executor == nil {
-		return service.generateModel(ctx, request, deltaObserver)
+		if err := service.repository.SaveContextSnapshot(
+			ctx, run.OwnerID, run.ID, run.WorkerLeaseToken, manifest,
+		); err != nil {
+			return TextResult{}, nil, err
+		}
+		return service.generateFinalOutput(ctx, request, observer, output)
 	}
+
 	loopCtx, cancel := context.WithTimeout(ctx, service.loopLimits.LoopTimeout)
 	defer cancel()
 	startedAt := time.Now()
+	service.logRunReceived(run, lastUserContent(request), request)
 
-	input := lastUserContent(request)
-	service.logRunReceived(run, input, request)
-	routing := buildModelToolRouting(service.registry, service.logger, run.ID)
+	exposure, err := service.registry.ResolveExposure(
+		loopCtx,
+		capability.ExposureRequest{
+			Actor: actor, ThreadID: run.ThreadID, RunID: run.ID,
+			InputMessageID: run.InputMessageID,
+		},
+	)
+	if err != nil {
+		return TextResult{}, nil, err
+	}
+	choice := ToolChoice{Mode: ToolChoiceRequired}
+	directFinalAllowed := false
+	if exposure.RequiredTool != "" {
+		choice = ToolChoice{
+			Mode: ToolChoiceSpecific,
+			Name: exposure.RequiredTool,
+		}
+	} else {
+		for _, label := range exposure.AuditLabels {
+			if label == "CONVERSE" {
+				choice = ToolChoice{Mode: ToolChoiceAuto}
+				directFinalAllowed = true
+				break
+			}
+		}
+	}
+	for tool, label := range exposure.AuditLabels {
+		if service.logger != nil {
+			service.logger.Info(
+				"agent.tool.exposure_decided",
+				"run_id", run.ID,
+				"tool", tool,
+				"decision", label,
+				"exposed", len(exposure.Authorizations[tool]) != 0,
+				"required", exposure.RequiredTool == tool,
+			)
+		}
+	}
+	routing := buildModelToolRoutingDefinitions(
+		exposure.Definitions,
+		service.logger,
+		run.ID,
+		choice,
+	)
+	if !directFinalAllowed {
+		routing.Definitions = append(
+			routing.Definitions,
+			finalResponseToolDefinition(),
+		)
+	}
 	request.Tools = routing.Definitions
 	request.ToolChoice = routing.ToolChoice
 	applyModelToolSnapshot(&manifest, routing)
-	if err := service.saveContextToolSnapshot(loopCtx, manifest); err != nil {
-		return TextResult{}, err
+	if err := service.repository.SaveContextSnapshot(
+		loopCtx, run.OwnerID, run.ID, run.WorkerLeaseToken, manifest,
+	); err != nil {
+		return TextResult{}, nil, err
 	}
+
 	exposed := exposedToolNames(request.Tools)
+	seenToolCallIDs := make(map[string]struct{})
 	toolCalls := 0
-	writeCalls := 0
 	toolIterations := 0
 	modelIterations := 0
-	seenToolCallIDs := make(map[string]struct{})
 	finalDecision := "direct_response"
+
 	for {
 		service.logLoopIteration(run, modelIterations, toolCalls)
-		result, err := service.generateModel(loopCtx, request, deltaObserver)
+		result, err := service.generateModel(loopCtx, request, nil)
 		if err != nil {
-			return TextResult{}, err
+			return TextResult{}, nil, err
 		}
 		modelIterations++
 		if !validLoopTextResult(result) ||
@@ -767,9 +804,51 @@ func (service *Service) generateObserved(
 			result.Model != service.configuration.Model ||
 			result.Usage.OutputTokens > service.configuration.MaxOutputTokens {
 			service.logInvalidModelResult(run, result)
-			return result, nil
+			return result, nil, nil
 		}
 		if len(result.ToolCalls) == 0 {
+			if directFinalAllowed {
+				service.logRoutingDecision(
+					run,
+					finalDecision,
+					nil,
+					reasonModelToolSelection,
+					reasonSummary(reasonModelToolSelection, finalDecision),
+					modelIterations,
+				)
+				finalResult, finalDeltas, finalErr := service.generateFinalOutput(
+					loopCtx, request, observer, output,
+				)
+				if finalErr != nil {
+					return TextResult{}, nil, finalErr
+				}
+				modelIterations++
+				service.logRunCompleted(
+					run, finalDecision, modelIterations, toolCalls,
+					startedAt, finalResult.Content,
+				)
+				return finalResult, finalDeltas, nil
+			}
+			service.logInvalidModelResult(run, result)
+			return TextResult{}, nil, NewGenerationError(
+				ErrorInvalidResponse,
+				0,
+				"",
+				"",
+				errors.New("agent: planning response did not choose a tool or final output"),
+			)
+		}
+		if finalResponseRequested(result.ToolCalls) {
+			if !validFinalResponseRequest(result.ToolCalls) {
+				service.logInvalidModelResult(run, result)
+				return TextResult{}, nil, NewGenerationError(
+					ErrorInvalidResponse,
+					0,
+					"",
+					"",
+					errors.New("agent: final response control call is invalid"),
+				)
+			}
 			service.logRoutingDecision(
 				run,
 				finalDecision,
@@ -778,29 +857,38 @@ func (service *Service) generateObserved(
 				reasonSummary(reasonModelToolSelection, finalDecision),
 				modelIterations,
 			)
+			finalResult, finalDeltas, finalErr := service.generateFinalOutput(
+				loopCtx,
+				request,
+				observer,
+				output,
+			)
+			if finalErr != nil {
+				return TextResult{}, nil, finalErr
+			}
+			modelIterations++
 			service.logRunCompleted(
 				run,
 				finalDecision,
 				modelIterations,
 				toolCalls,
 				startedAt,
-				result.Content,
+				finalResult.Content,
 			)
-			return result, nil
+			return finalResult, finalDeltas, nil
 		}
+
 		selected := toolCallNames(result.ToolCalls)
-		finalDecision = "tool_call"
 		service.logRoutingDecision(
 			run,
-			finalDecision,
+			"tool_call",
 			selected,
 			reasonModelToolSelection,
-			reasonSummary(reasonModelToolSelection, finalDecision),
+			reasonSummary(reasonModelToolSelection, "tool_call"),
 			modelIterations,
 		)
-		// MaxIterations 表示最多执行多少轮工具；达到上限后仍允许模型生成一次最终回复。
 		if toolIterations >= service.loopLimits.MaxIterations {
-			return TextResult{}, service.stopLoop(
+			return TextResult{}, nil, service.stopLoop(
 				run,
 				FailureToolIterationBudgetExhausted,
 				selected,
@@ -808,37 +896,22 @@ func (service *Service) generateObserved(
 			)
 		}
 		if toolCalls+len(result.ToolCalls) > service.loopLimits.MaxToolCalls {
-			return TextResult{}, service.stopLoop(
+			return TextResult{}, nil, service.stopLoop(
 				run,
 				FailureToolCallBudgetExhausted,
 				selected,
 				modelIterations,
 			)
 		}
-		if hasRepeatedToolCallID(
-			result.ToolCalls,
-			seenToolCallIDs,
-		) {
-			return TextResult{}, service.stopLoop(
+		if hasRepeatedToolCallID(result.ToolCalls, seenToolCallIDs) {
+			return TextResult{}, nil, service.stopLoop(
 				run,
 				FailureDuplicateToolCall,
 				selected,
 				modelIterations,
 			)
 		}
-		// 先分类并预留整批调用的写预算，防止部分执行以及未知、
-		// 非法调用在后续循环中重新获得写额度。
-		pendingWriteCalls := service.writeToolCallCount(result.ToolCalls)
-		if writeCalls+pendingWriteCalls >
-			service.loopLimits.MaxWriteToolCalls {
-			return TextResult{}, service.stopLoop(
-				run,
-				FailureWriteToolCallBudgetExhausted,
-				selected,
-				modelIterations,
-			)
-		}
-		writeCalls += pendingWriteCalls
+
 		request.Messages = append(request.Messages, TextMessage{
 			Content:   result.Content,
 			Role:      TextRoleAssistant,
@@ -846,14 +919,19 @@ func (service *Service) generateObserved(
 		})
 		toolIterations++
 		toolCalls += len(result.ToolCalls)
+
+		turnCompleted := false
+		var domainCompletion TextResult
 		for _, call := range result.ToolCalls {
 			seenToolCallIDs[call.ID] = struct{}{}
-			if err := service.saveToolCallProposed(
-				loopCtx,
-				run,
-				call,
-			); err != nil {
-				return TextResult{}, err
+			if err := service.saveToolCallProposed(loopCtx, run, call); err != nil {
+				return TextResult{}, nil, err
+			}
+			step := ToolStep{ID: call.ID, RunID: run.ID, Name: call.Name}
+			if observer != nil {
+				if err := observer.OnToolStarted(loopCtx, step); err != nil {
+					return TextResult{}, nil, err
+				}
 			}
 			if !toolExposed(exposed, call.Name) {
 				if err := service.markToolCallRejected(
@@ -862,7 +940,12 @@ func (service *Service) generateObserved(
 					call.ID,
 					"unknown_tool",
 				); err != nil {
-					return TextResult{}, err
+					return TextResult{}, nil, err
+				}
+				if observer != nil {
+					if err := observer.OnToolFailed(loopCtx, step); err != nil {
+						return TextResult{}, nil, err
+					}
 				}
 				request.Messages = append(
 					request.Messages,
@@ -870,36 +953,161 @@ func (service *Service) generateObserved(
 				)
 				continue
 			}
-			_, ok := service.toolDefinition(call.Name)
-			if !ok {
-				if err := service.markToolCallRejected(
-					loopCtx,
-					run,
-					call.ID,
-					"unknown_tool",
-				); err != nil {
-					return TextResult{}, err
-				}
-				request.Messages = append(
-					request.Messages,
-					toolFailureMessage(call.ID, capability.ErrUnknownTool),
-				)
-				continue
-			}
-			toolMessage, err := service.executeToolCall(
+			toolMessage, status, outcome, assistantText, err := service.executeToolCall(
 				loopCtx,
 				actor,
 				run,
 				call,
+				exposure.Authorizations[call.Name],
+				exposure.InputSchemas[call.Name],
 			)
 			if err != nil {
-				return TextResult{}, err
+				if observer != nil {
+					_ = observer.OnToolFailed(loopCtx, step)
+				}
+				return TextResult{}, nil, err
+			}
+			if observer != nil {
+				var eventErr error
+				if status == ToolCallSucceeded {
+					eventErr = observer.OnToolCompleted(loopCtx, step)
+				} else {
+					eventErr = observer.OnToolFailed(loopCtx, step)
+				}
+				if eventErr != nil {
+					if status != ToolCallSucceeded ||
+						outcome != capability.TurnOutcomeCompleted {
+						return TextResult{}, nil, eventErr
+					}
+					service.logAdvisoryStreamFailure(
+						run,
+						step,
+						"tool_completed",
+					)
+				}
 			}
 			request.Messages = append(request.Messages, toolMessage)
+			if status == ToolCallSucceeded && outcome == capability.TurnOutcomeCompleted {
+				turnCompleted = true
+				domainCompletion = TextResult{
+					CompletionSource: CompletionSourceDomain,
+					Content:          assistantText,
+					DomainToolCallID: call.ID,
+					DomainToolName:   call.Name,
+				}
+				break
+			}
 		}
-		request.ToolChoice = ToolChoice{Mode: ToolChoiceAuto}
 		finalDecision = "tool_call_then_response"
+		if turnCompleted {
+			finalDecision = "domain_completion"
+			service.logRoutingDecision(
+				run,
+				finalDecision,
+				selected,
+				reasonDomainTurnCompleted,
+				reasonSummary(reasonDomainTurnCompleted, finalDecision),
+				modelIterations,
+			)
+			service.logRunCompleted(
+				run,
+				finalDecision,
+				modelIterations,
+				toolCalls,
+				startedAt,
+				domainCompletion.Content,
+			)
+			return domainCompletion, nil, nil
+		}
 	}
+}
+
+func finalResponseToolDefinition() ToolDefinition {
+	return ToolDefinition{
+		Name: finalResponseToolName,
+		Description: "Choose this control tool only when no further domain tool is " +
+			"needed and the assistant is ready to produce its final user-visible response. " +
+			"Set decision to respond and do not include the response text in this call; " +
+			"the server starts a separate tool-disabled final output phase.",
+		InputSchema: capability.ObjectSchema(map[string]any{
+			"decision": capability.StringEnumSchema(
+				"Enter the final user-visible response phase.",
+				"respond",
+			),
+		}, []string{"decision"}),
+	}
+}
+
+func finalResponseRequested(calls []ModelToolCall) bool {
+	for _, call := range calls {
+		if call.Name == finalResponseToolName {
+			return true
+		}
+	}
+	return false
+}
+
+func validFinalResponseRequest(calls []ModelToolCall) bool {
+	if len(calls) != 1 || calls[0].Name != finalResponseToolName {
+		return false
+	}
+	var input map[string]any
+	if json.Unmarshal(calls[0].Arguments, &input) != nil || len(input) != 1 {
+		return false
+	}
+	decision, ok := input["decision"].(string)
+	return ok && decision == "respond"
+}
+
+func (service *Service) generateFinalOutput(
+	ctx context.Context,
+	request TextRequest,
+	observer StreamObserver,
+	output AssistantOutput,
+) (TextResult, []string, error) {
+	request.Tools = nil
+	request.ToolChoice = ToolChoice{Mode: ToolChoiceNone}
+	if observer == nil {
+		result, err := service.generateModel(ctx, request, nil)
+		return result, nil, err
+	}
+	if !ValidUUID(output.ID) || output.RunID == "" {
+		return TextResult{}, nil, NewGenerationError(
+			ErrorInvalidRequest,
+			0,
+			"",
+			"",
+			errors.New("agent: final output identity is invalid"),
+		)
+	}
+	if err := ValidateTextRequest(request); err != nil {
+		return TextResult{}, nil, NewGenerationError(
+			ErrorInvalidRequest,
+			0,
+			"",
+			"",
+			err,
+		)
+	}
+	streaming, ok := service.generator.(StreamingTextGenerator)
+	if !ok {
+		return TextResult{}, nil, NewGenerationError(
+			ErrorConfiguration,
+			0,
+			"",
+			"",
+			errors.New("agent: configured text generator does not support streaming"),
+		)
+	}
+	stream := &assistantOutputDeltaStream{observer: observer, output: output}
+	if err := stream.start(ctx); err != nil {
+		return TextResult{}, nil, streamObserverGenerationError(err)
+	}
+	result, err := streaming.GenerateStream(ctx, request, stream)
+	if err != nil {
+		return TextResult{}, nil, err
+	}
+	return result, stream.deltas, nil
 }
 
 func (service *Service) generateModel(
@@ -932,23 +1140,52 @@ func (service *Service) generateModel(
 	return streaming.GenerateStream(ctx, request, observer)
 }
 
-type countingDeltaObserver struct {
-	delegate StreamObserver
-	count    int
+type assistantOutputDeltaStream struct {
+	observer StreamObserver
+	output   AssistantOutput
+	sequence int
+	deltas   []string
 }
 
-func (observer *countingDeltaObserver) OnTextDelta(
+func (stream *assistantOutputDeltaStream) start(ctx context.Context) error {
+	return stream.observer.OnAssistantOutputStarted(ctx, AssistantOutput{
+		ID: stream.output.ID, RunID: stream.output.RunID,
+	})
+}
+
+func (stream *assistantOutputDeltaStream) OnTextDelta(
 	ctx context.Context,
 	delta string,
 ) error {
 	if delta == "" {
 		return nil
 	}
-	if err := observer.delegate.OnAssistantDelta(ctx, delta); err != nil {
-		return err
+	stream.sequence++
+	if err := stream.observer.OnAssistantOutputDelta(
+		ctx,
+		AssistantOutputDelta{
+			OutputID: stream.output.ID,
+			RunID:    stream.output.RunID,
+			Sequence: stream.sequence,
+			Delta:    delta,
+		},
+	); err != nil {
+		return streamObserverGenerationError(err)
 	}
-	observer.count += len(delta)
+	stream.deltas = append(stream.deltas, delta)
 	return nil
+}
+
+func streamObserverGenerationError(err error) *GenerationError {
+	return NewGenerationError(ErrorCancelled, 0, "", "", err)
+}
+
+func joinedTextDeltas(deltas []string) string {
+	var joined []byte
+	for _, delta := range deltas {
+		joined = append(joined, delta...)
+	}
+	return string(joined)
 }
 
 func (service *Service) executeToolCall(
@@ -956,27 +1193,36 @@ func (service *Service) executeToolCall(
 	actor requestcontext.Actor,
 	run Run,
 	call ModelToolCall,
-) (TextMessage, error) {
+	authorization json.RawMessage,
+	inputSchema map[string]any,
+) (TextMessage, ToolCallStatus, capability.TurnOutcome, string, error) {
 	toolCtx, cancel := context.WithTimeout(ctx, service.loopLimits.ToolTimeout)
 	defer cancel()
-	requestID := toolCallRequestID(run.ID, call.ID)
+	effect := service.registry.InvocationEffect(capability.Invocation{
+		Name: call.Name, Input: call.Arguments,
+	})
+	requestID := toolCallRequestID(run, call, effect.MayWrite())
 	if _, err := service.repository.StartToolCall(
 		toolCtx,
 		actor.UserID,
 		run.ID,
+		run.WorkerLeaseToken,
 		call.ID,
 		requestID,
 	); err != nil {
-		return TextMessage{}, err
+		return TextMessage{}, ToolCallFailed, capability.TurnOutcomeContinue, "", err
 	}
 	result, err := service.executor.Execute(
 		toolCtx,
 		capability.CallContext{
-			Actor:      actor,
-			ThreadID:   run.ThreadID,
-			RunID:      run.ID,
-			ToolCallID: call.ID,
-			RequestID:  requestID,
+			Actor:          actor,
+			ThreadID:       run.ThreadID,
+			RunID:          run.ID,
+			InputMessageID: run.InputMessageID,
+			ToolCallID:     call.ID,
+			RequestID:      requestID,
+			Authorization:  append(json.RawMessage(nil), authorization...),
+			InputSchema:    inputSchema,
 		},
 		capability.Invocation{Name: call.Name, Input: call.Arguments},
 	)
@@ -987,14 +1233,15 @@ func (service *Service) executeToolCall(
 			persistCtx,
 			actor.UserID,
 			run.ID,
+			run.WorkerLeaseToken,
 			call.ID,
 			ToolCallFailed,
 			capability.ErrorCategory(err),
 		); persistErr != nil {
-			return TextMessage{}, persistErr
+			return TextMessage{}, ToolCallFailed, capability.TurnOutcomeContinue, "", persistErr
 		}
 		// 工具自身失败属于模型可处理结果，回填稳定分类后让模型决定重试、换工具或解释。
-		return toolFailureMessage(call.ID, err), nil
+		return toolFailureMessage(call.ID, err), ToolCallFailed, capability.TurnOutcomeContinue, "", nil
 	}
 	content, err := marshalToolResult(result, service.loopLimits.MaxToolResultBytes)
 	if err != nil {
@@ -1004,13 +1251,14 @@ func (service *Service) executeToolCall(
 			persistCtx,
 			actor.UserID,
 			run.ID,
+			run.WorkerLeaseToken,
 			call.ID,
 			ToolCallFailed,
 			"internal",
 		); persistErr != nil {
-			return TextMessage{}, persistErr
+			return TextMessage{}, ToolCallFailed, capability.TurnOutcomeContinue, "", persistErr
 		}
-		return toolFailureMessage(call.ID, err), nil
+		return toolFailureMessage(call.ID, err), ToolCallFailed, capability.TurnOutcomeContinue, "", nil
 	}
 	persistCtx, persistCancel := runPersistenceContext(ctx)
 	defer persistCancel()
@@ -1018,18 +1266,19 @@ func (service *Service) executeToolCall(
 		persistCtx,
 		actor.UserID,
 		run.ID,
+		run.WorkerLeaseToken,
 		call.ID,
 		json.RawMessage(content),
 		toolSourceRefs(result.SourceRefs),
-		result.Handoffs,
+		result.ClientActions,
 	); err != nil {
-		return TextMessage{}, err
+		return TextMessage{}, ToolCallFailed, capability.TurnOutcomeContinue, "", err
 	}
 	return TextMessage{
 		Role:       TextRoleTool,
 		Content:    content,
 		ToolCallID: call.ID,
-	}, nil
+	}, ToolCallSucceeded, result.TurnOutcome, result.AssistantText, nil
 }
 
 func (service *Service) saveToolCallProposed(
@@ -1049,6 +1298,7 @@ func (service *Service) saveToolCallProposed(
 			Input:         call.Arguments,
 			Status:        ToolCallProposed,
 		},
+		run.WorkerLeaseToken,
 	)
 	return err
 }
@@ -1063,18 +1313,11 @@ func (service *Service) markToolCallRejected(
 		ctx,
 		run.OwnerID,
 		run.ID,
+		run.WorkerLeaseToken,
 		toolCallID,
 		ToolCallRejected,
 		errorCategory,
 	)
-	return err
-}
-
-func (service *Service) saveContextToolSnapshot(
-	ctx context.Context,
-	manifest agentcontext.Manifest,
-) error {
-	_, err := service.manifests.SaveToolSnapshot(ctx, manifest)
 	return err
 }
 
@@ -1145,6 +1388,23 @@ func (service *Service) logRunReceived(
 		)
 	}
 	service.logger.Info("agent.run.received", attrs...)
+}
+
+func (service *Service) logContextDegradation(
+	run Run,
+	source string,
+	status string,
+) {
+	if service.logger == nil {
+		return
+	}
+	service.logger.Warn(
+		"agent.context.degraded",
+		"run_id", run.ID,
+		"thread_id", run.ThreadID,
+		"source", source,
+		"status", status,
+	)
 }
 
 func textRequestImageCount(request TextRequest) int {
@@ -1276,7 +1536,7 @@ func (service *Service) logInvalidModelResult(
 		"agent.loop.invalid_model_result",
 		"run_id", run.ID,
 		"thread_id", run.ThreadID,
-		"id_valid", ValidModelID(result.ID),
+		"id_valid", ValidOpaqueID(result.ID),
 		"provider", result.Provider,
 		"provider_matches", result.Provider == service.configuration.Provider,
 		"model", result.Model,
@@ -1332,7 +1592,19 @@ func classifyRunFailure(err error) (string, bool) {
 }
 
 func validFinalTextResult(result TextResult) bool {
-	return ValidModelID(result.ID) &&
+	if result.CompletionSource == CompletionSourceDomain {
+		return conversation.ValidMessageContent(result.Content) &&
+			ValidOpaqueID(result.DomainToolCallID) &&
+			ValidOpaqueID(result.DomainToolName) &&
+			result.ID == "" && result.Provider == "" && result.Model == "" &&
+			result.FinishReason == "" && result.Usage == (TokenUsage{}) &&
+			len(result.ToolCalls) == 0
+	}
+	if result.CompletionSource != "" &&
+		result.CompletionSource != CompletionSourceModel {
+		return false
+	}
+	return ValidOpaqueID(result.ID) &&
 		ValidProviderID(result.Provider) &&
 		ValidModelID(result.Model) &&
 		(result.FinishReason == "stop" || result.FinishReason == "length") &&
@@ -1342,7 +1614,7 @@ func validFinalTextResult(result TextResult) bool {
 }
 
 func validLoopTextResult(result TextResult) bool {
-	if !ValidModelID(result.ID) ||
+	if !ValidOpaqueID(result.ID) ||
 		!ValidProviderID(result.Provider) ||
 		!ValidModelID(result.Model) ||
 		!validTokenUsage(result.Usage) {
@@ -1390,8 +1662,7 @@ func runConfigurationMatches(
 func defaultLoopLimits() LoopLimits {
 	return LoopLimits{
 		MaxIterations:      defaultMaxIterations,
-		MaxToolCalls:       defaultMaxToolCalls,
-		MaxWriteToolCalls:  defaultMaxWriteCalls,
+		MaxToolCalls:       MaxToolCallsPerRun,
 		ToolTimeout:        defaultToolTimeout,
 		LoopTimeout:        defaultLoopTimeout,
 		MaxToolResultBytes: defaultMaxToolResult,
@@ -1406,9 +1677,6 @@ func normalizeLoopLimits(limits LoopLimits) LoopLimits {
 	if limits.MaxToolCalls == 0 {
 		limits.MaxToolCalls = defaults.MaxToolCalls
 	}
-	if limits.MaxWriteToolCalls == 0 {
-		limits.MaxWriteToolCalls = defaults.MaxWriteToolCalls
-	}
 	if limits.ToolTimeout == 0 {
 		limits.ToolTimeout = defaults.ToolTimeout
 	}
@@ -1421,36 +1689,17 @@ func normalizeLoopLimits(limits LoopLimits) LoopLimits {
 	return limits
 }
 
-func (service *Service) toolDefinition(name string) (capability.Definition, bool) {
-	if service.registry == nil {
-		return capability.Definition{}, false
+// toolCallRequestID keeps every write tool stable across retries of the same
+// trusted input Message. Read calls remain unique to one Run and model call.
+func toolCallRequestID(run Run, call ModelToolCall, mayWrite bool) string {
+	seed := run.ID + "\x00" + call.ID
+	prefix := "tool-read-"
+	if mayWrite {
+		seed = run.InputMessageID + "\x00" + call.Name
+		prefix = "tool-write-"
 	}
-	registered, ok := service.registry.Get(name)
-	if !ok {
-		return capability.Definition{}, false
-	}
-	return registered.Definition(), true
-}
-
-// toolCallRequestID 在同一 Run 重放同一个 Tool Call 时保持不变，供写工具做幂等去重。
-func toolCallRequestID(runID string, toolCallID string) string {
-	return runID + "-" + toolCallID
-}
-
-func (service *Service) writeToolCallCount(
-	calls []ModelToolCall,
-) int {
-	count := 0
-	for _, call := range calls {
-		effect := service.registry.InvocationEffect(capability.Invocation{
-			Name:  call.Name,
-			Input: call.Arguments,
-		})
-		if effect.MayWrite() {
-			count++
-		}
-	}
-	return count
+	sum := sha256.Sum256([]byte(seed))
+	return fmt.Sprintf("%s%x", prefix, sum[:])
 }
 
 func (service *Service) stopLoop(

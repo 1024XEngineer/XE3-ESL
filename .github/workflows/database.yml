@@ -35,7 +35,7 @@ jobs:
 
     services:
       postgres:
-        image: pgvector/pgvector:pg18-bookworm@sha256:12a379b47ad65289572ea0756efc11b7c241a6662833e8af7038cd3b73d647e0
+        image: postgres:18-bookworm@sha256:7d2695c3aa88e792e8b3b233e7e4adb296a20412c6c0ca361e3edaaacfada108
         env:
           POSTGRES_DB: xe3_esl
           POSTGRES_USER: xe3_esl
@@ -63,24 +63,63 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26.5"
+          go-version: "1.26.6"
           cache-dependency-path: server/go.sum
 
       - name: Validate local database definition
         run: docker compose config --quiet
 
-      - name: Enforce append-only migration history
+      - name: Enforce migration history policy
         if: github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
-          invalid_changes=$(
-            git diff --name-status "$BASE_SHA"...HEAD -- "server/migrations/*.sql" |
-              awk '$1 !~ /^A/ { print }'
+
+          mapfile -t base_migrations < <(
+            git ls-tree -r --name-only "$BASE_SHA" -- server/migrations |
+              grep '\.sql$'
           )
+          mapfile -t current_migrations < <(
+            git ls-files server/migrations |
+              grep '\.sql$'
+          )
+
+          clean_baseline=(
+            server/migrations/000001_clean_baseline.down.sql
+            server/migrations/000001_clean_baseline.up.sql
+          )
+          migration_changes=$(
+            git diff --name-status "$BASE_SHA"...HEAD -- "server/migrations/*.sql"
+          )
+          if (( ${#base_migrations[@]} > 2 )) &&
+             [[ "${base_migrations[0]:-}" != "${clean_baseline[0]}" ]] &&
+             [[ "${base_migrations[1]:-}" != "${clean_baseline[1]}" ]] &&
+             [[ "${current_migrations[0]:-}" == "${clean_baseline[0]}" ]] &&
+             [[ "${current_migrations[1]:-}" == "${clean_baseline[1]}" ]]; then
+            shared_migrations=$(
+              comm -12 \
+                <(printf '%s\n' "${base_migrations[@]}") \
+                <(printf '%s\n' "${current_migrations[@]}")
+            )
+            if [[ -n "$shared_migrations" ]]; then
+              echo "The clean baseline must fully replace the legacy migration history:"
+              echo "$shared_migrations"
+              exit 1
+            fi
+            invalid_changes=$(
+              printf '%s\n' "$migration_changes" |
+                awk '$1 !~ /^(A|D)$/ { print }'
+            )
+            echo "Legacy migration history is being replaced by the clean baseline and its successors."
+          else
+            invalid_changes=$(
+              printf '%s\n' "$migration_changes" |
+                awk '$1 !~ /^A/ { print }'
+            )
+          fi
           if [[ -n "$invalid_changes" ]]; then
-            echo "Merged SQL migrations are append-only:"
+            echo "Migration history policy rejected these changes:"
             echo "$invalid_changes"
             exit 1
           fi
@@ -119,21 +158,20 @@ jobs:
           TEXT_GENERATION_PROVIDER: qianwen
           QIANWEN_BASE_URL: https://dashscope.aliyuncs.com/compatible-mode/v1
           QIANWEN_MODEL: qwen-ci-readiness-not-invoked
+          QIANWEN_EVALUATION_MODEL: qwen-ci-readiness-not-invoked
           QIANWEN_SPEECH_FEEDBACK_MODEL: qwen-ci-readiness-not-invoked
-          EMBEDDING_PROVIDER: qianwen
-          QIANWEN_EMBEDDING_BASE_URL: https://dashscope.aliyuncs.com/compatible-mode/v1
-          QIANWEN_EMBEDDING_MODEL: text-embedding-v4
-          QIANWEN_EMBEDDING_DIMENSIONS: "1024"
           SPEECH_RECOGNITION_PROVIDER: qianwen
           QIANWEN_ASR_BASE_URL: https://dashscope.aliyuncs.com/api/v1
-          QIANWEN_ASR_MODEL: fun-asr-flash-2026-06-15
+          QIANWEN_ASR_MODEL: fun-asr-realtime
+          QIANWEN_ASR_TIMEOUT: 150s
+          QIANWEN_ASR_RECORDED_MODEL: fun-asr-flash-2026-06-15
+          QIANWEN_ASR_RECORDED_TIMEOUT: 150s
           SPEECH_SYNTHESIS_PROVIDER: qianwen
           QIANWEN_TTS_BASE_URL: https://dashscope.aliyuncs.com/api/v1
           QIANWEN_TTS_MODEL: qwen-audio-3.0-tts-flash
           QIANWEN_TTS_VOICE: loongeva_v3.6
           QIANWEN_TTS_LANGUAGE: en
           DASHSCOPE_API_KEY: ci-readiness-not-a-secret
-          REVIEW_HISTORY_CURSOR_SIGNING_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY
         run: |
           set -euo pipefail
 

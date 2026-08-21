@@ -3,86 +3,50 @@ import 'package:speakup/features/coaching/ielts/ielts_assignment.dart';
 import 'package:speakup/features/coaching/ielts/ielts_question_bank.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 
-final class AgentPracticeContext {
-  const AgentPracticeContext({required this.threadId, required this.goalId});
+/// UI input for direct custom-scenario launch. The Plan stores only the
+/// resulting background summary, not a second scenario aggregate.
+final class ScenarioPreparationContext {
+  const ScenarioPreparationContext({
+    required this.situation,
+    required this.userRole,
+    required this.counterpartRole,
+    required this.goal,
+    required this.counterpartPersona,
+  });
 
-  final String threadId;
-  final String goalId;
+  final String situation;
+  final String userRole;
+  final String counterpartRole;
+  final String goal;
+  final String counterpartPersona;
 
   @override
   bool operator ==(Object other) =>
-      other is AgentPracticeContext &&
-      other.threadId == threadId &&
-      other.goalId == goalId;
+      other is ScenarioPreparationContext &&
+      other.situation == situation &&
+      other.userRole == userRole &&
+      other.counterpartRole == counterpartRole &&
+      other.goal == goal &&
+      other.counterpartPersona == counterpartPersona;
 
   @override
-  int get hashCode => Object.hash(threadId, goalId);
+  int get hashCode => Object.hash(
+    situation,
+    userRole,
+    counterpartRole,
+    goal,
+    counterpartPersona,
+  );
 }
 
-final class PreparationProfile {
-  const PreparationProfile({
-    required this.id,
-    required this.userId,
+final class PlanPreparationSnapshot {
+  const PlanPreparationSnapshot({
     required this.backgroundSummary,
-    required this.version,
-    required this.updatedAt,
-    this.resumeId,
-    this.resumeRevision,
-    this.jobDescriptionRef,
-    this.jobTargetId,
-    this.jobTargetConfirmationVersion,
+    this.interview,
   });
 
-  final String id;
-  final String userId;
-  final String? resumeId;
-  final int? resumeRevision;
-  final String? jobDescriptionRef;
   final String backgroundSummary;
-  final String? jobTargetId;
-  final int? jobTargetConfirmationVersion;
-  final int version;
-  final DateTime updatedAt;
-}
-
-final class PreparationSnapshot {
-  const PreparationSnapshot({
-    required this.id,
-    required this.sourceProfileId,
-    required this.sourceVersion,
-    required this.backgroundSnapshot,
-    required this.createdAt,
-    this.sourceJobTargetId,
-    this.sourceJobTargetConfirmationVersion,
-    this.jobTargetInput,
-    this.jobTargetCandidate,
-    this.resumeSnapshot,
-    this.jobDescriptionSnapshot,
-  });
-
-  final String id;
-  final String sourceProfileId;
-  final int sourceVersion;
-  final String? sourceJobTargetId;
-  final int? sourceJobTargetConfirmationVersion;
-  final JobTargetInput? jobTargetInput;
-  final JobTargetCandidate? jobTargetCandidate;
-  final String? resumeSnapshot;
-  final String? jobDescriptionSnapshot;
-  final String backgroundSnapshot;
-  final DateTime createdAt;
-}
-
-final class PreparationGoalSnapshot {
-  const PreparationGoalSnapshot({
-    required this.id,
-    required this.title,
-    required this.version,
-  });
-
-  final String id;
-  final String title;
-  final int version;
+  final InterviewPreparationSnapshot? interview;
 }
 
 final class PracticeObjective {
@@ -94,6 +58,7 @@ final class PracticeObjective {
 
 final class PreparationSessionPolicy {
   const PreparationSessionPolicy({
+    required this.completionMode,
     required this.suggestedDurationSeconds,
     required this.minEffectiveTurns,
     required this.maxEffectiveTurns,
@@ -103,10 +68,10 @@ final class PreparationSessionPolicy {
     required this.retryAllowed,
     required this.questionTranslationAllowed,
     required this.questionTipsAllowed,
-    required this.avatarAllowed,
     required this.speechFeedbackAllowed,
   });
 
+  final PreparationCompletionMode completionMode;
   final int suggestedDurationSeconds;
   final int minEffectiveTurns;
   final int maxEffectiveTurns;
@@ -116,11 +81,56 @@ final class PreparationSessionPolicy {
   final bool retryAllowed;
   final bool questionTranslationAllowed;
   final bool questionTipsAllowed;
-  final bool avatarAllowed;
   final bool speechFeedbackAllowed;
 }
 
-enum PracticePlanStatus { ready, archived }
+enum PreparationCompletionMode {
+  turnLimited,
+  userControlled;
+
+  static PreparationCompletionMode? fromWireValue(String value) =>
+      switch (value) {
+        'TURN_LIMITED' => PreparationCompletionMode.turnLimited,
+        'USER_CONTROLLED' => PreparationCompletionMode.userControlled,
+        _ => null,
+      };
+}
+
+enum PracticePlanStatus { draft, ready }
+
+final class PracticePlanSummary {
+  const PracticePlanSummary({
+    required this.id,
+    required this.version,
+    required this.status,
+    required this.experience,
+    required this.sceneName,
+    required this.practiceScope,
+    required this.jobTitle,
+    required this.practiceObjectives,
+    required this.resumeUsed,
+    required this.suggestedDurationSeconds,
+    required this.minEffectiveTurns,
+    required this.maxEffectiveTurns,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  final String id;
+  final int version;
+  final PracticePlanStatus status;
+  final PracticeExperience experience;
+  final String sceneName;
+  final String practiceScope;
+  final String jobTitle;
+  final List<String> practiceObjectives;
+  final bool resumeUsed;
+  final int suggestedDurationSeconds;
+  final int minEffectiveTurns;
+  final int maxEffectiveTurns;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+}
 
 final class PracticePlan {
   const PracticePlan({
@@ -130,37 +140,26 @@ final class PracticePlan {
     required this.sceneSelection,
     required this.sessionPolicy,
     required this.practiceObjectives,
-    required this.revision,
+    required this.version,
     required this.status,
     required this.createdAt,
     required this.updatedAt,
     this.sourceThreadId,
-    this.goalSnapshot,
     this.ieltsAssignment,
   });
 
   final String id;
   final String userId;
   final String? sourceThreadId;
-  final PreparationGoalSnapshot? goalSnapshot;
-  final PreparationSnapshot preparationSnapshot;
+  final PlanPreparationSnapshot preparationSnapshot;
   final SceneSelectionSnapshot sceneSelection;
   final PreparationSessionPolicy sessionPolicy;
   final List<PracticeObjective> practiceObjectives;
   final IeltsPracticeAssignment? ieltsAssignment;
-  final int revision;
+  final int version;
   final PracticePlanStatus status;
   final DateTime createdAt;
   final DateTime updatedAt;
-
-  AgentPracticeContext? get agentContext {
-    final threadId = sourceThreadId;
-    final goal = goalSnapshot;
-    if (threadId == null || goal == null) {
-      return null;
-    }
-    return AgentPracticeContext(threadId: threadId, goalId: goal.id);
-  }
 
   List<RoleDefinition> get selectedRoles {
     final rolesById = <String, RoleDefinition>{
@@ -175,58 +174,30 @@ final class PracticePlan {
       .firstWhere((option) => option.id == sceneSelection.practiceOptionId);
 }
 
-final class CreatePreparationProfileInput {
-  const CreatePreparationProfileInput({
-    required this.backgroundSummary,
-    this.resumeId,
-    this.resumeRevision,
-    this.jobDescriptionRef,
-    this.jobTargetId,
-    this.jobTargetConfirmationVersion,
-  });
-
-  final String backgroundSummary;
-  final String? resumeId;
-  final int? resumeRevision;
-  final String? jobDescriptionRef;
-  final String? jobTargetId;
-  final int? jobTargetConfirmationVersion;
-}
-
-final class CreatePreparationPlanInput {
-  const CreatePreparationPlanInput({
-    required this.preparationSnapshotId,
+final class CreatePracticePlanInput {
+  const CreatePracticePlanInput({
     required this.sceneId,
     required this.sceneVersion,
     required this.selectedRoleIds,
     required this.practiceOptionId,
     this.sourceThreadId,
-    this.goalId,
+    this.backgroundSummary = '',
+    this.interviewPreparationId,
+    this.expectedInterviewVersion,
     this.maxEffectiveTurns,
     this.ieltsSelection,
+    this.ieltsPreparedAnswers = const <IeltsPreparedAnswer>[],
   });
 
   final String? sourceThreadId;
-  final String? goalId;
-  final String preparationSnapshotId;
+  final String backgroundSummary;
+  final String? interviewPreparationId;
+  final int? expectedInterviewVersion;
   final String sceneId;
   final int sceneVersion;
   final List<String> selectedRoleIds;
   final String practiceOptionId;
   final int? maxEffectiveTurns;
   final IeltsPracticeSelection? ieltsSelection;
-}
-
-final class RevisePreparationPlanInput {
-  const RevisePreparationPlanInput({
-    required this.expectedPlanRevision,
-    required this.selectedRoleIds,
-    required this.practiceOptionId,
-    required this.maxEffectiveTurns,
-  });
-
-  final int expectedPlanRevision;
-  final List<String> selectedRoleIds;
-  final String practiceOptionId;
-  final int maxEffectiveTurns;
+  final List<IeltsPreparedAnswer> ieltsPreparedAnswers;
 }

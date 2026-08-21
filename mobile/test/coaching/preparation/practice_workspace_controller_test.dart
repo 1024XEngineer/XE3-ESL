@@ -1,1309 +1,551 @@
-import '../../support/scene_fixtures.dart';
-import '../../support/practice_fixtures.dart';
-import 'package:speakup/features/coaching/scene/scene.dart';
-
-import 'package:speakup/features/coaching/goal/goal.dart';
-import 'package:speakup/features/coaching/goal/goal_client.dart';
-
 import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/features/agent/conversation/agent_client.dart';
-import 'package:speakup/features/agent/conversation/conversation_controller.dart';
-import 'package:speakup/features/agent/conversation/agent_models.dart';
-import 'package:speakup/features/coaching/preparation/practice_launch_record_store.dart';
-import 'package:speakup/features/coaching/preparation/practice_workspace_controller.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
+import 'package:speakup/features/coaching/practice/practice_client_error.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
+import 'package:speakup/features/coaching/preparation/practice_launch_record_store.dart';
+import 'package:speakup/features/coaching/preparation/practice_workspace_controller.dart';
+import 'package:speakup/features/coaching/scene/scene.dart';
 
-import 'preparation_test_fakes.dart';
+import '../../support/practice_fixtures.dart';
+import '../../support/scene_fixtures.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test(
-    'acquire creates one dedicated Thread and safely retries its lease',
-    () async {
-      final store = _InspectableRecordStore(writeFailures: 1);
-      final harness = await _createHarness();
-      final workspace = PracticeWorkspaceController(
-        conversationController: harness.conversation,
-        practiceController: harness.practiceController,
-        recordStore: store,
-      );
-      addTearDown(() {
-        workspace.dispose();
-        harness.dispose();
-      });
-      await workspace.activateAccount('account-1');
-      final homeThreadId = harness.conversation.threadId;
-      final initialThreadCount = harness.conversation.threads.length;
+  test('pending workspace persists no Agent Thread or Goal identity', () async {
+    final harness = _Harness();
+    addTearDown(harness.dispose);
+    await harness.workspace.activateAccount(_accountId);
 
-      final firstAttempt = await workspace.acquireThread('launch-operation-1');
+    final lease = await harness.workspace.acquirePractice('launch-operation-1');
 
-      expect(firstAttempt, isNull);
-      expect(workspace.currentLease, isNotNull);
-      expect(harness.conversation.threadId, isNot(homeThreadId));
-      expect(harness.conversation.threads, hasLength(initialThreadCount + 1));
-
-      final retried = await workspace.acquireThread('launch-operation-1');
-
-      expect(retried, workspace.currentLease);
-      expect(retried?.returnThreadId, homeThreadId);
-      expect(harness.conversation.threads, hasLength(initialThreadCount + 1));
-      final record = jsonDecode((await store.read('account-1'))!);
-      expect(
-        record,
-        containsPair('practice_thread_id', retried?.practiceThreadId),
-      );
-      expect(record, containsPair('return_thread_id', homeThreadId));
-      expect(record, containsPair('schema_version', 6));
-
-      final replacement = await workspace.acquireThread(
-        'different-operation-2',
-      );
-      expect(replacement, isNotNull);
-      expect(replacement?.practiceThreadId, isNot(retried?.practiceThreadId));
-      expect(replacement?.returnThreadId, homeThreadId);
-      expect(harness.conversation.threads, hasLength(initialThreadCount + 2));
-    },
-  );
+    expect(lease, isNotNull);
+    expect(lease!.operationId, 'launch-operation-1');
+    final record = jsonDecode((await harness.store.read(_accountId))!);
+    expect(record, containsPair('schema_version', 8));
+    expect(record, isNot(contains('practice_thread_id')));
+    expect(record, isNot(contains('return_thread_id')));
+    expect(record, isNot(contains('goal_id')));
+    expect(record, containsPair('practice_plan_id', null));
+    expect(record, containsPair('practice_session_id', null));
+  });
 
   test(
-    'committed practice parks on home and resumes by exact identities',
+    'committed practice parks and restores by exact Session identity',
     () async {
-      final store = _InspectableRecordStore();
-      final harness = await _createHarness();
-      final firstWorkspace = PracticeWorkspaceController(
-        conversationController: harness.conversation,
-        practiceController: harness.practiceController,
-        recordStore: store,
-      );
+      final harness = _Harness();
       addTearDown(harness.dispose);
-      await firstWorkspace.activateAccount('account-1');
-      final homeThreadId = harness.conversation.threadId;
-      final launched = await _launchPractice(
-        harness: harness,
-        workspace: firstWorkspace,
-        operationId: 'launch-operation-1',
-        sceneId: 'interview-screening',
-        sceneTitle: '招聘初筛',
-        sessionId: 'practice-session-1',
-        practiceExperience: PracticeExperience.interview,
+      await harness.workspace.activateAccount(_accountId);
+      await harness.launch(sessionId: 'practice-session-1');
+
+      expect(harness.practiceController.hasActivePractice, isTrue);
+      expect(harness.workspace.hasResumable, isTrue);
+      expect(
+        harness.workspace.currentPlanId,
+        testPracticePlanId('practice-session-1'),
       );
-
-      expect(firstWorkspace.hasResumable, isTrue);
-      expect(firstWorkspace.resumableHasProgress, isFalse);
-      expect(await firstWorkspace.parkCurrentPractice(), isTrue);
-      expect(harness.conversation.threadId, homeThreadId);
-      expect(await harness.conversation.createThread(), isTrue);
-      final newerHomeThreadId = harness.conversation.threadId;
-      expect(newerHomeThreadId, isNot(homeThreadId));
-      firstWorkspace.dispose();
-
-      final restoredWorkspace = PracticeWorkspaceController(
-        conversationController: harness.conversation,
-        practiceController: harness.practiceController,
-        recordStore: store,
+      expect(
+        harness.workspace.hasResumableForPlan(
+          testPracticePlanId('practice-session-1'),
+        ),
+        isTrue,
       );
-      addTearDown(restoredWorkspace.dispose);
-      await restoredWorkspace.activateAccount('account-1');
+      expect(
+        harness.workspace.hasResumableForPlan('another-practice-plan'),
+        isFalse,
+      );
+      expect(await harness.workspace.parkCurrentPractice(), isTrue);
+      expect(harness.practiceController.hasActivePractice, isFalse);
 
-      expect(restoredWorkspace.currentTitle, '招聘初筛');
-      expect(restoredWorkspace.currentSceneId, 'interview-screening');
-      expect(restoredWorkspace.hasResumable, isTrue);
-      expect(await restoredWorkspace.resumeCurrentPractice(), isTrue);
-      expect(harness.conversation.threadId, launched.lease.practiceThreadId);
-      expect(harness.conversation.activeGoalId, launched.goal.id);
+      expect(await harness.workspace.resumeCurrentPractice(), isTrue);
+
+      expect(harness.practiceClient.restoreCalls, 1);
       expect(
         harness.practiceController.practiceSessionId,
         'practice-session-1',
       );
-      expect(harness.practiceController.hasActivePractice, isTrue);
-      expect(await restoredWorkspace.parkCurrentPractice(), isTrue);
-      expect(harness.conversation.threadId, newerHomeThreadId);
+      expect(harness.practiceController.scene?.id, testScenes.first.id);
     },
   );
 
   test(
-    'only a confirmed answer marks a practice as resumable progress',
+    'restored workspace survives controller recreation without a Thread',
     () async {
-      final store = _InspectableRecordStore();
-      final harness = await _createHarness();
-      final workspace = PracticeWorkspaceController(
-        conversationController: harness.conversation,
-        practiceController: harness.practiceController,
-        recordStore: store,
-      );
-      addTearDown(() {
-        workspace.dispose();
-        harness.dispose();
-      });
-      await workspace.activateAccount('account-1');
-      await _launchPractice(
-        harness: harness,
-        workspace: workspace,
-        operationId: 'launch-progress-operation',
-        sceneId: 'interview-screening',
-        sceneTitle: '招聘初筛',
-        sessionId: 'practice-progress-session',
-      );
-
-      expect(workspace.resumableHasProgress, isFalse);
-      expect(
-        await harness.practiceController.submitPracticeText(
-          'A confirmed answer.',
-        ),
-        isTrue,
-      );
-      await Future<void>.delayed(Duration.zero);
-
-      expect(workspace.resumableHasProgress, isTrue);
-      expect(await workspace.parkCurrentPractice(), isTrue);
-      final record = jsonDecode((await store.read('account-1'))!);
-      expect(record, containsPair('completed_turns', 1));
-    },
-  );
-
-  test(
-    'park returns to the conversation being viewed, not a stale launch Home',
-    () async {
-      final store = _InspectableRecordStore();
-      final harness = await _createHarness();
-      final workspace = PracticeWorkspaceController(
-        conversationController: harness.conversation,
-        practiceController: harness.practiceController,
-        recordStore: store,
-      );
-      addTearDown(() {
-        workspace.dispose();
-        harness.dispose();
-      });
-      await workspace.activateAccount('account-1');
-      final launchHomeThreadId = harness.conversation.threadId;
-      await _launchPractice(
-        harness: harness,
-        workspace: workspace,
-        operationId: 'launch-operation-1',
-        sceneId: 'interview-screening',
-        sceneTitle: '招聘初筛',
-        sessionId: 'practice-session-1',
-      );
-      expect(await workspace.parkCurrentPractice(), isTrue);
-      expect(harness.conversation.threadId, launchHomeThreadId);
-
-      // The user switches to a different conversation (e.g. via the drawer)
-      // while the practice stays parked and resumable.
-      await harness.conversation.createThread();
-      final otherHomeThreadId = harness.conversation.threadId;
-      expect(otherHomeThreadId, isNot(launchHomeThreadId));
-
-      // Leaving the training tab parks the practice again; the user should
-      // land back on the conversation they were actually viewing instead of
-      // the original launch Home.
-      expect(await workspace.parkCurrentPractice(), isTrue);
-      expect(harness.conversation.threadId, otherHomeThreadId);
-    },
-  );
-
-  test(
-    'scenario presentation survives parking and cold workspace restore',
-    () async {
-      final store = _InspectableRecordStore();
-      final harness = await _createHarness();
+      final store = MemoryPracticeLaunchRecordStore();
+      final practiceClient = _WorkspacePracticeClient();
+      final firstPractice = PracticeController(client: practiceClient);
       final firstWorkspace = PracticeWorkspaceController(
-        conversationController: harness.conversation,
-        practiceController: harness.practiceController,
+        practiceController: firstPractice,
         recordStore: store,
       );
-      addTearDown(harness.dispose);
-      await firstWorkspace.activateAccount('account-1');
-      await _launchPractice(
-        harness: harness,
+      await firstWorkspace.activateAccount(_accountId);
+      final first = _Harness.from(
+        store: store,
+        practiceClient: practiceClient,
+        practiceController: firstPractice,
         workspace: firstWorkspace,
-        operationId: 'launch-scenario-operation',
-        sceneId: 'daily-hotel',
-        sceneTitle: '酒店入住',
-        sessionId: 'practice-scenario-session',
-        practiceExperience: PracticeExperience.lifeAndTravel,
       );
-      expect(firstWorkspace.currentPracticeExperience, 'LIFE_AND_TRAVEL');
+      await first.launch(sessionId: 'practice-session-restart');
       expect(await firstWorkspace.parkCurrentPractice(), isTrue);
       firstWorkspace.dispose();
+      firstPractice.dispose();
 
-      final restoredWorkspace = PracticeWorkspaceController(
-        conversationController: harness.conversation,
-        practiceController: harness.practiceController,
-        recordStore: store,
-      );
-      addTearDown(restoredWorkspace.dispose);
-      await restoredWorkspace.activateAccount('account-1');
-
-      expect(restoredWorkspace.currentPracticeExperience, 'LIFE_AND_TRAVEL');
-      final record = jsonDecode((await store.read('account-1'))!);
-      expect(
-        record,
-        containsPair(
-          'scene',
-          containsPair('practice_experience', 'LIFE_AND_TRAVEL'),
-        ),
-      );
-      expect(await restoredWorkspace.resumeCurrentPractice(), isTrue);
-      expect(restoredWorkspace.currentSceneId, 'daily-hotel');
-    },
-  );
-
-  test(
-    'practice starts without a focused Home Thread and parks back to empty Home',
-    () async {
-      final store = _InspectableRecordStore();
-      final harness = await _createHarness();
-      await harness.conversation.clearFocusedThread();
-      expect(harness.conversation.threadId, isNull);
-      final workspace = PracticeWorkspaceController(
-        conversationController: harness.conversation,
-        practiceController: harness.practiceController,
-        recordStore: store,
-      );
-      addTearDown(() {
-        workspace.dispose();
-        harness.dispose();
-      });
-      await workspace.activateAccount('account-1');
-
-      final launched = await _launchPractice(
-        harness: harness,
-        workspace: workspace,
-        operationId: 'launch-operation-without-home-thread',
-        sceneId: 'interview-screening',
-        sceneTitle: '招聘初筛',
-        sessionId: 'practice-session-without-home-thread',
-      );
-
-      expect(launched.lease.returnThreadId, isNull);
-      expect(harness.conversation.threadId, launched.lease.practiceThreadId);
-      expect(harness.practiceController.hasActivePractice, isTrue);
-
-      expect(await workspace.parkCurrentPractice(), isTrue);
-      expect(harness.conversation.threadId, isNull);
-      expect(workspace.hasResumable, isTrue);
-
-      expect(await workspace.resumeCurrentPractice(), isTrue);
-      expect(harness.conversation.threadId, launched.lease.practiceThreadId);
-      expect(
-        harness.practiceController.practiceSessionId,
-        'practice-session-without-home-thread',
-      );
-    },
-  );
-
-  test(
-    'practice does not consume a pending Home draft Thread recovery',
-    () async {
-      final client = _FailingFocusAgentClient();
-      final harness = await _createHarness(client: client);
-      final workspace = PracticeWorkspaceController(
-        conversationController: harness.conversation,
-        practiceController: harness.practiceController,
-        recordStore: _InspectableRecordStore(),
-      );
-      addTearDown(() {
-        workspace.dispose();
-        harness.dispose();
-      });
-      await workspace.activateAccount('account-1');
-      await harness.conversation.clearFocusedThread();
-      client.focusFailuresRemaining = 1;
-
-      expect(
-        await harness.conversation.sendText('Keep this Home draft'),
-        isFalse,
-      );
-      expect(harness.conversation.threadId, isNull);
-      expect(harness.conversation.hasPendingThreadCreationRecovery, isTrue);
-      final createCallsAfterDraft = client.createCalls;
-
-      expect(
-        await workspace.acquireThread('practice-must-be-independent'),
-        isNull,
-      );
-
-      expect(workspace.errorMessage, contains('先回到首页完成恢复'));
-      expect(client.createCalls, createCallsAfterDraft);
-      expect(harness.conversation.threadId, isNull);
-
-      await harness.conversation.retryThreadHistory();
-      final recoveredHomeThreadId = harness.conversation.threadId;
-      expect(recoveredHomeThreadId, isNotNull);
-
-      final lease = await workspace.acquireThread(
-        'practice-must-be-independent',
-      );
-
-      expect(lease, isNotNull);
-      expect(lease?.returnThreadId, recoveredHomeThreadId);
-      expect(lease?.practiceThreadId, isNot(recoveredHomeThreadId));
-      expect(client.createCalls, createCallsAfterDraft + 1);
-    },
-  );
-
-  test(
-    'activation adopts an active Practice before its workspace record exists',
-    () async {
-      final store = _InspectableRecordStore();
-      final harness = await _createHarness();
-      final practiceThreadId = harness.conversation.threadId!;
-      final scene = testScene(
-        id: 'interview-practice-without-record',
-        name: '英文面试',
-        prompt: const ScenePrompt(
-          publicSceneBrief: 'A Practice created before its workspace record.',
-          practiceGoal: 'Complete the interview practice.',
-          userRole: 'Candidate',
-          aiRole: 'Interviewer',
-          personaSummary: 'Professional and focused.',
-          focusAreas: <String>['clarity'],
-          turnBlueprints: <String>['Ask one interview question.'],
-        ),
-      );
-      final goal = await activateTestGoal(
-        goalClient: harness.goalClient,
-        conversationController: harness.conversation,
-        threadId: practiceThreadId,
-        scene: scene,
-        clientOperationId: 'practice-goal-without-record',
-      );
-      harness.practiceClient.armStart(
-        threadId: practiceThreadId,
-        sessionId: 'practice-session-without-record',
-        planId: 'practice-plan-without-record',
-        scene: scene,
-      );
-      await harness.practiceController.activateCreatedPractice(
-        scene: scene,
-        sessionId: 'practice-session-without-record',
-        planId: 'practice-plan-without-record',
-        practiceMode: scene.practiceOptions.first.mode,
-        turnLimit: 3,
-        clientOperationId: 'practice-voice-without-record',
-      );
-      final workspace = PracticeWorkspaceController(
-        conversationController: harness.conversation,
-        practiceController: harness.practiceController,
-        recordStore: store,
-      );
-      addTearDown(() {
-        workspace.dispose();
-        harness.dispose();
-      });
-
-      await workspace.activateAccount('account-1');
-
-      expect(workspace.hasResumable, isTrue);
-      expect(workspace.currentPracticeThreadId, practiceThreadId);
-      expect(workspace.currentGoalId, goal.id);
-      expect(workspace.currentSessionId, 'practice-session-without-record');
-      expect(workspace.currentSceneId, scene.id);
-      expect(workspace.currentTitle, scene.name);
-      expect(workspace.currentLease?.returnThreadId, isNull);
-      expect(harness.conversation.threadId, isNull);
-      expect(await store.read('account-1'), isNotNull);
-
-      expect(await workspace.resumeCurrentPractice(), isTrue);
-      expect(harness.conversation.threadId, practiceThreadId);
-      expect(
-        harness.practiceController.practiceSessionId,
-        'practice-session-without-record',
-      );
-      expect(await workspace.parkCurrentPractice(), isTrue);
-      expect(harness.conversation.threadId, isNull);
-    },
-  );
-
-  test(
-    'cold activation restores home focus while keeping practice resumable',
-    () async {
-      final store = _InspectableRecordStore();
-      final firstHarness = await _createHarness();
-      final firstWorkspace = PracticeWorkspaceController(
-        conversationController: firstHarness.conversation,
-        practiceController: firstHarness.practiceController,
-        recordStore: store,
-      );
-      await firstWorkspace.activateAccount('account-1');
-      final homeThreadId = firstHarness.conversation.threadId;
-      final launched = await _launchPractice(
-        harness: firstHarness,
-        workspace: firstWorkspace,
-        operationId: 'launch-operation-1',
-        sceneId: 'interview-screening',
-        sceneTitle: '招聘初筛',
-        sessionId: 'practice-session-1',
-      );
-      expect(
-        firstHarness.conversation.threadId,
-        launched.lease.practiceThreadId,
-      );
-      firstWorkspace.dispose();
-      firstHarness.practiceController.dispose();
-      firstHarness.conversation.dispose();
-
-      final restartedConversation = ConversationController(
-        client: firstHarness.client,
-        clientIdFactory: (scope) => '$scope-restarted-operation',
-      );
-      final restartedPracticeController = PracticeController(
-        client: firstHarness.practiceClient,
-        clientIdFactory: (scope) => '$scope-restarted-practice-operation',
-      );
+      final restartedPractice = PracticeController(client: practiceClient);
       final restartedWorkspace = PracticeWorkspaceController(
-        conversationController: restartedConversation,
-        practiceController: restartedPracticeController,
+        practiceController: restartedPractice,
         recordStore: store,
       );
       addTearDown(() {
         restartedWorkspace.dispose();
-        restartedPracticeController.dispose();
-        restartedConversation.dispose();
+        restartedPractice.dispose();
       });
+      await restartedWorkspace.activateAccount(_accountId);
 
-      await restartedWorkspace.activateAccount('account-1');
-
-      expect(restartedConversation.isInitialized, isTrue);
-      expect(restartedConversation.threadId, homeThreadId);
-      expect(restartedWorkspace.hasResumable, isTrue);
-      expect(
-        restartedWorkspace.currentPracticeThreadId,
-        launched.lease.practiceThreadId,
-      );
+      expect(restartedWorkspace.currentSessionId, 'practice-session-restart');
+      expect(await restartedWorkspace.resumeCurrentPractice(), isTrue);
+      expect(restartedPractice.practiceSessionId, 'practice-session-restart');
     },
   );
 
-  test(
-    'cold activation discards an incomplete lease and allows a new launch',
-    () async {
-      final store = _InspectableRecordStore();
-      final firstHarness = await _createHarness();
-      final firstWorkspace = PracticeWorkspaceController(
-        conversationController: firstHarness.conversation,
-        practiceController: firstHarness.practiceController,
-        recordStore: store,
-      );
-      await firstWorkspace.activateAccount('account-1');
-      final homeThreadId = firstHarness.conversation.threadId;
-      final incomplete = await firstWorkspace.acquireThread(
-        'incomplete-operation-1',
-      );
-      expect(incomplete, isNotNull);
-      expect(firstHarness.conversation.threadId, incomplete?.practiceThreadId);
-      firstWorkspace.dispose();
-      firstHarness.practiceController.dispose();
-      firstHarness.conversation.dispose();
+  test('captured server progress remains resumable', () async {
+    final harness = _Harness();
+    addTearDown(harness.dispose);
+    await harness.workspace.activateAccount(_accountId);
+    await harness.launch(sessionId: 'practice-progress', completedTurns: 1);
+    await Future<void>.delayed(Duration.zero);
 
-      final restartedConversation = ConversationController(
-        client: firstHarness.client,
-        clientIdFactory: (scope) => '$scope-restarted-operation',
-      );
-      final restartedPracticeController = PracticeController(
-        client: firstHarness.practiceClient,
-        clientIdFactory: (scope) => '$scope-restarted-practice-operation',
-      );
-      final restartedWorkspace = PracticeWorkspaceController(
-        conversationController: restartedConversation,
-        practiceController: restartedPracticeController,
-        recordStore: store,
-      );
-      addTearDown(() {
-        restartedWorkspace.dispose();
-        restartedPracticeController.dispose();
-        restartedConversation.dispose();
-      });
-
-      await restartedWorkspace.activateAccount('account-1');
-
-      expect(restartedConversation.threadId, homeThreadId);
-      expect(restartedWorkspace.currentLease, isNull);
-      expect(restartedWorkspace.hasResumable, isFalse);
-      expect(await store.read('account-1'), isNull);
-
-      final fresh = await restartedWorkspace.acquireThread(
-        'fresh-launch-operation-2',
-      );
-      expect(fresh, isNotNull);
-      expect(fresh?.practiceThreadId, isNot(incomplete?.practiceThreadId));
-      expect(fresh?.returnThreadId, homeThreadId);
-    },
-  );
-
-  test(
-    'resume never falls back to another Session on the saved Thread',
-    () async {
-      final store = _InspectableRecordStore();
-      final harness = await _createHarness();
-      final workspace = PracticeWorkspaceController(
-        conversationController: harness.conversation,
-        practiceController: harness.practiceController,
-        recordStore: store,
-      );
-      addTearDown(() {
-        workspace.dispose();
-        harness.dispose();
-      });
-      await workspace.activateAccount('account-1');
-      final homeThreadId = harness.conversation.threadId;
-      final launched = await _launchPractice(
-        harness: harness,
-        workspace: workspace,
-        operationId: 'launch-operation-1',
-        sceneId: 'interview-screening',
-        sceneTitle: '招聘初筛',
-        sessionId: 'practice-session-1',
-      );
-      expect(await workspace.parkCurrentPractice(), isTrue);
-      harness.practiceClient.replaceSession(
-        launched.lease.practiceThreadId,
-        'practice-session-unrelated',
-      );
-
-      expect(await workspace.resumeCurrentPractice(), isFalse);
-      expect(workspace.errorMessage, contains('无法核验上次练习'));
-      expect(harness.conversation.threadId, launched.lease.practiceThreadId);
-      expect(harness.practiceController.practiceSessionId, isNull);
-      expect(workspace.hasResumable, isTrue);
-      expect(workspace.currentSessionId, 'practice-session-1');
-      expect(await store.read('account-1'), isNotNull);
-
-      expect(await workspace.parkCurrentPractice(), isTrue);
-      expect(harness.conversation.threadId, homeThreadId);
-      expect(workspace.hasResumable, isTrue);
-    },
-  );
-
-  test(
-    'resume clears an exact practice that became terminal on another client',
-    () async {
-      final store = _InspectableRecordStore();
-      final harness = await _createHarness();
-      final workspace = PracticeWorkspaceController(
-        conversationController: harness.conversation,
-        practiceController: harness.practiceController,
-        recordStore: store,
-      );
-      addTearDown(() {
-        workspace.dispose();
-        harness.dispose();
-      });
-      await workspace.activateAccount('account-1');
-      final homeThreadId = harness.conversation.threadId;
-      final launched = await _launchPractice(
-        harness: harness,
-        workspace: workspace,
-        operationId: 'launch-operation-1',
-        sceneId: 'interview-screening',
-        sceneTitle: '招聘初筛',
-        sessionId: 'practice-session-1',
-      );
-      expect(await workspace.parkCurrentPractice(), isTrue);
-      harness.practiceClient.complete(launched.lease.practiceThreadId);
-
-      expect(await workspace.resumeCurrentPractice(), isFalse);
-
-      expect(workspace.errorMessage, contains('已经结束'));
-      expect(harness.conversation.threadId, homeThreadId);
-      expect(workspace.hasResumable, isFalse);
-      expect(await store.read('account-1'), isNull);
-    },
-  );
-
-  test(
-    'replace ends the exact practice before creating a new Thread',
-    () async {
-      final store = _InspectableRecordStore();
-      final harness = await _createHarness();
-      final workspace = PracticeWorkspaceController(
-        conversationController: harness.conversation,
-        practiceController: harness.practiceController,
-        recordStore: store,
-      );
-      addTearDown(() {
-        workspace.dispose();
-        harness.dispose();
-      });
-      await workspace.activateAccount('account-1');
-      final homeThreadId = harness.conversation.threadId;
-      final launched = await _launchPractice(
-        harness: harness,
-        workspace: workspace,
-        operationId: 'launch-operation-1',
-        sceneId: 'interview-screening',
-        sceneTitle: '招聘初筛',
-        sessionId: 'practice-session-1',
-      );
-      expect(await workspace.parkCurrentPractice(), isTrue);
-
-      final replacement = await workspace.replaceCurrentPractice(
-        'replace-operation-2',
-      );
-
-      expect(harness.practiceClient.endedSessionIds, ['practice-session-1']);
-      expect(replacement, isNotNull);
-      expect(
-        replacement?.practiceThreadId,
-        isNot(launched.lease.practiceThreadId),
-      );
-      expect(replacement?.returnThreadId, homeThreadId);
-      expect(harness.conversation.threadId, replacement?.practiceThreadId);
-      expect(harness.practiceController.hasActivePractice, isFalse);
-      expect(workspace.hasResumable, isFalse);
-      final record = jsonDecode((await store.read('account-1'))!);
-      expect(record, containsPair('goal_id', isNull));
-      expect(record, containsPair('practice_session_id', isNull));
-    },
-  );
-
-  test(
-    'replace preserves an unverified Session and never ends an unrelated Session',
-    () async {
-      final store = _InspectableRecordStore();
-      final harness = await _createHarness();
-      final workspace = PracticeWorkspaceController(
-        conversationController: harness.conversation,
-        practiceController: harness.practiceController,
-        recordStore: store,
-      );
-      addTearDown(() {
-        workspace.dispose();
-        harness.dispose();
-      });
-      await workspace.activateAccount('account-1');
-      final homeThreadId = harness.conversation.threadId;
-      final launched = await _launchPractice(
-        harness: harness,
-        workspace: workspace,
-        operationId: 'launch-operation-1',
-        sceneId: 'interview-screening',
-        sceneTitle: '招聘初筛',
-        sessionId: 'practice-session-1',
-      );
-      expect(await workspace.parkCurrentPractice(), isTrue);
-      harness.practiceClient.replaceSession(
-        launched.lease.practiceThreadId,
-        'practice-session-unrelated',
-      );
-
-      final replacement = await workspace.replaceCurrentPractice(
-        'replace-operation-2',
-      );
-
-      expect(replacement, isNull);
-      expect(harness.practiceClient.endedSessionIds, isEmpty);
-      expect(workspace.currentSessionId, 'practice-session-1');
-      expect(workspace.hasResumable, isTrue);
-      expect(await store.read('account-1'), isNotNull);
-      expect(workspace.errorMessage, contains('无法核验当前练习'));
-      expect(harness.conversation.threadId, launched.lease.practiceThreadId);
-      expect(homeThreadId, isNot(launched.lease.practiceThreadId));
-    },
-  );
-
-  test('replace returns Home when ending the current Session fails', () async {
-    final store = _InspectableRecordStore();
-    final harness = await _createHarness();
-    final workspace = PracticeWorkspaceController(
-      conversationController: harness.conversation,
-      practiceController: harness.practiceController,
-      recordStore: store,
+    expect(harness.workspace.resumableHasProgress, isTrue);
+    final record = jsonDecode((await harness.store.read(_accountId))!);
+    expect(
+      record,
+      containsPair('practice_plan_id', testPracticePlanId('practice-progress')),
     );
-    addTearDown(() {
-      workspace.dispose();
-      harness.dispose();
-    });
-    await workspace.activateAccount('account-1');
-    final homeThreadId = harness.conversation.threadId;
-    await _launchPractice(
-      harness: harness,
-      workspace: workspace,
-      operationId: 'launch-operation-1',
-      sceneId: 'interview-screening',
-      sceneTitle: '招聘初筛',
-      sessionId: 'practice-session-1',
-    );
-    expect(await workspace.parkCurrentPractice(), isTrue);
-    harness.practiceClient.endFailures = 1;
-
-    final failed = await workspace.replaceCurrentPractice(
-      'replace-operation-2',
-    );
-
-    expect(failed, isNull);
-    expect(harness.conversation.threadId, homeThreadId);
-    expect(workspace.hasResumable, isTrue);
-    expect(workspace.errorMessage, contains('进度仍已保留'));
-
-    final retried = await workspace.replaceCurrentPractice(
-      'replace-operation-2',
-    );
-    expect(retried, isNotNull);
-    expect(harness.practiceClient.endedSessionIds, ['practice-session-1']);
+    expect(record, containsPair('completed_turns', 1));
   });
 
-  test(
-    'replace restores Home before reporting a local record cleanup failure',
-    () async {
-      final store = _InspectableRecordStore(deleteFailures: 1);
-      final harness = await _createHarness();
-      final workspace = PracticeWorkspaceController(
-        conversationController: harness.conversation,
-        practiceController: harness.practiceController,
-        recordStore: store,
-      );
-      addTearDown(() {
-        workspace.dispose();
-        harness.dispose();
-      });
-      await workspace.activateAccount('account-1');
-      final homeThreadId = harness.conversation.threadId;
-      await _launchPractice(
-        harness: harness,
-        workspace: workspace,
-        operationId: 'launch-operation-1',
-        sceneId: 'interview-screening',
-        sceneTitle: '招聘初筛',
-        sessionId: 'practice-session-1',
-      );
-      expect(await workspace.parkCurrentPractice(), isTrue);
+  test('replacing a practice ends the exact active Session', () async {
+    final harness = _Harness();
+    addTearDown(harness.dispose);
+    await harness.workspace.activateAccount(_accountId);
+    await harness.launch(sessionId: 'practice-to-replace');
 
-      final replacement = await workspace.replaceCurrentPractice(
-        'replace-operation-2',
-      );
-
-      expect(replacement, isNull);
-      expect(harness.practiceClient.endedSessionIds, ['practice-session-1']);
-      expect(harness.conversation.threadId, homeThreadId);
-      expect(workspace.hasResumable, isFalse);
-      expect(workspace.errorMessage, contains('本机记录清理失败'));
-
-      final retried = await workspace.acquireThread('replace-operation-2');
-      expect(retried, isNotNull);
-      expect(harness.conversation.threadId, retried?.practiceThreadId);
-      expect(retried?.returnThreadId, homeThreadId);
-    },
-  );
-
-  test('park keeps focus while the current turn is still submitting', () async {
-    final store = _InspectableRecordStore();
-    final harness = await _createHarness();
-    final workspace = PracticeWorkspaceController(
-      conversationController: harness.conversation,
-      practiceController: harness.practiceController,
-      recordStore: store,
+    final replacement = await harness.workspace.replaceCurrentPractice(
+      'replacement-operation',
     );
-    addTearDown(() {
-      workspace.dispose();
-      harness.dispose();
-    });
-    await workspace.activateAccount('account-1');
-    final launched = await _launchPractice(
-      harness: harness,
-      workspace: workspace,
-      operationId: 'launch-operation-1',
-      sceneId: 'interview-screening',
-      sceneTitle: '招聘初筛',
-      sessionId: 'practice-session-1',
-    );
+
+    expect(replacement?.operationId, 'replacement-operation');
+    expect(harness.practiceClient.endedSessionIds, ['practice-to-replace']);
+    expect(harness.workspace.hasResumable, isFalse);
+  });
+
+  test('terminal Session clears its local resume record', () async {
+    final harness = _Harness();
+    addTearDown(harness.dispose);
+    await harness.workspace.activateAccount(_accountId);
+    await harness.launch(sessionId: 'practice-completed');
+    expect(await harness.workspace.parkCurrentPractice(), isTrue);
+    harness.practiceClient.complete('practice-completed');
+
+    expect(await harness.workspace.resumeCurrentPractice(), isFalse);
+
+    expect(harness.workspace.hasResumable, isFalse);
+    expect(await harness.store.read(_accountId), isNull);
+  });
+
+  test('missing remote Session clears its stale local resume record', () async {
+    final harness = _Harness();
+    addTearDown(harness.dispose);
+    await harness.workspace.activateAccount(_accountId);
+    await harness.launch(sessionId: 'practice-deleted');
+    expect(await harness.workspace.parkCurrentPractice(), isTrue);
+    harness.practiceClient.remove('practice-deleted');
+
+    final outcome = await harness.workspace.resumeCurrentPracticeWithOutcome();
+
+    expect(outcome, PracticeWorkspaceResumeOutcome.stale);
+    expect(harness.workspace.hasResumable, isFalse);
+    expect(harness.workspace.errorMessage, contains('记录已清理'));
+    expect(await harness.store.read(_accountId), isNull);
+  });
+
+  test('park refuses to detach while a turn is being submitted', () async {
+    final harness = _Harness();
+    addTearDown(harness.dispose);
+    await harness.workspace.activateAccount(_accountId);
+    await harness.launch(sessionId: 'practice-submitting');
     harness.practiceClient.holdNextTextSubmission();
+
     final submission = harness.practiceController.submitPracticeText(
       'A pending answer.',
     );
     await Future<void>.delayed(Duration.zero);
 
-    expect(await workspace.parkCurrentPractice(), isFalse);
+    expect(await harness.workspace.parkCurrentPractice(), isFalse);
+    expect(harness.practiceController.practiceSessionId, 'practice-submitting');
+    expect(harness.workspace.errorMessage, contains('正在提交'));
 
-    expect(harness.conversation.threadId, launched.lease.practiceThreadId);
-    expect(workspace.errorMessage, contains('正在提交'));
     harness.practiceClient.failPendingTextSubmission();
     expect(await submission, isFalse);
   });
 
-  test('parking a completed practice clears its resumable record', () async {
+  test('resume rejects a remote snapshot for a different Session', () async {
+    final harness = _Harness();
+    addTearDown(harness.dispose);
+    await harness.workspace.activateAccount(_accountId);
+    await harness.launch(sessionId: 'practice-exact');
+    expect(await harness.workspace.parkCurrentPractice(), isTrue);
+    harness.practiceClient.restoreOverride = testPracticeSnapshot(
+      scene: testScenes.first,
+      sessionId: 'practice-unrelated',
+    );
+
+    expect(await harness.workspace.resumeCurrentPractice(), isFalse);
+
+    expect(harness.practiceController.practiceSessionId, isNull);
+    expect(harness.workspace.currentSessionId, 'practice-exact');
+    expect(harness.workspace.hasResumable, isTrue);
+    expect(harness.workspace.errorMessage, contains('无法核验'));
+    expect(await harness.store.read(_accountId), isNotNull);
+  });
+
+  test('replacement never ends an unrelated remote Session', () async {
+    final harness = _Harness();
+    addTearDown(harness.dispose);
+    await harness.workspace.activateAccount(_accountId);
+    await harness.launch(sessionId: 'practice-exact');
+    expect(await harness.workspace.parkCurrentPractice(), isTrue);
+    harness.practiceClient.replaceWithUnrelatedSession(
+      currentSessionId: 'practice-exact',
+      unrelatedSessionId: 'practice-unrelated',
+    );
+
+    final replacement = await harness.workspace.replaceCurrentPractice(
+      'replacement-operation',
+    );
+
+    expect(replacement, isNull);
+    expect(harness.practiceClient.endedSessionIds, isEmpty);
+    expect(harness.workspace.currentSessionId, 'practice-exact');
+    expect(harness.workspace.hasResumable, isTrue);
+    expect(harness.workspace.errorMessage, contains('无法核验'));
+    expect(await harness.store.read(_accountId), isNotNull);
+  });
+
+  test(
+    'replacement preserves progress when ending the Session fails',
+    () async {
+      final harness = _Harness();
+      addTearDown(harness.dispose);
+      await harness.workspace.activateAccount(_accountId);
+      await harness.launch(sessionId: 'practice-end-retry');
+      expect(await harness.workspace.parkCurrentPractice(), isTrue);
+      harness.practiceClient.endFailures = 1;
+
+      expect(
+        await harness.workspace.replaceCurrentPractice('replacement-operation'),
+        isNull,
+      );
+      expect(harness.workspace.hasResumable, isTrue);
+      expect(harness.workspace.currentSessionId, 'practice-end-retry');
+      expect(harness.workspace.errorMessage, contains('进度仍已保留'));
+      expect(harness.practiceClient.endedSessionIds, isEmpty);
+
+      expect(
+        await harness.workspace.replaceCurrentPractice('replacement-operation'),
+        isNotNull,
+      );
+      expect(harness.practiceClient.endedSessionIds, ['practice-end-retry']);
+      expect(harness.workspace.hasResumable, isFalse);
+    },
+  );
+
+  test(
+    'replacement reports local cleanup failure after ending the Session',
+    () async {
+      final store = _InspectableRecordStore(deleteFailures: 1);
+      final harness = _Harness(store: store);
+      addTearDown(harness.dispose);
+      await harness.workspace.activateAccount(_accountId);
+      await harness.launch(sessionId: 'practice-cleanup-failure');
+      expect(await harness.workspace.parkCurrentPractice(), isTrue);
+
+      expect(
+        await harness.workspace.replaceCurrentPractice('replacement-operation'),
+        isNull,
+      );
+
+      expect(harness.practiceClient.endedSessionIds, [
+        'practice-cleanup-failure',
+      ]);
+      expect(harness.workspace.hasResumable, isFalse);
+      expect(harness.workspace.errorMessage, contains('本机记录清理失败'));
+      expect(await store.read(_accountId), isNotNull);
+
+      expect(
+        await harness.workspace.acquirePractice('replacement-operation'),
+        isNotNull,
+      );
+    },
+  );
+
+  test('workspace records and cleanup stay isolated by account', () async {
     final store = _InspectableRecordStore();
-    final harness = await _createHarness();
+    final harness = _Harness(store: store);
+    addTearDown(harness.dispose);
+    await harness.workspace.activateAccount('account-1');
+    await harness.launch(sessionId: 'practice-account-1');
+    expect(await harness.workspace.parkCurrentPractice(), isTrue);
+
+    await harness.workspace.activateAccount('account-2');
+    expect(harness.workspace.hasResumable, isFalse);
+    expect(await store.read('account-1'), isNotNull);
+    await store.write('account-2', 'other-account-record');
+
+    await harness.workspace.activateAccount('account-1');
+    expect(harness.workspace.currentSessionId, 'practice-account-1');
+    await harness.workspace.clearPrivateState();
+
+    expect(await store.read('account-1'), isNull);
+    expect(await store.read('account-2'), 'other-account-record');
+  });
+
+  test('a stale account read cannot publish into a new account', () async {
+    final staleRead = Completer<String?>();
+    final store = _InspectableRecordStore(
+      readOverrides: <String, Future<String?>>{'account-1': staleRead.future},
+    );
+    final harness = _Harness(store: store);
+    addTearDown(harness.dispose);
+
+    final firstActivation = harness.workspace.activateAccount('account-1');
+    await harness.workspace.activateAccount('account-2');
+    staleRead.complete('{invalid');
+    await firstActivation;
+
+    expect(harness.workspace.isBusy, isFalse);
+    expect(harness.workspace.hasResumable, isFalse);
+    expect(harness.workspace.errorMessage, isNull);
+    expect(store.deletedAccountIds, isEmpty);
+    expect(
+      await harness.workspace.acquirePractice('account-2-operation'),
+      isNotNull,
+    );
+    final account2Record = jsonDecode((await store.read('account-2'))!);
+    expect(account2Record, containsPair('account_id', 'account-2'));
+  });
+
+  test('a failed local record read can be retried before launch', () async {
+    final store = _InspectableRecordStore(readFailures: 1);
+    final harness = _Harness(store: store);
+    addTearDown(harness.dispose);
+
+    await harness.workspace.activateAccount(_accountId);
+
+    expect(harness.workspace.canRetryActivation, isTrue);
+    expect(harness.workspace.errorMessage, contains('无法读取'));
+    expect(
+      await harness.workspace.acquirePractice('launch-operation-1'),
+      isNull,
+    );
+
+    await harness.workspace.retryActivation();
+
+    expect(harness.workspace.canRetryActivation, isFalse);
+    expect(harness.workspace.errorMessage, isNull);
+    expect(
+      await harness.workspace.acquirePractice('launch-operation-1'),
+      isNotNull,
+    );
+  });
+
+  test(
+    'legacy Thread and Goal workspace schema is rejected, not migrated',
+    () async {
+      final store = MemoryPracticeLaunchRecordStore();
+      await store.write(
+        _accountId,
+        jsonEncode(<String, Object?>{
+          'schema_version': 6,
+          'account_id': _accountId,
+          'operation_id': 'legacy-operation',
+          'practice_thread_id': 'legacy-thread',
+          'return_thread_id': 'home-thread',
+          'goal_id': 'legacy-goal',
+          'practice_session_id': 'legacy-session',
+          'scene': null,
+          'completed_turns': 0,
+        }),
+      );
+      final practice = PracticeController(client: _WorkspacePracticeClient());
+      final workspace = PracticeWorkspaceController(
+        practiceController: practice,
+        recordStore: store,
+      );
+      addTearDown(() {
+        workspace.dispose();
+        practice.dispose();
+      });
+
+      await workspace.activateAccount(_accountId);
+
+      expect(workspace.hasResumable, isFalse);
+      expect(workspace.errorMessage, contains('已失效'));
+      expect(await store.read(_accountId), isNull);
+    },
+  );
+
+  test('schema 7 workspace without Plan identity is rejected', () async {
+    final store = MemoryPracticeLaunchRecordStore();
+    await store.write(
+      _accountId,
+      jsonEncode(<String, Object?>{
+        'schema_version': 7,
+        'account_id': _accountId,
+        'operation_id': 'legacy-operation',
+        'practice_session_id': 'legacy-session',
+        'scene': null,
+        'completed_turns': 0,
+      }),
+    );
+    final practice = PracticeController(client: _WorkspacePracticeClient());
     final workspace = PracticeWorkspaceController(
-      conversationController: harness.conversation,
-      practiceController: harness.practiceController,
+      practiceController: practice,
       recordStore: store,
     );
     addTearDown(() {
       workspace.dispose();
-      harness.dispose();
+      practice.dispose();
     });
-    await workspace.activateAccount('account-1');
-    final homeThreadId = harness.conversation.threadId;
-    final launched = await _launchPractice(
-      harness: harness,
-      workspace: workspace,
-      operationId: 'launch-operation-1',
-      sceneId: 'interview-screening',
-      sceneTitle: '招聘初筛',
-      sessionId: 'practice-session-1',
-    );
-    expect(await workspace.parkCurrentPractice(), isTrue);
-    harness.practiceClient.complete(launched.lease.practiceThreadId);
-    expect(
-      await harness.conversation.selectThread(launched.lease.practiceThreadId),
-      isTrue,
-    );
-    await harness.practiceController.restoreCreatedPractice(
-      sessionId: 'practice-session-1',
-      scene: launched.scene,
-    );
-    expect(harness.practiceController.practiceSessionId, 'practice-session-1');
-    expect(harness.practiceController.hasActivePractice, isFalse);
 
-    expect(await workspace.parkCurrentPractice(), isTrue);
+    await workspace.activateAccount(_accountId);
 
-    expect(harness.conversation.threadId, homeThreadId);
     expect(workspace.hasResumable, isFalse);
-    expect(workspace.currentLease, isNull);
-    expect(await store.read('account-1'), isNull);
+    expect(workspace.errorMessage, contains('已失效'));
+    expect(await store.read(_accountId), isNull);
   });
-
-  test(
-    'completed interview returns to its source Agent thread for review',
-    () async {
-      final store = _InspectableRecordStore();
-      final harness = await _createHarness();
-      final workspace = PracticeWorkspaceController(
-        conversationController: harness.conversation,
-        practiceController: harness.practiceController,
-        recordStore: store,
-      );
-      addTearDown(() {
-        workspace.dispose();
-        harness.dispose();
-      });
-      await workspace.activateAccount('account-1');
-      final homeThreadId = harness.conversation.threadId;
-      final launched = await _launchPractice(
-        harness: harness,
-        workspace: workspace,
-        operationId: 'agent-created-interview',
-        sceneId: 'interview-screening',
-        sceneTitle: '招聘初筛',
-        sessionId: 'practice-session-1',
-        practiceExperience: PracticeExperience.interview,
-      );
-      expect(await workspace.parkCurrentPractice(), isTrue);
-      harness.practiceClient.complete(launched.lease.practiceThreadId);
-      expect(
-        await harness.conversation.selectThread(
-          launched.lease.practiceThreadId,
-        ),
-        isTrue,
-      );
-      await harness.practiceController.restoreCreatedPractice(
-        sessionId: 'practice-session-1',
-        scene: launched.scene,
-      );
-      expect(
-        harness.practiceController.recordingState,
-        PracticeRecordingState.completed,
-      );
-
-      expect(await workspace.completeAndContinueWithAgent(), isTrue);
-
-      expect(harness.conversation.threadId, homeThreadId);
-      expect(workspace.hasResumable, isFalse);
-      expect(
-        harness.conversation.messages.any(
-          (message) =>
-              message.role == AgentMessageRole.user &&
-              message.text.contains('招聘初筛') &&
-              !message.text.contains('practice-session-1') &&
-              !message.text.contains('练习记录 ID') &&
-              !message.text.contains('profile ID') &&
-              message.text.contains('直接读取这次练习的真实评分与报告'),
-        ),
-        isTrue,
-      );
-    },
-  );
-
-  test(
-    'records stay isolated by account and private cleanup deletes one account',
-    () async {
-      final store = _InspectableRecordStore();
-      final harness = await _createHarness();
-      final workspace = PracticeWorkspaceController(
-        conversationController: harness.conversation,
-        practiceController: harness.practiceController,
-        recordStore: store,
-      );
-      addTearDown(() {
-        workspace.dispose();
-        harness.dispose();
-      });
-      await workspace.activateAccount('account-1');
-      await _launchPractice(
-        harness: harness,
-        workspace: workspace,
-        operationId: 'launch-operation-1',
-        sceneId: 'interview-screening',
-        sceneTitle: '招聘初筛',
-        sessionId: 'practice-session-1',
-      );
-      expect(await workspace.parkCurrentPractice(), isTrue);
-
-      await workspace.activateAccount('account-2');
-      expect(workspace.hasResumable, isFalse);
-      expect(await store.read('account-1'), isNotNull);
-      await store.write('account-2', 'other-account-record');
-
-      await workspace.activateAccount('account-1');
-      expect(workspace.hasResumable, isTrue);
-      await workspace.clearPrivateState();
-
-      expect(workspace.hasResumable, isFalse);
-      expect(await store.read('account-1'), isNull);
-      expect(await store.read('account-2'), 'other-account-record');
-    },
-  );
-
-  test(
-    'a stale account read cannot publish into the newly active account',
-    () async {
-      final staleRead = Completer<String?>();
-      final store = _InspectableRecordStore(
-        readOverrides: <String, Future<String?>>{'account-1': staleRead.future},
-      );
-      final harness = await _createHarness();
-      final workspace = PracticeWorkspaceController(
-        conversationController: harness.conversation,
-        practiceController: harness.practiceController,
-        recordStore: store,
-      );
-      addTearDown(() {
-        workspace.dispose();
-        harness.dispose();
-      });
-
-      final firstActivation = workspace.activateAccount('account-1');
-      await workspace.activateAccount('account-2');
-      staleRead.complete('{invalid');
-      await firstActivation;
-
-      expect(workspace.isBusy, isFalse);
-      expect(workspace.hasResumable, isFalse);
-      expect(workspace.errorMessage, isNull);
-      expect(store.deletedAccountIds, isEmpty);
-    },
-  );
-
-  test(
-    'a failed local record read can be retried before creating work',
-    () async {
-      final store = _InspectableRecordStore(readFailures: 1);
-      final harness = await _createHarness();
-      final workspace = PracticeWorkspaceController(
-        conversationController: harness.conversation,
-        practiceController: harness.practiceController,
-        recordStore: store,
-      );
-      addTearDown(() {
-        workspace.dispose();
-        harness.dispose();
-      });
-
-      await workspace.activateAccount('account-1');
-
-      expect(workspace.canRetryActivation, isTrue);
-      expect(workspace.errorMessage, contains('无法读取'));
-      expect(await workspace.acquireThread('launch-operation-1'), isNull);
-
-      await workspace.retryActivation();
-
-      expect(workspace.canRetryActivation, isFalse);
-      expect(workspace.errorMessage, isNull);
-      expect(await workspace.acquireThread('launch-operation-1'), isNotNull);
-    },
-  );
-}
-
-Future<_Harness> _createHarness({AgentClient? client}) async {
-  final practiceClient = _WorkspacePracticeClient();
-  final resolvedClient = client ?? GoalAwareAgentClient();
-  if (resolvedClient is! GoalActivationClient) {
-    throw ArgumentError('Workspace test Agent must support Goal activation.');
-  }
-  final goalClient = resolvedClient as GoalActivationClient;
-  final conversation = ConversationController(
-    client: resolvedClient,
-    clientIdFactory: (scope) => '$scope-client-operation',
-  );
-  final practiceController = PracticeController(
-    client: practiceClient,
-    clientIdFactory: (scope) => '$scope-practice-operation',
-  );
-  await conversation.initialize();
-  return _Harness(
-    conversation: conversation,
-    client: resolvedClient,
-    goalClient: goalClient,
-    practiceController: practiceController,
-    practiceClient: practiceClient,
-  );
-}
-
-Future<_LaunchedPractice> _launchPractice({
-  required _Harness harness,
-  required PracticeWorkspaceController workspace,
-  required String operationId,
-  required String sceneId,
-  required String sceneTitle,
-  required String sessionId,
-  PracticeExperience practiceExperience = PracticeExperience.interview,
-}) async {
-  final lease = await workspace.acquireThread(operationId);
-  expect(lease, isNotNull);
-  final category = switch (practiceExperience) {
-    PracticeExperience.interview => SceneCategory.interviewRecruiter,
-    PracticeExperience.ieltsSpeaking => SceneCategory.ieltsSpeaking,
-    PracticeExperience.workplace => SceneCategory.workplaceGeneral,
-    PracticeExperience.lifeAndTravel => SceneCategory.lifeTravel,
-  };
-  final scene = testScene(
-    id: sceneId,
-    experience: practiceExperience,
-    category: category,
-    name: sceneTitle,
-    prompt: const ScenePrompt(
-      publicSceneBrief: 'Test practice scene.',
-      practiceGoal: 'Complete the test practice.',
-      userRole: 'Learner',
-      aiRole: 'Coach',
-      personaSummary: 'Structured and focused.',
-      focusAreas: <String>['clarity'],
-      turnBlueprints: <String>['Ask one relevant question.'],
-    ),
-  );
-  final goal = await activateTestGoal(
-    goalClient: harness.goalClient,
-    conversationController: harness.conversation,
-    threadId: lease!.practiceThreadId,
-    scene: scene,
-    clientOperationId: 'goal-$operationId',
-  );
-  expect(
-    await workspace.commitSession(
-      lease: lease,
-      goalId: goal.id,
-      sessionId: sessionId,
-      scene: scene,
-    ),
-    isTrue,
-  );
-  harness.practiceClient.armStart(
-    threadId: lease.practiceThreadId,
-    sessionId: sessionId,
-    planId: 'practice-plan-$sessionId',
-    scene: scene,
-  );
-  await harness.practiceController.activateCreatedPractice(
-    scene: scene,
-    sessionId: sessionId,
-    planId: 'practice-plan-$sessionId',
-    practiceMode: scene.practiceOptions.first.mode,
-    turnLimit: 3,
-    clientOperationId: 'voice-$operationId',
-  );
-  return _LaunchedPractice(lease: lease, goal: goal, scene: scene);
 }
 
 final class _Harness {
-  const _Harness({
-    required this.conversation,
-    required this.client,
-    required this.goalClient,
-    required this.practiceController,
+  factory _Harness({PracticeLaunchRecordStore? store}) {
+    final resolvedStore = store ?? MemoryPracticeLaunchRecordStore();
+    final client = _WorkspacePracticeClient();
+    final practice = PracticeController(client: client);
+    return _Harness.from(
+      store: resolvedStore,
+      practiceClient: client,
+      practiceController: practice,
+      workspace: PracticeWorkspaceController(
+        practiceController: practice,
+        recordStore: resolvedStore,
+      ),
+    );
+  }
+
+  _Harness.from({
+    required this.store,
     required this.practiceClient,
+    required this.practiceController,
+    required this.workspace,
   });
 
-  final ConversationController conversation;
-  final AgentClient client;
-  final GoalActivationClient goalClient;
-  final PracticeController practiceController;
+  final PracticeLaunchRecordStore store;
   final _WorkspacePracticeClient practiceClient;
+  final PracticeController practiceController;
+  final PracticeWorkspaceController workspace;
+
+  Future<void> launch({
+    required String sessionId,
+    int completedTurns = 0,
+  }) async {
+    final lease = await workspace.acquirePractice('launch-$sessionId');
+    expect(lease, isNotNull);
+    expect(
+      await workspace.commitSession(
+        lease: lease!,
+        planId: testPracticePlanId(sessionId),
+        sessionId: sessionId,
+        scene: testScenes.first,
+      ),
+      isTrue,
+    );
+    practiceClient.arm(
+      scene: testScenes.first,
+      sessionId: sessionId,
+      completedTurns: completedTurns,
+    );
+    await practiceController.activateCreatedPractice(
+      scene: testScenes.first,
+      sessionId: sessionId,
+      planId: testPracticePlanId(sessionId),
+      practiceMode: testScenes.first.practiceOptions.first.mode,
+      turnLimit: 3,
+      clientOperationId: 'voice-$sessionId',
+    );
+  }
 
   void dispose() {
+    workspace.dispose();
     practiceController.dispose();
-    conversation.dispose();
   }
-}
-
-final class _FailingFocusAgentClient
-    implements AgentClient, GoalActivationClient {
-  final GoalAwareAgentClient _delegate = GoalAwareAgentClient();
-
-  String? failSetFocusedThreadId;
-  bool failClearFocusedThread = false;
-  int focusFailuresRemaining = 0;
-  int createCalls = 0;
-
-  @override
-  Future<void> clearAccountState() => _delegate.clearAccountState();
-
-  @override
-  Future<AgentThreadPage> listThreads({int pageSize = 20, String? cursor}) =>
-      _delegate.listThreads(pageSize: pageSize, cursor: cursor);
-
-  @override
-  Future<AgentThreadSnapshot?> getFocusedThread() =>
-      _delegate.getFocusedThread();
-
-  @override
-  Future<AgentThreadSummary> createThread() {
-    createCalls++;
-    return _delegate.createThread();
-  }
-
-  @override
-  Future<AgentThreadSnapshot> setFocusedThread({required String threadId}) {
-    if (focusFailuresRemaining > 0) {
-      focusFailuresRemaining--;
-      throw const AgentClientException(
-        kind: AgentClientFailureKind.unavailable,
-      );
-    }
-    if (threadId == failSetFocusedThreadId) {
-      throw const AgentClientException(
-        kind: AgentClientFailureKind.unavailable,
-      );
-    }
-    return _delegate.setFocusedThread(threadId: threadId);
-  }
-
-  @override
-  Future<void> clearFocusedThread() {
-    if (failClearFocusedThread) {
-      throw const AgentClientException(
-        kind: AgentClientFailureKind.unavailable,
-      );
-    }
-    return _delegate.clearFocusedThread();
-  }
-
-  @override
-  Future<void> deleteThread({required String threadId}) =>
-      _delegate.deleteThread(threadId: threadId);
-
-  @override
-  Future<AgentMessagePage> listMessages({
-    required String threadId,
-    int pageSize = 50,
-    String? cursor,
-  }) => _delegate.listMessages(
-    threadId: threadId,
-    pageSize: pageSize,
-    cursor: cursor,
-  );
-
-  @override
-  Future<Goal> startScene({
-    required String threadId,
-    required SceneDefinition scene,
-    required String clientOperationId,
-  }) => _delegate.startScene(
-    threadId: threadId,
-    scene: scene,
-    clientOperationId: clientOperationId,
-  );
-
-  @override
-  Future<Goal> selectExistingGoal({
-    required String threadId,
-    required String goalId,
-  }) => _delegate.selectExistingGoal(threadId: threadId, goalId: goalId);
-
-  @override
-  Future<AgentExchange> sendText({
-    required String threadId,
-    required String text,
-    required String clientMessageId,
-    List<String> imageAssetIds = const <String>[],
-  }) => _delegate.sendText(
-    threadId: threadId,
-    text: text,
-    clientMessageId: clientMessageId,
-    imageAssetIds: imageAssetIds,
-  );
-}
-
-final class _LaunchedPractice {
-  const _LaunchedPractice({
-    required this.lease,
-    required this.goal,
-    required this.scene,
-  });
-
-  final PracticeWorkspaceLease lease;
-  final Goal goal;
-  final SceneDefinition scene;
 }
 
 final class _WorkspacePracticeClient
     implements PracticeClient, PracticeLifecycleClient {
-  final Map<String, PracticeSessionSnapshot> _sessions =
-      <String, PracticeSessionSnapshot>{};
-  final Map<String, String> _sessionsByThread = <String, String>{};
-  final List<String> endedSessionIds = <String>[];
-  int endFailures = 0;
-  _StartSeed? _nextStart;
+  final Map<String, PracticeSessionSnapshot> _sessions = {};
+  final Set<String> _notFoundSessionIds = {};
+  final List<String> endedSessionIds = [];
+  PracticeSessionSnapshot? _armed;
+  PracticeSessionSnapshot? restoreOverride;
   Completer<PracticeTurnConfirmation>? _pendingTextSubmission;
+  int restoreCalls = 0;
+  int endFailures = 0;
 
-  void armStart({
-    required String threadId,
-    required String sessionId,
-    required String planId,
+  void arm({
     required SceneDefinition scene,
+    required String sessionId,
+    int completedTurns = 0,
   }) {
-    _nextStart = _StartSeed(
-      threadId: threadId,
-      sessionId: sessionId,
-      planId: planId,
+    _notFoundSessionIds.remove(sessionId);
+    _armed = testPracticeSnapshot(
       scene: scene,
-    );
-  }
-
-  void replaceSession(String threadId, String sessionId) {
-    final currentSessionId = _sessionsByThread[threadId]!;
-    final current = _sessions.remove(currentSessionId)!;
-    _sessions[sessionId] = _activeSnapshot(
       sessionId: sessionId,
-      planId: 'practice-plan-$sessionId',
-      practiceExperience: current.practiceExperience,
-      sceneCategory: current.sceneCategory,
-      practiceMode: current.practiceMode,
-      version: current.sessionVersion + 1,
+      completedTurns: completedTurns,
     );
-    _sessionsByThread[threadId] = sessionId;
   }
 
-  void complete(String threadId) {
-    final sessionId = _sessionsByThread[threadId]!;
+  void complete(String sessionId) {
     final current = _sessions[sessionId]!;
     _sessions[sessionId] = PracticeSessionSnapshot(
       sessionId: current.sessionId,
       planId: current.planId,
-      sessionVersion: current.sessionVersion + 1,
       practiceExperience: current.practiceExperience,
       sceneCategory: current.sceneCategory,
       practiceMode: current.practiceMode,
       capabilities: current.capabilities,
+      sessionVersion: current.sessionVersion + 1,
       completedTurns: current.turnLimit,
       turnLimit: current.turnLimit,
       sessionCompleted: true,
+    );
+  }
+
+  void remove(String sessionId) {
+    _sessions.remove(sessionId);
+    _notFoundSessionIds.add(sessionId);
+  }
+
+  void replaceWithUnrelatedSession({
+    required String currentSessionId,
+    required String unrelatedSessionId,
+  }) {
+    _sessions.remove(currentSessionId);
+    _sessions[unrelatedSessionId] = testPracticeSnapshot(
+      scene: testScenes.first,
+      sessionId: unrelatedSessionId,
     );
   }
 
@@ -1318,41 +560,38 @@ final class _WorkspacePracticeClient
   }
 
   @override
-  Future<void> clearAccountState() async {
-    _sessions.clear();
-    _sessionsByThread.clear();
-    _nextStart = null;
+  Future<PracticeSessionSnapshot> activatePractice({
+    required String sessionId,
+    required String clientOperationId,
+  }) async {
+    final snapshot = _armed;
+    if (snapshot == null || snapshot.sessionId != sessionId) {
+      throw StateError('No matching Practice Session was armed.');
+    }
+    _armed = null;
+    _sessions[sessionId] = snapshot;
+    return snapshot;
   }
 
   @override
   Future<PracticeSessionSnapshot> restorePractice({
     required String sessionId,
   }) async {
-    return _sessions[sessionId] ??
-        (throw StateError('No exact Practice Session was prepared.'));
-  }
-
-  @override
-  Future<PracticeSessionSnapshot> activatePractice({
-    required String sessionId,
-    required String clientOperationId,
-  }) async {
-    final next = _nextStart;
-    if (next == null || next.sessionId != sessionId) {
-      throw StateError('No exact Practice Session was prepared.');
+    restoreCalls++;
+    final override = restoreOverride;
+    if (override != null) {
+      return override;
     }
-    _nextStart = null;
-    final snapshot = _activeSnapshot(
-      sessionId: next.sessionId,
-      planId: next.planId,
-      practiceExperience: next.scene.experience,
-      sceneCategory: next.scene.category,
-      practiceMode: next.scene.practiceOptions.first.mode,
-      version: 1,
-    );
-    _sessions[sessionId] = snapshot;
-    _sessionsByThread[next.threadId] = sessionId;
-    return snapshot;
+    final snapshot = _sessions[sessionId];
+    if (snapshot != null) {
+      return snapshot;
+    }
+    if (_notFoundSessionIds.contains(sessionId)) {
+      throw const PracticeClientException(
+        kind: PracticeClientFailureKind.notFound,
+      );
+    }
+    throw StateError('Unknown Practice Session.');
   }
 
   @override
@@ -1365,12 +604,11 @@ final class _WorkspacePracticeClient
       endFailures--;
       throw StateError('Test end failure.');
     }
-    final snapshot = _sessions[sessionId];
-    if (snapshot == null || snapshot.sessionVersion != expectedSessionVersion) {
-      throw StateError('The exact active Practice Session was not found.');
+    final current = _sessions[sessionId];
+    if (current == null || current.sessionVersion != expectedSessionVersion) {
+      throw StateError('Practice Session version changed.');
     }
     _sessions.remove(sessionId);
-    _sessionsByThread.removeWhere((_, value) => value == sessionId);
     endedSessionIds.add(sessionId);
     return PracticeSessionLifecycle(
       sessionId: sessionId,
@@ -1380,11 +618,16 @@ final class _WorkspacePracticeClient
   }
 
   @override
+  Future<void> clearAccountState() async {
+    _sessions.clear();
+    _notFoundSessionIds.clear();
+    _armed = null;
+  }
+
+  @override
   Future<TranscriptionCandidate> transcribe(
     PracticeTranscriptionRequest request,
-  ) {
-    throw UnimplementedError();
-  }
+  ) => throw UnimplementedError();
 
   @override
   Future<PracticeTurnConfirmation> confirm({
@@ -1392,9 +635,7 @@ final class _WorkspacePracticeClient
     required String questionId,
     required String candidateId,
     required String idempotencyKey,
-  }) {
-    throw UnimplementedError();
-  }
+  }) => throw UnimplementedError();
 
   @override
   Future<PracticeTurnConfirmation> submitText({
@@ -1404,101 +645,15 @@ final class _WorkspacePracticeClient
     required String idempotencyKey,
   }) {
     final pending = _pendingTextSubmission;
-    if (pending != null) {
-      return pending.future;
+    if (pending == null) {
+      throw StateError('No text submission was prepared.');
     }
-    final current = _sessions.values.single;
-    final completedTurns = current.completedTurns + 1;
-    final completed = completedTurns >= current.turnLimit;
-    final nextQuestion = completed
-        ? null
-        : PracticeQuestion(
-            id: 'question-${current.sessionId}-$completedTurns',
-            sessionId: current.sessionId,
-            text: 'What happened next?',
-          );
-    _sessions[current.sessionId] = PracticeSessionSnapshot(
-      sessionId: current.sessionId,
-      planId: current.planId,
-      sessionVersion: current.sessionVersion + 1,
-      practiceExperience: current.practiceExperience,
-      sceneCategory: current.sceneCategory,
-      practiceMode: current.practiceMode,
-      capabilities: current.capabilities,
-      completedTurns: completedTurns,
-      turnLimit: current.turnLimit,
-      sessionCompleted: completed,
-      currentQuestion: nextQuestion,
-    );
-    return Future<PracticeTurnConfirmation>.value(
-      PracticeTurnConfirmation(
-        turnId: 'turn-$completedTurns',
-        sessionId: sessionId,
-        questionId: questionId,
-        candidateId: 'text-candidate-$completedTurns',
-        answer: PracticeMessage(
-          id: 'answer-$completedTurns',
-          role: PracticeMessageRole.user,
-          text: answerText,
-        ),
-        completedTurns: completedTurns,
-        turnLimit: current.turnLimit,
-        sessionCompleted: completed,
-        practiceExperience: current.practiceExperience,
-        sceneCategory: current.sceneCategory,
-        practiceMode: current.practiceMode,
-        capabilities: current.capabilities,
-        sessionVersion: current.sessionVersion + 1,
-        nextQuestion: nextQuestion,
-      ),
-    );
+    return pending.future;
   }
-
-  PracticeSessionSnapshot _activeSnapshot({
-    required String sessionId,
-    required String planId,
-    required PracticeExperience practiceExperience,
-    required SceneCategory sceneCategory,
-    required PracticeMode practiceMode,
-    required int version,
-  }) {
-    return PracticeSessionSnapshot(
-      sessionId: sessionId,
-      planId: planId,
-      practiceExperience: practiceExperience,
-      sceneCategory: sceneCategory,
-      practiceMode: practiceMode,
-      capabilities: testPracticeCapabilities,
-      sessionVersion: version,
-      completedTurns: 0,
-      turnLimit: 3,
-      sessionCompleted: false,
-      currentQuestion: PracticeQuestion(
-        id: 'question-$sessionId',
-        sessionId: sessionId,
-        text: 'Tell me about yourself.',
-      ),
-    );
-  }
-}
-
-final class _StartSeed {
-  const _StartSeed({
-    required this.threadId,
-    required this.sessionId,
-    required this.planId,
-    required this.scene,
-  });
-
-  final String threadId;
-  final String sessionId;
-  final String planId;
-  final SceneDefinition scene;
 }
 
 final class _InspectableRecordStore implements PracticeLaunchRecordStore {
   _InspectableRecordStore({
-    this.writeFailures = 0,
     this.readFailures = 0,
     this.deleteFailures = 0,
     this.readOverrides = const <String, Future<String?>>{},
@@ -1507,7 +662,6 @@ final class _InspectableRecordStore implements PracticeLaunchRecordStore {
   final Map<String, String> values = <String, String>{};
   final Map<String, Future<String?>> readOverrides;
   final List<String> deletedAccountIds = <String>[];
-  int writeFailures;
   int readFailures;
   int deleteFailures;
 
@@ -1522,10 +676,6 @@ final class _InspectableRecordStore implements PracticeLaunchRecordStore {
 
   @override
   Future<void> write(String accountId, String value) async {
-    if (writeFailures > 0) {
-      writeFailures--;
-      throw StateError('Test write failure.');
-    }
     values[accountId] = value;
   }
 
@@ -1539,3 +689,5 @@ final class _InspectableRecordStore implements PracticeLaunchRecordStore {
     values.remove(accountId);
   }
 }
+
+const _accountId = 'account-workspace';

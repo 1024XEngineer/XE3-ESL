@@ -15,74 +15,145 @@ EvaluationReport decodeEvaluationReport(Object? value) {
     required: const {
       'report_id',
       'evaluation_id',
-      'evaluation_revision_id',
       'practice_session_id',
-      'revision',
-      'schema_version',
-      'scene_type',
-      'scene_category',
-      'scoreability_status',
-      'summary',
-      'dimensions',
-      'priority_actions',
-      'detail_schema',
-      'detail',
+      'report',
       'created_at',
     },
   );
-  if (root['schema_version'] != 'evaluation-report/v1') {
+  final formal = _exactObject(
+    root['report'],
+    required: const {
+      'schema_version',
+      'scene_type',
+      'practice_experience',
+      'scene_category',
+      'practice_mode',
+      'scoreability_status',
+      'summary',
+      'questions',
+      'dimensions',
+      'priority_actions',
+    },
+  );
+  if (formal['schema_version'] != 'evaluation-report/v2') {
     throw const EvaluationReportDecodeException();
   }
   final id = _uuid(root['report_id']);
   final evaluationId = _uuid(root['evaluation_id']);
-  final evaluationRevisionId = _uuid(root['evaluation_revision_id']);
-  final practiceSessionId = _identifier(root['practice_session_id']);
-  final revision = root['revision'];
-  if (revision is! int || revision < 1) {
+  final practiceSessionId = _uuid(root['practice_session_id']);
+  final sceneType = _sceneType(formal['scene_type']);
+  final practiceExperience = _identifier(formal['practice_experience']);
+  final sceneCategory = _identifier(formal['scene_category']);
+  final practiceMode = _identifier(formal['practice_mode']);
+  if (!_validPracticeContext(
+    sceneType: sceneType,
+    practiceExperience: practiceExperience,
+    sceneCategory: sceneCategory,
+    practiceMode: practiceMode,
+  )) {
     throw const EvaluationReportDecodeException();
   }
-  final sceneType = _sceneType(root['scene_type']);
-  final sceneCategory = _version(root['scene_category']);
-  final scoreability = _scoreability(root['scoreability_status']);
-  final summary = _text(root['summary'], maximumBytes: 2048);
+  final scoreability = _scoreability(formal['scoreability_status']);
+  final summary = _text(formal['summary'], maximumBytes: 2048);
+  final questions = _questions(formal['questions']);
+  final answerTurnIds = questions
+      .map((question) => question.answer?.turnId)
+      .nonNulls
+      .toSet();
   final findings = <String>{};
   final dimensions = _dimensions(
-    root['dimensions'],
+    formal['dimensions'],
     scoreability: scoreability,
     findingIds: findings,
+    answerTurnIds: answerTurnIds,
   );
   final priorityActions = _priorityActions(
-    root['priority_actions'],
+    formal['priority_actions'],
     dimensions: dimensions,
     findingIds: findings,
   );
-  final detailSchema = _version(root['detail_schema']);
-  final detail = _exactObject(root['detail'], allowUnknown: true);
-  if (utf8.encode(jsonEncode(detail)).length > 256 * 1024) {
-    throw const EvaluationReportDecodeException();
-  }
   return EvaluationReport(
     id: id,
     evaluationId: evaluationId,
-    evaluationRevisionId: evaluationRevisionId,
     practiceSessionId: practiceSessionId,
-    revision: revision,
     sceneType: sceneType,
+    practiceExperience: practiceExperience,
     sceneCategory: sceneCategory,
+    practiceMode: practiceMode,
     scoreability: scoreability,
     summary: summary,
+    questions: questions,
     dimensions: dimensions,
     priorityActions: priorityActions,
-    detailSchema: detailSchema,
-    detail: Map<String, Object?>.unmodifiable(detail),
     createdAt: _dateTime(root['created_at']),
   );
+}
+
+List<EvaluationReportQuestion> _questions(Object? value) {
+  if (value is! List<Object?> || value.isEmpty || value.length > 128) {
+    throw const EvaluationReportDecodeException();
+  }
+  final ids = <String>{};
+  final positions = <int>{};
+  final answerTurnIds = <String>{};
+  final result = value
+      .map((item) {
+        final root = _exactObject(
+          item,
+          required: const {'question_id', 'position', 'text', 'answer'},
+          optional: const {'parent_question_id'},
+        );
+        final id = _uuid(root['question_id']);
+        final position = root['position'];
+        if (position is! int ||
+            position < 1 ||
+            !ids.add(id) ||
+            !positions.add(position)) {
+          throw const EvaluationReportDecodeException();
+        }
+        final parentQuestionId = root.containsKey('parent_question_id')
+            ? _uuid(root['parent_question_id'])
+            : null;
+        final rawAnswer = root['answer'];
+        EvaluationReportAnswer? answer;
+        if (rawAnswer != null) {
+          final source = _exactObject(
+            rawAnswer,
+            required: const {'turn_id', 'transcript'},
+          );
+          final turnId = _uuid(source['turn_id']);
+          if (!answerTurnIds.add(turnId)) {
+            throw const EvaluationReportDecodeException();
+          }
+          answer = EvaluationReportAnswer(
+            turnId: turnId,
+            transcript: _text(source['transcript'], maximumBytes: 65536),
+          );
+        }
+        return EvaluationReportQuestion(
+          id: id,
+          position: position,
+          parentQuestionId: parentQuestionId,
+          text: _text(root['text'], maximumBytes: 16384),
+          answer: answer,
+        );
+      })
+      .toList(growable: false);
+  for (final question in result) {
+    if (question.parentQuestionId == question.id ||
+        (question.parentQuestionId != null &&
+            !ids.contains(question.parentQuestionId))) {
+      throw const EvaluationReportDecodeException();
+    }
+  }
+  return List<EvaluationReportQuestion>.unmodifiable(result);
 }
 
 List<EvaluationReportDimension> _dimensions(
   Object? value, {
   required EvaluationReportScoreability scoreability,
   required Set<String> findingIds,
+  required Set<String> answerTurnIds,
 }) {
   if (value is! List<Object?> || value.isEmpty || value.length > 16) {
     throw const EvaluationReportDecodeException();
@@ -94,6 +165,7 @@ List<EvaluationReportDimension> _dimensions(
         item,
         required: const {
           'key',
+          'score',
           'scale',
           'coverage',
           'confidence',
@@ -103,16 +175,16 @@ List<EvaluationReportDimension> _dimensions(
           'improvements',
           'recommended_examples',
         },
-        optional: const {'score'},
       );
-      final key = _version(root['key']);
+      final key = _identifier(root['key']);
       if (!keys.add(key)) {
         throw const EvaluationReportDecodeException();
       }
       final scale = _scale(root['scale']);
-      final score = root.containsKey('score')
-          ? _number(root['score'], minimum: 0, maximum: _scoreMaximum(scale))
-          : null;
+      final rawScore = root['score'];
+      final score = rawScore == null
+          ? null
+          : _number(rawScore, minimum: 0, maximum: _scoreMaximum(scale));
       if (scoreability == EvaluationReportScoreability.insufficient &&
           score != null) {
         throw const EvaluationReportDecodeException();
@@ -123,23 +195,29 @@ List<EvaluationReportDimension> _dimensions(
         scale: scale,
         coverage: _number(root['coverage'], minimum: 0, maximum: 1),
         confidence: _number(root['confidence'], minimum: 0, maximum: 1),
-        reasonCodes: _versions(root['reason_codes'], maximumItems: 16),
-        evidenceRefIds: _identifiers(
-          root['evidence_ref_ids'],
-          maximumItems: 64,
+        reasonCodes: _identifiers(root['reason_codes'], maximumItems: 8),
+        evidenceRefIds: _uuids(root['evidence_ref_ids'], maximumItems: 64),
+        strengths: _findings(root['strengths'], findingIds, answerTurnIds),
+        improvements: _findings(
+          root['improvements'],
+          findingIds,
+          answerTurnIds,
         ),
-        strengths: _findings(root['strengths'], findingIds),
-        improvements: _findings(root['improvements'], findingIds),
         recommendedExamples: _findings(
           root['recommended_examples'],
           findingIds,
+          answerTurnIds,
         ),
       );
     }),
   );
 }
 
-List<EvaluationReportFinding> _findings(Object? value, Set<String> findingIds) {
+List<EvaluationReportFinding> _findings(
+  Object? value,
+  Set<String> findingIds,
+  Set<String> answerTurnIds,
+) {
   if (value is! List<Object?> || value.length > 5) {
     throw const EvaluationReportDecodeException();
   }
@@ -150,7 +228,7 @@ List<EvaluationReportFinding> _findings(Object? value, Set<String> findingIds) {
         required: const {'finding_id', 'message', 'evidence'},
         optional: const {'suggestion'},
       );
-      final id = _version(root['finding_id']);
+      final id = _identifier(root['finding_id']);
       if (!findingIds.add(id)) {
         throw const EvaluationReportDecodeException();
       }
@@ -175,9 +253,13 @@ List<EvaluationReportFinding> _findings(Object? value, Set<String> findingIds) {
           if (start is! int || end is! int || start < 0 || end <= start) {
             throw const EvaluationReportDecodeException();
           }
+          final turnId = _uuid(source['turn_id']);
+          if (!answerTurnIds.contains(turnId)) {
+            throw const EvaluationReportDecodeException();
+          }
           return EvaluationReportEvidence(
-            evidenceRefId: _identifier(source['evidence_ref_id']),
-            turnId: _identifier(source['turn_id']),
+            evidenceRefId: _uuid(source['evidence_ref_id']),
+            turnId: turnId,
             startUtf8Byte: start,
             endUtf8Byte: end,
             originalExcerpt: _text(
@@ -215,8 +297,8 @@ List<EvaluationReportPriorityAction> _priorityActions(
         item,
         required: const {'dimension_key', 'finding_id'},
       );
-      final dimensionKey = _version(root['dimension_key']);
-      final findingId = _version(root['finding_id']);
+      final dimensionKey = _identifier(root['dimension_key']);
+      final findingId = _identifier(root['finding_id']);
       if (!dimensionKeys.contains(dimensionKey) ||
           !findingIds.contains(findingId) ||
           !actions.add('$dimensionKey\u0000$findingId')) {
@@ -261,13 +343,6 @@ String _identifier(Object? value) {
   return value;
 }
 
-String _version(Object? value) {
-  if (value is! String || !_versionPattern.hasMatch(value)) {
-    throw const EvaluationReportDecodeException();
-  }
-  return value;
-}
-
 String _text(Object? value, {required int maximumBytes}) {
   if (value is! String ||
       value.trim().isEmpty ||
@@ -278,24 +353,24 @@ String _text(Object? value, {required int maximumBytes}) {
   return value;
 }
 
-List<String> _versions(Object? value, {required int maximumItems}) {
-  if (value is! List<Object?> || value.length > maximumItems) {
-    throw const EvaluationReportDecodeException();
-  }
-  final seen = <String>{};
-  final result = value.map(_version).toList(growable: false);
-  if (result.any((item) => !seen.add(item))) {
-    throw const EvaluationReportDecodeException();
-  }
-  return List<String>.unmodifiable(result);
-}
-
 List<String> _identifiers(Object? value, {required int maximumItems}) {
   if (value is! List<Object?> || value.length > maximumItems) {
     throw const EvaluationReportDecodeException();
   }
   final seen = <String>{};
   final result = value.map(_identifier).toList(growable: false);
+  if (result.any((item) => !seen.add(item))) {
+    throw const EvaluationReportDecodeException();
+  }
+  return List<String>.unmodifiable(result);
+}
+
+List<String> _uuids(Object? value, {required int maximumItems}) {
+  if (value is! List<Object?> || value.length > maximumItems) {
+    throw const EvaluationReportDecodeException();
+  }
+  final seen = <String>{};
+  final result = value.map(_uuid).toList(growable: false);
   if (result.any((item) => !seen.add(item))) {
     throw const EvaluationReportDecodeException();
   }
@@ -330,6 +405,41 @@ EvaluationReportSceneType _sceneType(Object? value) => switch (value) {
   _ => throw const EvaluationReportDecodeException(),
 };
 
+bool _validPracticeContext({
+  required EvaluationReportSceneType sceneType,
+  required String practiceExperience,
+  required String sceneCategory,
+  required String practiceMode,
+}) => switch (sceneType) {
+  EvaluationReportSceneType.ieltsSpeaking =>
+    practiceExperience == 'IELTS_SPEAKING' &&
+        sceneCategory == 'IELTS_SPEAKING' &&
+        const {
+          'FULL_MOCK',
+          'PART_1',
+          'PART_2',
+          'PART_3',
+        }.contains(practiceMode),
+  EvaluationReportSceneType.interview =>
+    practiceExperience == 'INTERVIEW' &&
+        const {
+          'INTERVIEW_RECRUITER',
+          'INTERVIEW_BEHAVIORAL',
+          'INTERVIEW_PROFESSIONAL',
+          'INTERVIEW_HIRING_MANAGER',
+          'INTERVIEW_CUSTOM',
+        }.contains(sceneCategory) &&
+        const {'FULL_SIMULATION', 'FOCUS'}.contains(practiceMode),
+  EvaluationReportSceneType.overseasDailyLife =>
+    practiceExperience == 'LIFE_AND_TRAVEL' &&
+        const {'LIFE_TRAVEL', 'LIFE_DAILY'}.contains(sceneCategory) &&
+        const {'FULL_SIMULATION', 'FOCUS'}.contains(practiceMode),
+  EvaluationReportSceneType.overseasWorkplace =>
+    practiceExperience == 'WORKPLACE' &&
+        sceneCategory == 'WORKPLACE_GENERAL' &&
+        const {'FULL_SIMULATION', 'FOCUS'}.contains(practiceMode),
+};
+
 EvaluationReportScoreability _scoreability(Object? value) => switch (value) {
   'PROVISIONAL' => EvaluationReportScoreability.provisional,
   'INSUFFICIENT' => EvaluationReportScoreability.insufficient,
@@ -338,7 +448,7 @@ EvaluationReportScoreability _scoreability(Object? value) => switch (value) {
 
 EvaluationReportScoreScale _scale(Object? value) => switch (value) {
   'PERCENTAGE_100' => EvaluationReportScoreScale.percentage100,
-  'IELTS_BAND' => EvaluationReportScoreScale.ieltsBand,
+  'IELTS_BAND_9' => EvaluationReportScoreScale.ieltsBand,
   _ => throw const EvaluationReportDecodeException(),
 };
 
@@ -356,5 +466,4 @@ DateTime _dateTime(Object? value) {
 final _uuidPattern = RegExp(
   r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$',
 );
-final _identifierPattern = RegExp(r'^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$');
-final _versionPattern = RegExp(r'^[A-Za-z][A-Za-z0-9._:/-]{0,159}$');
+final _identifierPattern = RegExp(r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$');

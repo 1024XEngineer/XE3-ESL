@@ -2,11 +2,16 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:speakup/features/agent/client_action/agent_client_action.dart';
 import 'package:speakup/features/agent/conversation/agent_client.dart';
+import 'package:speakup/features/agent/conversation/agent_models.dart';
+import 'package:speakup/features/agent/conversation/conversation_controller.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
+import 'package:speakup/features/coaching/preparation/practice_plan_client_action.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/main.dart' as app;
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
@@ -45,6 +50,7 @@ void main() {
         conversationController: dependencies.conversationController,
         composerController: dependencies.composerController,
         messageAudioController: dependencies.messageAudioController,
+        messageTranslationClient: dependencies.messageTranslationClient,
         practiceController: dependencies.practiceController,
         preparationController: dependencies.preparationController,
         ieltsPreparationController: dependencies.ieltsPreparationController,
@@ -122,7 +128,7 @@ void main() {
     }
     Navigator.of(tester.element(find.byKey(const Key('practice-page')))).pop();
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('primary-tab-review')));
+    await _tapPrimaryTab(tester, 2);
     await _waitForPersistedSessionReview(
       tester,
       controller: dependencies.reviewHistoryController,
@@ -140,7 +146,7 @@ void main() {
 
     await _signOut(tester);
     await _signIn(tester, email: email, password: password);
-    await tester.tap(find.byKey(const Key('primary-tab-review')));
+    await _tapPrimaryTab(tester, 2);
     await _waitForPersistedSessionReview(
       tester,
       controller: dependencies.reviewHistoryController,
@@ -193,6 +199,7 @@ void main() {
         conversationController: dependencies.conversationController,
         composerController: dependencies.composerController,
         messageAudioController: dependencies.messageAudioController,
+        messageTranslationClient: dependencies.messageTranslationClient,
         practiceController: dependencies.practiceController,
         preparationController: dependencies.preparationController,
         ieltsPreparationController: dependencies.ieltsPreparationController,
@@ -223,7 +230,7 @@ void main() {
       await _registerOrSignIn(tester, email: email, password: password);
     }
 
-    await tester.tap(find.byKey(const Key('primary-tab-scenes')));
+    await _tapPrimaryTab(tester, 1);
     await tester.pump();
     final interviewHub = find.byKey(const Key('practice-hub-interview'));
     await _waitForPreparationTarget(
@@ -276,7 +283,7 @@ void main() {
     await tester.tap(find.byKey(const Key('roleplay-filter-travel')));
     await tester.pumpAndSettle();
     expect(
-      find.byKey(const Key('catalog-scene-scn_daily_hotel_checkin_issue')),
+      find.byKey(const Key('catalog-scene-scn_travel_hotel_checkin')),
       findsOneWidget,
     );
     await tester.tap(find.byKey(const Key('preparation-back-to-families')));
@@ -304,6 +311,7 @@ void main() {
         conversationController: dependencies.conversationController,
         composerController: dependencies.composerController,
         messageAudioController: dependencies.messageAudioController,
+        messageTranslationClient: dependencies.messageTranslationClient,
         practiceController: dependencies.practiceController,
         preparationController: dependencies.preparationController,
         ieltsPreparationController: dependencies.ieltsPreparationController,
@@ -324,20 +332,19 @@ void main() {
       () => !dependencies.conversationController.isBusy,
       const Duration(seconds: 20),
     );
-    await tester.tap(find.byKey(const Key('primary-tab-scenes')));
+    await _tapPrimaryTab(tester, 1);
     await tester.pump();
 
     final interviewHub = find.byKey(const Key('practice-hub-interview'));
     final examHub = find.byKey(const Key('practice-hub-exam'));
-    final roleplayHub = find.byKey(const Key('practice-hub-roleplay'));
+    final workplaceHub = find.byKey(const Key('practice-hub-workplace'));
     await _waitForPreparationTarget(
       tester,
       target: interviewHub,
-      operation: 'load the three practice hubs',
+      operation: 'load the four practice hubs',
       timeout: const Duration(seconds: 30),
     );
     expect(examHub, findsOneWidget);
-    expect(roleplayHub, findsOneWidget);
 
     await _scrollPreparationIntoView(tester, interviewHub);
     await tester.tap(interviewHub);
@@ -350,12 +357,12 @@ void main() {
     await tester.tap(find.byKey(const Key('preparation-back-to-families')));
     await tester.pumpAndSettle();
 
-    await _scrollPreparationIntoView(tester, roleplayHub);
-    await tester.tap(roleplayHub);
+    await _scrollPreparationIntoView(tester, workplaceHub);
+    await tester.tap(workplaceHub);
     await _waitForPreparationTarget(
       tester,
-      target: find.byKey(const Key('practice-hub-title-roleplay')),
-      operation: 'open the roleplay hub',
+      target: find.byKey(const Key('practice-hub-title-workplace')),
+      operation: 'open the workplace hub',
       timeout: const Duration(seconds: 10),
     );
     await tester.tap(find.byKey(const Key('preparation-back-to-families')));
@@ -365,29 +372,24 @@ void main() {
     await tester.tap(examHub);
     await tester.pump();
 
-    final part1 = find.byKey(
-      const Key('catalog-scene-scn_ielts_speaking_part_1'),
-    );
-    await _waitForPreparationTarget(
-      tester,
-      target: part1,
-      operation: 'load the IELTS Part 1 entry',
-      timeout: const Duration(seconds: 30),
-    );
-    await _scrollPreparationIntoView(tester, part1);
-    await tester.tap(part1);
-    await tester.pump();
-
-    final questionSet = find.byKey(const Key('ielts-part1-set-p1-001'));
+    final questionSet = find.byKey(const Key('ielts-part1-set-p1-topic-001'));
     await _waitForPreparationTarget(
       tester,
       target: questionSet,
-      operation: 'load the first IELTS Part 1 question set',
+      operation: 'load the first IELTS Part 1 question topic',
       timeout: const Duration(seconds: 30),
     );
     await _scrollPreparationIntoView(tester, questionSet);
     await tester.tap(questionSet);
     await tester.pump();
+
+    await _waitForPreparationTarget(
+      tester,
+      target: find.byKey(const Key('ielts-set-detail')),
+      operation: 'open the IELTS Part 1 question set details',
+      timeout: const Duration(seconds: 20),
+    );
+    await _tapPracticeControl(tester, const Key('ielts-set-detail-start'));
 
     await _waitForPreparationTarget(
       tester,
@@ -425,15 +427,36 @@ void main() {
     );
 
     await tester.tap(find.byKey(const Key('ielts-mock-exit')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'Save & exit'));
+    await _waitForPreparationTarget(
+      tester,
+      target: find.byKey(const Key('ielts-mock-exit-sheet')),
+      operation: 'open the IELTS exit confirmation',
+      timeout: const Duration(seconds: 10),
+    );
+    await _tapPracticeControl(tester, const Key('ielts-mock-save-and-exit'));
+    await _waitForPreparationTarget(
+      tester,
+      target: examHub,
+      operation: 'return to the practice hubs after ending the first session',
+      timeout: const Duration(seconds: 20),
+    );
+    await _scrollPreparationIntoView(tester, examHub);
+    await tester.tap(examHub);
     await _waitForPreparationTarget(
       tester,
       target: questionSet,
-      operation: 'return to IELTS Part 1 after ending the first session',
+      operation: 'reload IELTS Part 1 after ending the first session',
+      timeout: const Duration(seconds: 30),
+    );
+    await _scrollPreparationIntoView(tester, questionSet);
+    await tester.tap(questionSet);
+    await _waitForPreparationTarget(
+      tester,
+      target: find.byKey(const Key('ielts-set-detail')),
+      operation: 'reopen the IELTS Part 1 question set details',
       timeout: const Duration(seconds: 20),
     );
-    await tester.tap(questionSet);
+    await _tapPracticeControl(tester, const Key('ielts-set-detail-start'));
     await _waitUntil(tester, () {
       final currentSessionId =
           dependencies.practiceController.practiceSessionId;
@@ -450,6 +473,177 @@ void main() {
       isNot(firstSessionId),
     );
   });
+
+  testWidgets('real iOS Agent recovers a short IELTS warm-up answer', (
+    tester,
+  ) async {
+    const apiBaseUrl = String.fromEnvironment(
+      'SPEAKUP_API_BASE_URL',
+      defaultValue: 'http://127.0.0.1:8080',
+    );
+    final email =
+        'ielts-agent-${DateTime.now().microsecondsSinceEpoch}@example.com';
+    const password = 'IELTS Agent e2e password 648';
+    final dependencies = app.createProductionAppDependencies(
+      baseUri: Uri.parse(apiBaseUrl),
+      sessionStore: _MemorySessionStore(),
+    );
+    runApp(
+      SpeakUpApp(
+        authController: dependencies.authController,
+        conversationController: dependencies.conversationController,
+        composerController: dependencies.composerController,
+        messageAudioController: dependencies.messageAudioController,
+        messageTranslationClient: dependencies.messageTranslationClient,
+        practiceController: dependencies.practiceController,
+        preparationController: dependencies.preparationController,
+        ieltsPreparationController: dependencies.ieltsPreparationController,
+        jobPreparationController: dependencies.jobPreparationController,
+        preparationLaunchController: dependencies.preparationLaunchController,
+        reviewHistoryController: dependencies.reviewHistoryController,
+      ),
+    );
+
+    await _registerOrSignIn(
+      tester,
+      email: email,
+      password: password,
+      requireFocusedConversation: false,
+    );
+    await _waitUntil(
+      tester,
+      () => !dependencies.conversationController.isBusy,
+      const Duration(seconds: 20),
+    );
+    expect(await dependencies.conversationController.createThread(), isTrue);
+    await _waitUntil(
+      tester,
+      () => _composerIsReady(tester),
+      const Duration(seconds: 20),
+    );
+    await _sendRealAgentMessage(
+      tester,
+      controller: dependencies.conversationController,
+      text: '嗯，我最近在学雅思。',
+    );
+    await _sendRealAgentMessage(
+      tester,
+      controller: dependencies.conversationController,
+      text: 'Part One',
+    );
+    final warmUp = await _sendRealAgentMessage(
+      tester,
+      controller: dependencies.conversationController,
+      text: '呃你给我随便挑一个。',
+    );
+    expect(warmUp.clientActions, isEmpty);
+
+    final confirmation = await _sendRealAgentMessage(
+      tester,
+      controller: dependencies.conversationController,
+      text: '呃。 no person.',
+    );
+    final action = confirmation.clientActions
+        .where(_isPracticePlanConfirmAction)
+        .map(decodeConfirmPracticePlanClientAction)
+        .single;
+    expect(confirmation.text.trim(), isNot(warmUp.text.trim()));
+    expect(
+      dependencies.conversationController.messages
+          .where(
+            (message) =>
+                message.role == AgentMessageRole.assistant &&
+                message.text.trim() == warmUp.text.trim(),
+          )
+          .length,
+      1,
+    );
+    expect(
+      dependencies.conversationController.messages
+          .expand((message) => message.clientActions)
+          .where(_isPracticePlanConfirmAction)
+          .length,
+      1,
+    );
+    expect(action.practiceMode, 'PART_1');
+    expect(
+      find.byKey(
+        Key(
+          'agent-client-action-practice-plan-'
+          '${action.practicePlanId}-${action.planVersion}',
+        ),
+      ),
+      findsOneWidget,
+    );
+    final confirmationButton = find.byKey(
+      Key(
+        'confirm-practice-plan-'
+        '${action.practicePlanId}-${action.planVersion}',
+      ),
+    );
+    await _waitUntil(
+      tester,
+      () => confirmationButton.hitTestable().evaluate().length == 1,
+      const Duration(seconds: 10),
+    );
+    await _expectRealUiScreenshot(tester, binding, 'agent-short-warmup-action');
+    await tester.tap(confirmationButton);
+    await _waitForPreparationTarget(
+      tester,
+      target: find.byKey(const Key('ielts-mock-page')),
+      operation: 'open the Agent-created IELTS Part 1 Practice Session',
+      timeout: const Duration(seconds: 90),
+    );
+    expect(dependencies.practiceController.practiceSessionId, isNotNull);
+  });
+}
+
+bool _isPracticePlanConfirmAction(AgentClientAction action) {
+  return action.type == practicePlanConfirmClientActionType;
+}
+
+Future<AgentMessage> _sendRealAgentMessage(
+  WidgetTester tester, {
+  required ConversationController controller,
+  required String text,
+}) async {
+  await _waitUntil(
+    tester,
+    () => _composerIsReady(tester) && !controller.isBusy,
+    const Duration(seconds: 20),
+  );
+  final previousAssistantIDs = <String>{
+    for (final message in controller.messages)
+      if (message.role == AgentMessageRole.assistant) message.id,
+  };
+  await tester.enterText(find.byKey(const Key('agent-composer-field')), text);
+  await _waitUntil(
+    tester,
+    () => _sendButtonIsEnabled(tester),
+    const Duration(seconds: 5),
+  );
+  await tester.tap(find.byKey(const Key('agent-send-button')));
+  await _waitUntil(
+    tester,
+    () =>
+        !controller.isBusy &&
+        controller.messages.any(
+          (message) =>
+              message.role == AgentMessageRole.assistant &&
+              !message.isStreaming &&
+              !previousAssistantIDs.contains(message.id),
+        ),
+    const Duration(seconds: 90),
+  );
+  if (controller.errorMessage != null) {
+    fail('Agent message failed: ${controller.errorMessage}');
+  }
+  return controller.messages.lastWhere(
+    (message) =>
+        message.role == AgentMessageRole.assistant &&
+        !message.isStreaming &&
+        !previousAssistantIDs.contains(message.id),
+  );
 }
 
 Future<void> _expectRealUiScreenshot(
@@ -524,7 +718,7 @@ Future<void> _registerOrSignIn(
       tester,
       () =>
           find.byKey(const Key('agent-home-page')).evaluate().isNotEmpty &&
-          find.byKey(const Key('primary-tab-scenes')).evaluate().isNotEmpty,
+          find.byKey(const Key('primary-navigation')).evaluate().isNotEmpty,
       const Duration(seconds: 20),
     );
   }
@@ -547,7 +741,7 @@ Future<void> _signIn(
     tester,
     () =>
         find.byKey(const Key('agent-home-page')).evaluate().isNotEmpty &&
-        find.byKey(const Key('primary-tab-review')).evaluate().isNotEmpty,
+        find.byKey(const Key('primary-navigation')).evaluate().isNotEmpty,
     const Duration(seconds: 20),
   );
 }
@@ -567,13 +761,37 @@ Future<void> _tapAuthSubmit(WidgetTester tester, String label) async {
   await tester.tap(button);
 }
 
+Future<void> _tapPrimaryTab(WidgetTester tester, int index) async {
+  final navigation = find.byKey(const Key('primary-navigation'));
+  await _waitUntil(
+    tester,
+    () => navigation.evaluate().length == 1,
+    const Duration(seconds: 20),
+  );
+  expect(find.byType(UiKitView), findsOneWidget);
+  ByteData? response;
+  for (var viewId = 0; viewId < 16 && response == null; viewId++) {
+    response = await tester.binding.defaultBinaryMessenger
+        .handlePlatformMessage(
+          'speakup/native_tab_bar/$viewId',
+          const StandardMethodCodec().encodeMethodCall(
+            MethodCall('onSelected', index),
+          ),
+          null,
+        );
+  }
+  expect(response, isNotNull);
+  expect(const StandardMethodCodec().decodeEnvelope(response!), index);
+  await tester.pump();
+}
+
 Future<void> _completeRealVoicePractice(
   WidgetTester tester, {
   required PracticeController controller,
   required bool validateAudioMedia,
 }) async {
   FocusManager.instance.primaryFocus?.unfocus();
-  await tester.tap(find.byKey(const Key('primary-tab-scenes')));
+  await _tapPrimaryTab(tester, 1);
   await tester.pump();
   final interviewHub = find.byKey(const Key('practice-hub-interview'));
   await _waitForPreparationTarget(
@@ -924,7 +1142,7 @@ Future<bool> _signedInAccountMatches(
   WidgetTester tester,
   String expectedEmail,
 ) async {
-  await tester.tap(find.byKey(const Key('primary-tab-profile')));
+  await _tapPrimaryTab(tester, 3);
   await _waitUntil(
     tester,
     () => find.byKey(const Key('profile-page')).evaluate().isNotEmpty,
@@ -933,13 +1151,13 @@ Future<bool> _signedInAccountMatches(
   if (find.text(expectedEmail).evaluate().isEmpty) {
     return false;
   }
-  await tester.tap(find.byKey(const Key('primary-tab-agent')));
+  await _tapPrimaryTab(tester, 0);
   await _ensureFocusedConversation(tester);
   return true;
 }
 
 Future<void> _signOut(WidgetTester tester) async {
-  await tester.tap(find.byKey(const Key('primary-tab-profile')));
+  await _tapPrimaryTab(tester, 3);
   await _waitUntil(
     tester,
     () => find.byKey(const Key('profile-page')).evaluate().isNotEmpty,

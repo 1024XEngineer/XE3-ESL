@@ -37,11 +37,8 @@ func TestAssemblerAddsSignedImagesToMultimodalUserMessage(
 	}
 	assembler, err := NewAssembler(
 		repository,
-		multimodalContextGoals{},
-		multimodalContextLearningProfile{},
-		multimodalContextStableProfile{},
-		multimodalContextMemories{},
-		multimodalContextMemoryBarrier{},
+		Instruction{Version: "test-v1", Content: "Test instruction."},
+		multimodalContextProfile{},
 		WithImageReader(multimodalContextImages{}),
 	)
 	if err != nil {
@@ -117,11 +114,8 @@ func TestAssemblerImageBudgetKeepsNewestImages(t *testing.T) {
 	}
 	assembler, err := NewAssembler(
 		repository,
-		multimodalContextGoals{},
-		multimodalContextLearningProfile{},
-		multimodalContextStableProfile{},
-		multimodalContextMemories{},
-		multimodalContextMemoryBarrier{},
+		Instruction{Version: "test-v1", Content: "Test instruction."},
+		multimodalContextProfile{},
 		WithImageReader(multimodalBudgetImages{}),
 	)
 	if err != nil {
@@ -187,13 +181,13 @@ func (repository multimodalRepository) FindThread(
 	return repository.thread, nil
 }
 
-func (multimodalRepository) FindLatestCheckpoint(
+func (multimodalRepository) FindSummary(
 	context.Context,
 	string,
 	string,
 	int64,
-) (summary.Checkpoint, error) {
-	return summary.Checkpoint{}, conversation.ErrNotFound
+) (summary.State, error) {
+	return summary.State{}, conversation.ErrNotFound
 }
 
 func (repository multimodalRepository) ListMessagesForContext(
@@ -216,54 +210,13 @@ func (repository multimodalRepository) FindMessage(
 	return repository.message, nil
 }
 
-type multimodalContextGoals struct{}
+type multimodalContextProfile struct{}
 
-func (multimodalContextGoals) ReadGoalContext(
+func (multimodalContextProfile) Contribute(
 	context.Context,
 	requestcontext.Actor,
-	string,
-) (GoalContext, bool, error) {
-	return GoalContext{}, false, nil
-}
-
-type multimodalContextStableProfile struct{}
-
-type multimodalContextLearningProfile struct{}
-
-func (multimodalContextLearningProfile) ReadLearningProfile(
-	context.Context,
-	LearningProfileReadRequest,
-) ([]LearningProfileDimension, error) {
-	return []LearningProfileDimension{}, nil
-}
-
-func (multimodalContextStableProfile) ReadStableProfile(
-	context.Context,
-	StableProfileReadRequest,
-) ([]StableProfileMemory, error) {
-	return nil, nil
-}
-
-type multimodalContextMemories struct{}
-
-func (multimodalContextMemories) Search(
-	context.Context,
-	MemorySearchRequest,
-) ([]MemorySearchHit, error) {
-	return nil, nil
-}
-
-type multimodalContextMemoryBarrier struct{}
-
-func (multimodalContextMemoryBarrier) Await(
-	_ context.Context,
-	request MemoryExtractionBarrierRequest,
-) (MemoryExtractionBarrierResult, error) {
-	return MemoryExtractionBarrierResult{
-		PolicyVersion: MemoryExtractionBarrierPolicyV1,
-		Cutoff:        request.Cutoff,
-		Status:        MemoryExtractionBarrierReady,
-	}, nil
+) (CoachingProfileContribution, error) {
+	return CoachingProfileContribution{Enabled: true}, nil
 }
 
 type multimodalContextImages struct{}
@@ -293,13 +246,13 @@ func (repository multimodalBudgetRepository) FindThread(
 	return repository.thread, nil
 }
 
-func (multimodalBudgetRepository) FindLatestCheckpoint(
+func (multimodalBudgetRepository) FindSummary(
 	context.Context,
 	string,
 	string,
 	int64,
-) (summary.Checkpoint, error) {
-	return summary.Checkpoint{}, conversation.ErrNotFound
+) (summary.State, error) {
+	return summary.State{}, conversation.ErrNotFound
 }
 
 func (repository multimodalBudgetRepository) ListMessagesForContext(

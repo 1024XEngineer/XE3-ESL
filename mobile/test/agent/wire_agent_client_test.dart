@@ -7,17 +7,32 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/features/agent/conversation/agent_client.dart';
 import 'package:speakup/features/agent/conversation/agent_models.dart';
 import 'package:speakup/providers/agent/wire_agent_client.dart';
-import 'package:speakup/features/agent/handoff/agent_handoff.dart';
+import 'package:speakup/features/coaching/preparation/practice_plan_client_action.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
 
 void main() {
-  group('WireAgentClient focused Thread', () {
-    test('loads the focused durable Thread and ordered Messages', () async {
+  test('Agent evaluation status URL uses the Message-owned endpoint', () {
+    expect(
+      validAgentSpeechFeedbackStatusUrl(
+        '/v1/agent-messages/20000000-0000-4000-8000-000000000001/evaluation',
+      ),
+      isTrue,
+    );
+    expect(
+      validAgentSpeechFeedbackStatusUrl(
+        '/v1/speech-feedback/20000000-0000-4000-8000-000000000001',
+      ),
+      isFalse,
+    );
+  });
+
+  group('WireAgentClient Thread snapshot', () {
+    test('loads one durable Thread and its ordered Messages', () async {
       final transport = _ScriptedTransport([
         _Step(
           method: 'GET',
-          path: '/v1/agent-threads/focused',
+          path: '/v1/agent-threads/$_threadId',
           response: _jsonResponse(HttpStatus.ok, _threadJson(title: '英文面试准备')),
         ),
         _Step(
@@ -38,24 +53,27 @@ void main() {
                 role: 'assistant',
                 content: 'Start with the result.',
                 producedByRunId: _runId,
-                handoffs: const <Object?>[
+                clientActions: const <Object?>[
                   {
-                    'type': 'confirm_practice_plan',
-                    'label': '确认并开始练习',
-                    'practice_plan_id': _practicePlanId,
-                    'plan_revision': 2,
-                    'target': 'Java Interview Practice',
-                    'scene_name': '项目经历深挖',
-                    'practice_experience': 'INTERVIEW',
-                    'scene_category': 'INTERVIEW_PROFESSIONAL',
-                    'practice_mode': 'FULL_SIMULATION',
-                    'roles': ['面试官', '候选人'],
-                    'practice_scope': '围绕项目难点完成三轮追问',
-                    'suggested_duration_seconds': 720,
-                    'min_effective_turns': 3,
-                    'max_effective_turns': 5,
-                    'executable_status': 'ready',
-                    'confirmation_prompt': '请确认是否按此方案开始练习。',
+                    'type': practicePlanConfirmClientActionType,
+                    'payload': {
+                      'label': '确认并开始练习',
+                      'practice_plan_id': _practicePlanId,
+                      'plan_version': 2,
+                      'scene_id': 'scn_interview_project_deep_dive',
+                      'scene_name': '项目经历深挖',
+                      'user_role': '候选人',
+                      'ai_roles': ['面试官'],
+                      'practice_goal': 'Java Interview Practice',
+                      'practice_experience': 'INTERVIEW',
+                      'scene_category': 'INTERVIEW_PROFESSIONAL',
+                      'practice_mode': 'FULL_SIMULATION',
+                      'practice_scope': '围绕项目难点完成三轮追问',
+                      'suggested_duration_seconds': 720,
+                      'min_effective_turns': 3,
+                      'max_effective_turns': 5,
+                      'confirmation_prompt': '请确认是否按此方案开始练习。',
+                    },
                   },
                 ],
               ),
@@ -65,21 +83,19 @@ void main() {
       ]);
       final harness = _Harness(transport);
 
-      final snapshot = (await harness.client.getFocusedThread())!;
+      final snapshot = await harness.client.getThread(threadId: _threadId);
 
       expect(snapshot.threadId, _threadId);
       expect(snapshot.title, '英文面试准备');
       expect(snapshot.messages, hasLength(2));
       expect(snapshot.messages.first.text, 'Help me explain this.');
       expect(snapshot.messages.last.role, AgentMessageRole.assistant);
-      expect(snapshot.messages.last.handoffs, hasLength(1));
-      final handoff = snapshot.messages.last.handoffs.single;
-      expect(handoff, isA<ConfirmPracticePlanHandoff>());
-      expect(
-        (handoff as ConfirmPracticePlanHandoff).practicePlanId,
-        _practicePlanId,
+      expect(snapshot.messages.last.clientActions, hasLength(1));
+      final action = decodeConfirmPracticePlanClientAction(
+        snapshot.messages.last.clientActions.single,
       );
-      expect(handoff.planRevision, 2);
+      expect(action.practicePlanId, _practicePlanId);
+      expect(action.planVersion, 2);
       expect(
         transport.calls.every(
           (call) =>
@@ -91,11 +107,72 @@ void main() {
       transport.expectDone();
     });
 
+    test(
+      'restores a historical v1 practice action from Thread history',
+      () async {
+        final transport = _ScriptedTransport([
+          _Step(
+            method: 'GET',
+            path: '/v1/agent-threads/$_threadId',
+            response: _jsonResponse(HttpStatus.ok, _threadJson()),
+          ),
+          _Step(
+            method: 'GET',
+            path: '/v1/agent-threads/$_threadId/messages',
+            response: _jsonResponse(HttpStatus.ok, {
+              'messages': [
+                _messageJson(
+                  id: _assistantMessageId,
+                  sequence: 1,
+                  role: 'assistant',
+                  content: 'Your historical practice is ready.',
+                  producedByRunId: _runId,
+                  clientActions: const <Object?>[
+                    {
+                      'type': practicePlanConfirmClientActionV1Type,
+                      'payload': {
+                        'label': '确认并开始练习',
+                        'practice_plan_id': _practicePlanId,
+                        'plan_version': 2,
+                        'target': 'Java Interview Practice',
+                        'scene_name': '项目经历深挖',
+                        'practice_experience': 'INTERVIEW',
+                        'scene_category': 'INTERVIEW_PROFESSIONAL',
+                        'practice_mode': 'FULL_SIMULATION',
+                        'roles': ['面试官'],
+                        'practice_scope': '围绕项目难点完成三轮追问',
+                        'suggested_duration_seconds': 720,
+                        'min_effective_turns': 3,
+                        'max_effective_turns': 5,
+                        'confirmation_prompt': '请确认是否按此方案开始练习。',
+                      },
+                    },
+                  ],
+                ),
+              ],
+            }),
+          ),
+        ]);
+        final harness = _Harness(transport);
+
+        final snapshot = await harness.client.getThread(threadId: _threadId);
+        final action = decodeConfirmPracticePlanClientAction(
+          snapshot.messages.single.clientActions.single,
+        );
+
+        expect(action.protocol, ConfirmPracticePlanProtocol.v1);
+        expect(action.userRole, isNull);
+        expect(action.practiceGoal, 'Java Interview Practice');
+        expect(action.aiRoles, <String>['面试官']);
+        transport.expectDone();
+      },
+    );
+
     test('does not replay a voice Message through the text Run API', () async {
       final transport = _ScriptedTransport([
         _Step(
           method: 'GET',
-          path: '/v1/agent-threads/focused',
+          path: '/v1/agent-threads/$_threadId',
           response: _jsonResponse(HttpStatus.ok, _threadJson()),
         ),
         _Step(
@@ -126,11 +203,45 @@ void main() {
       ]);
       final harness = _Harness(transport);
 
-      final snapshot = (await harness.client.getFocusedThread())!;
+      final snapshot = await harness.client.getThread(threadId: _threadId);
 
       expect(snapshot.messages, hasLength(1));
       expect(snapshot.messages.single.modality, AgentMessageModality.voice);
       expect(snapshot.textRecovery, isNull);
+      transport.expectDone();
+    });
+
+    test('restores voice provenance after its recording was deleted', () async {
+      final transport = _ScriptedTransport([
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-threads/$_threadId',
+          response: _jsonResponse(HttpStatus.ok, _threadJson()),
+        ),
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-threads/$_threadId/messages',
+          response: _jsonResponse(HttpStatus.ok, {
+            'messages': [
+              _messageJson(
+                id: _userMessageId,
+                sequence: 1,
+                role: 'user',
+                content: 'Keep my transcript after deleting the recording.',
+                clientMessageId: 'voice_message_deleted',
+                modality: 'voice',
+              ),
+            ],
+          }),
+        ),
+      ]);
+      final harness = _Harness(transport);
+
+      final snapshot = await harness.client.getThread(threadId: _threadId);
+
+      expect(snapshot.messages.single.modality, AgentMessageModality.voice);
+      expect(snapshot.messages.single.audio, isNull);
+      expect(snapshot.messages.single.text, contains('transcript'));
       transport.expectDone();
     });
 
@@ -155,7 +266,7 @@ void main() {
             method: 'POST',
             path: '/v1/agent-threads',
             verify: (call) {
-              expect(jsonDecode(call.body!), <String, Object?>{});
+              expect(call.body, isNull);
             },
             response: _jsonResponse(HttpStatus.created, _threadJson()),
           ),
@@ -177,7 +288,7 @@ void main() {
       final transport = _ScriptedTransport([
         _Step(
           method: 'GET',
-          path: '/v1/agent-threads/focused',
+          path: '/v1/agent-threads/$_threadId',
           response: _jsonResponse(HttpStatus.ok, _threadJson()),
         ),
         _Step(
@@ -234,7 +345,7 @@ void main() {
       ]);
       final harness = _Harness(transport);
 
-      final snapshot = (await harness.client.getFocusedThread())!;
+      final snapshot = await harness.client.getThread(threadId: _threadId);
 
       expect(snapshot.messages, hasLength(1));
       expect(snapshot.textRecovery?.clientMessageId, clientMessageId);
@@ -263,7 +374,7 @@ void main() {
         final transport = _ScriptedTransport([
           _Step(
             method: 'GET',
-            path: '/v1/agent-threads/focused',
+            path: '/v1/agent-threads/$_threadId',
             response: _jsonResponse(HttpStatus.ok, _threadJson()),
           ),
           _Step(
@@ -304,7 +415,7 @@ void main() {
         ]);
         final harness = _Harness(transport, maxRunPollAttempts: 2);
 
-        final snapshot = (await harness.client.getFocusedThread())!;
+        final snapshot = await harness.client.getThread(threadId: _threadId);
 
         expect(snapshot.textRecovery, isNull);
         expect(snapshot.messages, hasLength(2));
@@ -375,7 +486,7 @@ void main() {
           method: 'GET',
           path: '/v1/agent-threads',
           response: _jsonResponse(HttpStatus.ok, {
-            'threads': [_threadJson(title: List.filled(26, '一').join())],
+            'threads': [_threadJson(title: List.filled(33, '一').join())],
           }),
         ),
       ]);
@@ -396,48 +507,40 @@ void main() {
   });
 
   group('WireAgentClient bounded Thread history', () {
-    test(
-      'encodes Thread keyset pagination and preserves focused metadata',
-      () async {
-        final transport = _ScriptedTransport([
-          _Step(
-            method: 'GET',
-            path: '/v1/agent-threads',
-            verify: (call) {
-              expect(call.queryParameters, {
-                'page_size': '20',
-                'cursor': 'older_threads',
-              });
-            },
-            response: _jsonResponse(HttpStatus.ok, {
-              'threads': [
-                _threadJson(),
-                _threadJson(id: _threadBId, updatedAt: _olderUpdatedAt),
-              ],
-              'focused_thread_id': _threadBId,
-              'next_cursor': 'oldest_threads',
-            }),
-          ),
-        ]);
-        final harness = _Harness(transport);
-
-        final page = await harness.client.listThreads(cursor: 'older_threads');
-
-        expect(page.threads.map((thread) => thread.id), [
-          _threadId,
-          _threadBId,
-        ]);
-        expect(page.focusedThreadId, _threadBId);
-        expect(page.nextCursor, 'oldest_threads');
-        transport.expectDone();
-      },
-    );
-
-    test('gets, selects, clears focus and pages one Thread messages', () async {
+    test('encodes Thread keyset pagination metadata', () async {
       final transport = _ScriptedTransport([
         _Step(
           method: 'GET',
-          path: '/v1/agent-threads/focused',
+          path: '/v1/agent-threads',
+          verify: (call) {
+            expect(call.queryParameters, {
+              'page_size': '20',
+              'cursor': 'older_threads',
+            });
+          },
+          response: _jsonResponse(HttpStatus.ok, {
+            'threads': [
+              _threadJson(),
+              _threadJson(id: _threadBId, updatedAt: _olderUpdatedAt),
+            ],
+            'next_cursor': 'oldest_threads',
+          }),
+        ),
+      ]);
+      final harness = _Harness(transport);
+
+      final page = await harness.client.listThreads(cursor: 'older_threads');
+
+      expect(page.threads.map((thread) => thread.id), [_threadId, _threadBId]);
+      expect(page.nextCursor, 'oldest_threads');
+      transport.expectDone();
+    });
+
+    test('gets explicit Threads and pages one Thread messages', () async {
+      final transport = _ScriptedTransport([
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-threads/$_threadId',
           response: _jsonResponse(HttpStatus.ok, _threadJson()),
         ),
         _Step(
@@ -446,11 +549,8 @@ void main() {
           response: _jsonResponse(HttpStatus.ok, {'messages': <Object?>[]}),
         ),
         _Step(
-          method: 'PUT',
-          path: '/v1/agent-threads/focused',
-          verify: (call) {
-            expect(jsonDecode(call.body!), {'thread_id': _threadBId});
-          },
+          method: 'GET',
+          path: '/v1/agent-threads/$_threadBId',
           response: _jsonResponse(HttpStatus.ok, _threadJson(id: _threadBId)),
         ),
         _Step(
@@ -482,48 +582,19 @@ void main() {
             ],
           }),
         ),
-        const _Step(
-          method: 'DELETE',
-          path: '/v1/agent-threads/focused',
-          response: IdentityHttpResponse(
-            statusCode: HttpStatus.noContent,
-            body: '',
-          ),
-        ),
       ]);
       final harness = _Harness(transport);
 
-      final restored = await harness.client.getFocusedThread();
-      final selected = await harness.client.setFocusedThread(
-        threadId: _threadBId,
-      );
+      final restored = await harness.client.getThread(threadId: _threadId);
+      final selected = await harness.client.getThread(threadId: _threadBId);
       final messages = await harness.client.listMessages(
         threadId: _threadId,
         cursor: 'older_messages',
       );
-      await harness.client.clearFocusedThread();
-
-      expect(restored?.threadId, _threadId);
+      expect(restored.threadId, _threadId);
       expect(selected.threadId, _threadBId);
       expect(selected.nextMessageCursor, 'older_b_messages');
       expect(messages.messages.single.sequence, 1);
-      transport.expectDone();
-    });
-
-    test('maps an empty focused selection from 204 only', () async {
-      final transport = _ScriptedTransport([
-        const _Step(
-          method: 'GET',
-          path: '/v1/agent-threads/focused',
-          response: IdentityHttpResponse(
-            statusCode: HttpStatus.noContent,
-            body: '',
-          ),
-        ),
-      ]);
-      final harness = _Harness(transport);
-
-      expect(await harness.client.getFocusedThread(), isNull);
       transport.expectDone();
     });
 
@@ -687,7 +758,7 @@ void main() {
           path: '/v1/agent-threads',
           response: _jsonResponse(HttpStatus.ok, {
             'threads': <Object?>[],
-            'focused_thread_id': null,
+            'next_cursor': null,
           }),
         ),
         _Step(
@@ -726,7 +797,7 @@ void main() {
             path: '/v1/agent-threads/$_threadId/runs',
             response: _jsonResponse(
               HttpStatus.created,
-              _runJson(status: 'completed'),
+              _runJson(status: 'completed', completionSource: 'domain'),
             ),
           ),
           _messagesStep(userContent: text, clientMessageId: 'message_unicode'),
@@ -817,12 +888,11 @@ void main() {
                   images: [
                     {
                       'image_asset_id': imageId,
-                      'thread_id': _threadId,
                       'content_type': 'image/png',
                       'size_bytes': 128,
                       'width': 32,
                       'height': 24,
-                      'status': 'attached',
+                      'status': 'ready',
                       'created_at': _createdAt,
                       'attached_at': _createdAt,
                     },
@@ -1006,6 +1076,80 @@ void main() {
       },
     );
 
+    test('rejects a retry identity returned by the initial endpoint', () async {
+      final transport = _ScriptedTransport([
+        _Step(
+          method: 'POST',
+          path: '/v1/agent-threads/$_threadId/runs',
+          response: _jsonResponse(
+            HttpStatus.created,
+            _runJson(
+              id: _retryRunId,
+              status: 'completed',
+              attempt: 2,
+              retryOfRunId: _runId,
+              clientRetryId: 'retry:$_runId',
+            ),
+          ),
+        ),
+      ]);
+      final harness = _Harness(transport);
+
+      await expectLater(
+        harness.client.sendText(
+          threadId: _threadId,
+          text: 'Keep the initial identity frozen.',
+          clientMessageId: 'message_initial_identity',
+        ),
+        throwsA(
+          isA<AgentClientException>().having(
+            (error) => error.kind,
+            'kind',
+            AgentClientFailureKind.invalidResponse,
+          ),
+        ),
+      );
+      transport.expectDone();
+    });
+
+    test('rejects immutable Run identity drift while polling', () async {
+      final transport = _ScriptedTransport([
+        _Step(
+          method: 'POST',
+          path: '/v1/agent-threads/$_threadId/runs',
+          response: _jsonResponse(
+            HttpStatus.accepted,
+            _runJson(status: 'pending'),
+          ),
+        ),
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-runs/$_runId',
+          response: _jsonResponse(
+            HttpStatus.ok,
+            _runJson(status: 'completed', requestedModel: 'qwen-max'),
+          ),
+        ),
+      ]);
+      final harness = _Harness(transport, maxRunPollAttempts: 2);
+
+      await expectLater(
+        harness.client.sendText(
+          threadId: _threadId,
+          text: 'Keep the polled identity frozen.',
+          clientMessageId: 'message_poll_identity',
+        ),
+        throwsA(
+          isA<AgentClientException>().having(
+            (error) => error.kind,
+            'kind',
+            AgentClientFailureKind.invalidResponse,
+          ),
+        ),
+      );
+      transport.expectDone();
+    });
+
     test(
       'uses the explicit retry endpoint after a retryable failed Run',
       () async {
@@ -1082,6 +1226,63 @@ void main() {
         transport.expectDone();
       },
     );
+
+    test('rejects a retry that skips the next attempt number', () async {
+      const text = 'Retry without skipping attempts.';
+      final transport = _ScriptedTransport([
+        _Step(
+          method: 'POST',
+          path: '/v1/agent-threads/$_threadId/runs',
+          response: _jsonResponse(
+            HttpStatus.created,
+            _runJson(
+              status: 'failed',
+              failureKind: 'internal_error',
+              failureRetryable: true,
+            ),
+          ),
+        ),
+        _Step(
+          method: 'POST',
+          path: '/v1/agent-runs/$_runId/retries',
+          response: _jsonResponse(
+            HttpStatus.created,
+            _runJson(
+              id: _retryRunId,
+              status: 'completed',
+              attempt: 3,
+              retryOfRunId: _runId,
+              clientRetryId: 'retry:$_runId',
+            ),
+          ),
+        ),
+      ]);
+      final harness = _Harness(transport);
+
+      await expectLater(
+        harness.client.sendText(
+          threadId: _threadId,
+          text: text,
+          clientMessageId: 'message_retry_attempt',
+        ),
+        throwsA(isA<AgentClientException>()),
+      );
+      await expectLater(
+        harness.client.sendText(
+          threadId: _threadId,
+          text: text,
+          clientMessageId: 'message_retry_attempt',
+        ),
+        throwsA(
+          isA<AgentClientException>().having(
+            (error) => error.kind,
+            'kind',
+            AgentClientFailureKind.invalidResponse,
+          ),
+        ),
+      );
+      transport.expectDone();
+    });
 
     test(
       'one retry recovers an ambiguous submit and creates a new attempt',
@@ -1285,6 +1486,7 @@ void main() {
             _runJson(
               id: _thirdRunId,
               status: 'completed',
+              attempt: 3,
               retryOfRunId: _retryRunId,
               clientRetryId: 'retry:$_retryRunId',
             ),
@@ -1357,6 +1559,59 @@ void main() {
                 AgentClientFailureKind.pollingTimedOut,
               )
               .having((error) => error.retryable, 'retryable', isTrue),
+        ),
+      );
+      transport.expectDone();
+    });
+  });
+
+  group('WireAgentClient message translation', () {
+    test('decodes one bounded Simplified Chinese translation', () async {
+      final transport = _ScriptedTransport([
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-messages/$_assistantMessageId/translation',
+          response: _jsonResponse(HttpStatus.ok, {
+            'message_id': _assistantMessageId,
+            'target_language': 'zh-CN',
+            'translation': '先说结果。',
+          }),
+        ),
+      ]);
+      final harness = _Harness(transport);
+
+      final translation = await harness.client.translateMessage(
+        messageId: _assistantMessageId,
+      );
+
+      expect(translation.messageId, _assistantMessageId);
+      expect(translation.targetLanguage, 'zh-CN');
+      expect(translation.content, '先说结果。');
+      transport.expectDone();
+    });
+
+    test('rejects a translation for a different message', () async {
+      final transport = _ScriptedTransport([
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-messages/$_assistantMessageId/translation',
+          response: _jsonResponse(HttpStatus.ok, {
+            'message_id': _userMessageId,
+            'target_language': 'zh-CN',
+            'translation': '先说结果。',
+          }),
+        ),
+      ]);
+      final harness = _Harness(transport);
+
+      await expectLater(
+        harness.client.translateMessage(messageId: _assistantMessageId),
+        throwsA(
+          isA<AgentClientException>().having(
+            (error) => error.kind,
+            'kind',
+            AgentClientFailureKind.invalidResponse,
+          ),
         ),
       );
       transport.expectDone();
@@ -1613,6 +1868,7 @@ final class _ScriptedTransport implements IdentityHttpTransport {
     required Uri uri,
     required Map<String, String> headers,
     String? body,
+    List<int>? bodyBytes,
   }) async {
     if (_steps.isEmpty) {
       throw StateError('Unexpected Agent HTTP request.');
@@ -1663,6 +1919,7 @@ final class _ControlledTransport implements IdentityHttpTransport {
     required Uri uri,
     required Map<String, String> headers,
     String? body,
+    List<int>? bodyBytes,
   }) {
     if (_responses.isEmpty) {
       throw StateError('No controlled Agent response was queued.');
@@ -1714,12 +1971,10 @@ Map<String, Object?> _threadJson({
   String createdAt = _createdAt,
   String updatedAt = _updatedAt,
   String? title,
-  String? activeGoalId,
 }) {
   return {
     'thread_id': id,
     'title': title,
-    'active_goal_id': ?activeGoalId,
     'created_at': createdAt,
     'updated_at': updatedAt,
   };
@@ -1732,7 +1987,7 @@ Map<String, Object?> _messageJson({
   required String content,
   String? clientMessageId,
   String? producedByRunId,
-  List<Object?>? handoffs,
+  List<Object?>? clientActions,
   String? modality,
   Map<String, Object?>? audio,
   List<Object?>? images,
@@ -1744,7 +1999,7 @@ Map<String, Object?> _messageJson({
     'role': role,
     'client_message_id': ?clientMessageId,
     'produced_by_run_id': ?producedByRunId,
-    'handoffs': ?handoffs,
+    'client_actions': ?clientActions,
     'modality': ?modality,
     'audio': ?audio,
     'images': ?images,
@@ -1756,21 +2011,25 @@ Map<String, Object?> _messageJson({
 Map<String, Object?> _runJson({
   String id = _runId,
   required String status,
+  int? attempt,
   String? failureKind,
   bool failureRetryable = false,
   String? retryOfRunId,
   String? clientRetryId,
+  String completionSource = 'model',
+  String requestedProvider = 'qianwen',
+  String requestedModel = 'qwen-flash',
 }) {
   return {
     'run_id': id,
     'thread_id': _threadId,
     'input_message_id': _userMessageId,
-    'attempt': retryOfRunId == null ? 1 : 2,
+    'attempt': attempt ?? (retryOfRunId == null ? 1 : 2),
     'retry_of_run_id': ?retryOfRunId,
     'client_retry_id': ?clientRetryId,
     'status': status,
-    'requested_provider': 'qianwen',
-    'requested_model': 'qwen-flash',
+    'requested_provider': requestedProvider,
+    'requested_model': requestedModel,
     'max_output_tokens': 512,
     if (status == 'running' || status == 'completed' || status == 'failed')
       'started_at': _startedAt,
@@ -1778,10 +2037,16 @@ Map<String, Object?> _runJson({
       'completed_at': _completedAt,
     if (status == 'completed') ...{
       'assistant_message_id': _assistantMessageId,
-      'provider_completion_id': 'completion_1',
-      'provider_model': 'qwen-flash',
-      'finish_reason': 'stop',
-      'usage': {'input_tokens': 8, 'output_tokens': 5, 'total_tokens': 13},
+      'completion_source': completionSource,
+      if (completionSource == 'model') ...{
+        'provider_completion_id': 'completion_1',
+        'provider_model': 'qwen-flash',
+        'finish_reason': 'stop',
+        'usage': {'input_tokens': 8, 'output_tokens': 5, 'total_tokens': 13},
+      } else ...{
+        'domain_tool_call_id': 'call-practice-preview-1',
+        'domain_tool_name': 'practice.preview.v1',
+      },
     },
     if (status == 'failed')
       'failure': {

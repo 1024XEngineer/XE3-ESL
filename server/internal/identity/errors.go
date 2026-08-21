@@ -15,5 +15,4 @@ var (
 	ErrPasswordUnavailable     = errors.New("identity: password hashing unavailable")
 	ErrProfileNotFound         = errors.New("identity: profile not found")
 	ErrProfileVersionConflict  = errors.New("identity: profile version conflict")
-	ErrIdempotencyKeyConflict  = errors.New("identity: idempotency key conflict")
 )

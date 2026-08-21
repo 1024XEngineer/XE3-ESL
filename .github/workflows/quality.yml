@@ -12,6 +12,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -27,7 +28,6 @@ jobs:
       flutter: ${{ steps.scope.outputs.flutter }}
       go: ${{ steps.scope.outputs.go }}
       api: ${{ steps.scope.outputs.api }}
-      smoke: ${{ steps.scope.outputs.smoke }}
     steps:
       - name: Check out repository history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -49,13 +49,11 @@ jobs:
           flutter=false
           go=false
           api=false
-          smoke=false
 
           set_all_checks() {
             flutter=true
             go=true
             api=true
-            smoke=true
           }
 
           if [[ "$EVENT_NAME" != "pull_request" || "$BASE_REF" == "main" ]]; then
@@ -73,7 +71,7 @@ jobs:
             while IFS= read -r -d '' file; do
               printf 'Changed file: %q\n' "$file"
               case "$file" in
-                Makefile|.github/workflows/quality.yml)
+                Makefile|.github/workflows/quality.yml|.github/workflows/coverage-comment.yml)
                   set_all_checks
                   ;;
                 mobile/*)
@@ -81,11 +79,9 @@ jobs:
                   ;;
                 server/*)
                   go=true
-                  smoke=true
                   ;;
                 api/*)
                   api=true
-                  smoke=true
                   ;;
               esac
             done < "$changed_files"
@@ -95,7 +91,6 @@ jobs:
             echo "flutter=$flutter"
             echo "go=$go"
             echo "api=$api"
-            echo "smoke=$smoke"
           } >> "$GITHUB_OUTPUT"
 
   flutter:
@@ -124,8 +119,16 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pub-flutter-3.44.6-
 
-      - name: Check Flutter
-        run: make check-flutter
+      - name: Check Flutter and collect coverage
+        run: make check-flutter-coverage
+
+      - name: Upload Flutter coverage
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: flutter-coverage-mobile
+          path: mobile/coverage/lcov.info
+          if-no-files-found: error
+          retention-days: 14
 
   go:
     name: Go
@@ -142,12 +145,22 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26.5"
+          go-version: "1.26.6"
           cache: true
           cache-dependency-path: server/go.sum
 
-      - name: Check Go
-        run: make check-go
+      - name: Check Go and collect coverage
+        run: make check-go-coverage
+
+      - name: Upload Go coverage
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: go-coverage-server
+          path: |
+            server/coverage.out
+            server/coverage.txt
+          if-no-files-found: error
+          retention-days: 14
 
   api:
     name: API contracts
@@ -171,27 +184,306 @@ jobs:
       - name: Check API contracts
         run: make check-api
 
-  smoke:
-    name: Deterministic smoke
-    needs: changes
-    if: needs.changes.outputs.smoke == 'true'
+  coverage-gate:
+    name: Coverage gate
+    needs:
+      - changes
+      - go
+    if: >-
+      github.event_name == 'pull_request' &&
+      needs.changes.outputs.go == 'true' &&
+      needs.go.result == 'success'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Download current Go coverage
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          persist-credentials: false
+          name: go-coverage-server
+          path: coverage/current
 
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - name: Resolve baseline run
+        id: baseline
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
-          go-version: "1.26.5"
-          cache: true
-          cache-dependency-path: server/go.sum
+          script: |
+            const baseBranch = context.payload.pull_request.base.ref;
+            const workflows = await github.paginate(
+              github.rest.actions.listRepoWorkflows,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                per_page: 100,
+              },
+            );
+            const qualityWorkflow = workflows.find(
+              (workflow) => workflow.name === "Quality",
+            );
+            if (!qualityWorkflow) {
+              core.warning("Unable to find the Quality workflow; coverage gate skipped");
+              core.setOutput("available", "false");
+              return;
+            }
 
-      - name: Check deterministic Mock main flow
-        run: make check-smoke
+            const runs = await github.paginate(
+              github.rest.actions.listWorkflowRuns,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: qualityWorkflow.id,
+                branch: baseBranch,
+                event: "push",
+                status: "completed",
+                per_page: 100,
+              },
+            );
+
+            let baseline = null;
+            for (const run of runs.filter(
+              (candidate) => candidate.conclusion === "success",
+            )) {
+              const artifacts = await github.paginate(
+                github.rest.actions.listWorkflowRunArtifacts,
+                {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  run_id: run.id,
+                  per_page: 100,
+                },
+              );
+              if (artifacts.some(
+                (artifact) => artifact.name === "go-coverage-server",
+              )) {
+                baseline = run;
+                break;
+              }
+            }
+
+            if (!baseline) {
+              core.warning(
+                "No successful Quality run has a Go coverage artifact; coverage gate skipped",
+              );
+              core.setOutput("available", "false");
+              return;
+            }
+
+            core.setOutput("run_id", String(baseline.id));
+            core.setOutput("available", "true");
+
+      - name: Explain missing coverage baseline
+        if: steps.baseline.outputs.available != 'true'
+        run: >-
+          echo "Coverage gate skipped because the base branch has no Go
+          coverage artifact baseline yet."
+
+      - name: Download baseline Go coverage
+        if: steps.baseline.outputs.available == 'true'
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: go-coverage-server
+          path: coverage/baseline
+          run-id: ${{ steps.baseline.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Reject total Go coverage regression
+        if: steps.baseline.outputs.available == 'true'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const fs = require("fs");
+            const path = require("path");
+
+            function readCoverage(profilePath) {
+              let totalStatements = 0;
+              let coveredStatements = 0;
+              const content = fs.readFileSync(profilePath, "utf8");
+
+              for (const line of content.split(/\r?\n/)) {
+                if (!line || line.startsWith("mode:")) continue;
+
+                const match = line.match(
+                  /^(.*):\d+\.\d+,\d+\.\d+\s+(\d+)\s+(\d+)$/,
+                );
+                if (!match) continue;
+
+                const statements = Number(match[2]);
+                const hits = Number(match[3]);
+                totalStatements += statements;
+                coveredStatements += hits > 0 ? statements : 0;
+              }
+
+              return totalStatements === 0
+                ? 0
+                : (coveredStatements / totalStatements) * 100;
+            }
+
+            const current = readCoverage(
+              path.join("coverage", "current", "coverage.out"),
+            );
+            const baseline = readCoverage(
+              path.join("coverage", "baseline", "coverage.out"),
+            );
+            const currentRounded = Number(current.toFixed(1));
+            const baselineRounded = Number(baseline.toFixed(1));
+
+            core.info(
+              `Current: ${current.toFixed(1)}%; baseline: ${baseline.toFixed(1)}%`,
+            );
+            if (currentRounded < baselineRounded) {
+              core.setFailed(
+                `Total Go coverage ${current.toFixed(1)}% is below baseline ` +
+                  `${baseline.toFixed(1)}%`,
+              );
+            }
+
+  flutter-coverage-gate:
+    name: Flutter coverage gate
+    needs:
+      - changes
+      - flutter
+    if: >-
+      github.event_name == 'pull_request' &&
+      needs.changes.outputs.flutter == 'true' &&
+      needs.flutter.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Download current Flutter coverage
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: flutter-coverage-mobile
+          path: coverage/current
+
+      - name: Resolve baseline run
+        id: baseline
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const baseBranch = context.payload.pull_request.base.ref;
+            const workflows = await github.paginate(
+              github.rest.actions.listRepoWorkflows,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                per_page: 100,
+              },
+            );
+            const qualityWorkflow = workflows.find(
+              (workflow) => workflow.name === "Quality",
+            );
+            if (!qualityWorkflow) {
+              core.warning("Unable to find the Quality workflow; Flutter coverage gate skipped");
+              core.setOutput("available", "false");
+              return;
+            }
+
+            const runs = await github.paginate(
+              github.rest.actions.listWorkflowRuns,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: qualityWorkflow.id,
+                branch: baseBranch,
+                event: "push",
+                status: "completed",
+                per_page: 100,
+              },
+            );
+
+            let baseline = null;
+            for (const run of runs.filter(
+              (candidate) => candidate.conclusion === "success",
+            )) {
+              const artifacts = await github.paginate(
+                github.rest.actions.listWorkflowRunArtifacts,
+                {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  run_id: run.id,
+                  per_page: 100,
+                },
+              );
+              if (artifacts.some(
+                (artifact) => artifact.name === "flutter-coverage-mobile",
+              )) {
+                baseline = run;
+                break;
+              }
+            }
+
+            if (!baseline) {
+              core.warning(
+                "No successful Quality run has a Flutter coverage artifact; coverage gate skipped",
+              );
+              core.setOutput("available", "false");
+              return;
+            }
+
+            core.setOutput("run_id", String(baseline.id));
+            core.setOutput("available", "true");
+
+      - name: Explain missing Flutter coverage baseline
+        if: steps.baseline.outputs.available != 'true'
+        run: >-
+          echo "Flutter coverage gate skipped because the base branch has no
+          Flutter coverage artifact baseline yet."
+
+      - name: Download baseline Flutter coverage
+        if: steps.baseline.outputs.available == 'true'
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: flutter-coverage-mobile
+          path: coverage/baseline
+          run-id: ${{ steps.baseline.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Reject total Flutter coverage regression
+        if: steps.baseline.outputs.available == 'true'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const fs = require("fs");
+            const path = require("path");
+
+            function readCoverage(reportPath) {
+              let totalLines = 0;
+              let coveredLines = 0;
+              const content = fs.readFileSync(reportPath, "utf8");
+
+              for (const line of content.split(/\r?\n/)) {
+                if (!line.startsWith("DA:")) continue;
+
+                const fields = line.slice(3).split(",");
+                const hits = Number(fields[1]);
+                if (!Number.isFinite(hits)) continue;
+
+                totalLines += 1;
+                coveredLines += hits > 0 ? 1 : 0;
+              }
+
+              return totalLines === 0
+                ? 0
+                : (coveredLines / totalLines) * 100;
+            }
+
+            const current = readCoverage(
+              path.join("coverage", "current", "lcov.info"),
+            );
+            const baseline = readCoverage(
+              path.join("coverage", "baseline", "lcov.info"),
+            );
+            const currentRounded = Number(current.toFixed(1));
+            const baselineRounded = Number(baseline.toFixed(1));
+
+            core.info(
+              `Current: ${current.toFixed(1)}%; baseline: ${baseline.toFixed(1)}%`,
+            );
+            if (currentRounded < baselineRounded) {
+              core.setFailed(
+                `Total Flutter coverage ${current.toFixed(1)}% is below baseline ` +
+                  `${baseline.toFixed(1)}%`,
+              );
+            }
 
   quality-gate:
     name: Quality gate
@@ -200,7 +492,8 @@ jobs:
       - flutter
       - go
       - api
-      - smoke
+      - coverage-gate
+      - flutter-coverage-gate
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -212,8 +505,8 @@ jobs:
       GO_RESULT: ${{ needs.go.result }}
       API_REQUIRED: ${{ needs.changes.outputs.api }}
       API_RESULT: ${{ needs.api.result }}
-      SMOKE_REQUIRED: ${{ needs.changes.outputs.smoke }}
-      SMOKE_RESULT: ${{ needs.smoke.result }}
+      GO_COVERAGE_RESULT: ${{ needs.coverage-gate.result }}
+      FLUTTER_COVERAGE_RESULT: ${{ needs.flutter-coverage-gate.result }}
     steps:
       - name: Require every selected check to pass
         shell: bash
@@ -257,4 +550,22 @@ jobs:
           require_result "Flutter" "$FLUTTER_REQUIRED" "$FLUTTER_RESULT"
           require_result "Go" "$GO_REQUIRED" "$GO_RESULT"
           require_result "API contracts" "$API_REQUIRED" "$API_RESULT"
-          require_result "Deterministic smoke" "$SMOKE_REQUIRED" "$SMOKE_RESULT"
+
+          require_coverage_result() {
+            local name=$1
+            local result=$2
+
+            case "$result" in
+              success|skipped)
+                ;;
+              *)
+                echo "$name finished with unexpected result: $result"
+                return 1
+                ;;
+            esac
+          }
+
+          require_coverage_result "Go coverage gate" "$GO_COVERAGE_RESULT"
+          require_coverage_result \
+            "Flutter coverage gate" \
+            "$FLUTTER_COVERAGE_RESULT"

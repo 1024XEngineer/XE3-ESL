@@ -1,0 +1,1 @@
+17 3,15 * * * root /usr/bin/flock -n /run/lock/xe3-speakup-certbot.lock /usr/local/sbin/xe3-renew-cert >> /var/log/xe3-speakup-certbot.log 2>&1

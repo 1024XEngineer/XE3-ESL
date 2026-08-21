@@ -36,7 +36,7 @@ type Turn struct {
 	EvidenceVersion         int64     `json:"-"`
 	ConfirmedAt             time.Time `json:"-"`
 	Kind                    TurnKind  `json:"turn_kind"`
-	RetryRequestID          string    `json:"retry_request_id,omitempty"`
+	ClientRequestID         string    `json:"-"`
 	OriginalTurnID          string    `json:"original_turn_id,omitempty"`
 	CountsTowardTurnLimit   bool      `json:"counts_toward_turn_limit"`
 	EffectiveTurns          int       `json:"effective_turns"`

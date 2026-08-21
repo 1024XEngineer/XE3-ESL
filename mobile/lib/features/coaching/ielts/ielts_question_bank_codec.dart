@@ -13,87 +13,104 @@ IeltsQuestionBank decodeIeltsQuestionBank(Object? value) {
       'schema_version',
       'bank_id',
       'season',
+      'season_label',
+      'season_start',
+      'season_end',
       'source_cutoff',
-      'part1_sets',
+      'filters',
       'part1_topics',
       'topic_groups',
     },
   );
+  final seasonStart = DateTime.tryParse(_string(root['season_start']));
+  final seasonEnd = DateTime.tryParse(_string(root['season_end']));
   final sourceCutoff = DateTime.tryParse(_string(root['source_cutoff']));
-  final rawPart1Sets = root['part1_sets'];
-  final rawPart1Topics = root['part1_topics'];
-  final rawTopicGroups = root['topic_groups'];
-  if (root['schema_version'] != 2 ||
+  final rawTopics = root['part1_topics'];
+  final rawGroups = root['topic_groups'];
+  if (root['schema_version'] != 4 ||
+      seasonStart == null ||
+      seasonEnd == null ||
       sourceCutoff == null ||
-      rawPart1Sets is! List<Object?> ||
-      rawPart1Sets.length != 38 ||
-      rawPart1Topics is! List<Object?> ||
-      rawPart1Topics.length != 38 ||
-      rawTopicGroups is! List<Object?> ||
-      rawTopicGroups.length != 56) {
+      rawTopics is! List<Object?> ||
+      rawTopics.isEmpty ||
+      rawGroups is! List<Object?> ||
+      rawGroups.isEmpty) {
     throw const IeltsQuestionBankWireFormatException();
   }
-  final part1Ids = <String>{};
-  final part1Sets = rawPart1Sets
-      .map((raw) {
-        final set = _part1Set(raw);
-        if (!part1Ids.add(set.id)) {
-          throw const IeltsQuestionBankWireFormatException();
-        }
-        return set;
-      })
-      .toList(growable: false);
-  final part1TopicIds = <String>{};
-  final part1Topics = rawPart1Topics
-      .map((raw) {
-        final topic = _part1PracticeTopic(raw);
-        if (!part1TopicIds.add(topic.id)) {
-          throw const IeltsQuestionBankWireFormatException();
-        }
-        return topic;
-      })
-      .toList(growable: false);
+  final topicIds = <String>{};
+  final topics = rawTopics.map(_part1Topic).toList(growable: false);
   final groupIds = <String>{};
-  final topicGroups = rawTopicGroups
-      .map((raw) {
-        final group = _topicGroup(raw);
-        if (!groupIds.add(group.id)) {
-          throw const IeltsQuestionBankWireFormatException();
-        }
-        return group;
-      })
-      .toList(growable: false);
+  final groups = rawGroups.map(_topicGroup).toList(growable: false);
+  if (topics.any((topic) => !topicIds.add(topic.id)) ||
+      groups.any((group) => !groupIds.add(group.id))) {
+    throw const IeltsQuestionBankWireFormatException();
+  }
   return IeltsQuestionBank(
     bankId: _resourceId(root['bank_id']),
-    season: _string(root['season']),
+    season: _resourceId(root['season']),
+    seasonLabel: _string(root['season_label']),
+    seasonStart: seasonStart,
+    seasonEnd: seasonEnd,
     sourceCutoff: sourceCutoff.toUtc(),
-    part1Sets: List.unmodifiable(part1Sets),
-    part1Topics: List.unmodifiable(part1Topics),
-    topicGroups: List.unmodifiable(topicGroups),
+    filters: _filters(root['filters']),
+    part1Topics: List.unmodifiable(topics),
+    topicGroups: List.unmodifiable(groups),
   );
 }
 
-IeltsPart1PracticeTopic _part1PracticeTopic(Object? value) {
+IeltsCatalogFilters _filters(Object? value) {
+  final object = _object(
+    value,
+    required: const {'releases', 'parts', 'topic_tags', 'cue_card_types'},
+  );
+  return IeltsCatalogFilters(
+    releases: _options(object['releases']),
+    parts: _options(object['parts']),
+    topicTags: _options(object['topic_tags']),
+    cueCardTypes: _options(object['cue_card_types']),
+  );
+}
+
+List<IeltsFilterOption> _options(Object? value) {
+  if (value is! List<Object?>) {
+    throw const IeltsQuestionBankWireFormatException();
+  }
+  final codes = <String>{};
+  return List.unmodifiable(
+    value.map((item) {
+      final object = _object(item, required: const {'code', 'label'});
+      final option = IeltsFilterOption(
+        code: _resourceId(object['code']),
+        label: _string(object['label']),
+      );
+      if (!codes.add(option.code)) {
+        throw const IeltsQuestionBankWireFormatException();
+      }
+      return option;
+    }),
+  );
+}
+
+IeltsPart1PracticeTopic _part1Topic(Object? value) {
   final object = _object(
     value,
     required: const {
       'id',
       'title_zh',
       'title_en',
-      'release',
-      'category',
+      'release_status',
+      'cue_card_type',
+      'tag_codes',
       'questions',
-      'published',
     },
   );
-  final release = _string(object['release'], maximumBytes: 32);
-  final category = IeltsTopicCategory.fromWireName(
-    _string(object['category'], maximumBytes: 16),
-  );
+  final release = _string(object['release_status'], maximumBytes: 32);
+  final cueCardType = _string(object['cue_card_type'], maximumBytes: 16);
+  final tags = _stringList(object['tag_codes']);
   final questions = _stringList(object['questions'], maximumItemBytes: 1024);
   if (!const {'new', 'carry_over', 'evergreen'}.contains(release) ||
-      category == null ||
-      object['published'] != true ||
+      !const {'person', 'place', 'thing', 'experience'}.contains(cueCardType) ||
+      tags.isEmpty ||
       questions.length < 2) {
     throw const IeltsQuestionBankWireFormatException();
   }
@@ -101,53 +118,9 @@ IeltsPart1PracticeTopic _part1PracticeTopic(Object? value) {
     id: _resourceId(object['id']),
     titleZh: _string(object['title_zh']),
     titleEn: _string(object['title_en']),
-    release: release,
-    category: category,
-    questions: questions,
-  );
-}
-
-IeltsPart1Set _part1Set(Object? value) {
-  final object = _object(
-    value,
-    required: const {'id', 'title', 'topics', 'question_count', 'published'},
-  );
-  final rawTopics = object['topics'];
-  if (rawTopics is! List<Object?> ||
-      rawTopics.length != 3 ||
-      object['question_count'] != 8 ||
-      object['published'] != true) {
-    throw const IeltsQuestionBankWireFormatException();
-  }
-  final topics = rawTopics.map(_part1Topic).toList(growable: false);
-  if (topics.fold<int>(0, (total, topic) => total + topic.questions.length) !=
-      8) {
-    throw const IeltsQuestionBankWireFormatException();
-  }
-  return IeltsPart1Set(
-    id: _resourceId(object['id']),
-    title: _string(object['title']),
-    topics: List.unmodifiable(topics),
-    questionCount: 8,
-  );
-}
-
-IeltsPart1Topic _part1Topic(Object? value) {
-  final object = _object(
-    value,
-    required: const {'title', 'release', 'questions'},
-  );
-  final release = _string(object['release'], maximumBytes: 32);
-  if (!const {'new', 'carry_over', 'evergreen'}.contains(release)) {
-    throw const IeltsQuestionBankWireFormatException();
-  }
-  final questions = _stringList(object['questions'], maximumItemBytes: 1024);
-  if (questions.length < 2) {
-    throw const IeltsQuestionBankWireFormatException();
-  }
-  return IeltsPart1Topic(
-    title: _string(object['title']),
-    release: release,
+    releaseStatus: release,
+    cueCardType: cueCardType,
+    tagCodes: tags,
     questions: questions,
   );
 }
@@ -158,49 +131,38 @@ IeltsTopicGroup _topicGroup(Object? value) {
     required: const {
       'id',
       'title_zh',
-      'release',
-      'region',
-      'category',
+      'release_status',
+      'cue_card_type',
+      'tag_codes',
       'part2',
       'part3_questions',
-      'published',
-      'supplemented_question_count',
     },
   );
-  final release = _string(object['release'], maximumBytes: 32);
-  final category = IeltsTopicCategory.fromWireName(
-    _string(object['category'], maximumBytes: 16),
-  );
-  final supplemented = object['supplemented_question_count'];
-  if (!const {'new', 'carry_over'}.contains(release) ||
-      object['region'] != 'mainland' ||
-      category == null ||
-      object['published'] != true ||
-      supplemented is! int ||
-      supplemented < 0 ||
-      supplemented > 5) {
-    throw const IeltsQuestionBankWireFormatException();
-  }
-  final cueObject = _object(
-    object['part2'],
-    required: const {'prompt', 'points'},
-  );
-  final points = _stringList(cueObject['points'], maximumItemBytes: 1024);
+  final release = _string(object['release_status'], maximumBytes: 32);
+  final cueCardType = _string(object['cue_card_type'], maximumBytes: 16);
+  final tags = _stringList(object['tag_codes']);
+  final cue = _object(object['part2'], required: const {'prompt', 'points'});
+  final points = _stringList(cue['points'], maximumItemBytes: 1024);
   final questions = _stringList(
     object['part3_questions'],
     maximumItemBytes: 1024,
   );
-  if (points.length < 3 || questions.isEmpty || questions.length > 6) {
+  if (!const {'new', 'carry_over', 'evergreen'}.contains(release) ||
+      !const {'person', 'place', 'thing', 'experience'}.contains(cueCardType) ||
+      tags.isEmpty ||
+      points.length < 3 ||
+      questions.isEmpty ||
+      questions.length > 6) {
     throw const IeltsQuestionBankWireFormatException();
   }
   return IeltsTopicGroup(
     id: _resourceId(object['id']),
     title: _string(object['title_zh']),
-    release: release,
-    category: category,
-    cueCard: IeltsCueCard(prompt: _string(cueObject['prompt']), points: points),
+    releaseStatus: release,
+    cueCardType: cueCardType,
+    tagCodes: tags,
+    cueCard: IeltsCueCard(prompt: _string(cue['prompt']), points: points),
     part3Questions: questions,
-    supplementedQuestionCount: supplemented,
   );
 }
 
@@ -230,13 +192,12 @@ List<String> _stringList(Object? value, {int maximumItemBytes = 128}) {
     throw const IeltsQuestionBankWireFormatException();
   }
   final seen = <String>{};
-  final result = <String>[];
-  for (final item in value) {
-    final text = _string(item, maximumBytes: maximumItemBytes);
-    if (!seen.add(text)) {
-      throw const IeltsQuestionBankWireFormatException();
-    }
-    result.add(text);
-  }
+  final result = value
+      .map((item) {
+        final text = _string(item, maximumBytes: maximumItemBytes);
+        if (!seen.add(text)) throw const IeltsQuestionBankWireFormatException();
+        return text;
+      })
+      .toList(growable: false);
   return List.unmodifiable(result);
 }

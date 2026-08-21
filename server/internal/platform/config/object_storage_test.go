@@ -7,6 +7,7 @@ import (
 )
 
 func TestLoadObjectStorageUsesSafeDefaultsWhenDisabled(t *testing.T) {
+	t.Setenv("OBJECT_STORAGE_PROVIDER", "")
 	t.Setenv("OSS_ENABLED", "")
 	t.Setenv("OSS_REGION", "")
 	t.Setenv("OSS_ENDPOINT", "")
@@ -23,6 +24,7 @@ func TestLoadObjectStorageUsesSafeDefaultsWhenDisabled(t *testing.T) {
 		t.Fatalf("LoadObjectStorage() error = %v", err)
 	}
 	if config.Enabled ||
+		config.Provider != ObjectStorageProviderAliyunOSS ||
 		config.AudioPrefix != "audio/v1" ||
 		config.ImagePrefix != "image/v1" ||
 		config.ResumePrefix != "resume/v1" ||
@@ -34,6 +36,7 @@ func TestLoadObjectStorageUsesSafeDefaultsWhenDisabled(t *testing.T) {
 }
 
 func TestLoadObjectStorageReadsEnabledConfigurationWithoutSecrets(t *testing.T) {
+	t.Setenv("OBJECT_STORAGE_PROVIDER", ObjectStorageProviderAliyunOSS)
 	t.Setenv("OSS_ENABLED", "1")
 	t.Setenv("OSS_REGION", "cn-shanghai")
 	t.Setenv("OSS_ENDPOINT", "https://oss-cn-shanghai.aliyuncs.com")
@@ -52,6 +55,7 @@ func TestLoadObjectStorageReadsEnabledConfigurationWithoutSecrets(t *testing.T) 
 		t.Fatalf("LoadObjectStorage() error = %v", err)
 	}
 	if !config.Enabled ||
+		config.Provider != ObjectStorageProviderAliyunOSS ||
 		config.Region != "cn-shanghai" ||
 		config.Endpoint != "https://oss-cn-shanghai.aliyuncs.com" ||
 		config.Bucket != "example-private-audio-bucket" ||
@@ -61,6 +65,86 @@ func TestLoadObjectStorageReadsEnabledConfigurationWithoutSecrets(t *testing.T) 
 		config.SignedURLTTL != 90*time.Second ||
 		config.CredentialsProvider != ObjectStorageCredentialsEnvironment {
 		t.Fatalf("unexpected enabled config: %#v", config)
+	}
+}
+
+func TestLoadObjectStorageReadsQiniuKodoConfigurationWithoutSecrets(t *testing.T) {
+	t.Setenv("OSS_ENABLED", "1")
+	t.Setenv("OBJECT_STORAGE_PROVIDER", ObjectStorageProviderQiniuKodo)
+	t.Setenv("QINIU_KODO_S3_REGION", "cn-east-1")
+	t.Setenv("QINIU_KODO_S3_ENDPOINT", "https://s3.cn-east-1.qiniucs.com")
+	t.Setenv("QINIU_KODO_S3_BUCKET", "speakup-private")
+	t.Setenv("QINIU_KODO_SERVER_SIDE_ENCRYPTION", "true")
+	t.Setenv("QINIU_ACCESS_KEY", "must-not-be-copied")
+	t.Setenv("QINIU_SECRET_KEY", "must-not-be-copied")
+
+	configuration, err := LoadObjectStorage()
+	if err != nil {
+		t.Fatalf("LoadObjectStorage() error = %v", err)
+	}
+	if !configuration.Enabled ||
+		configuration.Provider != ObjectStorageProviderQiniuKodo ||
+		configuration.Bucket != "speakup-private" ||
+		configuration.Region != "cn-east-1" ||
+		configuration.Endpoint != "https://s3.cn-east-1.qiniucs.com" ||
+		!configuration.ServerSideEncryption ||
+		configuration.AudioPrefix != "audio/v1" ||
+		configuration.ImagePrefix != "image/v1" ||
+		configuration.ResumePrefix != "resume/v1" {
+		t.Fatalf("unexpected Qiniu config: %#v", configuration)
+	}
+}
+
+func TestLoadObjectStorageRejectsUnsafeQiniuKodoConfiguration(t *testing.T) {
+	testCases := []struct {
+		name       string
+		region     string
+		endpoint   string
+		bucket     string
+		encryption string
+		expected   error
+	}{
+		{
+			name: "missing bucket", region: "cn-east-1",
+			endpoint:   "https://s3.cn-east-1.qiniucs.com",
+			encryption: "1", expected: ErrObjectStorageQiniuBucket,
+		},
+		{
+			name: "invalid region", region: "z0", bucket: "speakup-private",
+			endpoint: "https://s3.cn-east-1.qiniucs.com", encryption: "1",
+			expected: ErrObjectStorageQiniuS3Region,
+		},
+		{
+			name: "insecure endpoint", region: "cn-east-1", bucket: "speakup-private",
+			endpoint: "http://s3.cn-east-1.qiniucs.com", encryption: "1",
+			expected: ErrObjectStorageQiniuS3Endpoint,
+		},
+		{
+			name: "endpoint region mismatch", region: "cn-east-1", bucket: "speakup-private",
+			endpoint: "https://s3.cn-south-1.qiniucs.com", encryption: "1",
+			expected: ErrObjectStorageQiniuS3Endpoint,
+		},
+		{
+			name: "encryption not attested", bucket: "speakup-private",
+			region: "cn-east-1", endpoint: "https://s3.cn-east-1.qiniucs.com", encryption: "0",
+			expected: ErrObjectStorageEncryption,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Setenv("OSS_ENABLED", "1")
+			t.Setenv("OBJECT_STORAGE_PROVIDER", ObjectStorageProviderQiniuKodo)
+			t.Setenv("QINIU_KODO_S3_REGION", testCase.region)
+			t.Setenv("QINIU_KODO_S3_ENDPOINT", testCase.endpoint)
+			t.Setenv("QINIU_KODO_S3_BUCKET", testCase.bucket)
+			t.Setenv("QINIU_KODO_SERVER_SIDE_ENCRYPTION", testCase.encryption)
+
+			_, err := LoadObjectStorage()
+			if !errors.Is(err, testCase.expected) {
+				t.Fatalf("LoadObjectStorage() error = %v, want %v", err, testCase.expected)
+			}
+		})
 	}
 }
 
@@ -89,6 +173,12 @@ func TestLoadObjectStorageRejectsUnsafeValues(t *testing.T) {
 		value    string
 		expected error
 	}{
+		{
+			name:     "storage provider",
+			key:      "OBJECT_STORAGE_PROVIDER",
+			value:    "automatic",
+			expected: ErrObjectStorageProvider,
+		},
 		{
 			name:     "enabled",
 			key:      "OSS_ENABLED",

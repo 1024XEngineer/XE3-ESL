@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
@@ -50,10 +49,6 @@ func (a *SessionApplication) CreateSession(
 		return SessionBootstrap{}, false,
 			ErrInvalidArgument
 	}
-	if !request.UserConfirmed {
-		return SessionBootstrap{}, false,
-			ErrConfirmationRequired
-	}
 	intent, err := newContextIntent(
 		"POST",
 		"/v1/practice-plans/"+planID+"/practice-sessions",
@@ -63,28 +58,16 @@ func (a *SessionApplication) CreateSession(
 	if err != nil {
 		return SessionBootstrap{}, false, err
 	}
-	replayed, found, err := a.repository.ReplaySession(
-		ctx,
-		contextActor(actor),
-		intent,
-	)
-	if err != nil {
-		return SessionBootstrap{}, false, err
-	}
-	if found {
-		return replayed, true, nil
-	}
-
 	plan, err := a.plans.ReadExecutablePlan(
 		ctx,
 		actor,
 		planID,
-		request.ExpectedPlanRevision,
+		request.ExpectedPlanVersion,
 	)
 	if err != nil {
 		return SessionBootstrap{}, false, err
 	}
-	if !validExecutablePlan(plan, actor, planID, request.ExpectedPlanRevision) {
+	if !validExecutablePlan(plan, actor, planID, request.ExpectedPlanVersion) {
 		return SessionBootstrap{}, false,
 			ErrConflict
 	}
@@ -99,7 +82,7 @@ func (a *SessionApplication) CreateSession(
 	if err != nil {
 		return SessionBootstrap{}, false, ErrConflict
 	}
-	sessionID, snapshotID, participants, err := a.newSessionIdentities(
+	sessionID, participants, err := a.newSessionIdentities(
 		actor,
 		roles,
 	)
@@ -107,9 +90,8 @@ func (a *SessionApplication) CreateSession(
 		return SessionBootstrap{}, false, err
 	}
 	snapshot := SessionSnapshot{
-		ID:             snapshotID,
 		SessionID:      sessionID,
-		PlanRevision:   plan.Revision,
+		PlanVersion:    plan.Version,
 		Experience:     selection.Scene.Experience,
 		Category:       selection.Scene.Category,
 		PracticeMode:   option.Mode,
@@ -127,12 +109,12 @@ func (a *SessionApplication) CreateSession(
 		ctx,
 		contextActor(actor),
 		CreateSessionCommand{
-			SessionID:    sessionID,
-			SnapshotID:   snapshotID,
-			PlanID:       plan.ID,
-			PlanRevision: plan.Revision,
-			Snapshot:     snapshot,
-			Intent:       intent,
+			SessionID:          sessionID,
+			PlanID:             plan.ID,
+			PlanVersion:        plan.Version,
+			Snapshot:           snapshot,
+			ClientRequestID:    intent.Key,
+			RequestFingerprint: intent.PayloadFingerprint,
 		},
 	)
 }
@@ -160,21 +142,6 @@ func (a *SessionApplication) GetSessionSnapshot(
 		ctx,
 		contextActor(actor),
 		sessionID,
-	)
-}
-
-func (a *SessionApplication) ResolveSessionByPlan(
-	ctx context.Context,
-	actor requestcontext.Actor,
-	planID string,
-) (SessionBootstrap, error) {
-	if ctx == nil || !actor.Valid() || !validContextResourceID(planID) {
-		return SessionBootstrap{}, ErrNotFound
-	}
-	return a.repository.ResolveSessionByPlan(
-		ctx,
-		contextActor(actor),
-		planID,
 	)
 }
 
@@ -211,7 +178,8 @@ func (a *SessionApplication) TransitionSession(
 			SessionID:              sessionID,
 			ExpectedSessionVersion: expectedVersion,
 			Transition:             transition,
-			Intent:                 intent,
+			ClientRequestID:        intent.Key,
+			RequestFingerprint:     intent.PayloadFingerprint,
 		},
 	)
 }
@@ -219,20 +187,16 @@ func (a *SessionApplication) TransitionSession(
 func (a *SessionApplication) newSessionIdentities(
 	actor requestcontext.Actor,
 	roles []RoleDefinition,
-) (string, string, []Participant, error) {
+) (string, []Participant, error) {
 	sessionID, err := a.ids.NewID()
 	if err != nil || !validContextResourceID(sessionID) {
-		return "", "", nil, ErrConflict
-	}
-	snapshotID, err := a.ids.NewID()
-	if err != nil || !validContextResourceID(snapshotID) {
-		return "", "", nil, ErrConflict
+		return "", nil, ErrConflict
 	}
 	participants := make([]Participant, 0, len(roles)+1)
 	for _, role := range roles {
 		participantID, err := a.ids.NewID()
 		if err != nil || !validContextResourceID(participantID) {
-			return "", "", nil, ErrConflict
+			return "", nil, ErrConflict
 		}
 		roleCopy := cloneRoleDefinition(role)
 		participants = append(participants, Participant{
@@ -250,7 +214,7 @@ func (a *SessionApplication) newSessionIdentities(
 	}
 	learnerID, err := a.ids.NewID()
 	if err != nil || !validContextResourceID(learnerID) {
-		return "", "", nil, ErrConflict
+		return "", nil, ErrConflict
 	}
 	participants = append(participants, Participant{
 		ID:        learnerID,
@@ -262,21 +226,17 @@ func (a *SessionApplication) newSessionIdentities(
 		},
 		Order: len(participants) + 1,
 	})
-	return sessionID, snapshotID, participants, nil
+	return sessionID, participants, nil
 }
 
 func validExecutablePlan(
 	plan PlanProjection,
 	actor requestcontext.Actor,
 	planID string,
-	revision int,
+	version int,
 ) bool {
 	if plan.ID != planID || plan.OwnerUserID != actor.UserID ||
-		plan.Revision != revision ||
-		plan.Preparation.ID == "" ||
-		plan.Preparation.SourceProfileID == "" ||
-		plan.Preparation.SourceVersion < 1 ||
-		plan.Preparation.CreatedAt.IsZero() ||
+		plan.Version != version ||
 		plan.SceneSelection.Scene.ID == "" ||
 		plan.SceneSelection.Scene.Version < 1 ||
 		plan.SceneSelection.Scene.Status != SceneStatusActive ||
@@ -318,7 +278,7 @@ func validExecutablePlan(
 }
 
 func validCreateSessionRequest(request CreateSessionRequest) bool {
-	return request.ExpectedPlanRevision > 0
+	return request.ExpectedPlanVersion > 0
 }
 
 func validFrozenIELTSPlan(plan PlanProjection) bool {
@@ -367,6 +327,10 @@ func cloneIELTSAssignment(
 		result.Parts[index] = part
 		result.Parts[index].TurnBlueprints = cloneStrings(
 			part.TurnBlueprints,
+		)
+		result.Parts[index].PreparedAnswers = append(
+			[]IELTSPreparedAnswer(nil),
+			part.PreparedAnswers...,
 		)
 	}
 	return &result
@@ -430,8 +394,7 @@ func newContextIntent(
 }
 
 func validContextResourceID(value string) bool {
-	return utf8.ValidString(value) && value != "" && len(value) <= 128 &&
-		!strings.ContainsRune(value, '\x00') && strings.TrimSpace(value) == value
+	return ValidAggregateID(value)
 }
 
 func validContextResourcePath(value string) bool {
@@ -452,6 +415,8 @@ func contextTransitionWireAction(
 		return "pause", true
 	case SessionResume:
 		return "resume", true
+	case SessionComplete:
+		return "complete", true
 	case SessionEndEarly:
 		return "end-early", true
 	default:

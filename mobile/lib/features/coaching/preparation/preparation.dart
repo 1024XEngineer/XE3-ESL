@@ -4,9 +4,13 @@ library;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:speakup/design/speak_up_components.dart';
+import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/coaching/ielts/ielts_catalog.dart';
+import 'package:speakup/features/coaching/ielts/ielts_speech_client.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/interview/interview_catalog.dart';
+import 'package:speakup/features/coaching/interview/job_preparation_controller.dart';
 import 'package:speakup/features/coaching/scenario/scenario_catalog.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
@@ -16,10 +20,88 @@ import 'package:speakup/features/coaching/ielts/ielts_question_bank.dart';
 import 'package:speakup/features/coaching/ielts/ielts_preparation_controller.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_controller.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_models.dart';
+import 'package:speakup/features/coaching/preparation/preparation_models.dart';
 
 enum _PracticeHub { interview, ielts, workplace, life }
 
-enum _ExistingPracticeAction { continuePractice, replace }
+enum ExistingPracticeAction { continuePractice, replace }
+
+typedef PracticeStartedCallback = FutureOr<void> Function();
+
+Future<ExistingPracticeAction?> showExistingPracticeActionSheet(
+  BuildContext context, {
+  required String? currentTitle,
+  required String nextTitle,
+  bool startingFullMock = false,
+}) {
+  final activeTitle = currentTitle ?? '上次练习';
+  return showModalBottomSheet<ExistingPracticeAction>(
+    context: context,
+    useSafeArea: true,
+    isScrollControlled: true,
+    builder: (context) => Padding(
+      padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      startingFullMock ? '开始新的模考？' : '开始新的练习？',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      startingFullMock
+                          ? '你还有未完成的“$activeTitle”。可以继续当前进度，'
+                                '或结束它并开始新的完整模考。'
+                          : '你正在练“$activeTitle”。开始“$nextTitle”后，'
+                                '当前进度将结束。',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              IconButton(
+                tooltip: '关闭',
+                onPressed: () => Navigator.of(context).pop(),
+                icon: const Icon(Icons.close_rounded),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+          FilledButton(
+            key: const Key('continue-existing-practice'),
+            onPressed: () => Navigator.of(
+              context,
+            ).pop(ExistingPracticeAction.continuePractice),
+            child: Text(startingFullMock ? '继续上次练习' : '继续“$activeTitle”'),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton(
+            key: const Key('replace-existing-practice'),
+            onPressed: () =>
+                Navigator.of(context).pop(ExistingPracticeAction.replace),
+            child: Text(startingFullMock ? '开始新模考' : '开始“$nextTitle”'),
+          ),
+          const SizedBox(height: 4),
+          TextButton(
+            key: const Key('cancel-existing-practice-action'),
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('取消'),
+          ),
+        ],
+      ),
+    ),
+  );
+}
 
 class PreparationPage extends StatefulWidget {
   const PreparationPage({
@@ -29,7 +111,9 @@ class PreparationPage extends StatefulWidget {
     this.preparationController,
     this.ieltsController,
     this.launchController,
+    this.jobPreparationController,
     this.onOpenJobPreparation,
+    this.onOpenInterviewPlan,
     this.onSceneSelected,
     this.onPracticeStarted,
     super.key,
@@ -41,9 +125,11 @@ class PreparationPage extends StatefulWidget {
   final PreparationController? preparationController;
   final IeltsPreparationController? ieltsController;
   final PreparationLaunchController? launchController;
+  final JobPreparationController? jobPreparationController;
   final VoidCallback? onOpenJobPreparation;
+  final ValueChanged<String>? onOpenInterviewPlan;
   final VoidCallback? onSceneSelected;
-  final VoidCallback? onPracticeStarted;
+  final PracticeStartedCallback? onPracticeStarted;
 
   @override
   State<PreparationPage> createState() => _PreparationPageState();
@@ -52,7 +138,6 @@ class PreparationPage extends StatefulWidget {
 class _PreparationPageState extends State<PreparationPage> {
   TextEditingController? _backgroundController;
   _PracticeHub? _selectedHub;
-  PracticeMode? _selectedIeltsSection;
   IeltsPracticeSelection? _launchingIeltsSelection;
   bool _handlingIeltsNavigation = false;
 
@@ -63,6 +148,7 @@ class _PreparationPageState extends State<PreparationPage> {
     widget.preparationController?.addListener(_rebuild);
     widget.ieltsController?.addListener(_rebuild);
     widget.launchController?.addListener(_rebuild);
+    widget.jobPreparationController?.addListener(_rebuild);
     _backgroundController = _newBackgroundController(widget.launchController);
     unawaited(widget.preparationController?.loadIfNeeded());
   }
@@ -89,6 +175,10 @@ class _PreparationPageState extends State<PreparationPage> {
       _backgroundController?.dispose();
       _backgroundController = _newBackgroundController(widget.launchController);
     }
+    if (oldWidget.jobPreparationController != widget.jobPreparationController) {
+      oldWidget.jobPreparationController?.removeListener(_rebuild);
+      widget.jobPreparationController?.addListener(_rebuild);
+    }
   }
 
   @override
@@ -97,6 +187,7 @@ class _PreparationPageState extends State<PreparationPage> {
     widget.preparationController?.removeListener(_rebuild);
     widget.ieltsController?.removeListener(_rebuild);
     widget.launchController?.removeListener(_rebuild);
+    widget.jobPreparationController?.removeListener(_rebuild);
     _backgroundController?.dispose();
     super.dispose();
   }
@@ -124,6 +215,11 @@ class _PreparationPageState extends State<PreparationPage> {
     }
   }
 
+  void _openInterviewCatalog() {
+    setState(() => _selectedHub = _PracticeHub.interview);
+    unawaited(widget.jobPreparationController?.loadInterviewPlans());
+  }
+
   Future<void> _handleIeltsNavigation(
     IeltsPracticeNavigationRequest request,
   ) async {
@@ -134,9 +230,15 @@ class _PreparationPageState extends State<PreparationPage> {
     }
     setState(() {
       _selectedHub = _PracticeHub.ielts;
-      _selectedIeltsSection = request.mode;
     });
     final selection = request.selection;
+    if (selection == null) {
+      await widget.ieltsController?.loadIfNeeded();
+      if (!mounted) {
+        _handlingIeltsNavigation = false;
+        return;
+      }
+    }
     if (selection != null) {
       final scene = ieltsSceneForMode(
         _scenesForHub(controller.scenes, _PracticeHub.ielts),
@@ -166,6 +268,8 @@ class _PreparationPageState extends State<PreparationPage> {
   Future<void> _startPractice({
     required bool replaceCurrentPractice,
     IeltsPracticeSelection? ieltsSelection,
+    List<IeltsPreparedAnswer> ieltsPreparedAnswers = const [],
+    ScenarioPreparationContext? scenarioContext,
   }) async {
     final catalog = widget.preparationController;
     final launch = widget.launchController;
@@ -181,7 +285,7 @@ class _PreparationPageState extends State<PreparationPage> {
         option == null) {
       return;
     }
-    if (launch.backgroundSummary.trim().isEmpty) {
+    if (scenarioContext == null && launch.backgroundSummary.trim().isEmpty) {
       launch.updateBackgroundSummary('默认示例：${detail.prompt.publicSceneBrief}');
     }
     final started = await launch.start(
@@ -190,8 +294,10 @@ class _PreparationPageState extends State<PreparationPage> {
         role: role,
         option: option,
         ieltsSelection: ieltsSelection,
+        ieltsPreparedAnswers: ieltsPreparedAnswers,
       ),
       replaceCurrentPractice: replaceCurrentPractice,
+      scenarioContext: scenarioContext,
     );
     if (started && mounted) {
       final bootstrap = launch.bootstrap;
@@ -202,13 +308,15 @@ class _PreparationPageState extends State<PreparationPage> {
           ieltsSelection,
         );
       }
+      await widget.onPracticeStarted?.call();
+      if (!mounted) {
+        return;
+      }
       catalog.showSceneList();
       setState(() {
         _selectedHub = null;
-        _selectedIeltsSection = null;
         _launchingIeltsSelection = null;
       });
-      widget.onPracticeStarted?.call();
     }
   }
 
@@ -228,13 +336,15 @@ class _PreparationPageState extends State<PreparationPage> {
           );
         }
       }
+      await widget.onPracticeStarted?.call();
+      if (!mounted) {
+        return;
+      }
       catalog?.showSceneList();
       setState(() {
         _selectedHub = null;
-        _selectedIeltsSection = null;
         _launchingIeltsSelection = null;
       });
-      widget.onPracticeStarted?.call();
     }
   }
 
@@ -243,7 +353,9 @@ class _PreparationPageState extends State<PreparationPage> {
     SceneDefinition scene, {
     PracticeMode? practiceMode,
     IeltsPracticeSelection? ieltsSelection,
+    List<IeltsPreparedAnswer> ieltsPreparedAnswers = const [],
     bool forceReplaceCurrentPractice = false,
+    bool useDefaultScenarioContext = false,
   }) async {
     var replaceCurrentPractice = forceReplaceCurrentPractice;
     final launch = widget.launchController;
@@ -264,14 +376,15 @@ class _PreparationPageState extends State<PreparationPage> {
             return;
           }
         }
-        final action = await _chooseExistingPracticeAction(
+        final action = await showExistingPracticeActionSheet(
+          context,
           currentTitle: launch?.resumablePracticeTitle,
           nextTitle: scene.name,
         );
         if (!mounted || action == null) {
           return;
         }
-        if (action == _ExistingPracticeAction.continuePractice) {
+        if (action == ExistingPracticeAction.continuePractice) {
           await _continueCurrentPractice();
           return;
         }
@@ -296,6 +409,10 @@ class _PreparationPageState extends State<PreparationPage> {
     await _startPractice(
       replaceCurrentPractice: replaceCurrentPractice,
       ieltsSelection: ieltsSelection,
+      ieltsPreparedAnswers: ieltsPreparedAnswers,
+      scenarioContext: useDefaultScenarioContext
+          ? _defaultScenarioContext(controller.detail!)
+          : null,
     );
   }
 
@@ -303,92 +420,33 @@ class _PreparationPageState extends State<PreparationPage> {
     PreparationController controller,
     SceneDefinition scene,
   ) async {
-    final ielts = widget.ieltsController;
-    if (ielts == null) {
-      throw StateError('IELTS controller is required for IELTS practice.');
-    }
-    await ielts.loadIfNeeded();
-    if (!mounted) {
-      return;
-    }
-    final selection = ielts.randomFullMockSelection();
-    if (selection == null) {
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(content: Text(ielts.errorMessage ?? '雅思口语题库暂时不可用，请稍后重试。')),
-        );
+    final launch = widget.launchController;
+    if (launch?.hasResumablePractice ?? false) {
+      final action = await showExistingPracticeActionSheet(
+        context,
+        currentTitle: launch?.resumablePracticeTitle,
+        nextTitle: scene.name,
+        startingFullMock: true,
+      );
+      if (!mounted || action == null) {
+        return;
+      }
+      if (action == ExistingPracticeAction.continuePractice) {
+        await _continueCurrentPractice();
+        return;
+      }
+      await _startSceneDirectly(
+        controller,
+        scene,
+        practiceMode: PracticeMode.fullMock,
+        forceReplaceCurrentPractice: true,
+      );
       return;
     }
     await _startSceneDirectly(
       controller,
       scene,
       practiceMode: PracticeMode.fullMock,
-      ieltsSelection: selection,
-    );
-  }
-
-  Future<_ExistingPracticeAction?> _chooseExistingPracticeAction({
-    required String? currentTitle,
-    required String nextTitle,
-  }) async {
-    final activeTitle = currentTitle ?? '上次练习';
-    return showModalBottomSheet<_ExistingPracticeAction>(
-      context: context,
-      useSafeArea: true,
-      isScrollControlled: true,
-      builder: (context) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '开始新的练习？',
-                        style: Theme.of(context).textTheme.titleLarge,
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        '你正在练“$activeTitle”。开始“$nextTitle”后，'
-                        '当前进度将结束。',
-                        style: Theme.of(context).textTheme.bodyMedium,
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 12),
-                IconButton(
-                  tooltip: '关闭',
-                  onPressed: () => Navigator.of(context).pop(),
-                  icon: const Icon(Icons.close_rounded),
-                ),
-              ],
-            ),
-            const SizedBox(height: 24),
-            FilledButton(
-              key: const Key('continue-existing-practice'),
-              onPressed: () => Navigator.of(
-                context,
-              ).pop(_ExistingPracticeAction.continuePractice),
-              child: Text('继续“$activeTitle”'),
-            ),
-            const SizedBox(height: 8),
-            OutlinedButton(
-              key: const Key('replace-existing-practice'),
-              onPressed: () =>
-                  Navigator.of(context).pop(_ExistingPracticeAction.replace),
-              child: Text('开始“$nextTitle”'),
-            ),
-          ],
-        ),
-      ),
     );
   }
 
@@ -397,14 +455,17 @@ class _PreparationPageState extends State<PreparationPage> {
     if (launch?.hasResumablePractice ?? false) {
       final resumed = await launch!.resumeCurrentPractice();
       if (resumed && mounted) {
+        await widget.onPracticeStarted?.call();
+        if (!mounted) {
+          return;
+        }
         widget.preparationController?.showSceneList();
         setState(() => _selectedHub = null);
-        widget.onPracticeStarted?.call();
       }
       return;
     }
     if (widget.practiceController?.hasActivePractice ?? false) {
-      widget.onPracticeStarted?.call();
+      await widget.onPracticeStarted?.call();
     } else if (widget.onSceneSelected case final callback?) {
       callback();
     } else if (widget.showBackButton) {
@@ -412,9 +473,13 @@ class _PreparationPageState extends State<PreparationPage> {
     }
   }
 
-  void _handleBack(PreparationController? controller) {
+  Future<void> _handleBack(PreparationController? controller) async {
     final launch = widget.launchController;
-    if (launch?.isNavigationLocked ?? false) {
+    if (launch?.isStarting ?? false) {
+      if (!await launch!.cancelCurrentPreparation() || !mounted) {
+        return;
+      }
+    } else if (launch?.isNavigationLocked ?? false) {
       return;
     }
     if (controller?.selectedScene != null) {
@@ -429,7 +494,7 @@ class _PreparationPageState extends State<PreparationPage> {
       setState(() => _selectedHub = null);
       return;
     }
-    Navigator.of(context).maybePop();
+    await Navigator.of(context).maybePop();
   }
 
   @override
@@ -443,7 +508,7 @@ class _PreparationPageState extends State<PreparationPage> {
       canPop: !navigationLocked && !hasInternalRoute,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) {
-          _handleBack(controller);
+          unawaited(_handleBack(controller));
         }
       },
       child: Scaffold(
@@ -458,9 +523,11 @@ class _PreparationPageState extends State<PreparationPage> {
                 leading: IconButton(
                   key: const Key('preparation-route-back-button'),
                   tooltip: '返回',
-                  onPressed: navigationLocked
+                  onPressed:
+                      navigationLocked &&
+                          !(widget.launchController?.isStarting ?? false)
                       ? null
-                      : () => _handleBack(controller),
+                      : () => unawaited(_handleBack(controller)),
                   icon: const Icon(Icons.arrow_back_rounded),
                 ),
               )
@@ -485,7 +552,7 @@ class _PreparationPageState extends State<PreparationPage> {
         scene: selectedScene,
         launchController: widget.launchController,
         hasPrimaryNavigation: !widget.showBackButton,
-        onBack: () => _handleBack(controller),
+        onBack: () => unawaited(_handleBack(controller)),
         onRetry: _retryLaunch,
       );
     }
@@ -493,114 +560,121 @@ class _PreparationPageState extends State<PreparationPage> {
     if (selectedHub != null) {
       return _buildHub(controller, selectedHub);
     }
-    return ListView(
+    final Widget catalogBody;
+    if (controller.isLoadingScenes) {
+      catalogBody = const Center(
+        child: _CatalogLoading(key: Key('preparation-catalog-loading')),
+      );
+    } else if (controller.errorMessage case final message?) {
+      catalogBody = Align(
+        alignment: Alignment.topCenter,
+        child: _CatalogFailure(
+          key: const Key('preparation-catalog-error'),
+          message: message,
+          onRetry: controller.retryLastFailure,
+        ),
+      );
+    } else if (controller.scenes.isEmpty) {
+      catalogBody = const Align(
+        alignment: Alignment.topCenter,
+        child: _CatalogEmpty(),
+      );
+    } else {
+      catalogBody = _buildPracticeHubCarousel();
+    }
+    return Padding(
       key: const Key('preparation-catalog-list'),
-      primary: false,
       padding: PreparationDesign.pagePadding(
         context,
         hasPrimaryNavigation: !widget.showBackButton,
         top: 18,
       ),
-      children: [
-        const Text(
-          '场景练习',
-          key: Key('training-center-title'),
-          style: PreparationDesign.pageTitle,
-        ),
-        const SizedBox(height: 8),
-        const Text(
-          '今天想练什么？',
-          key: Key('practice-hub-page-title'),
-          style: PreparationDesign.body,
-        ),
-        if (widget.launchController?.workspaceErrorMessage case final message?)
-          Padding(
-            padding: const EdgeInsets.only(top: 10),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  message,
-                  key: const Key('practice-workspace-error'),
-                  style: const TextStyle(color: Color(0xFF9A332A), height: 1.4),
-                ),
-                if (widget.launchController?.canRetryWorkspaceActivation ??
-                    false)
-                  TextButton(
-                    key: const Key('retry-practice-workspace-activation'),
-                    onPressed: () => unawaited(
-                      widget.launchController!.retryWorkspaceActivation(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SpeakUpDisplayTitle(
+            title: 'Practice',
+            semanticLabel: '训练',
+            key: Key('training-center-title'),
+          ),
+          if (widget.launchController?.workspaceErrorMessage
+              case final message?)
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    message,
+                    key: const Key('practice-workspace-error'),
+                    style: const TextStyle(
+                      color: Color(0xFF9A332A),
+                      height: 1.4,
                     ),
-                    child: const Text('重试读取练习记录'),
                   ),
-              ],
+                  if (widget.launchController?.canRetryWorkspaceActivation ??
+                      false)
+                    TextButton(
+                      key: const Key('retry-practice-workspace-activation'),
+                      onPressed: () => unawaited(
+                        widget.launchController!.retryWorkspaceActivation(),
+                      ),
+                      child: const Text('重试读取练习记录'),
+                    ),
+                ],
+              ),
             ),
-          ),
-        const SizedBox(height: 24),
-        if (controller.isLoadingScenes)
-          const _CatalogLoading(key: Key('preparation-catalog-loading'))
-        else if (controller.errorMessage case final message?)
-          _CatalogFailure(
-            key: const Key('preparation-catalog-error'),
-            message: message,
-            onRetry: controller.retryLastFailure,
-          )
-        else if (controller.scenes.isEmpty)
-          const _CatalogEmpty()
-        else ...[
-          _PracticeHubEntry(
-            key: const Key('practice-hub-interview'),
-            title: '英文面试',
-            description: '模拟面试与轮次专项练习',
-            icon: Icons.work_outline_rounded,
-            accentColor: PreparationDesign.interview,
-            tintColor: PreparationDesign.interviewTint,
-            assetPath: 'assets/images/scenes/interview-hero.jpg',
-            onPressed: () =>
-                setState(() => _selectedHub = _PracticeHub.interview),
-          ),
-          const SizedBox(height: 12),
-          _PracticeHubEntry(
-            key: const Key('practice-hub-exam'),
-            title: 'IELTS 口语',
-            description: 'Part 1、2、3 与完整模考',
-            icon: Icons.school_outlined,
-            accentColor: PreparationDesign.ielts,
-            tintColor: PreparationDesign.ieltsTint,
-            assetPath: 'assets/images/scenes/ielts-hero.jpg',
-            onPressed: () {
-              final ielts = widget.ieltsController;
-              if (ielts == null) {
-                throw StateError('IELTS controller is not configured.');
-              }
-              setState(() => _selectedHub = _PracticeHub.ielts);
-              unawaited(ielts.loadIfNeeded());
-            },
-          ),
-          const SizedBox(height: 12),
-          _PracticeHubEntry(
-            key: const Key('practice-hub-workplace'),
-            title: '职场英语',
-            description: '会议、协作与客户沟通',
-            icon: Icons.business_center_outlined,
-            accentColor: PreparationDesign.scenario,
-            tintColor: PreparationDesign.scenarioTint,
-            assetPath: 'assets/images/scenes/workplace-scene.jpg',
-            onPressed: () =>
-                setState(() => _selectedHub = _PracticeHub.workplace),
-          ),
-          const SizedBox(height: 12),
-          _PracticeHubEntry(
-            key: const Key('practice-hub-life'),
-            title: '生活与旅行',
-            description: '日常交流与出行场景实战',
-            icon: Icons.travel_explore_outlined,
-            accentColor: PreparationDesign.scenario,
-            tintColor: PreparationDesign.scenarioTint,
-            assetPath: 'assets/images/scenes/travel-scene.jpg',
-            onPressed: () => setState(() => _selectedHub = _PracticeHub.life),
-          ),
+          const SizedBox(height: 14),
+          Expanded(child: catalogBody),
         ],
+      ),
+    );
+  }
+
+  Widget _buildPracticeHubCarousel() {
+    return _PracticeHubCarousel(
+      items: [
+        _PracticeHubItem(
+          key: const Key('practice-hub-interview'),
+          title: '英文面试',
+          description: '模拟面试与轮次专项练习',
+          assetPath: 'assets/images/scenes/practice-interview.webp',
+          fallbackIcon: Icons.work_outline_rounded,
+          onPressed: _openInterviewCatalog,
+        ),
+        _PracticeHubItem(
+          key: const Key('practice-hub-exam'),
+          title: 'IELTS 口语',
+          description: 'Part 1、2、3 与完整模考',
+          assetPath: 'assets/images/scenes/practice-ielts.webp',
+          fallbackIcon: Icons.school_outlined,
+          onPressed: () {
+            final ielts = widget.ieltsController;
+            if (ielts == null) {
+              setState(() => _selectedHub = _PracticeHub.ielts);
+              return;
+            }
+            setState(() => _selectedHub = _PracticeHub.ielts);
+            unawaited(ielts.loadIfNeeded());
+          },
+        ),
+        _PracticeHubItem(
+          key: const Key('practice-hub-workplace'),
+          title: '职场英语',
+          description: '会议、协作与客户沟通',
+          assetPath: 'assets/images/scenes/practice-workplace.webp',
+          fallbackIcon: Icons.business_center_outlined,
+          onPressed: () =>
+              setState(() => _selectedHub = _PracticeHub.workplace),
+        ),
+        _PracticeHubItem(
+          key: const Key('practice-hub-life'),
+          title: '生活与旅行',
+          description: '日常交流与出行场景实战',
+          assetPath: 'assets/images/scenes/practice-travel.webp',
+          fallbackIcon: Icons.travel_explore_outlined,
+          onPressed: () => setState(() => _selectedHub = _PracticeHub.life),
+        ),
       ],
     );
   }
@@ -608,12 +682,10 @@ class _PreparationPageState extends State<PreparationPage> {
   Widget _buildHub(PreparationController controller, _PracticeHub hub) {
     final scenes = _scenesForHub(controller.scenes, hub);
     final ielts = widget.ieltsController;
-    final ieltsSection = hub == _PracticeHub.ielts
-        ? _selectedIeltsSection
+    final fullMockScene = hub == _PracticeHub.ielts
+        ? ieltsSceneForMode(scenes, PracticeMode.fullMock)
         : null;
-    final routeKey = hub == _PracticeHub.ielts
-        ? (ieltsSection == null ? 'ielts-modes' : 'ielts-${ieltsSection.name}')
-        : hub.name;
+    final routeKey = hub.name;
     return ListView(
       key: Key('preparation-hub-list-$routeKey'),
       primary: false,
@@ -623,71 +695,63 @@ class _PreparationPageState extends State<PreparationPage> {
         top: 8,
       ),
       children: [
-        Align(
-          alignment: Alignment.centerLeft,
-          child: IconButton(
-            key: const Key('preparation-back-to-families'),
-            tooltip: '返回场景练习',
-            onPressed: () => setState(() {
-              if (ieltsSection != null) {
-                _selectedIeltsSection = null;
-              } else {
-                _selectedHub = null;
-              }
-            }),
-            icon: const Icon(Icons.arrow_back_rounded),
-            color: PreparationDesign.ink,
-            style: IconButton.styleFrom(
-              backgroundColor: PreparationDesign.surface,
-              side: const BorderSide(color: PreparationDesign.border),
-            ),
-          ),
+        _buildHubHeader(
+          hub,
+          trailing: fullMockScene == null
+              ? null
+              : IeltsFullMockButton(
+                  onPressed: () =>
+                      unawaited(_startIeltsFullMock(controller, fullMockScene)),
+                ),
         ),
-        const SizedBox(height: 12),
+        SizedBox(height: hub == _PracticeHub.interview ? 20 : 16),
         if (hub == _PracticeHub.interview)
           InterviewCatalog(
-            scenes: scenes,
-            onScenePressed: (scene) =>
-                unawaited(_startSceneDirectly(controller, scene)),
-            onOpenJobPreparation: widget.onOpenJobPreparation,
+            plans: widget.jobPreparationController?.interviewPlans ?? const [],
+            loading: widget.jobPreparationController?.plansLoading ?? false,
+            errorMessage: widget.jobPreparationController?.plansErrorMessage,
+            onCreatePressed: widget.onOpenJobPreparation,
+            onPlanPressed: (plan) => widget.onOpenInterviewPlan?.call(plan.id),
+            onPlanDeleted: (plan) => unawaited(
+              widget.jobPreparationController?.deleteInterviewPlan(plan.id),
+            ),
+            onRetry: () => unawaited(
+              widget.jobPreparationController?.loadInterviewPlans(force: true),
+            ),
           )
         else if (hub == _PracticeHub.ielts)
-          if (ieltsSection == null)
-            IeltsCatalog(
-              scenes: scenes,
-              onFullMockPressed: (scene) =>
-                  unawaited(_startIeltsFullMock(controller, scene)),
-              onPartPressed: (scene, mode) {
-                if (ielts == null) {
-                  throw StateError('IELTS controller is not configured.');
-                }
-                setState(() => _selectedIeltsSection = mode);
-                unawaited(ielts.loadIfNeeded());
-              },
-            )
-          else
-            IeltsSetCatalog(
-              controller: ielts!,
-              mode: ieltsSection,
-              scene: ieltsSceneForMode(scenes, ieltsSection),
-              onRetry: ielts.retryLoad,
-              onSelectionPressed: (scene, selection) => unawaited(
-                _startSceneDirectly(
-                  controller,
-                  scene,
-                  practiceMode: ieltsSection,
-                  ieltsSelection: selection,
+          IeltsCatalog(
+            controller: ielts!,
+            scenes: scenes,
+            answerSpeaker: widget.practiceController?.promptSpeaker,
+            speechClient: widget.practiceController?.mediaClient == null
+                ? null
+                : WireIeltsSpeechClient(
+                    widget.practiceController!.mediaClient!,
+                  ),
+            audioPlayer: widget.practiceController?.audioPlayer,
+            onRetry: ielts.retryLoad,
+            onSelectionPressed: (scene, mode, selection, preparedAnswers) =>
+                unawaited(
+                  _startSceneDirectly(
+                    controller,
+                    scene,
+                    practiceMode: mode,
+                    ieltsSelection: selection,
+                    ieltsPreparedAnswers: preparedAnswers,
+                  ),
                 ),
-              ),
-            )
+          )
         else
           ScenarioCatalog(
-            title: _practiceHubLabel(hub),
-            description: _scenarioHubDescription(hub),
-            titleKey: Key('practice-hub-title-${hub.name}'),
             scenes: scenes,
-            onScenePressed: (scene) =>
-                unawaited(_startSceneDirectly(controller, scene)),
+            onScenePressed: (scene) => unawaited(
+              _startSceneDirectly(
+                controller,
+                scene,
+                useDefaultScenarioContext: true,
+              ),
+            ),
           ),
       ],
     );
@@ -705,99 +769,56 @@ class _PreparationPageState extends State<PreparationPage> {
           top: 8,
         ),
         children: [
-          Align(
-            alignment: Alignment.centerLeft,
-            child: IconButton(
-              key: const Key('preparation-back-to-families'),
-              tooltip: '返回场景练习',
-              onPressed: () => setState(() => _selectedHub = null),
-              icon: const Icon(Icons.arrow_back_rounded),
-              color: PreparationDesign.ink,
-              style: IconButton.styleFrom(
-                backgroundColor: PreparationDesign.surface,
-                side: const BorderSide(color: PreparationDesign.border),
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          PreparationCatalogHeader(
-            title: _practiceHubLabel(selectedHub),
-            description: selectedHub == _PracticeHub.interview
-                ? '选择一项面试能力开始练习。'
-                : '该模块需要连接真实场景目录后使用。',
-            titleKey: Key('practice-hub-title-${selectedHub.name}'),
-          ),
-          const SizedBox(height: 24),
+          _buildHubHeader(selectedHub),
+          SizedBox(height: selectedHub == _PracticeHub.interview ? 20 : 16),
           const PreparationCatalogEmpty(message: '连接场景服务后即可查看练习。'),
         ],
       );
     }
-    return ListView(
-      primary: false,
+    return Padding(
       padding: PreparationDesign.pagePadding(
         context,
         hasPrimaryNavigation: !widget.showBackButton,
         top: 18,
       ),
-      children: [
-        const Text(
-          '场景练习',
-          key: Key('training-center-title'),
-          style: PreparationDesign.pageTitle,
-        ),
-        const SizedBox(height: 8),
-        Text(
-          widget.previewMode ? '今天想练什么？' : '练习内容暂时无法加载，请稍后重试。',
-          key: const Key('practice-availability-message'),
-          style: PreparationDesign.body,
-        ),
-        const SizedBox(height: 24),
-        _PracticeHubEntry(
-          key: const Key('practice-hub-interview'),
-          title: '英文面试',
-          description: '模拟面试与轮次专项练习',
-          icon: Icons.work_outline_rounded,
-          accentColor: PreparationDesign.interview,
-          tintColor: PreparationDesign.interviewTint,
-          assetPath: 'assets/images/scenes/interview-hero.jpg',
-          onPressed: () =>
-              setState(() => _selectedHub = _PracticeHub.interview),
-        ),
-        const SizedBox(height: 12),
-        _PracticeHubEntry(
-          key: const Key('practice-hub-exam'),
-          title: 'IELTS 口语',
-          description: 'Part 1、2、3 与完整模考',
-          icon: Icons.school_outlined,
-          accentColor: PreparationDesign.ielts,
-          tintColor: PreparationDesign.ieltsTint,
-          assetPath: 'assets/images/scenes/ielts-hero.jpg',
-          onPressed: () => setState(() => _selectedHub = _PracticeHub.ielts),
-        ),
-        const SizedBox(height: 12),
-        _PracticeHubEntry(
-          key: const Key('practice-hub-workplace'),
-          title: '职场英语',
-          description: '会议、协作与客户沟通',
-          icon: Icons.business_center_outlined,
-          accentColor: PreparationDesign.scenario,
-          tintColor: PreparationDesign.scenarioTint,
-          assetPath: 'assets/images/scenes/workplace-scene.jpg',
-          onPressed: () =>
-              setState(() => _selectedHub = _PracticeHub.workplace),
-        ),
-        const SizedBox(height: 12),
-        _PracticeHubEntry(
-          key: const Key('practice-hub-life'),
-          title: '生活与旅行',
-          description: '日常交流与出行场景实战',
-          icon: Icons.travel_explore_outlined,
-          accentColor: PreparationDesign.scenario,
-          tintColor: PreparationDesign.scenarioTint,
-          assetPath: 'assets/images/scenes/travel-scene.jpg',
-          onPressed: () => setState(() => _selectedHub = _PracticeHub.life),
-        ),
-      ],
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SpeakUpDisplayTitle(
+            title: 'Practice',
+            semanticLabel: '训练',
+            key: Key('training-center-title'),
+          ),
+          if (!widget.previewMode) ...[
+            const SizedBox(height: 8),
+            const Text(
+              '练习内容暂时无法加载，请稍后重试。',
+              key: Key('practice-availability-message'),
+              style: PreparationDesign.body,
+            ),
+          ],
+          const SizedBox(height: 14),
+          Expanded(child: _buildPracticeHubCarousel()),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHubHeader(_PracticeHub hub, {Widget? trailing}) {
+    return SpeakUpNavigationHeader(
+      title: _practiceHubDisplayTitle(hub),
+      semanticLabel: _practiceHubLabel(hub),
+      titleStyle: SpeakUpDesign.secondaryDisplayTitle,
+      backButtonKey: const Key('preparation-back-to-families'),
+      titleKey: Key('practice-hub-title-${hub.name}'),
+      onBack: () => setState(() => _selectedHub = null),
+      trailing:
+          trailing ??
+          (hub == _PracticeHub.interview
+              ? InterviewCatalogCreateButton(
+                  onPressed: widget.onOpenJobPreparation,
+                )
+              : null),
     );
   }
 }
@@ -846,7 +867,10 @@ class _SceneLaunchStatus extends StatelessWidget {
             child: IconButton(
               key: const Key('preparation-back-to-catalog'),
               tooltip: '取消并返回',
-              onPressed: navigationLocked ? null : onBack,
+              onPressed:
+                  navigationLocked && !(launchController?.isStarting ?? false)
+                  ? null
+                  : onBack,
               icon: const Icon(Icons.arrow_back_rounded),
               color: PreparationDesign.ink,
               style: IconButton.styleFrom(
@@ -968,129 +992,237 @@ class _CatalogEmpty extends StatelessWidget {
   }
 }
 
-class _PracticeHubEntry extends StatelessWidget {
-  const _PracticeHubEntry({
-    required this.title,
-    required this.description,
-    required this.icon,
-    required this.accentColor,
-    required this.tintColor,
-    required this.assetPath,
-    required this.onPressed,
-    super.key,
-  });
+class _PracticeHubCarousel extends StatefulWidget {
+  const _PracticeHubCarousel({required this.items});
 
-  final String title;
-  final String description;
-  final IconData icon;
-  final Color accentColor;
-  final Color tintColor;
-  final String assetPath;
-  final VoidCallback onPressed;
+  final List<_PracticeHubItem> items;
+
+  @override
+  State<_PracticeHubCarousel> createState() => _PracticeHubCarouselState();
+}
+
+class _PracticeHubCarouselState extends State<_PracticeHubCarousel> {
+  late final PageController _controller;
+  int _currentPage = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = PageController(initialPage: 1, viewportFraction: 0.88);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final textScale = MediaQuery.textScalerOf(context).scale(1);
-    final compact = MediaQuery.sizeOf(context).width < 360 || textScale > 1.35;
-    final mediaWidth = compact ? 88.0 : 118.0;
+    final pageCount = widget.items.length + 2;
+    return Column(
+      children: [
+        Expanded(
+          child: PageView.builder(
+            key: const Key('practice-hub-carousel'),
+            controller: _controller,
+            allowImplicitScrolling: true,
+            itemCount: pageCount,
+            onPageChanged: _handlePageChanged,
+            itemBuilder: (context, page) => Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              child: _PracticeHubEntry(
+                item: widget.items[_itemIndexForPage(page)],
+                entryKey: _entryKeyForPage(page),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Semantics(
+          label: '第 ${_currentPage + 1} 页，共 ${widget.items.length} 页',
+          liveRegion: true,
+          child: ExcludeSemantics(
+            child: Row(
+              key: const Key('practice-hub-page-indicator'),
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                for (var index = 0; index < widget.items.length; index++)
+                  AnimatedContainer(
+                    key: Key('practice-hub-page-dot-$index'),
+                    duration: const Duration(milliseconds: 180),
+                    width: index == _currentPage ? 18 : 6,
+                    height: 6,
+                    margin: const EdgeInsets.symmetric(horizontal: 3),
+                    decoration: BoxDecoration(
+                      color: index == _currentPage
+                          ? PreparationDesign.ink
+                          : PreparationDesign.border,
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  int _itemIndexForPage(int page) {
+    if (page == 0) {
+      return widget.items.length - 1;
+    }
+    if (page == widget.items.length + 1) {
+      return 0;
+    }
+    return page - 1;
+  }
+
+  Key _entryKeyForPage(int page) {
+    if (page == 0) {
+      return const Key('practice-hub-loop-leading');
+    }
+    if (page == widget.items.length + 1) {
+      return const Key('practice-hub-loop-trailing');
+    }
+    return widget.items[page - 1].key;
+  }
+
+  void _handlePageChanged(int page) {
+    final logicalPage = _itemIndexForPage(page);
+    if (_currentPage != logicalPage) {
+      setState(() => _currentPage = logicalPage);
+    }
+    if (page == 0 || page == widget.items.length + 1) {
+      final destination = page == 0 ? widget.items.length : 1;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _controller.hasClients) {
+          _controller.jumpToPage(destination);
+        }
+      });
+    }
+  }
+}
+
+class _PracticeHubItem {
+  const _PracticeHubItem({
+    required this.key,
+    required this.title,
+    required this.description,
+    required this.assetPath,
+    required this.fallbackIcon,
+    required this.onPressed,
+  });
+
+  final Key key;
+  final String title;
+  final String description;
+  final String assetPath;
+  final IconData fallbackIcon;
+  final VoidCallback onPressed;
+}
+
+class _PracticeHubEntry extends StatelessWidget {
+  const _PracticeHubEntry({required this.item, required this.entryKey});
+
+  final _PracticeHubItem item;
+  final Key entryKey;
+
+  @override
+  Widget build(BuildContext context) {
     return Material(
-      color: PreparationDesign.surface,
+      key: entryKey,
+      color: PreparationDesign.surfaceMuted,
       clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(PreparationDesign.radiusMedia),
+        borderRadius: BorderRadius.circular(PreparationDesign.radiusHero),
         side: const BorderSide(color: PreparationDesign.border),
       ),
       child: Semantics(
         button: true,
-        label: '$title。$description',
-        onTap: onPressed,
+        label: '${item.title}。${item.description}',
+        onTap: item.onPressed,
         excludeSemantics: true,
         child: InkWell(
-          onTap: onPressed,
-          child: IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(minHeight: 112),
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(18, 17, 12, 16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
-                            title,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: PreparationDesign.sectionTitle,
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            description,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: PreparationDesign.label.copyWith(
-                              color: PreparationDesign.secondary,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          Row(
-                            children: [
-                              Text(
-                                '进入',
-                                style: PreparationDesign.label.copyWith(
-                                  color: accentColor,
-                                ),
-                              ),
-                              const SizedBox(width: 4),
-                              Icon(
-                                Icons.arrow_forward_rounded,
-                                size: 18,
-                                color: accentColor,
-                              ),
-                            ],
-                          ),
-                        ],
+          onTap: item.onPressed,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Image.asset(
+                item.assetPath,
+                fit: BoxFit.cover,
+                alignment: Alignment.topCenter,
+                errorBuilder: (_, _, _) => ColoredBox(
+                  color: PreparationDesign.surfaceMuted,
+                  child: Icon(
+                    item.fallbackIcon,
+                    color: PreparationDesign.ink,
+                    size: 44,
+                  ),
+                ),
+              ),
+              const DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment(0, -0.15),
+                    end: Alignment.bottomCenter,
+                    colors: [Colors.transparent, Color(0xD9000000)],
+                  ),
+                ),
+              ),
+              Positioned(
+                left: 22,
+                right: 22,
+                bottom: 22,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      item.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: PreparationDesign.pageTitle.copyWith(
+                        color: Colors.white,
                       ),
                     ),
-                  ),
-                ),
-                SizedBox(
-                  width: mediaWidth,
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      ColoredBox(color: tintColor),
-                      Image.asset(
-                        assetPath,
-                        fit: BoxFit.cover,
-                        alignment: Alignment.topCenter,
-                        errorBuilder: (_, _, _) => ColoredBox(
-                          color: tintColor,
-                          child: Icon(icon, color: accentColor, size: 36),
+                    const SizedBox(height: 6),
+                    Text(
+                      item.description,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: PreparationDesign.body.copyWith(
+                        color: Colors.white.withValues(alpha: 0.82),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Container(
+                      width: double.infinity,
+                      constraints: const BoxConstraints(minHeight: 48),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 12,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.94),
+                        borderRadius: BorderRadius.circular(
+                          PreparationDesign.radiusControl,
                         ),
                       ),
-                      Positioned(
-                        top: 10,
-                        right: 10,
-                        child: Container(
-                          width: 36,
-                          height: 36,
-                          decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.88),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(icon, color: accentColor, size: 19),
-                        ),
+                      child: Text(
+                        '开始练习',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: PreparationDesign.cardTitle,
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
@@ -1107,11 +1239,23 @@ String _practiceHubLabel(_PracticeHub hub) {
   };
 }
 
-String _scenarioHubDescription(_PracticeHub hub) {
+ScenarioPreparationContext _defaultScenarioContext(SceneDefinition scene) {
+  final prompt = scene.prompt;
+  return ScenarioPreparationContext(
+    situation: prompt.publicSceneBrief.trim(),
+    userRole: prompt.userRole.trim(),
+    counterpartRole: prompt.aiRole.trim(),
+    goal: prompt.practiceGoal.trim(),
+    counterpartPersona: prompt.personaSummary.trim(),
+  );
+}
+
+String _practiceHubDisplayTitle(_PracticeHub hub) {
   return switch (hub) {
-    _PracticeHub.workplace => '练习会议、协作、汇报与客户沟通。',
-    _PracticeHub.life => '练习日常交流、旅行与生活问题处理。',
-    _ => throw StateError('Scenario description requires a Scenario hub.'),
+    _PracticeHub.interview => 'Interview',
+    _PracticeHub.ielts => 'IELTS',
+    _PracticeHub.workplace => 'Workplace',
+    _PracticeHub.life => 'Travel',
   };
 }
 

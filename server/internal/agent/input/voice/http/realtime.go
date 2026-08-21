@@ -77,11 +77,14 @@ func (handler *Handler) uploadRealtime(c *gin.Context) {
 		writeRealtimeFailure(connection, "invalid_audio", false)
 		return
 	}
-	observer := &realtimeTranscriptionWriter{connection: connection}
+	observer := &realtimeTranscriptionWriter{
+		connection: connection,
+		timeout:    handler.readTimeout,
+	}
 	if err := observer.write("transcription.started", gin.H{}); err != nil {
 		return
 	}
-	candidate, err := handler.application.UploadStream(
+	draft, err := handler.application.UploadStream(
 		c.Request.Context(),
 		actor,
 		agentvoice.UploadRequest{
@@ -96,11 +99,11 @@ func (handler *Handler) uploadRealtime(c *gin.Context) {
 		writeRealtimeFailure(connection, "stream_interrupted", true)
 		return
 	}
-	event := "candidate.ready"
-	if candidate.Status == agentvoice.StatusFailed {
-		event = "candidate.failed"
+	event := "draft.ready"
+	if draft.Status == agentvoice.StatusFailed {
+		event = "draft.failed"
 	}
-	_ = observer.write(event, gin.H{"candidate": CandidateResponse(candidate)})
+	_ = observer.write(event, gin.H{"draft": DraftResponse(draft)})
 }
 
 func readRealtimeStart(connection *websocket.Conn) (realtimeStartFrame, error) {
@@ -188,6 +191,7 @@ func pcm16MonoWAV(pcm []byte, sampleRate int) ([]byte, error) {
 
 type realtimeTranscriptionWriter struct {
 	connection *websocket.Conn
+	timeout    time.Duration
 }
 
 func (writer *realtimeTranscriptionWriter) OnTranscriptionUpdate(
@@ -204,6 +208,11 @@ func (writer *realtimeTranscriptionWriter) write(
 	event string,
 	data any,
 ) error {
+	if err := writer.connection.SetWriteDeadline(
+		time.Now().Add(writer.timeout),
+	); err != nil {
+		return err
+	}
 	return writer.connection.WriteJSON(gin.H{"type": event, "data": data})
 }
 
@@ -213,7 +222,7 @@ func writeRealtimeFailure(
 	retryable bool,
 ) {
 	_ = connection.WriteJSON(gin.H{
-		"type": "candidate.failed",
+		"type": "draft.failed",
 		"data": gin.H{"kind": kind, "retryable": retryable},
 	})
 }

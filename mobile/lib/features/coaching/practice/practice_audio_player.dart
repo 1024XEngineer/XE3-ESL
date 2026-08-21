@@ -4,6 +4,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/services.dart' show MethodChannel;
 import 'package:flutter/widgets.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -18,6 +19,82 @@ abstract interface class PracticeAudioPlayer {
   Future<void> clearAccountState();
 
   Future<void> dispose();
+}
+
+abstract interface class PracticePCMStreamPlayer {
+  Future<void> startPCMStream();
+
+  Future<void> appendPCM(Uint8List bytes);
+
+  Future<void> finishPCMStream();
+
+  Future<void> stopPCMStream();
+
+  Future<void> disposePCMStream();
+}
+
+final class MethodChannelPracticePCMStreamPlayer
+    implements PracticePCMStreamPlayer {
+  static const _channel = MethodChannel('speakup/agent_pcm_player');
+  bool _started = false;
+  bool _disposed = false;
+
+  @override
+  Future<void> startPCMStream() async {
+    if (_disposed) {
+      throw const PracticeAudioPlaybackException();
+    }
+    await stopPCMStream();
+    await _channel.invokeMethod<void>('start', const <String, Object>{
+      'sampleRate': 24000,
+      'channelCount': 1,
+      'bitsPerSample': 16,
+      'speed': 1.0,
+    });
+    if (_disposed) {
+      await _channel.invokeMethod<void>('stop');
+      throw const PracticeAudioPlaybackException();
+    }
+    _started = true;
+  }
+
+  @override
+  Future<void> appendPCM(Uint8List bytes) async {
+    if (_disposed || !_started || bytes.isEmpty || bytes.length.isOdd) {
+      throw const PracticeAudioPlaybackException();
+    }
+    await _channel.invokeMethod<void>('append', bytes);
+  }
+
+  @override
+  Future<void> finishPCMStream() async {
+    if (!_started) {
+      return;
+    }
+    await _channel.invokeMethod<void>('finish');
+    _started = false;
+  }
+
+  @override
+  Future<void> stopPCMStream() async {
+    if (!_started) {
+      return;
+    }
+    _started = false;
+    await _channel.invokeMethod<void>('stop');
+  }
+
+  @override
+  Future<void> disposePCMStream() async {
+    if (_disposed) {
+      return;
+    }
+    _disposed = true;
+    if (_started) {
+      _started = false;
+      await _channel.invokeMethod<void>('stop');
+    }
+  }
 }
 
 abstract interface class NativePracticeAudioPlayer {

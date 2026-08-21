@@ -12,7 +12,14 @@ void main() {
 
     expect(report.id, '20000000-0000-4000-8000-000000000002');
     expect(report.sceneType, EvaluationReportSceneType.interview);
+    expect(report.practiceExperience, 'INTERVIEW');
+    expect(report.practiceMode, 'FULL_SIMULATION');
     expect(report.scoreability, EvaluationReportScoreability.provisional);
+    expect(report.questions.single.text, 'Tell me about your experience.');
+    expect(
+      report.questions.single.answer?.transcript,
+      'I led a project and improved delivery.',
+    );
     expect(report.dimensions.single.score, 82);
     expect(report.priorityActions.single.findingId, 'improvement_action');
     expect(
@@ -25,6 +32,22 @@ void main() {
           .single
           .originalExcerpt,
       'I made the product better.',
+    );
+  });
+
+  test('rejects a practice context that conflicts with the scene type', () {
+    final mismatchedExperience = evaluationReportWireFixture();
+    _formal(mismatchedExperience)['practice_experience'] = 'IELTS_SPEAKING';
+    final mismatchedMode = evaluationReportWireFixture();
+    _formal(mismatchedMode)['practice_mode'] = 'FULL_MOCK';
+
+    expect(
+      () => decodeEvaluationReport(mismatchedExperience),
+      throwsA(_decodeFailure),
+    );
+    expect(
+      () => decodeEvaluationReport(mismatchedMode),
+      throwsA(_decodeFailure),
     );
   });
 
@@ -67,7 +90,7 @@ void main() {
   test('rejects broken priority references and duplicate finding ids', () {
     final broken = evaluationReportWireFixture();
     final action =
-        (broken['priority_actions']! as List<Object?>).single
+        (_formal(broken)['priority_actions']! as List<Object?>).single
             as Map<String, Object?>;
     action['finding_id'] = 'missing_finding';
     final duplicate = evaluationReportWireFixture();
@@ -84,31 +107,32 @@ void main() {
     expect(() => decodeEvaluationReport(duplicate), throwsA(_decodeFailure));
   });
 
-  test('rejects oversized detail and malformed date', () {
-    final oversized = evaluationReportWireFixture()
-      ..['detail'] = <String, Object?>{
-        'payload': List<String>.filled(256 * 1024, 'a').join(),
-      };
+  test('rejects unknown report fields and malformed date', () {
+    final unknown = evaluationReportWireFixture();
+    _formal(unknown)['detail'] = <String, Object?>{};
     final malformedDate = evaluationReportWireFixture()
       ..['created_at'] = '2026-07-26T10:00:00';
 
-    expect(() => decodeEvaluationReport(oversized), throwsA(_decodeFailure));
+    expect(() => decodeEvaluationReport(unknown), throwsA(_decodeFailure));
     expect(
       () => decodeEvaluationReport(malformedDate),
       throwsA(_decodeFailure),
     );
   });
 
-  test('report detail remains valid JSON object data', () {
+  test('accepts a JSON round trip of the stored report envelope', () {
     final raw = evaluationReportWireFixture();
     final report = decodeEvaluationReport(jsonDecode(jsonEncode(raw)));
 
-    expect(report.detail['schema_version'], 'interview-report/v1');
-    expect(() => report.detail['new'] = true, throwsUnsupportedError);
+    expect(report.practiceSessionId, '30000000-0000-4000-8000-000000000003');
   });
 }
 
 Map<String, Object?> _dimension(Map<String, Object?> report) =>
-    (report['dimensions']! as List<Object?>).single as Map<String, Object?>;
+    (_formal(report)['dimensions']! as List<Object?>).single
+        as Map<String, Object?>;
+
+Map<String, Object?> _formal(Map<String, Object?> report) =>
+    report['report']! as Map<String, Object?>;
 
 final _decodeFailure = isA<EvaluationReportDecodeException>();

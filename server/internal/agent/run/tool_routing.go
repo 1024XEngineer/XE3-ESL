@@ -8,8 +8,9 @@ import (
 )
 
 const (
-	modelToolRoutingVersionV1 = "model-tool-routing-v1"
+	modelToolRoutingVersionV3 = "model-tool-routing-v3"
 	reasonModelToolSelection  = "model_tool_selection"
+	reasonDomainTurnCompleted = "domain_turn_completed"
 )
 
 type modelToolRouting struct {
@@ -17,22 +18,37 @@ type modelToolRouting struct {
 	ToolChoice  ToolChoice
 }
 
-// buildModelToolRouting 将 Registry 中的全部工具交给模型自主选择。
+// buildModelToolRouting exposes the complete Registry without interpreting
+// user text or business tool names.
 func buildModelToolRouting(
 	registry *capability.Registry,
 	logger *slog.Logger,
 	runID string,
+	choice ToolChoice,
 ) modelToolRouting {
-	routing := modelToolRouting{
-		ToolChoice: ToolChoice{Mode: ToolChoiceAuto},
+	var definitions []capability.Definition
+	if registry != nil {
+		definitions = registry.Definitions()
 	}
-	if registry == nil {
+	return buildModelToolRoutingDefinitions(definitions, logger, runID, choice)
+}
+
+func buildModelToolRoutingDefinitions(
+	definitions []capability.Definition,
+	logger *slog.Logger,
+	runID string,
+	choice ToolChoice,
+) modelToolRouting {
+	if choice.Mode == "" {
+		choice = ToolChoice{Mode: ToolChoiceAuto}
+	}
+	routing := modelToolRouting{ToolChoice: choice}
+	if len(definitions) == 0 {
 		return routing
 	}
-	registered := registry.Definitions()
-	routing.Definitions = make([]ToolDefinition, 0, len(registered))
-	names := make([]string, 0, len(registered))
-	for _, definition := range registered {
+	routing.Definitions = make([]ToolDefinition, 0, len(definitions))
+	names := make([]string, 0, len(definitions))
+	for _, definition := range definitions {
 		routing.Definitions = append(routing.Definitions, ToolDefinition{
 			Name:        definition.Name,
 			Description: definition.Description,
@@ -46,8 +62,9 @@ func buildModelToolRouting(
 			"run_id", runID,
 			"tools", names,
 			"tool_count", len(names),
-			"routing_version", modelToolRoutingVersionV1,
+			"routing_version", modelToolRoutingVersionV3,
 			"tool_choice_mode", string(routing.ToolChoice.Mode),
+			"tool_choice_name", routing.ToolChoice.Name,
 		)
 	}
 	return routing

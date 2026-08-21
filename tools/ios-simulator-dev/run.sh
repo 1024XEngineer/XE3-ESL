@@ -79,7 +79,6 @@ dependency_overrides:
   avatar_kit:
     path: $tool_dir/avatar_kit_stub
 EOF
-
 print "启动 PostgreSQL..."
 docker compose -p xe3-esl -f "$repo_dir/compose.yaml" up -d --wait postgres
 
@@ -124,4 +123,5 @@ cd "$mobile_dir"
 flutter "$flutter_mode" \
   "$@" \
   -d "$device_id" \
-  --dart-define="SPEAKUP_API_BASE_URL=$base_url"
+  --dart-define="SPEAKUP_API_BASE_URL=$base_url" \
+  --dart-define="SPEAKUP_AVATAR_ENABLED=false"

@@ -8,10 +8,13 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/modelid"
 )
 
 const (
 	TextProviderQianwen = "qianwen"
+	TextProviderQiniu   = "qiniu"
 
 	defaultTextTimeout         = 60 * time.Second
 	defaultTextMaxOutputTokens = 8192
@@ -26,6 +29,7 @@ type TextGenerationConfig struct {
 	Provider            string
 	BaseURL             string
 	Model               string
+	EvaluationModel     string
 	SpeechFeedbackModel string
 	Timeout             time.Duration
 	MaxOutputTokens     int
@@ -62,49 +66,75 @@ func LoadTextGeneration() (TextGenerationConfig, error) {
 	if provider == "" {
 		return TextGenerationConfig{}, errors.New("TEXT_GENERATION_PROVIDER is required")
 	}
-	if provider != TextProviderQianwen {
+	if provider != TextProviderQianwen && provider != TextProviderQiniu {
 		return TextGenerationConfig{}, errors.New("TEXT_GENERATION_PROVIDER is not supported")
 	}
 
-	baseURL := strings.TrimSpace(os.Getenv("QIANWEN_BASE_URL"))
+	prefix := "QIANWEN"
+	apiKeyName := "DASHSCOPE_API_KEY"
+	if provider == TextProviderQiniu {
+		prefix = "QINIU_AI"
+		apiKeyName = "QINIU_AI_API_KEY"
+	}
+	baseURLName := prefix + "_BASE_URL"
+	modelName := prefix + "_MODEL"
+	evaluationModelName := prefix + "_EVALUATION_MODEL"
+	speechFeedbackModelName := prefix + "_SPEECH_FEEDBACK_MODEL"
+	timeoutName := prefix + "_TIMEOUT"
+	maxOutputTokensName := prefix + "_MAX_OUTPUT_TOKENS"
+
+	baseURL := strings.TrimSpace(os.Getenv(baseURLName))
 	if baseURL == "" {
-		return TextGenerationConfig{}, errors.New("QIANWEN_BASE_URL is required")
+		return TextGenerationConfig{}, fmt.Errorf("%s is required", baseURLName)
 	}
-	model := strings.TrimSpace(os.Getenv("QIANWEN_MODEL"))
-	if model == "" {
-		return TextGenerationConfig{}, errors.New("QIANWEN_MODEL is required")
-	}
-	speechFeedbackModel := strings.TrimSpace(
-		os.Getenv("QIANWEN_SPEECH_FEEDBACK_MODEL"),
-	)
-	if speechFeedbackModel == "" {
-		return TextGenerationConfig{}, errors.New(
-			"QIANWEN_SPEECH_FEEDBACK_MODEL is required",
+	model := os.Getenv(modelName)
+	if !modelid.Valid(model) {
+		return TextGenerationConfig{}, fmt.Errorf(
+			"%s must be a valid model ID",
+			modelName,
 		)
 	}
-	apiKey := strings.TrimSpace(os.Getenv("DASHSCOPE_API_KEY"))
+	evaluationModel := os.Getenv(evaluationModelName)
+	if !modelid.Valid(evaluationModel) {
+		return TextGenerationConfig{}, fmt.Errorf(
+			"%s must be a valid model ID",
+			evaluationModelName,
+		)
+	}
+	speechFeedbackModel := os.Getenv(speechFeedbackModelName)
+	if !modelid.Valid(speechFeedbackModel) {
+		return TextGenerationConfig{}, fmt.Errorf(
+			"%s must be a valid model ID",
+			speechFeedbackModelName,
+		)
+	}
+	apiKey := strings.TrimSpace(os.Getenv(apiKeyName))
 	if apiKey == "" {
-		return TextGenerationConfig{}, errors.New("DASHSCOPE_API_KEY is required")
+		return TextGenerationConfig{}, fmt.Errorf("%s is required", apiKeyName)
 	}
 	if strings.IndexFunc(apiKey, func(r rune) bool {
 		return r < 0x21 || r == 0x7f
 	}) >= 0 {
-		return TextGenerationConfig{}, errors.New("DASHSCOPE_API_KEY contains whitespace or control characters")
+		return TextGenerationConfig{}, fmt.Errorf(
+			"%s contains whitespace or control characters",
+			apiKeyName,
+		)
 	}
 
-	timeout, err := durationOrDefault("QIANWEN_TIMEOUT", defaultTextTimeout)
+	timeout, err := durationOrDefault(timeoutName, defaultTextTimeout)
 	if err != nil {
 		return TextGenerationConfig{}, err
 	}
 	if timeout <= 0 || timeout > maximumTextTimeout {
 		return TextGenerationConfig{}, fmt.Errorf(
-			"QIANWEN_TIMEOUT must be greater than zero and at most %s",
+			"%s must be greater than zero and at most %s",
+			timeoutName,
 			maximumTextTimeout,
 		)
 	}
 
 	maxOutputTokens, err := positiveIntOrDefault(
-		"QIANWEN_MAX_OUTPUT_TOKENS",
+		maxOutputTokensName,
 		defaultTextMaxOutputTokens,
 	)
 	if err != nil {
@@ -112,7 +142,8 @@ func LoadTextGeneration() (TextGenerationConfig, error) {
 	}
 	if maxOutputTokens > maximumTextOutputTokens {
 		return TextGenerationConfig{}, fmt.Errorf(
-			"QIANWEN_MAX_OUTPUT_TOKENS must be at most %d",
+			"%s must be at most %d",
+			maxOutputTokensName,
 			maximumTextOutputTokens,
 		)
 	}
@@ -136,6 +167,7 @@ func LoadTextGeneration() (TextGenerationConfig, error) {
 		Provider:            provider,
 		BaseURL:             baseURL,
 		Model:               model,
+		EvaluationModel:     evaluationModel,
 		SpeechFeedbackModel: speechFeedbackModel,
 		Timeout:             timeout,
 		MaxOutputTokens:     maxOutputTokens,

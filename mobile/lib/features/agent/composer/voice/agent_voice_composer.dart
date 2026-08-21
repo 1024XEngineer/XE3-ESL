@@ -16,6 +16,7 @@ class AgentComposerVoiceDock extends StatelessWidget {
     required this.canAddImages,
     required this.onAddImages,
     required this.onShowText,
+    this.liveTranscript,
     super.key,
   });
 
@@ -27,6 +28,7 @@ class AgentComposerVoiceDock extends StatelessWidget {
   final bool canAddImages;
   final FutureOr<void> Function() onAddImages;
   final VoidCallback onShowText;
+  final String? liveTranscript;
 
   @override
   Widget build(BuildContext context) {
@@ -42,6 +44,8 @@ class AgentComposerVoiceDock extends StatelessWidget {
       durationKey: const Key('agent-voice-recording-duration'),
       showTextKey: const Key('agent-show-text-composer'),
       onShowText: onShowText,
+      liveTranscript: liveTranscript,
+      liveTranscriptKey: const Key('agent-voice-live-transcript'),
       leading: IconButton(
         key: const Key('agent-image-picker-button'),
         tooltip: '添加图片',

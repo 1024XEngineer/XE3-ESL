@@ -8,251 +8,269 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"strings"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
+	sharedmedia "github.com/1024XEngineer/XE3-ESL/server/internal/media"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
-)
-
-const (
-	defaultStagedTTL       = 24 * time.Hour
-	defaultUploadLease     = 2 * time.Minute
-	defaultCleanupLease    = 5 * time.Minute
-	defaultCleanupBatch    = 8
-	maxUploadRequestIDSize = 128
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Service struct {
-	repository Repository
-	store      objectstore.Store
-	ids        IDGenerator
-	clock      func() time.Time
-	config     Config
-	logger     *slog.Logger
-}
-
-type ServiceOption func(*Service) error
-
-func WithLogger(logger *slog.Logger) ServiceOption {
-	return func(service *Service) error {
-		if logger == nil {
-			return errors.New("agent image: logger is required")
-		}
-		service.logger = logger
-		return nil
-	}
+	media    *sharedmedia.Service
+	threads  *conversation.Service
+	database *pgxpool.Pool
+	clock    func() time.Time
+	config   Config
+	logger   *slog.Logger
 }
 
 func NewService(
-	repository Repository,
-	store objectstore.Store,
-	ids IDGenerator,
+	mediaService *sharedmedia.Service,
+	threads *conversation.Service,
+	database *pgxpool.Pool,
 	config Config,
-	options ...ServiceOption,
+	logger *slog.Logger,
 ) (*Service, error) {
-	if repository == nil || store == nil || ids == nil {
-		return nil, errors.New("agent image: dependencies are required")
-	}
-	if config.StagedTTL <= 0 {
-		config.StagedTTL = defaultStagedTTL
-	}
-	if config.UploadLease <= 0 {
-		config.UploadLease = defaultUploadLease
-	}
-	if config.StagedTTL < time.Minute || config.StagedTTL > 7*24*time.Hour ||
-		config.UploadLease < time.Second ||
-		config.UploadLease > 10*time.Minute {
+	if mediaService == nil || threads == nil || database == nil || logger == nil ||
+		config.StagedTTL < time.Minute || config.StagedTTL > 7*24*time.Hour {
 		return nil, ErrInvalidRequest
 	}
-	service := &Service{
-		repository: repository,
-		store:      store,
-		ids:        ids,
-		clock:      func() time.Time { return time.Now().UTC() },
-		config:     config,
-	}
-	for _, option := range options {
-		if option == nil {
-			return nil, errors.New("agent image: option is invalid")
-		}
-		if err := option(service); err != nil {
-			return nil, err
-		}
-	}
-	return service, nil
+	return &Service{
+		media: mediaService, threads: threads, database: database,
+		clock:  func() time.Time { return time.Now().UTC() },
+		config: config, logger: logger,
+	}, nil
 }
 
-func (s *Service) Upload(
+func (service *Service) Upload(
 	ctx context.Context,
 	actor requestcontext.Actor,
 	request UploadRequest,
-) (result Asset, resultErr error) {
-	startedAt := s.clock()
-	telemetry := imageUploadTelemetry{}
+) (result Image, resultErr error) {
+	startedAt := service.clock()
 	defer func() {
-		s.logUpload(ctx, telemetry, result, resultErr, startedAt)
+		attributes := []any{
+			"duration_ms", service.clock().Sub(startedAt).Milliseconds(),
+		}
+		if result.ID != "" {
+			attributes = append(attributes, "media_asset_id", result.ID)
+		}
+		if resultErr != nil {
+			service.logger.WarnContext(ctx, "agent.image.upload.failed", append(
+				attributes, "error_category", errorCategory(resultErr),
+			)...)
+			return
+		}
+		service.logger.InfoContext(ctx, "agent.image.upload.succeeded", attributes...)
 	}()
-	if ctx == nil || !actor.Valid() || !ValidUUID(request.ThreadID) ||
-		!validUploadRequestID(request.IdempotencyKey) ||
-		request.Body == nil {
-		return Asset{}, ErrInvalidRequest
+	if ctx == nil || !actor.Valid() || !sharedmedia.ValidUUID(request.ThreadID) ||
+		!sharedmedia.ValidIdempotencyKey(request.IdempotencyKey) || request.Body == nil {
+		return Image{}, ErrInvalidRequest
 	}
-	payload, err := io.ReadAll(io.LimitReader(
-		request.Body,
-		MaxBytes+1,
-	))
+	_, err := service.threads.GetThread(ctx, actor, request.ThreadID)
 	if err != nil {
-		return Asset{}, ErrInvalid
+		return Image{}, mapConversationError(err)
 	}
-	if len(payload) == 0 {
-		return Asset{}, ErrInvalid
+	payload, err := io.ReadAll(io.LimitReader(request.Body, MaxBytes+1))
+	if err != nil || len(payload) == 0 {
+		return Image{}, ErrInvalid
 	}
 	if len(payload) > MaxBytes {
-		return Asset{}, ErrTooLarge
+		return Image{}, ErrTooLarge
 	}
-	normalized, err := normalizeImage(
-		request.ContentType,
-		payload,
-	)
+	normalized, err := normalizeImage(request.ContentType, payload)
 	if err != nil {
-		return Asset{}, err
-	}
-	telemetry = imageUploadTelemetry{
-		contentType: normalized.contentType,
-		size:        int64(len(normalized.payload)),
-		width:       normalized.width,
-		height:      normalized.height,
+		return Image{}, err
 	}
 	checksumBytes := sha256.Sum256(normalized.payload)
-	checksum := hex.EncodeToString(checksumBytes[:])
-	assetID, err := s.ids.NewID()
-	if err != nil {
-		return Asset{}, ErrRepository
-	}
-	now := s.clock()
-	stage, err := s.repository.StageAsset(ctx, Asset{
-		ID:              assetID,
-		OwnerID:         actor.UserID,
-		ThreadID:        request.ThreadID,
-		UploadRequestID: request.IdempotencyKey,
-		ObjectKey:       ObjectPrefix + assetID + normalized.extension,
-		ContentType:     normalized.contentType,
-		Size:            int64(len(normalized.payload)),
-		Width:           normalized.width,
-		Height:          normalized.height,
-		ChecksumSHA256:  checksum,
-		Status:          StatusStaged,
-		ExpiresAt:       now.Add(s.config.StagedTTL),
-		CreatedAt:       now,
-		UpdatedAt:       now,
-	})
-	if err != nil {
-		return Asset{}, err
-	}
-	asset := stage.Asset
-	if !sameUpload(
-		asset,
-		normalized.contentType,
-		int64(len(normalized.payload)),
-		normalized.width,
-		normalized.height,
-		checksum,
-	) {
-		return Asset{}, ErrIdempotencyConflict
-	}
-	if asset.Status != StatusStaged || asset.ETag != "" {
-		return asset, nil
-	}
-	claim, acquired, err := s.repository.ClaimUpload(
-		ctx,
-		actor.UserID,
-		asset.ID,
-		s.config.UploadLease,
-	)
-	if err != nil {
-		return Asset{}, err
-	}
-	if !acquired {
-		return claim.Asset, nil
-	}
-	deadline, ok := uploadDeadline(
-		s.clock(),
-		claim.LeaseExpiresAt,
-		s.config.UploadLease,
-	)
-	if !ok {
-		return Asset{}, ErrConflict
-	}
-	putContext, cancel := context.WithDeadline(ctx, deadline)
-	defer cancel()
-	put, err := s.store.Put(putContext, objectstore.PutRequest{
-		Key:            claim.Asset.ObjectKey,
+	asset, err := service.media.Upload(ctx, sharedmedia.Upload{
+		UserID:         actor.UserID,
+		Kind:           sharedmedia.KindImage,
+		IdempotencyKey: request.IdempotencyKey,
+		ContentType:    normalized.contentType,
 		Body:           bytes.NewReader(normalized.payload),
-		Size:           claim.Asset.Size,
-		ContentType:    claim.Asset.ContentType,
-		ChecksumSHA256: claim.Asset.ChecksumSHA256,
+		Size:           int64(len(normalized.payload)),
+		ChecksumSHA256: hex.EncodeToString(checksumBytes[:]),
+		Width:          normalized.width,
+		Height:         normalized.height,
+		ExpiresAt:      service.clock().Add(service.config.StagedTTL),
 	})
 	if err != nil {
-		return Asset{}, err
+		return Image{}, mapMediaError(err)
 	}
-	return s.repository.CommitUpload(
-		ctx,
-		actor.UserID,
-		claim.Asset.ID,
-		claim.FencingToken,
-		put.ETag,
-	)
+	return imageFromAsset(asset, time.Time{}), nil
 }
 
-type imageUploadTelemetry struct {
-	contentType string
-	size        int64
-	width       int
-	height      int
-}
-
-func (s *Service) logUpload(
+func (service *Service) Get(
 	ctx context.Context,
-	telemetry imageUploadTelemetry,
-	asset Asset,
-	err error,
-	startedAt time.Time,
-) {
-	if s.logger == nil {
-		return
+	actor requestcontext.Actor,
+	assetID string,
+) (Image, error) {
+	if ctx == nil || !actor.Valid() || !sharedmedia.ValidUUID(assetID) {
+		return Image{}, ErrNotFound
 	}
-	attributes := []any{
-		"duration_ms", s.clock().Sub(startedAt).Milliseconds(),
+	asset, err := service.media.FindOwned(ctx, actor.UserID, assetID)
+	if err != nil {
+		return Image{}, mapMediaError(err)
 	}
-	if telemetry.contentType != "" {
-		attributes = append(
-			attributes,
-			"content_type", telemetry.contentType,
-			"size_bytes", telemetry.size,
-			"width", telemetry.width,
-			"height", telemetry.height,
-		)
+	if asset.Kind != sharedmedia.KindImage {
+		return Image{}, ErrNotFound
 	}
-	if asset.ID != "" {
-		attributes = append(
-			attributes,
-			"image_asset_id", asset.ID,
-			"status", asset.Status,
-		)
+	return imageFromAsset(asset, time.Time{}), nil
+}
+
+func (service *Service) Content(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	assetID string,
+) (objectstore.SignedGetResult, error) {
+	image, err := service.Get(ctx, actor, assetID)
+	if err != nil {
+		return objectstore.SignedGetResult{}, err
+	}
+	result, err := service.media.SignedGet(ctx, actor.UserID, image.ID)
+	if err != nil {
+		return objectstore.SignedGetResult{}, mapMediaError(err)
+	}
+	return result, nil
+}
+
+func (service *Service) Delete(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	assetID string,
+) error {
+	if ctx == nil || !actor.Valid() || !sharedmedia.ValidUUID(assetID) {
+		return ErrNotFound
+	}
+	image, err := service.Get(ctx, actor, assetID)
+	if errors.Is(err, ErrNotFound) {
+		return nil
 	}
 	if err != nil {
-		attributes = append(
-			attributes,
-			"error_category", imageErrorCategory(err),
-		)
-		s.logger.WarnContext(ctx, "agent.image.upload.failed", attributes...)
-		return
+		return err
 	}
-	s.logger.InfoContext(ctx, "agent.image.upload.succeeded", attributes...)
+	if err := service.media.Delete(ctx, actor.UserID, image.ID); err != nil {
+		return mapMediaError(err)
+	}
+	return nil
 }
 
-func imageErrorCategory(err error) string {
+func (service *Service) MessageAssets(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	threadID string,
+	messageID string,
+) ([]Image, error) {
+	if ctx == nil || !actor.Valid() || !sharedmedia.ValidUUID(threadID) ||
+		!sharedmedia.ValidUUID(messageID) {
+		return nil, ErrNotFound
+	}
+	rows, err := service.database.Query(ctx, `
+SELECT
+    asset.id::text,
+    asset.content_type,
+    asset.size_bytes,
+    asset.width,
+    asset.height,
+    asset.status,
+    asset.created_at,
+    attachment.created_at
+FROM agent_message_attachments AS attachment
+JOIN media_assets AS asset ON asset.id = attachment.asset_id
+JOIN agent_messages AS message ON message.id = attachment.message_id
+JOIN agent_threads AS thread ON thread.id = message.thread_id
+WHERE thread.user_id = $1
+  AND thread.id = $2
+  AND message.id = $3
+  AND asset.kind = 'image'
+  AND asset.status = 'ready'
+ORDER BY attachment.position`, actor.UserID, threadID, messageID)
+	if err != nil {
+		return nil, ErrRepository
+	}
+	defer rows.Close()
+	images := make([]Image, 0, MaxPerMessage)
+	for rows.Next() {
+		var image Image
+		if err := rows.Scan(
+			&image.ID,
+			&image.ContentType,
+			&image.Size,
+			&image.Width,
+			&image.Height,
+			&image.Status,
+			&image.CreatedAt,
+			&image.AttachedAt,
+		); err != nil {
+			return nil, ErrRepository
+		}
+		images = append(images, image)
+	}
+	if rows.Err() != nil {
+		return nil, ErrRepository
+	}
+	return images, nil
+}
+
+func (service *Service) MessageImages(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	threadID string,
+	messageID string,
+) ([]ContextImage, error) {
+	images, err := service.MessageAssets(ctx, actor, threadID, messageID)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]ContextImage, 0, len(images))
+	for _, image := range images {
+		signed, err := service.media.SignedGet(ctx, actor.UserID, image.ID)
+		if err != nil {
+			return nil, mapMediaError(err)
+		}
+		result = append(result, ContextImage{AssetID: image.ID, URL: signed.URL})
+	}
+	return result, nil
+}
+
+func imageFromAsset(
+	asset sharedmedia.Asset,
+	attachedAt time.Time,
+) Image {
+	return Image{
+		ID: asset.ID, ContentType: asset.ContentType,
+		Size: asset.Size, Width: asset.Width, Height: asset.Height,
+		Status: string(asset.Status), CreatedAt: asset.CreatedAt,
+		AttachedAt: attachedAt,
+	}
+}
+
+func mapConversationError(err error) error {
+	if errors.Is(err, conversation.ErrNotFound) {
+		return ErrNotFound
+	}
+	return ErrRepository
+}
+
+func mapMediaError(err error) error {
+	switch {
+	case errors.Is(err, sharedmedia.ErrInvalidRequest):
+		return ErrInvalidRequest
+	case errors.Is(err, sharedmedia.ErrNotFound):
+		return ErrNotFound
+	case errors.Is(err, sharedmedia.ErrConflict):
+		return ErrConflict
+	case errors.Is(err, sharedmedia.ErrIdempotencyConflict):
+		return ErrIdempotencyConflict
+	default:
+		return err
+	}
+}
+
+func errorCategory(err error) string {
 	switch {
 	case errors.Is(err, ErrTooLarge):
 		return "image_too_large"
@@ -275,221 +293,6 @@ func imageErrorCategory(err error) string {
 	default:
 		return "repository"
 	}
-}
-
-func (s *Service) Get(
-	ctx context.Context,
-	actor requestcontext.Actor,
-	assetID string,
-) (Asset, error) {
-	if ctx == nil || !actor.Valid() || !ValidUUID(assetID) {
-		return Asset{}, ErrNotFound
-	}
-	return s.repository.FindAsset(ctx, actor.UserID, assetID)
-}
-
-func (s *Service) Content(
-	ctx context.Context,
-	actor requestcontext.Actor,
-	assetID string,
-) (objectstore.SignedGetResult, error) {
-	asset, err := s.Get(ctx, actor, assetID)
-	if err != nil {
-		return objectstore.SignedGetResult{}, err
-	}
-	if asset.ETag == "" ||
-		(asset.Status != StatusStaged && asset.Status != StatusAttached) {
-		return objectstore.SignedGetResult{}, ErrNotFound
-	}
-	result, err := s.store.SignedGet(ctx, asset.ObjectKey)
-	if err != nil {
-		return objectstore.SignedGetResult{}, err
-	}
-	if strings.TrimSpace(result.URL) == "" ||
-		!result.ExpiresAt.After(s.clock()) {
-		return objectstore.SignedGetResult{}, ErrRepository
-	}
-	return result, nil
-}
-
-func (s *Service) MessageImages(
-	ctx context.Context,
-	actor requestcontext.Actor,
-	threadID string,
-	messageID string,
-) ([]ContextImage, error) {
-	if ctx == nil || !actor.Valid() || !ValidUUID(threadID) ||
-		!ValidUUID(messageID) {
-		return nil, ErrNotFound
-	}
-	assets, err := s.repository.ListMessageAssets(
-		ctx,
-		actor.UserID,
-		threadID,
-		messageID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]ContextImage, 0, len(assets))
-	for _, asset := range assets {
-		if asset.Status != StatusAttached {
-			continue
-		}
-		signed, err := s.store.SignedGet(ctx, asset.ObjectKey)
-		if err != nil {
-			return nil, err
-		}
-		if strings.TrimSpace(signed.URL) == "" ||
-			!signed.ExpiresAt.After(s.clock()) {
-			return nil, ErrRepository
-		}
-		result = append(result, ContextImage{
-			AssetID: asset.ID,
-			URL:     signed.URL,
-		})
-	}
-	return result, nil
-}
-
-func (s *Service) MessageAssets(
-	ctx context.Context,
-	actor requestcontext.Actor,
-	threadID string,
-	messageID string,
-) ([]Asset, error) {
-	if ctx == nil || !actor.Valid() || !ValidUUID(threadID) ||
-		!ValidUUID(messageID) {
-		return nil, ErrNotFound
-	}
-	return s.repository.ListMessageAssets(
-		ctx,
-		actor.UserID,
-		threadID,
-		messageID,
-	)
-}
-
-func (s *Service) Attach(
-	ctx context.Context,
-	actor requestcontext.Actor,
-	threadID string,
-	messageID string,
-	assetIDs []string,
-) ([]Asset, error) {
-	if ctx == nil || !actor.Valid() {
-		return nil, ErrInvalidRequest
-	}
-	return s.repository.AttachAssets(
-		ctx,
-		actor.UserID,
-		threadID,
-		messageID,
-		assetIDs,
-	)
-}
-
-func (s *Service) Delete(
-	ctx context.Context,
-	actor requestcontext.Actor,
-	assetID string,
-) error {
-	if ctx == nil || !actor.Valid() || !ValidUUID(assetID) {
-		return ErrNotFound
-	}
-	asset, err := s.repository.BeginDeletion(
-		ctx,
-		actor.UserID,
-		assetID,
-	)
-	if err != nil {
-		return err
-	}
-	if asset.Status == StatusDeleted {
-		return nil
-	}
-	if err := s.store.Delete(ctx, asset.ObjectKey); err != nil {
-		return err
-	}
-	_, err = s.repository.FinishDeletion(
-		ctx,
-		actor.UserID,
-		asset.ID,
-	)
-	return err
-}
-
-func (s *Service) Reclaim(
-	ctx context.Context,
-	limit int,
-) (CleanupResult, error) {
-	if ctx == nil {
-		return CleanupResult{}, ErrInvalidRequest
-	}
-	if limit <= 0 || limit > 100 {
-		limit = defaultCleanupBatch
-	}
-	claims, err := s.repository.ClaimCleanup(
-		ctx,
-		defaultCleanupLease,
-		limit,
-	)
-	if err != nil {
-		return CleanupResult{}, err
-	}
-	result := CleanupResult{}
-	for _, claim := range claims {
-		if err := s.store.Delete(ctx, claim.ObjectKey); err != nil {
-			result.Failed++
-			_ = s.repository.ReleaseCleanup(ctx, claim)
-			continue
-		}
-		if err := s.repository.FinishCleanup(ctx, claim); err != nil {
-			result.Failed++
-			_ = s.repository.ReleaseCleanup(ctx, claim)
-			continue
-		}
-		result.Deleted++
-	}
-	return result, nil
-}
-
-func validUploadRequestID(value string) bool {
-	return len(value) >= 8 &&
-		len(value) <= maxUploadRequestIDSize &&
-		strings.TrimSpace(value) == value &&
-		!strings.ContainsAny(value, "\x00\r\n")
-}
-
-func sameUpload(
-	asset Asset,
-	contentType string,
-	size int64,
-	width int,
-	height int,
-	checksum string,
-) bool {
-	return asset.ContentType == contentType &&
-		asset.Size == size &&
-		asset.Width == width &&
-		asset.Height == height &&
-		asset.ChecksumSHA256 == checksum
-}
-
-func uploadDeadline(
-	now time.Time,
-	leaseExpiresAt time.Time,
-	leaseDuration time.Duration,
-) (time.Time, bool) {
-	reserve := leaseDuration / 10
-	if reserve < 500*time.Millisecond {
-		reserve = 500 * time.Millisecond
-	}
-	if reserve > 5*time.Second {
-		reserve = 5 * time.Second
-	}
-	deadline := leaseExpiresAt.Add(-reserve)
-	return deadline, deadline.After(now)
 }
 
 var _ Application = (*Service)(nil)

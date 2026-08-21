@@ -2,10 +2,15 @@ package run
 
 import (
 	"encoding/json"
+	"regexp"
 	"time"
 
-	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
+	agentclientaction "github.com/1024XEngineer/XE3-ESL/server/internal/agent/clientaction"
 )
+
+const maxToolSourceRefs = 16
+
+var toolSourceTypePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9._:-]{0,63}$`)
 
 type ToolCallStatus string
 
@@ -39,7 +44,7 @@ type ToolCall struct {
 	ErrorCategory string
 	RequestID     string
 	SourceRefs    []ToolSourceRef
-	Handoffs      []agenthandoff.Item
+	ClientActions []agentclientaction.Action
 	ProposedAt    time.Time
 	StartedAt     time.Time
 	CompletedAt   time.Time
@@ -47,7 +52,7 @@ type ToolCall struct {
 }
 
 func (call ToolCall) ValidIdentity() bool {
-	return ValidModelID(call.ID) &&
+	return ValidOpaqueID(call.ID) &&
 		ValidUUID(call.RunID) &&
 		ValidUUID(call.OwnerID) &&
 		ValidUUID(call.ThreadID)
@@ -56,4 +61,16 @@ func (call ToolCall) ValidIdentity() bool {
 type ToolSourceRef struct {
 	Type string `json:"type"`
 	ID   string `json:"id"`
+}
+
+func ValidToolSourceRefs(refs []ToolSourceRef) bool {
+	if len(refs) > maxToolSourceRefs {
+		return false
+	}
+	for _, ref := range refs {
+		if !toolSourceTypePattern.MatchString(ref.Type) || !ValidOpaqueID(ref.ID) {
+			return false
+		}
+	}
+	return true
 }

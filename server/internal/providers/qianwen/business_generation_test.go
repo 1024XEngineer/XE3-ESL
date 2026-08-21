@@ -9,10 +9,11 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/memory"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/textgeneration"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
+	preparationagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/interviewresume/fieldextractor"
 	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/resume/fieldextractor"
 )
 
 func TestBusinessGeneratorsMapOwnedRequests(t *testing.T) {
@@ -23,19 +24,23 @@ func TestBusinessGeneratorsMapOwnedRequests(t *testing.T) {
 		systemPrompt   string
 		userPrompt     string
 		responseFormat protocol.TextResponseFormat
+		schemaName     string
 		generate       func(*textClient) (string, string, string, error)
 	}{
 		{
-			name:           "Memory JSON",
-			systemPrompt:   "extract durable memory",
-			userPrompt:     "one user turn",
-			responseFormat: protocol.TextResponseFormatJSON,
+			name:           "Evaluation JSON",
+			systemPrompt:   "evaluate frozen evidence",
+			userPrompt:     "sanitized evidence payload",
+			responseFormat: protocol.TextResponseFormatJSONSchema,
+			schemaName:     "evaluation_report",
 			generate: func(client *textClient) (string, string, string, error) {
-				result, err := (&MemoryGenerator{generator: client}).GenerateJSON(
+				result, err := (&EvaluationScoringGenerator{
+					generator: client,
+				}).Generate(
 					context.Background(),
-					memory.GenerationRequest{
-						SystemPrompt: "extract durable memory",
-						UserPrompt:   "one user turn",
+					textgeneration.Request{
+						SystemPrompt: "evaluate frozen evidence",
+						UserPrompt:   "sanitized evidence payload",
 					},
 				)
 				return result.Provider, result.Model, result.Content, err
@@ -45,7 +50,8 @@ func TestBusinessGeneratorsMapOwnedRequests(t *testing.T) {
 			name:           "Summary JSON",
 			systemPrompt:   "summarize the thread",
 			userPrompt:     "thread transcript",
-			responseFormat: protocol.TextResponseFormatJSON,
+			responseFormat: protocol.TextResponseFormatJSONSchema,
+			schemaName:     "conversation_summary",
 			generate: func(client *textClient) (string, string, string, error) {
 				result, err := (&SummaryGenerator{generator: client}).GenerateJSON(
 					context.Background(),
@@ -74,10 +80,29 @@ func TestBusinessGeneratorsMapOwnedRequests(t *testing.T) {
 			},
 		},
 		{
+			name:           "Practice turn intent JSON",
+			systemPrompt:   "classify current behavior",
+			userPrompt:     "current user message",
+			responseFormat: protocol.TextResponseFormatJSONSchema,
+			schemaName:     "practice_turn_intent",
+			generate: func(client *textClient) (string, string, string, error) {
+				result, err := (&PracticeTurnIntentGenerator{generator: client}).
+					GeneratePracticeTurnIntent(
+						context.Background(),
+						preparationagentcapability.PracticeTurnIntentGenerationRequest{
+							SystemInstruction: "classify current behavior",
+							UserMaterial:      "current user message",
+						},
+					)
+				return "", "", result.Content, err
+			},
+		},
+		{
 			name:           "Resume JSON",
 			systemPrompt:   "extract resume fields",
 			userPrompt:     "resume document payload",
-			responseFormat: protocol.TextResponseFormatJSON,
+			responseFormat: protocol.TextResponseFormatJSONSchema,
+			schemaName:     "resume_fields",
 			generate: func(client *textClient) (string, string, string, error) {
 				result, err := (&ResumeFieldGenerator{generator: client}).GenerateJSON(
 					context.Background(),
@@ -117,6 +142,7 @@ func TestBusinessGeneratorsMapOwnedRequests(t *testing.T) {
 				t.Fatalf("content = %q", content)
 			}
 			if test.name != "Preparation text" &&
+				test.name != "Practice turn intent JSON" &&
 				(provider != providerName || model != "qwen3.5-flash") {
 				t.Fatalf("provider/model = %q/%q", provider, model)
 			}
@@ -127,13 +153,16 @@ func TestBusinessGeneratorsMapOwnedRequests(t *testing.T) {
 				received.Messages[1].Content != test.userPrompt {
 				t.Fatalf("messages = %#v", received.Messages)
 			}
-			if test.responseFormat == protocol.TextResponseFormatJSON {
-				if received.ResponseFormat == nil ||
-					received.ResponseFormat.Type != string(protocol.TextResponseFormatJSON) {
-					t.Fatalf("response format = %#v", received.ResponseFormat)
+			switch test.responseFormat {
+			case protocol.TextResponseFormatJSONSchema:
+				assertStrictResponseSchema(t, received, test.schemaName)
+				if test.schemaName == "evaluation_report" {
+					assertEvaluationFindingSchema(t, received)
 				}
-			} else if received.ResponseFormat != nil {
-				t.Fatalf("response format = %#v, want omitted", received.ResponseFormat)
+			default:
+				if received.ResponseFormat != nil {
+					t.Fatalf("response format = %#v, want omitted", received.ResponseFormat)
+				}
 			}
 			if len(received.Tools) != 0 || received.ToolChoice != nil {
 				t.Fatalf("business request exposed tools: %#v", received)
@@ -142,27 +171,50 @@ func TestBusinessGeneratorsMapOwnedRequests(t *testing.T) {
 	}
 }
 
-func TestBusinessGeneratorPreservesStableProviderFailure(t *testing.T) {
-	t.Parallel()
+func assertStrictResponseSchema(
+	t *testing.T,
+	received chatCompletionRequest,
+	name string,
+) {
+	t.Helper()
+	format := received.ResponseFormat
+	if format == nil ||
+		format.Type != string(protocol.TextResponseFormatJSONSchema) ||
+		format.JSONSchema == nil || format.JSONSchema.Name != name ||
+		!format.JSONSchema.Strict || received.MaxTokens != nil {
+		t.Fatalf("strict response format = %#v", format)
+	}
+}
 
-	client := mustBusinessGenerator(t, doerFunc(func(*http.Request) (*http.Response, error) {
-		return jsonResponse(
-			http.StatusTooManyRequests,
-			`{"code":"Throttling.RateQuota"}`,
-		), nil
-	}))
-	_, err := (&MemoryGenerator{generator: client}).GenerateJSON(
-		context.Background(),
-		memory.GenerationRequest{
-			SystemPrompt: "extract durable memory",
-			UserPrompt:   "one user turn",
-		},
-	)
-	var failure memory.ProviderFailure
-	if !errors.As(err, &failure) ||
-		failure.StableCategory() != string(protocol.ErrorRateLimited) ||
-		!failure.Retryable() {
-		t.Fatalf("provider failure = %#v", err)
+func assertEvaluationFindingSchema(
+	t *testing.T,
+	received chatCompletionRequest,
+) {
+	t.Helper()
+	format := received.ResponseFormat
+	properties, ok := format.JSONSchema.Schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("evaluation schema properties = %#v", format.JSONSchema.Schema)
+	}
+	dimensions, ok := properties["dimensions"].(map[string]any)
+	if !ok {
+		t.Fatalf("evaluation dimensions schema = %#v", properties["dimensions"])
+	}
+	dimension, ok := dimensions["items"].(map[string]any)
+	if !ok {
+		t.Fatalf("evaluation dimension item = %#v", dimensions["items"])
+	}
+	dimensionProperties, ok := dimension["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("evaluation dimension properties = %#v", dimension)
+	}
+	strengths, ok := dimensionProperties["strengths"].(map[string]any)
+	if !ok {
+		t.Fatalf("evaluation strengths schema = %#v", dimensionProperties["strengths"])
+	}
+	finding, ok := strengths["items"].(map[string]any)
+	if !ok || finding["type"] != "object" || finding["additionalProperties"] != false {
+		t.Fatalf("evaluation finding schema = %#v", strengths["items"])
 	}
 }
 

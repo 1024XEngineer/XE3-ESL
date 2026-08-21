@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:speakup/features/coaching/interview/job_preparation_models.dart';
 import 'package:speakup/features/coaching/ielts/ielts_assignment.dart';
 import 'package:speakup/features/coaching/ielts/ielts_assignment_codec.dart';
+import 'package:speakup/features/coaching/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/coaching/preparation/preparation_models.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/features/coaching/scene/scene_wire_codec.dart';
@@ -11,156 +12,188 @@ final class PreparationWireFormatException implements Exception {
   const PreparationWireFormatException();
 }
 
-typedef JobTargetInputDecoder = JobTargetInput Function(Object? value);
-typedef JobTargetCandidateDecoder = JobTargetCandidate Function(Object? value);
+InterviewPreparation decodeInterviewPreparationBody(String body) =>
+    decodeInterviewPreparation(_decodeJson(body));
 
-PreparationProfile decodePreparationProfileBody(String body) =>
-    decodePreparationProfile(_decodeJson(body));
-
-PreparationProfile decodePreparationProfile(Object? value) {
+InterviewPreparation decodeInterviewPreparation(Object? value) {
   final object = _object(
     value,
     required: const <String>{
-      'preparation_profile_id',
+      'interview_preparation_id',
       'user_id',
-      'background_summary',
+      'input',
+      'candidate',
+      'status',
       'version',
+      'created_at',
       'updated_at',
     },
-    optional: const <String>{
-      'resume_id',
-      'resume_revision',
-      'job_description_ref',
-      'job_target_id',
-      'job_target_confirmation_version',
-    },
+    optional: const <String>{'resume_content'},
   );
-  final hasJobTarget = object.containsKey('job_target_id');
-  final hasResume = object.containsKey('resume_id');
-  if (hasResume != object.containsKey('resume_revision')) {
+  final createdAt = _dateTime(object['created_at']);
+  final updatedAt = _dateTime(object['updated_at']);
+  if (updatedAt.isBefore(createdAt)) {
     throw const PreparationWireFormatException();
   }
-  if (hasJobTarget != object.containsKey('job_target_confirmation_version')) {
+  final input = decodeInterviewPreparationInput(object['input']);
+  final candidate = decodeInterviewPreparationCandidate(object['candidate']);
+  if (candidate.source != input.source) {
     throw const PreparationWireFormatException();
   }
-  return PreparationProfile(
-    id: _resourceId(object['preparation_profile_id']),
-    userId: _resourceId(object['user_id']),
-    resumeId: hasResume ? _resourceId(object['resume_id']) : null,
-    resumeRevision: hasResume ? _version(object['resume_revision']) : null,
-    jobDescriptionRef: object.containsKey('job_description_ref')
-        ? _text(object['job_description_ref'], maximumBytes: 16 * 1024)
-        : null,
-    backgroundSummary: _text(
-      object['background_summary'],
-      maximumBytes: 64 * 1024,
-    ),
-    jobTargetId: hasJobTarget ? _resourceId(object['job_target_id']) : null,
-    jobTargetConfirmationVersion: hasJobTarget
-        ? _version(object['job_target_confirmation_version'])
-        : null,
-    version: _version(object['version']),
-    updatedAt: _dateTime(object['updated_at']),
+  return InterviewPreparation(
+    id: _aggregateId(object['interview_preparation_id']),
+    userId: _aggregateId(object['user_id']),
+    input: input,
+    candidate: candidate,
+    resumeUsed: _validateOptionalResumeContent(object),
+    status: switch (_text(object['status'], maximumBytes: 16)) {
+      'draft' => InterviewPreparationStatus.draft,
+      'confirmed' => InterviewPreparationStatus.confirmed,
+      'discarded' => InterviewPreparationStatus.discarded,
+      _ => throw const PreparationWireFormatException(),
+    },
+    version: _positiveInteger(object['version']),
+    createdAt: createdAt,
+    updatedAt: updatedAt,
   );
 }
 
-PreparationSnapshot decodePreparationSnapshotBody(
-  String body, {
-  JobTargetInputDecoder? decodeJobTargetInput,
-  JobTargetCandidateDecoder? decodeJobTargetCandidate,
-}) => decodePreparationSnapshot(
-  _decodeJson(body),
-  decodeJobTargetInput: decodeJobTargetInput,
-  decodeJobTargetCandidate: decodeJobTargetCandidate,
-);
+InterviewPreparationInput decodeInterviewPreparationInput(Object? value) {
+  final object = _object(
+    value,
+    required: const <String>{'source'},
+    optional: const <String>{
+      'job_title',
+      'job_description',
+      'company',
+      'seniority',
+      'candidate_background',
+      'practice_focus',
+    },
+  );
+  final source = switch (_text(object['source'], maximumBytes: 32)) {
+    'job_description' => InterviewPreparationSource.jobDescription,
+    'quick_start' => InterviewPreparationSource.quickStart,
+    _ => throw const PreparationWireFormatException(),
+  };
+  final input = InterviewPreparationInput(
+    source: source,
+    jobTitle: _optionalText(object, 'job_title', 512),
+    jobDescription: _optionalText(object, 'job_description', 64 * 1024),
+    company: _optionalText(object, 'company', 512),
+    seniority: _optionalText(object, 'seniority', 256),
+    candidateBackground: _optionalText(
+      object,
+      'candidate_background',
+      16 * 1024,
+    ),
+    practiceFocus: _optionalText(object, 'practice_focus', 8 * 1024),
+  );
+  if ((source == InterviewPreparationSource.jobDescription &&
+          input.jobDescription == null) ||
+      (source == InterviewPreparationSource.quickStart &&
+          (input.jobTitle == null || input.jobDescription != null))) {
+    throw const PreparationWireFormatException();
+  }
+  return input;
+}
 
-PreparationSnapshot decodePreparationSnapshot(
-  Object? value, {
-  JobTargetInputDecoder? decodeJobTargetInput,
-  JobTargetCandidateDecoder? decodeJobTargetCandidate,
-}) {
+InterviewPreparationCandidate decodeInterviewPreparationCandidate(
+  Object? value,
+) {
   final object = _object(
     value,
     required: const <String>{
-      'preparation_snapshot_id',
-      'source_profile_id',
-      'source_version',
-      'background_snapshot',
-      'created_at',
+      'source',
+      'general_advice_only',
+      'job_title',
+      'seniority',
+      'responsibilities',
+      'core_skills',
+      'communication_focus',
+      'practice_goals',
+      'scope_notice',
+      'catalog_recommendation',
     },
-    optional: const <String>{
-      'source_job_target_id',
-      'source_job_target_confirmation_version',
-      'job_target_input_snapshot',
-      'job_target_candidate_snapshot',
-      'resume_snapshot',
-      'job_description_snapshot',
+    optional: const <String>{'company'},
+  );
+  final source = switch (_text(object['source'], maximumBytes: 32)) {
+    'job_description' => InterviewPreparationSource.jobDescription,
+    'quick_start' => InterviewPreparationSource.quickStart,
+    _ => throw const PreparationWireFormatException(),
+  };
+  final generalAdviceOnly = object['general_advice_only'];
+  if (generalAdviceOnly is! bool ||
+      generalAdviceOnly != (source == InterviewPreparationSource.quickStart)) {
+    throw const PreparationWireFormatException();
+  }
+  final recommendation = _object(
+    object['catalog_recommendation'],
+    required: const <String>{
+      'scene_id',
+      'scene_version',
+      'selected_role_ids',
+      'practice_option_id',
     },
   );
-  const jobKeys = <String>{
-    'source_job_target_id',
-    'source_job_target_confirmation_version',
-    'job_target_input_snapshot',
-    'job_target_candidate_snapshot',
-  };
-  final presentJobKeys = jobKeys.where(object.containsKey).length;
-  if (presentJobKeys != 0 &&
-      (presentJobKeys != jobKeys.length ||
-          decodeJobTargetInput == null ||
-          decodeJobTargetCandidate == null)) {
-    throw const PreparationWireFormatException();
-  }
-  final hasJobTarget = presentJobKeys == jobKeys.length;
-  final input = hasJobTarget
-      ? decodeJobTargetInput!(object['job_target_input_snapshot'])
-      : null;
-  final candidate = hasJobTarget
-      ? decodeJobTargetCandidate!(object['job_target_candidate_snapshot'])
-      : null;
-  if (input != null && candidate != null && input.source != candidate.source) {
-    throw const PreparationWireFormatException();
-  }
-  return PreparationSnapshot(
-    id: _resourceId(object['preparation_snapshot_id']),
-    sourceProfileId: _resourceId(object['source_profile_id']),
-    sourceVersion: _version(object['source_version']),
-    sourceJobTargetId: hasJobTarget
-        ? _resourceId(object['source_job_target_id'])
-        : null,
-    sourceJobTargetConfirmationVersion: hasJobTarget
-        ? _version(object['source_job_target_confirmation_version'])
-        : null,
-    jobTargetInput: input,
-    jobTargetCandidate: candidate,
-    resumeSnapshot: object.containsKey('resume_snapshot')
-        ? _text(object['resume_snapshot'], maximumBytes: 64 * 1024)
-        : null,
-    jobDescriptionSnapshot: object.containsKey('job_description_snapshot')
-        ? _text(object['job_description_snapshot'], maximumBytes: 64 * 1024)
-        : null,
-    backgroundSnapshot: _text(
-      object['background_snapshot'],
-      maximumBytes: 64 * 1024,
+  return InterviewPreparationCandidate(
+    source: source,
+    generalAdviceOnly: generalAdviceOnly,
+    jobTitle: _text(object['job_title'], maximumBytes: 512),
+    company: _optionalText(object, 'company', 512) ?? '',
+    seniority: _text(object['seniority'], maximumBytes: 256),
+    responsibilities: _nonEmptyTextList(object['responsibilities']),
+    coreSkills: _nonEmptyTextList(object['core_skills']),
+    communicationFocus: _nonEmptyTextList(object['communication_focus']),
+    practiceGoals: _nonEmptyTextList(object['practice_goals']),
+    scopeNotice: _text(object['scope_notice'], maximumBytes: 2048),
+    catalogRecommendation: InterviewCatalogRecommendation(
+      sceneId: _resourceId(recommendation['scene_id']),
+      sceneVersion: _positiveInteger(recommendation['scene_version']),
+      selectedRoleIds: _resourceIdList(recommendation['selected_role_ids']),
+      practiceOptionId: _resourceId(recommendation['practice_option_id']),
     ),
-    createdAt: _dateTime(object['created_at']),
   );
 }
 
-PracticePlan decodePracticePlanBody(
-  String body, {
-  JobTargetInputDecoder? decodeJobTargetInput,
-  JobTargetCandidateDecoder? decodeJobTargetCandidate,
-}) => decodePracticePlan(
-  _decodeJson(body),
-  decodeJobTargetInput: decodeJobTargetInput,
-  decodeJobTargetCandidate: decodeJobTargetCandidate,
-);
+Map<String, Object?> encodeInterviewPreparationInput(
+  InterviewPreparationInput input,
+) => <String, Object?>{
+  'source': input.source.wireValue,
+  if (input.jobTitle != null) 'job_title': input.jobTitle,
+  if (input.jobDescription != null) 'job_description': input.jobDescription,
+  if (input.company != null) 'company': input.company,
+  if (input.seniority != null) 'seniority': input.seniority,
+  if (input.candidateBackground != null)
+    'candidate_background': input.candidateBackground,
+  if (input.practiceFocus != null) 'practice_focus': input.practiceFocus,
+};
 
-PracticePlan decodePracticePlan(
-  Object? value, {
-  JobTargetInputDecoder? decodeJobTargetInput,
-  JobTargetCandidateDecoder? decodeJobTargetCandidate,
-}) {
+Map<String, Object?> encodeInterviewPreparationCandidate(
+  InterviewPreparationCandidate candidate,
+) => <String, Object?>{
+  'source': candidate.source.wireValue,
+  'general_advice_only': candidate.generalAdviceOnly,
+  'job_title': candidate.jobTitle,
+  if (candidate.company.isNotEmpty) 'company': candidate.company,
+  'seniority': candidate.seniority,
+  'responsibilities': candidate.responsibilities,
+  'core_skills': candidate.coreSkills,
+  'communication_focus': candidate.communicationFocus,
+  'practice_goals': candidate.practiceGoals,
+  'scope_notice': candidate.scopeNotice,
+  'catalog_recommendation': <String, Object?>{
+    'scene_id': candidate.catalogRecommendation.sceneId,
+    'scene_version': candidate.catalogRecommendation.sceneVersion,
+    'selected_role_ids': candidate.catalogRecommendation.selectedRoleIds,
+    'practice_option_id': candidate.catalogRecommendation.practiceOptionId,
+  },
+};
+
+PracticePlan decodePracticePlanBody(String body) =>
+    decodePracticePlan(_decodeJson(body));
+
+PracticePlan decodePracticePlan(Object? value) {
   final object = _object(
     value,
     required: const <String>{
@@ -170,16 +203,12 @@ PracticePlan decodePracticePlan(
       'scene_selection',
       'session_policy',
       'practice_objectives',
-      'plan_revision',
+      'version',
       'practice_plan_status',
       'created_at',
       'updated_at',
     },
-    optional: const <String>{
-      'source_thread_id',
-      'goal_snapshot',
-      'ielts_assignment',
-    },
+    optional: const <String>{'source_thread_id', 'ielts_assignment'},
   );
   late final SceneSelectionSnapshot sceneSelection;
   try {
@@ -192,52 +221,40 @@ PracticePlan decodePracticePlan(
   if (updatedAt.isBefore(createdAt)) {
     throw const PreparationWireFormatException();
   }
-  final sessionPolicy = decodePreparationSessionPolicy(
-    object['session_policy'],
-  );
-  final ieltsAssignment = object.containsKey('ielts_assignment')
-      ? decodeIeltsPracticeAssignment(object['ielts_assignment'])
+  final policy = decodePreparationSessionPolicy(object['session_policy']);
+  final assignment = object.containsKey('ielts_assignment')
+      ? _ieltsAssignment(object['ielts_assignment'])
       : null;
-  final selectedOption = sceneSelection.scene.practiceOptions
-      .where((option) => option.id == sceneSelection.practiceOptionId)
-      .firstOrNull;
-  final expectedIeltsMode =
-      selectedOption == null ||
-          sceneSelection.scene.experience != PracticeExperience.ieltsSpeaking
-      ? null
-      : selectedOption.mode;
-  if (ieltsAssignment?.mode != expectedIeltsMode ||
-      (ieltsAssignment != null &&
-          (ieltsAssignment.turnBlueprints.length !=
-                  sessionPolicy.maxEffectiveTurns ||
-              !_sameStrings(
-                ieltsAssignment.turnBlueprints,
-                sceneSelection.scene.prompt.turnBlueprints,
-              )))) {
+  final expectedIelts =
+      sceneSelection.scene.experience == PracticeExperience.ieltsSpeaking;
+  if (expectedIelts != (assignment != null) ||
+      (assignment != null &&
+          (assignment.mode !=
+                  sceneSelection.scene.practiceOptions
+                      .firstWhere(
+                        (item) => item.id == sceneSelection.practiceOptionId,
+                      )
+                      .mode ||
+              assignment.turnBlueprints.length != policy.maxEffectiveTurns))) {
     throw const PreparationWireFormatException();
   }
   return PracticePlan(
-    id: _resourceId(object['practice_plan_id']),
-    userId: _resourceId(object['user_id']),
+    id: _aggregateId(object['practice_plan_id']),
+    userId: _aggregateId(object['user_id']),
     sourceThreadId: object.containsKey('source_thread_id')
-        ? _resourceId(object['source_thread_id'])
+        ? _aggregateId(object['source_thread_id'])
         : null,
-    goalSnapshot: object.containsKey('goal_snapshot')
-        ? _goalSnapshot(object['goal_snapshot'])
-        : null,
-    preparationSnapshot: decodePreparationSnapshot(
+    preparationSnapshot: _planPreparationSnapshot(
       object['preparation_snapshot'],
-      decodeJobTargetInput: decodeJobTargetInput,
-      decodeJobTargetCandidate: decodeJobTargetCandidate,
     ),
     sceneSelection: sceneSelection,
-    sessionPolicy: sessionPolicy,
+    sessionPolicy: policy,
     practiceObjectives: decodePracticeObjectives(object['practice_objectives']),
-    ieltsAssignment: ieltsAssignment,
-    revision: _version(object['plan_revision']),
+    ieltsAssignment: assignment,
+    version: _positiveInteger(object['version']),
     status: switch (_text(object['practice_plan_status'], maximumBytes: 16)) {
+      'draft' => PracticePlanStatus.draft,
       'ready' => PracticePlanStatus.ready,
-      'archived' => PracticePlanStatus.archived,
       _ => throw const PreparationWireFormatException(),
     },
     createdAt: createdAt,
@@ -245,30 +262,295 @@ PracticePlan decodePracticePlan(
   );
 }
 
-IeltsPracticeAssignment decodeIeltsPracticeAssignment(Object? value) {
-  try {
-    return decodeIeltsAssignment(value);
-  } on IeltsAssignmentWireFormatException {
+List<PracticePlanSummary> decodePracticePlanListBody(String body) {
+  final root = _object(
+    _decodeJson(body),
+    required: const <String>{'practice_plans'},
+  );
+  final values = root['practice_plans'];
+  if (values is! List<Object?>) throw const PreparationWireFormatException();
+  return List<PracticePlanSummary>.unmodifiable(
+    values.map((value) {
+      final object = _object(
+        value,
+        required: const <String>{
+          'practice_plan_id',
+          'version',
+          'practice_plan_status',
+          'practice_experience',
+          'scene_name',
+          'practice_scope',
+          'job_title',
+          'practice_objectives',
+          'resume_used',
+          'suggested_duration_seconds',
+          'min_effective_turns',
+          'max_effective_turns',
+          'created_at',
+          'updated_at',
+        },
+      );
+      final experience = PracticeExperience.fromWireValue(
+        _text(object['practice_experience'], maximumBytes: 32),
+      );
+      final resumeUsed = object['resume_used'];
+      final maxTurns = _nonNegativeInteger(object['max_effective_turns']);
+      if (experience == null || resumeUsed is! bool) {
+        throw const PreparationWireFormatException();
+      }
+      return PracticePlanSummary(
+        id: _aggregateId(object['practice_plan_id']),
+        version: _positiveInteger(object['version']),
+        status: switch (_text(
+          object['practice_plan_status'],
+          maximumBytes: 16,
+        )) {
+          'draft' => PracticePlanStatus.draft,
+          'ready' => PracticePlanStatus.ready,
+          _ => throw const PreparationWireFormatException(),
+        },
+        experience: experience,
+        sceneName: _text(object['scene_name']),
+        practiceScope: _text(object['practice_scope']),
+        jobTitle: _allowEmptyText(object['job_title']),
+        practiceObjectives: _nonEmptyTextList(object['practice_objectives']),
+        resumeUsed: resumeUsed,
+        suggestedDurationSeconds: _positiveInteger(
+          object['suggested_duration_seconds'],
+        ),
+        minEffectiveTurns: _positiveInteger(object['min_effective_turns']),
+        maxEffectiveTurns: maxTurns,
+        createdAt: _dateTime(object['created_at']),
+        updatedAt: _dateTime(object['updated_at']),
+      );
+    }),
+  );
+}
+
+PreparationPracticeBootstrap decodePreparationPracticeBootstrapBody(
+  String body, {
+  required PracticePlan expectedPlan,
+}) {
+  final root = _object(
+    _decodeJson(body),
+    required: const <String>{'practice_session', 'snapshot'},
+  );
+  final session = _object(
+    root['practice_session'],
+    required: const <String>{
+      'practice_session_id',
+      'practice_plan_id',
+      'plan_version',
+      'practice_experience',
+      'scene_category',
+      'practice_mode',
+      'evaluation_policy_ref',
+      'practice_session_status',
+      'session_version',
+      'created_at',
+    },
+    optional: const <String>{'started_at', 'ended_at', 'end_reason'},
+  );
+  final snapshot = _object(
+    root['snapshot'],
+    required: const <String>{
+      'practice_session_id',
+      'plan_version',
+      'practice_experience',
+      'scene_category',
+      'practice_mode',
+      'scene_selection',
+      'preparation_snapshot',
+      'participants',
+      'session_policy',
+      'practice_objectives',
+    },
+    optional: const <String>{'ielts_assignment'},
+  );
+  final id = _aggregateId(session['practice_session_id']);
+  final planID = _aggregateId(session['practice_plan_id']);
+  final planVersion = _positiveInteger(session['plan_version']);
+  final experience = PracticeExperience.fromWireValue(
+    _text(session['practice_experience'], maximumBytes: 32),
+  );
+  final category = SceneCategory.fromWireValue(
+    _text(session['scene_category'], maximumBytes: 64),
+  );
+  final mode = PracticeMode.fromWireValue(
+    _text(session['practice_mode'], maximumBytes: 32),
+  );
+  final snapshotPolicy = decodePreparationSessionPolicy(
+    snapshot['session_policy'],
+  );
+  if (experience == null ||
+      category == null ||
+      mode == null ||
+      planID != expectedPlan.id ||
+      planVersion != expectedPlan.version ||
+      id != _aggregateId(snapshot['practice_session_id']) ||
+      planVersion != _positiveInteger(snapshot['plan_version']) ||
+      experience.wireValue != snapshot['practice_experience'] ||
+      category.wireValue != snapshot['scene_category'] ||
+      mode.wireValue != snapshot['practice_mode'] ||
+      !_samePracticeExecutionSelection(
+        snapshot['scene_selection'],
+        expectedPlan.sceneSelection,
+      ) ||
+      snapshotPolicy.maxEffectiveTurns !=
+          expectedPlan.sessionPolicy.maxEffectiveTurns) {
     throw const PreparationWireFormatException();
+  }
+  return PreparationPracticeBootstrap(
+    session: PreparationPracticeSession(
+      id: id,
+      planId: planID,
+      planVersion: planVersion,
+      practiceExperience: experience,
+      sceneCategory: category,
+      practiceMode: mode,
+      status: _text(session['practice_session_status'], maximumBytes: 32),
+      version: _positiveInteger(session['session_version']),
+      createdAt: _dateTime(session['created_at']),
+    ),
+    maxEffectiveTurns: snapshotPolicy.maxEffectiveTurns,
+  );
+}
+
+PlanPreparationSnapshot _planPreparationSnapshot(Object? value) {
+  final object = _object(
+    value,
+    required: const <String>{'background_summary'},
+    optional: const <String>{'interview'},
+  );
+  return PlanPreparationSnapshot(
+    backgroundSummary: _allowEmptyText(object['background_summary'], 64 * 1024),
+    interview: object.containsKey('interview')
+        ? _interviewPreparationSnapshot(object['interview'])
+        : null,
+  );
+}
+
+InterviewPreparationSnapshot _interviewPreparationSnapshot(Object? value) {
+  final object = _object(
+    value,
+    required: const <String>{
+      'interview_preparation_id',
+      'version',
+      'input',
+      'candidate',
+    },
+    optional: const <String>{'resume_content'},
+  );
+  final input = decodeInterviewPreparationInput(object['input']);
+  final candidate = decodeInterviewPreparationCandidate(object['candidate']);
+  if (input.source != candidate.source) {
+    throw const PreparationWireFormatException();
+  }
+  return InterviewPreparationSnapshot(
+    id: _aggregateId(object['interview_preparation_id']),
+    version: _positiveInteger(object['version']),
+    input: input,
+    candidate: candidate,
+    resumeUsed: _validateOptionalResumeContent(object),
+  );
+}
+
+bool _validateOptionalResumeContent(Map<String, Object?> object) {
+  if (!object.containsKey('resume_content')) {
+    return false;
+  }
+  _validateResumeMaterial(object['resume_content']);
+  return true;
+}
+
+void _validateResumeMaterial(Object? value) {
+  final object = _object(
+    value,
+    required: const <String>{
+      'target_position',
+      'professional_summary',
+      'work_experiences',
+      'project_experiences',
+      'education_experiences',
+      'skills',
+      'awards',
+    },
+  );
+  _allowEmptyText(object['target_position']);
+  _allowEmptyText(object['professional_summary']);
+  for (final item in _list(object['work_experiences'])) {
+    final experience = _object(
+      item,
+      required: const <String>{'company', 'position', 'duties', 'achievements'},
+      optional: const <String>{'start_date', 'end_date'},
+    );
+    _allowEmptyText(experience['company']);
+    _allowEmptyText(experience['position']);
+    _optionalAllowEmptyText(experience, 'start_date');
+    _optionalAllowEmptyText(experience, 'end_date');
+    _stringList(experience['duties']);
+    _stringList(experience['achievements']);
+  }
+  for (final item in _list(object['project_experiences'])) {
+    final experience = _object(
+      item,
+      required: const <String>{
+        'project_name',
+        'role',
+        'description',
+        'technologies',
+        'duties',
+        'achievements',
+      },
+    );
+    _allowEmptyText(experience['project_name']);
+    _allowEmptyText(experience['role']);
+    _allowEmptyText(experience['description']);
+    _stringList(experience['technologies']);
+    _stringList(experience['duties']);
+    _stringList(experience['achievements']);
+  }
+  for (final item in _list(object['education_experiences'])) {
+    final experience = _object(
+      item,
+      required: const <String>{'school', 'major', 'degree'},
+      optional: const <String>{'gpa', 'start_date', 'end_date'},
+    );
+    _allowEmptyText(experience['school']);
+    _allowEmptyText(experience['major']);
+    _allowEmptyText(experience['degree']);
+    _optionalAllowEmptyText(experience, 'gpa');
+    _optionalAllowEmptyText(experience, 'start_date');
+    _optionalAllowEmptyText(experience, 'end_date');
+  }
+  _stringList(object['skills']);
+  _stringList(object['awards']);
+}
+
+List<Object?> _list(Object? value) {
+  if (value is! List<Object?>) {
+    throw const PreparationWireFormatException();
+  }
+  return value;
+}
+
+void _stringList(Object? value) {
+  for (final item in _list(value)) {
+    _allowEmptyText(item);
   }
 }
 
-PreparationGoalSnapshot _goalSnapshot(Object? value) {
-  final object = _object(
-    value,
-    required: const <String>{'goal_id', 'title', 'version'},
-  );
-  return PreparationGoalSnapshot(
-    id: _resourceId(object['goal_id']),
-    title: _text(object['title'], maximumBytes: 512),
-    version: _version(object['version']),
-  );
+void _optionalAllowEmptyText(Map<String, Object?> object, String key) {
+  if (object.containsKey(key)) {
+    _allowEmptyText(object[key]);
+  }
 }
 
 PreparationSessionPolicy decodePreparationSessionPolicy(Object? value) {
   final object = _object(
     value,
     required: const <String>{
+      'completion_mode',
       'suggested_duration_seconds',
       'min_effective_turns',
       'max_effective_turns',
@@ -278,45 +560,48 @@ PreparationSessionPolicy decodePreparationSessionPolicy(Object? value) {
       'retry_allowed',
       'question_translation_allowed',
       'question_tips_allowed',
-      'avatar_allowed',
       'speech_feedback_allowed',
     },
   );
-  final minimum = _version(object['min_effective_turns']);
-  final maximum = _version(object['max_effective_turns']);
-  final checkpoint = _version(object['coverage_checkpoint_turn']);
-  final followUps = object['max_follow_ups_per_question'];
-  final rule = _text(object['early_completion_rule'], maximumBytes: 128);
-  final retryAllowed = object['retry_allowed'];
-  final questionTranslationAllowed = object['question_translation_allowed'];
-  final questionTipsAllowed = object['question_tips_allowed'];
-  final avatarAllowed = object['avatar_allowed'];
-  final speechFeedbackAllowed = object['speech_feedback_allowed'];
-  if (minimum > checkpoint ||
-      checkpoint > maximum ||
-      followUps is! int ||
-      followUps < 0 ||
+  final mode = PreparationCompletionMode.fromWireValue(
+    _text(object['completion_mode'], maximumBytes: 32),
+  );
+  final minimum = _positiveInteger(object['min_effective_turns']);
+  final maximum = _nonNegativeInteger(object['max_effective_turns']);
+  final checkpoint = _positiveInteger(object['coverage_checkpoint_turn']);
+  final followUps = _nonNegativeInteger(object['max_follow_ups_per_question']);
+  final flags = <Object?>[
+    object['retry_allowed'],
+    object['question_translation_allowed'],
+    object['question_tips_allowed'],
+    object['speech_feedback_allowed'],
+  ];
+  if (mode == null ||
+      (mode == PreparationCompletionMode.turnLimited &&
+          (maximum < 1 || minimum > checkpoint || checkpoint > maximum)) ||
+      (mode == PreparationCompletionMode.userControlled &&
+          (maximum != 0 || checkpoint != 1)) ||
       followUps > 3 ||
-      retryAllowed is! bool ||
-      questionTranslationAllowed is! bool ||
-      questionTipsAllowed is! bool ||
-      avatarAllowed is! bool ||
-      speechFeedbackAllowed is! bool ||
-      !RegExp(r'^[A-Z][A-Z0-9_]*$').hasMatch(rule)) {
+      flags.any((value) => value is! bool)) {
     throw const PreparationWireFormatException();
   }
   return PreparationSessionPolicy(
-    suggestedDurationSeconds: _version(object['suggested_duration_seconds']),
+    completionMode: mode,
+    suggestedDurationSeconds: _positiveInteger(
+      object['suggested_duration_seconds'],
+    ),
     minEffectiveTurns: minimum,
     maxEffectiveTurns: maximum,
     coverageCheckpointTurn: checkpoint,
     maxFollowUpsPerQuestion: followUps,
-    earlyCompletionRule: rule,
-    retryAllowed: retryAllowed,
-    questionTranslationAllowed: questionTranslationAllowed,
-    questionTipsAllowed: questionTipsAllowed,
-    avatarAllowed: avatarAllowed,
-    speechFeedbackAllowed: speechFeedbackAllowed,
+    earlyCompletionRule: _text(
+      object['early_completion_rule'],
+      maximumBytes: 128,
+    ),
+    retryAllowed: object['retry_allowed']! as bool,
+    questionTranslationAllowed: object['question_translation_allowed']! as bool,
+    questionTipsAllowed: object['question_tips_allowed']! as bool,
+    speechFeedbackAllowed: object['speech_feedback_allowed']! as bool,
   );
 }
 
@@ -331,16 +616,56 @@ List<PracticeObjective> decodePracticeObjectives(Object? value) {
         item,
         required: const <String>{'objective_id', 'description'},
       );
-      final id = _text(object['objective_id'], maximumBytes: 128);
-      if (!RegExp(r'^[a-z][a-z0-9_]*$').hasMatch(id) || !ids.add(id)) {
-        throw const PreparationWireFormatException();
-      }
+      final id = _resourceId(object['objective_id']);
+      if (!ids.add(id)) throw const PreparationWireFormatException();
       return PracticeObjective(
         id: id,
         description: _text(object['description']),
       );
     }),
   );
+}
+
+IeltsPracticeAssignment _ieltsAssignment(Object? value) {
+  try {
+    return decodeIeltsAssignment(value);
+  } on IeltsAssignmentWireFormatException {
+    throw const PreparationWireFormatException();
+  }
+}
+
+bool sameSceneSelection(
+  SceneSelectionSnapshot left,
+  SceneSelectionSnapshot right,
+) =>
+    left.scene.id == right.scene.id &&
+    left.scene.version == right.scene.version &&
+    left.practiceOptionId == right.practiceOptionId &&
+    _sameStrings(left.selectedRoleIds, right.selectedRoleIds);
+
+bool _samePracticeExecutionSelection(
+  Object? value,
+  SceneSelectionSnapshot expected,
+) {
+  try {
+    final selection = _object(
+      value,
+      required: const <String>{
+        'scene',
+        'selected_role_ids',
+        'practice_option_id',
+      },
+    );
+    final scene = decodeSceneDefinition(selection['scene']);
+    final selectedRoleIds = _resourceIdList(selection['selected_role_ids']);
+    final practiceOptionId = _resourceId(selection['practice_option_id']);
+    return scene.id == expected.scene.id &&
+        scene.version == expected.scene.version &&
+        practiceOptionId == expected.practiceOptionId &&
+        _sameStrings(selectedRoleIds, expected.selectedRoleIds);
+  } on SceneWireFormatException {
+    throw const PreparationWireFormatException();
+  }
 }
 
 Object? _decodeJson(String body) {
@@ -368,6 +693,12 @@ Map<String, Object?> _object(
 
 String _resourceId(Object? value) => _text(value, maximumBytes: 128);
 
+String _aggregateId(Object? value) {
+  final id = _text(value, maximumBytes: 36);
+  if (!_uuidV4.hasMatch(id)) throw const PreparationWireFormatException();
+  return id;
+}
+
 String _text(Object? value, {int maximumBytes = 256 * 1024}) {
   if (value is! String ||
       value.trim().isEmpty ||
@@ -379,119 +710,64 @@ String _text(Object? value, {int maximumBytes = 256 * 1024}) {
   return value;
 }
 
-int _version(Object? value) {
-  if (value is! int || value < 1) {
+String _allowEmptyText(Object? value, [int maximumBytes = 256 * 1024]) {
+  if (value is! String ||
+      value.trim() != value ||
+      value.contains('\u0000') ||
+      utf8.encode(value).length > maximumBytes) {
     throw const PreparationWireFormatException();
   }
   return value;
 }
 
+String? _optionalText(
+  Map<String, Object?> object,
+  String key,
+  int maximumBytes,
+) => object.containsKey(key)
+    ? _text(object[key], maximumBytes: maximumBytes)
+    : null;
+
+int _positiveInteger(Object? value) {
+  if (value is! int || value < 1) throw const PreparationWireFormatException();
+  return value;
+}
+
+int _nonNegativeInteger(Object? value) {
+  if (value is! int || value < 0) throw const PreparationWireFormatException();
+  return value;
+}
+
 DateTime _dateTime(Object? value) {
-  if (value is! String) {
-    throw const PreparationWireFormatException();
-  }
+  if (value is! String) throw const PreparationWireFormatException();
   final result = DateTime.tryParse(value);
-  if (result == null) {
-    throw const PreparationWireFormatException();
-  }
+  if (result == null) throw const PreparationWireFormatException();
   return result;
 }
 
-bool sameSceneSelection(
-  SceneSelectionSnapshot left,
-  SceneSelectionSnapshot right,
-) =>
-    sameSceneDefinition(left.scene, right.scene) &&
-    _sameStrings(left.selectedRoleIds, right.selectedRoleIds) &&
-    left.practiceOptionId == right.practiceOptionId;
-
-bool samePracticeSceneSelection(
-  SceneSelectionSnapshot projected,
-  SceneSelectionSnapshot source,
-) {
-  if (!_sameSceneCore(projected.scene, source.scene) ||
-      !_sameStrings(projected.selectedRoleIds, source.selectedRoleIds) ||
-      projected.practiceOptionId != source.practiceOptionId) {
-    return false;
+List<String> _resourceIdList(Object? value) {
+  if (value is! List<Object?> || value.isEmpty || value.length > 8) {
+    throw const PreparationWireFormatException();
   }
-  final selectedRoles = source.scene.roles
-      .where((role) => source.selectedRoleIds.contains(role.id))
-      .toList(growable: false);
-  final selectedOptions = source.scene.practiceOptions
-      .where((option) => option.id == source.practiceOptionId)
-      .toList(growable: false);
-  return selectedRoles.length == source.selectedRoleIds.length &&
-      selectedOptions.length == 1 &&
-      _sameRoles(projected.scene.roles, selectedRoles) &&
-      _sameOptions(projected.scene.practiceOptions, selectedOptions);
+  final result = value.map(_resourceId).toList(growable: false);
+  if (result.toSet().length != result.length) {
+    throw const PreparationWireFormatException();
+  }
+  return List<String>.unmodifiable(result);
 }
 
-bool sameSceneDefinition(SceneDefinition left, SceneDefinition right) =>
-    _sameSceneCore(left, right) &&
-    _sameRoles(left.roles, right.roles) &&
-    _sameOptions(left.practiceOptions, right.practiceOptions);
-
-bool _sameSceneCore(SceneDefinition left, SceneDefinition right) =>
-    left.id == right.id &&
-    left.experience == right.experience &&
-    left.category == right.category &&
-    left.name == right.name &&
-    left.version == right.version &&
-    left.status == right.status &&
-    left.prompt.publicSceneBrief == right.prompt.publicSceneBrief &&
-    left.prompt.practiceGoal == right.prompt.practiceGoal &&
-    left.prompt.userRole == right.prompt.userRole &&
-    left.prompt.aiRole == right.prompt.aiRole &&
-    left.prompt.personaSummary == right.prompt.personaSummary &&
-    _sameStrings(left.prompt.focusAreas, right.prompt.focusAreas) &&
-    _sameStrings(left.prompt.turnBlueprints, right.prompt.turnBlueprints);
-
-bool _sameRoles(List<RoleDefinition> left, List<RoleDefinition> right) =>
-    left.length == right.length &&
-    List<bool>.generate(
-      left.length,
-      (index) =>
-          left[index].id == right[index].id &&
-          left[index].sceneId == right[index].sceneId &&
-          left[index].type == right[index].type &&
-          left[index].displayName == right[index].displayName &&
-          left[index].responsibilities == right[index].responsibilities &&
-          left[index].style == right[index].style &&
-          _sameRoleObjectives(
-            left[index].practiceObjectives,
-            right[index].practiceObjectives,
-          ) &&
-          left[index].voiceConfigRef == right[index].voiceConfigRef,
-    ).every((same) => same);
-
-bool _sameRoleObjectives(
-  List<RolePracticeObjective> left,
-  List<RolePracticeObjective> right,
-) =>
-    left.length == right.length &&
-    List<bool>.generate(
-      left.length,
-      (index) =>
-          left[index].objectiveId == right[index].objectiveId &&
-          left[index].description == right[index].description,
-    ).every((same) => same);
-
-bool _sameOptions(List<PracticeOption> left, List<PracticeOption> right) =>
-    left.length == right.length &&
-    List<bool>.generate(
-      left.length,
-      (index) =>
-          left[index].id == right[index].id &&
-          left[index].sceneId == right[index].sceneId &&
-          left[index].mode == right[index].mode &&
-          left[index].displayName == right[index].displayName &&
-          left[index].roleId == right[index].roleId &&
-          left[index].suggestedDurationSeconds ==
-              right[index].suggestedDurationSeconds &&
-          left[index].turnPolicyRef == right[index].turnPolicyRef &&
-          left[index].sessionPolicyRef == right[index].sessionPolicyRef &&
-          left[index].evaluationPolicyRef == right[index].evaluationPolicyRef,
-    ).every((same) => same);
+List<String> _nonEmptyTextList(Object? value) {
+  if (value is! List<Object?> || value.isEmpty || value.length > 20) {
+    throw const PreparationWireFormatException();
+  }
+  final result = value
+      .map((item) => _text(item, maximumBytes: 2048))
+      .toList(growable: false);
+  if (result.toSet().length != result.length) {
+    throw const PreparationWireFormatException();
+  }
+  return List<String>.unmodifiable(result);
+}
 
 bool _sameStrings(List<String> left, List<String> right) =>
     left.length == right.length &&
@@ -499,3 +775,7 @@ bool _sameStrings(List<String> left, List<String> right) =>
       left.length,
       (index) => left[index] == right[index],
     ).every((same) => same);
+
+final RegExp _uuidV4 = RegExp(
+  r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+);

@@ -13,9 +13,8 @@ import 'package:speakup/features/agent/conversation/conversation_controller.dart
 import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/speak_up_shell.dart';
 import 'package:speakup/design/speak_up_theme.dart';
-import 'package:speakup/features/coaching/preparation/practice_plan_handoff_controller.dart';
+import 'package:speakup/features/coaching/preparation/practice_plan_client_action_controller.dart';
 import 'package:speakup/features/coaching/scenario/scenario_practice.dart';
-import 'package:speakup/features/coaching/scenario/scenario_practice_session.dart';
 import 'package:speakup/features/coaching/ielts/ielts_mock_practice.dart';
 import 'package:speakup/features/coaching/interview/interview_practice.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
@@ -31,13 +30,13 @@ import 'package:speakup/identity/auth_gate.dart';
 import 'package:speakup/identity/model/identity_models.dart';
 import 'package:speakup/features/coaching/practice/practice_client.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
-import 'package:speakup/features/coaching/review/interview_report_controller.dart';
-import 'package:speakup/features/coaching/review/interview_report_view.dart';
-import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
-import 'package:speakup/features/coaching/review/ielts_speaking_report_view.dart';
+import 'package:speakup/features/coaching/evaluation/session_evaluation_controller.dart';
+import 'package:speakup/features/coaching/interview/interview_resume_file.dart';
 import 'package:speakup/features/coaching/review/review_history_controller.dart';
+import 'package:speakup/features/coaching/review/session_evaluation_page.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
-import 'package:speakup/resume/resume_controller.dart';
+import 'package:speakup/features/coaching/profile/coaching_profile.dart';
+import 'package:speakup/features/coaching/scenario/scenario_practice_session.dart';
 
 class SpeakUpApp extends StatelessWidget {
   const SpeakUpApp({
@@ -45,18 +44,18 @@ class SpeakUpApp extends StatelessWidget {
     required this.conversationController,
     required this.composerController,
     required this.messageAudioController,
+    required this.messageTranslationClient,
     required this.practiceController,
     required this.preparationController,
     required this.ieltsPreparationController,
     this.jobPreparationController,
     this.preparationLaunchController,
-    this.practicePlanHandoffController,
+    this.practicePlanClientActionController,
     this.reviewHistoryController,
-    this.avatarControllerFactory,
-    this.interviewReportController,
-    this.ieltsSpeakingReportController,
+    this.sessionEvaluationController,
     this.speechFeedbackController,
-    this.resumeController,
+    this.coachingProfileController,
+    this.avatarControllerFactory,
     super.key,
   }) : _authentication = (controller: authController),
        _allowFakePreview = false;
@@ -65,18 +64,18 @@ class SpeakUpApp extends StatelessWidget {
     this.conversationController,
     this.composerController,
     this.messageAudioController,
+    this.messageTranslationClient,
     this.practiceController,
     this.preparationController,
     this.ieltsPreparationController,
     this.jobPreparationController,
     this.preparationLaunchController,
-    this.practicePlanHandoffController,
+    this.practicePlanClientActionController,
     this.reviewHistoryController,
-    this.avatarControllerFactory,
-    this.interviewReportController,
-    this.ieltsSpeakingReportController,
+    this.sessionEvaluationController,
     this.speechFeedbackController,
-    this.resumeController,
+    this.coachingProfileController,
+    this.avatarControllerFactory,
     super.key,
   }) : _authentication = null,
        _allowFakePreview = true;
@@ -85,18 +84,18 @@ class SpeakUpApp extends StatelessWidget {
   final ConversationController? conversationController;
   final ComposerController? composerController;
   final AgentMessageAudioController? messageAudioController;
+  final AgentMessageTranslationClient? messageTranslationClient;
   final PracticeController? practiceController;
   final PreparationController? preparationController;
   final IeltsPreparationController? ieltsPreparationController;
   final JobPreparationController? jobPreparationController;
   final PreparationLaunchController? preparationLaunchController;
-  final PracticePlanHandoffController? practicePlanHandoffController;
+  final PracticePlanClientActionController? practicePlanClientActionController;
   final ReviewHistoryController? reviewHistoryController;
-  final AvatarControllerFactory? avatarControllerFactory;
-  final InterviewReportController? interviewReportController;
-  final IeltsSpeakingReportController? ieltsSpeakingReportController;
+  final SessionEvaluationController? sessionEvaluationController;
   final SpeechFeedbackController? speechFeedbackController;
-  final ResumeController? resumeController;
+  final CoachingProfileController? coachingProfileController;
+  final AvatarControllerFactory? avatarControllerFactory;
   final bool _allowFakePreview;
 
   @override
@@ -111,18 +110,19 @@ class SpeakUpApp extends StatelessWidget {
               conversationController: conversationController,
               composerController: composerController,
               messageAudioController: messageAudioController,
+              messageTranslationClient: messageTranslationClient,
               practiceController: practiceController,
               preparationController: preparationController,
               ieltsPreparationController: ieltsPreparationController,
               jobPreparationController: jobPreparationController,
               preparationLaunchController: preparationLaunchController,
-              practicePlanHandoffController: practicePlanHandoffController,
+              practicePlanClientActionController:
+                  practicePlanClientActionController,
               reviewHistoryController: reviewHistoryController,
-              avatarControllerFactory: avatarControllerFactory,
-              interviewReportController: interviewReportController,
-              ieltsSpeakingReportController: ieltsSpeakingReportController,
+              sessionEvaluationController: sessionEvaluationController,
               speechFeedbackController: speechFeedbackController,
-              resumeController: resumeController,
+              coachingProfileController: coachingProfileController,
+              avatarControllerFactory: avatarControllerFactory,
               allowFakePreview: _allowFakePreview,
             )
           : AuthGate(
@@ -133,18 +133,19 @@ class SpeakUpApp extends StatelessWidget {
                 conversationController: conversationController,
                 composerController: composerController,
                 messageAudioController: messageAudioController,
+                messageTranslationClient: messageTranslationClient,
                 practiceController: practiceController,
                 preparationController: preparationController,
                 ieltsPreparationController: ieltsPreparationController,
                 jobPreparationController: jobPreparationController,
                 preparationLaunchController: preparationLaunchController,
-                practicePlanHandoffController: practicePlanHandoffController,
+                practicePlanClientActionController:
+                    practicePlanClientActionController,
                 reviewHistoryController: reviewHistoryController,
-                avatarControllerFactory: avatarControllerFactory,
-                interviewReportController: interviewReportController,
-                ieltsSpeakingReportController: ieltsSpeakingReportController,
+                sessionEvaluationController: sessionEvaluationController,
                 speechFeedbackController: speechFeedbackController,
-                resumeController: resumeController,
+                coachingProfileController: coachingProfileController,
+                avatarControllerFactory: avatarControllerFactory,
                 allowFakePreview: _allowFakePreview,
               ),
             ),
@@ -159,18 +160,18 @@ class _AuthenticatedNavigator extends StatefulWidget {
     this.conversationController,
     this.composerController,
     this.messageAudioController,
+    this.messageTranslationClient,
     this.practiceController,
     this.preparationController,
     this.ieltsPreparationController,
     this.jobPreparationController,
     this.preparationLaunchController,
-    this.practicePlanHandoffController,
+    this.practicePlanClientActionController,
     this.reviewHistoryController,
-    this.avatarControllerFactory,
-    this.interviewReportController,
-    this.ieltsSpeakingReportController,
+    this.sessionEvaluationController,
     this.speechFeedbackController,
-    this.resumeController,
+    this.coachingProfileController,
+    this.avatarControllerFactory,
     required this.allowFakePreview,
   });
 
@@ -179,18 +180,18 @@ class _AuthenticatedNavigator extends StatefulWidget {
   final ConversationController? conversationController;
   final ComposerController? composerController;
   final AgentMessageAudioController? messageAudioController;
+  final AgentMessageTranslationClient? messageTranslationClient;
   final PracticeController? practiceController;
   final PreparationController? preparationController;
   final IeltsPreparationController? ieltsPreparationController;
   final JobPreparationController? jobPreparationController;
   final PreparationLaunchController? preparationLaunchController;
-  final PracticePlanHandoffController? practicePlanHandoffController;
+  final PracticePlanClientActionController? practicePlanClientActionController;
   final ReviewHistoryController? reviewHistoryController;
-  final AvatarControllerFactory? avatarControllerFactory;
-  final InterviewReportController? interviewReportController;
-  final IeltsSpeakingReportController? ieltsSpeakingReportController;
+  final SessionEvaluationController? sessionEvaluationController;
   final SpeechFeedbackController? speechFeedbackController;
-  final ResumeController? resumeController;
+  final CoachingProfileController? coachingProfileController;
+  final AvatarControllerFactory? avatarControllerFactory;
   final bool allowFakePreview;
 
   @override
@@ -208,6 +209,20 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
   late final bool _ownsComposerController;
   late final bool _ownsMessageAudioController;
   late final bool _ownsPracticeController;
+
+  Future<void> _openSavedInterviewPlan(String planId) async {
+    final controller = widget.jobPreparationController;
+    if (controller == null || !await controller.openSavedPlan(planId)) {
+      return;
+    }
+    _navigatorKey.currentState?.pushNamed(AppRoutes.jobPreparation);
+  }
+
+  void _closeJobPreparation() {
+    _navigatorKey.currentState?.popUntil(
+      (route) => route.settings.name != AppRoutes.jobPreparation,
+    );
+  }
 
   @override
   void initState() {
@@ -324,20 +339,15 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
     InterviewPracticeCompletion completion,
   ) {
     final navigator = _navigatorKey.currentState;
-    final reportController = widget.interviewReportController;
+    final reportController = widget.sessionEvaluationController;
     if (navigator == null || reportController == null) {
       throw StateError('Interview report route is not configured.');
     }
     return navigator.push<CompletedPracticeRouteResult>(
       MaterialPageRoute<CompletedPracticeRouteResult>(
-        builder: (_) => InterviewReportPage(
+        builder: (_) => SessionEvaluationPage(
           practiceSessionId: completion.practiceSessionId,
           controller: reportController,
-          title: completion.title,
-          speechFeedbackController: widget.speechFeedbackController,
-          speechFeedbackSourceKeys: completion.speechFeedbackSourceKeys,
-          onContinueWithAgent:
-              widget.preparationLaunchController?.completeAndContinueWithAgent,
         ),
       ),
     );
@@ -357,17 +367,17 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             conversationController: _conversationController,
             composerController: _composerController,
             messageAudioController: _messageAudioController,
+            messageTranslationClient: widget.messageTranslationClient,
             practiceController: _practiceController,
             preparationController: widget.preparationController,
             ieltsPreparationController: widget.ieltsPreparationController,
             jobPreparationController: widget.jobPreparationController,
             preparationLaunchController: widget.preparationLaunchController,
-            practicePlanHandoffController: widget.practicePlanHandoffController,
+            practicePlanClientActionController:
+                widget.practicePlanClientActionController,
             reviewHistoryController: widget.reviewHistoryController,
-            interviewReportController: widget.interviewReportController,
-            ieltsSpeakingReportController: widget.ieltsSpeakingReportController,
             speechFeedbackController: widget.speechFeedbackController,
-            resumeController: widget.resumeController,
+            coachingProfileController: widget.coachingProfileController,
           ),
           AppRoutes.preparation => PreparationPage(
             showBackButton: true,
@@ -376,22 +386,36 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             preparationController: widget.preparationController,
             ieltsController: widget.ieltsPreparationController,
             launchController: widget.preparationLaunchController,
+            jobPreparationController: widget.jobPreparationController,
             onOpenJobPreparation: widget.jobPreparationController == null
                 ? null
-                : () => _navigatorKey.currentState?.pushNamed(
-                    AppRoutes.jobPreparation,
-                  ),
-            onPracticeStarted: () => _navigatorKey.currentState
-                ?.pushReplacementNamed(AppRoutes.practice),
+                : () {
+                    widget.jobPreparationController!.beginNewPreparation();
+                    _navigatorKey.currentState?.pushNamed(
+                      AppRoutes.jobPreparation,
+                    );
+                  },
+            onOpenInterviewPlan: widget.jobPreparationController == null
+                ? null
+                : (planId) => unawaited(_openSavedInterviewPlan(planId)),
+            onPracticeStarted: () async {
+              await _navigatorKey.currentState?.pushReplacementNamed(
+                AppRoutes.practice,
+              );
+            },
           ),
           AppRoutes.jobPreparation
               when widget.jobPreparationController != null =>
             JobPreparationWizard(
               controller: widget.jobPreparationController!,
               catalogController: widget.preparationController,
-              resumeController: widget.resumeController,
-              onPracticeStarted: () => _navigatorKey.currentState
-                  ?.pushReplacementNamed(AppRoutes.practice),
+              resumeFilePicker: const SystemInterviewResumeFilePicker(),
+              onExit: _closeJobPreparation,
+              onPracticeStarted: () async {
+                await _navigatorKey.currentState?.pushReplacementNamed(
+                  AppRoutes.practice,
+                );
+              },
             ),
           AppRoutes.practice => _buildPracticePage(),
           AppRoutes.conversation => SpeakUpShell(
@@ -402,24 +426,23 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             conversationController: _conversationController,
             composerController: _composerController,
             messageAudioController: _messageAudioController,
+            messageTranslationClient: widget.messageTranslationClient,
             practiceController: _practiceController,
             preparationController: widget.preparationController,
             ieltsPreparationController: widget.ieltsPreparationController,
             jobPreparationController: widget.jobPreparationController,
             preparationLaunchController: widget.preparationLaunchController,
-            practicePlanHandoffController: widget.practicePlanHandoffController,
+            practicePlanClientActionController:
+                widget.practicePlanClientActionController,
             reviewHistoryController: widget.reviewHistoryController,
-            interviewReportController: widget.interviewReportController,
-            ieltsSpeakingReportController: widget.ieltsSpeakingReportController,
             speechFeedbackController: widget.speechFeedbackController,
-            resumeController: widget.resumeController,
+            coachingProfileController: widget.coachingProfileController,
           ),
           AppRoutes.review => ReviewPage(
             showBackButton: true,
             previewMode: widget.allowFakePreview,
             practiceAvailable: true,
             historyController: widget.reviewHistoryController,
-            ieltsSpeakingReportController: widget.ieltsSpeakingReportController,
           ),
           _ => null,
         };
@@ -438,28 +461,28 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
     final launchController = widget.preparationLaunchController;
     if (_practiceController.practiceExperience ==
         PracticeExperience.ieltsSpeaking) {
-      return IeltsSpeakingMockPage(
-        controller: _practiceController,
-        onExitRequested: launchController?.parkCurrentPractice,
-        ieltsController: widget.ieltsPreparationController,
-        completedReportBuilder: widget.ieltsSpeakingReportController == null
-            ? null
-            : (_, practiceSessionId) => IeltsSpeakingSessionReportPanel(
-                practiceSessionId: practiceSessionId,
-                controller: widget.ieltsSpeakingReportController!,
-              ),
-        speechFeedbackController: widget.speechFeedbackController,
-      );
+      final factory = widget.avatarControllerFactory;
+      if (factory != null) {
+        return PracticeAvatarSession(
+          practiceController: _practiceController,
+          avatarControllerFactory: factory,
+          surfaceKey: const Key('ielts-avatar-surface'),
+          builder: (_, avatar) =>
+              _buildIeltsPracticePage(launchController, avatar: avatar),
+        );
+      }
+      return _buildIeltsPracticePage(launchController);
     }
     final experience = _practiceController.practiceExperience;
-    if (experience == PracticeExperience.workplace ||
+    if (experience == PracticeExperience.interview ||
+        experience == PracticeExperience.workplace ||
         experience == PracticeExperience.lifeAndTravel) {
       final factory = widget.avatarControllerFactory;
       if (factory != null) {
         return ScenarioPracticeSession(
           practiceController: _practiceController,
           avatarControllerFactory: factory,
-          onPracticeCompleted: launchController?.completeAndContinueWithAgent,
+          onPracticeCompleted: launchController?.parkCurrentPractice,
           speechFeedbackController: widget.speechFeedbackController,
           onExitRequested: launchController?.parkCurrentPractice,
         );
@@ -467,7 +490,8 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
       return ScenarioPracticePage(
         previewMode: widget.allowFakePreview,
         practiceController: _practiceController,
-        onPracticeCompleted: launchController?.completeAndContinueWithAgent,
+        questionSpeaker: _practiceController.promptSpeaker,
+        onPracticeCompleted: launchController?.parkCurrentPractice,
         speechFeedbackController: widget.speechFeedbackController,
         onExitRequested: launchController?.parkCurrentPractice,
       );
@@ -478,12 +502,33 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
     return InterviewPracticePage(
       previewMode: widget.allowFakePreview,
       practiceController: _practiceController,
-      onOpenInterviewReport: widget.interviewReportController == null
+      practicePromptSpeaker: _practiceController.promptSpeaker,
+      onOpenInterviewReport: widget.sessionEvaluationController == null
           ? null
           : _openInterviewReport,
       speechFeedbackController: widget.speechFeedbackController,
       onExitRequested: launchController?.parkCurrentPractice,
-      onContinueWithAgent: launchController?.completeAndContinueWithAgent,
+      onReturnToConversation: launchController?.parkCurrentPractice,
+    );
+  }
+
+  Widget _buildIeltsPracticePage(
+    PreparationLaunchController? launchController, {
+    PracticeAvatarSessionView? avatar,
+  }) {
+    return IeltsSpeakingMockPage(
+      controller: _practiceController,
+      examinerSpeaker: _practiceController.promptSpeaker,
+      onExitRequested: launchController?.parkCurrentPractice,
+      ieltsController: widget.ieltsPreparationController,
+      reportStatusController: widget.sessionEvaluationController,
+      speechFeedbackController: widget.speechFeedbackController,
+      avatarSurfaceBuilder: avatar?.surfaceBuilder,
+      avatarStatusLabel: avatar?.statusLabel,
+      onBeforeUserTurn: avatar?.interruptForUserTurn,
+      onReplayQuestionWithAvatar: avatar?.onReplayQuestion,
+      avatarReplayLoading: avatar?.replayLoading ?? false,
+      avatarReplayPlaying: avatar?.replayPlaying ?? false,
     );
   }
 }

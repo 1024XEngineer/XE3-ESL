@@ -11,17 +11,23 @@ import (
 const (
 	SpeechProviderQianwen = "qianwen"
 
-	defaultASRTimeout    = 90 * time.Second
-	defaultTTSTimeout    = 60 * time.Second
-	maximumSpeechTimeout = 5 * time.Minute
+	qianwenRealtimeASRModel = "fun-asr-realtime"
+	qianwenRecordedASRModel = "fun-asr-flash-2026-06-15"
+
+	defaultASRTimeout         = 150 * time.Second
+	minimumRealtimeASRTimeout = 150 * time.Second
+	defaultTTSTimeout         = 60 * time.Second
+	maximumSpeechTimeout      = 5 * time.Minute
 )
 
 type SpeechRecognitionConfig struct {
-	Provider string
-	BaseURL  string
-	Model    string
-	Timeout  time.Duration
-	APIKey   Secret
+	Provider        string
+	BaseURL         string
+	Model           string
+	Timeout         time.Duration
+	RecordedModel   string
+	RecordedTimeout time.Duration
+	APIKey          Secret
 }
 
 type SpeechSynthesisConfig struct {
@@ -44,11 +50,34 @@ func LoadSpeechRecognition() (SpeechRecognitionConfig, error) {
 	if err != nil {
 		return SpeechRecognitionConfig{}, err
 	}
-	model, err := requiredEnvironment("QIANWEN_ASR_MODEL")
+	model, err := requiredQianwenASRModel(
+		"QIANWEN_ASR_MODEL",
+		qianwenRealtimeASRModel,
+	)
 	if err != nil {
 		return SpeechRecognitionConfig{}, err
 	}
 	timeout, err := speechTimeoutOrDefault("QIANWEN_ASR_TIMEOUT", defaultASRTimeout)
+	if err != nil {
+		return SpeechRecognitionConfig{}, err
+	}
+	if timeout < minimumRealtimeASRTimeout {
+		return SpeechRecognitionConfig{}, fmt.Errorf(
+			"QIANWEN_ASR_TIMEOUT must be at least %s for realtime recognition",
+			minimumRealtimeASRTimeout,
+		)
+	}
+	recordedModel, err := requiredQianwenASRModel(
+		"QIANWEN_ASR_RECORDED_MODEL",
+		qianwenRecordedASRModel,
+	)
+	if err != nil {
+		return SpeechRecognitionConfig{}, err
+	}
+	recordedTimeout, err := speechTimeoutOrDefault(
+		"QIANWEN_ASR_RECORDED_TIMEOUT",
+		defaultASRTimeout,
+	)
 	if err != nil {
 		return SpeechRecognitionConfig{}, err
 	}
@@ -57,11 +86,13 @@ func LoadSpeechRecognition() (SpeechRecognitionConfig, error) {
 		return SpeechRecognitionConfig{}, err
 	}
 	return SpeechRecognitionConfig{
-		Provider: provider,
-		BaseURL:  baseURL,
-		Model:    model,
-		Timeout:  timeout,
-		APIKey:   apiKey,
+		Provider:        provider,
+		BaseURL:         baseURL,
+		Model:           model,
+		Timeout:         timeout,
+		RecordedModel:   recordedModel,
+		RecordedTimeout: recordedTimeout,
+		APIKey:          apiKey,
 	}, nil
 }
 
@@ -123,6 +154,18 @@ func requiredEnvironment(name string) (string, error) {
 		return "", fmt.Errorf("%s is required", name)
 	}
 	return value, nil
+}
+
+func requiredQianwenASRModel(name string, expected string) (string, error) {
+	model, err := requiredEnvironment(name)
+	if err != nil {
+		return "", err
+	}
+	model = strings.ToLower(model)
+	if model != expected {
+		return "", fmt.Errorf("%s must be %s", name, expected)
+	}
+	return model, nil
 }
 
 func loadDashScopeAPIKey() (Secret, error) {

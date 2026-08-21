@@ -6,13 +6,88 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/features/agent/conversation/agent_client.dart';
+import 'package:speakup/features/agent/conversation/agent_message_audio_client.dart';
 import 'package:speakup/features/agent/conversation/agent_models.dart';
+import 'package:speakup/features/agent/composer/voice/agent_voice_input_client.dart';
 import 'package:speakup/features/agent/composer/voice/agent_voice_models.dart';
 import 'package:speakup/providers/agent/wire_agent_voice_client.dart';
-import 'package:speakup/features/agent/handoff/agent_handoff.dart';
+import 'package:speakup/features/coaching/preparation/practice_plan_client_action.dart';
 import 'package:speakup/identity/auth_state.dart';
 
 void main() {
+  test('receives assistant PCM before text input stream completes', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(server.close);
+    final handled = Completer<void>();
+    server.listen((request) async {
+      expect(
+        request.uri.path,
+        '/v1/agent-threads/$_threadId/assistant-speech/realtime',
+      );
+      final socket = await WebSocketTransformer.upgrade(
+        request,
+        protocolSelector: (protocols) => 'speakup.assistant-speech.v1',
+      );
+      socket.add(
+        jsonEncode(<String, Object>{
+          'type': 'stream.ready',
+          'data': <String, Object>{
+            'content_type': 'audio/pcm',
+            'sample_rate': 24000,
+            'channel_count': 1,
+            'bits_per_sample': 16,
+          },
+        }),
+      );
+      var sentAudio = false;
+      await for (final message in socket) {
+        final frame = jsonDecode(message as String) as Map<String, dynamic>;
+        if (frame['type'] == 'segment' && !sentAudio) {
+          sentAudio = true;
+          socket.add(Uint8List.fromList(<int>[1, 2, 3, 4]));
+        }
+        if (frame['type'] == 'finish') {
+          socket.add(
+            jsonEncode(const <String, Object>{
+              'type': 'stream.completed',
+              'data': <String, Object>{},
+            }),
+          );
+          await socket.close();
+          handled.complete();
+          break;
+        }
+      }
+    });
+    final client = WireAgentVoiceClient(
+      baseUri: Uri.parse('http://${server.address.address}:${server.port}'),
+      credentialProvider: () => _credential,
+      invalidateSession: _ignoreInvalidation,
+      apiTransport: _ScriptedVoiceTransport(const <_Step>[]),
+      signedAudioTransport: _ScriptedVoiceTransport(const <_Step>[]),
+    );
+    addTearDown(client.dispose);
+    final text = StreamController<AgentAssistantSpeechTextSegment>();
+    addTearDown(text.close);
+    final audio = StreamIterator<AgentAssistantSpeechAudioSegment>(
+      client.streamAssistantSpeech(threadId: _threadId, segments: text.stream),
+    );
+    addTearDown(audio.cancel);
+
+    final firstAudio = audio.moveNext();
+    text.add(
+      const AgentAssistantSpeechTextSegment(
+        sequence: 1,
+        text: 'This arrives while the model is still streaming',
+      ),
+    );
+    expect(await firstAudio.timeout(const Duration(seconds: 2)), isTrue);
+    expect(audio.current.audio, <int>[1, 2, 3, 4]);
+    await text.close();
+    expect(await audio.moveNext(), isFalse);
+    await handled.future;
+  });
+
   test('streams PCM chunks over the authenticated voice WebSocket', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(server.close);
@@ -21,7 +96,7 @@ void main() {
     server.listen((request) async {
       expect(
         request.uri.path,
-        '/v1/agent-threads/$_threadId/voice-message-candidates/realtime',
+        '/v1/agent-threads/$_threadId/voice-drafts/realtime',
       );
       expect(
         request.headers.value(HttpHeaders.authorizationHeader),
@@ -37,11 +112,8 @@ void main() {
             (jsonDecode(message) as Map<String, dynamic>)['type'] == 'finish') {
           socket.add(
             jsonEncode(<String, Object>{
-              'type': 'candidate.failed',
-              'data': <String, Object>{
-                'kind': 'test_complete',
-                'retryable': true,
-              },
+              'type': 'draft.ready',
+              'data': <String, Object>{'draft': _draftJson(status: 'ready')},
             }),
           );
           await socket.close();
@@ -64,18 +136,21 @@ void main() {
     );
     addTearDown(client.dispose);
 
-    await expectLater(
-      client.createCandidateRealtime(
-        threadId: _threadId,
-        audioChunks: Stream<Uint8List>.fromIterable(<Uint8List>[
-          Uint8List.fromList(<int>[1, 2]),
-          Uint8List.fromList(<int>[3, 4]),
-        ]),
-        idempotencyKey: 'voice_realtime_001',
-      ),
-      emitsError(isA<AgentClientException>()),
-    );
+    final events = await client
+        .createDraftRealtime(
+          threadId: _threadId,
+          audioChunks: Stream<Uint8List>.fromIterable(<Uint8List>[
+            Uint8List.fromList(<int>[1, 2]),
+            Uint8List.fromList(<int>[3, 4]),
+          ]),
+          idempotencyKey: 'voice_realtime_001',
+        )
+        .toList();
     await handled.future;
+
+    expect(events, hasLength(1));
+    final completed = events.single as AgentVoiceDraftCompleted;
+    expect(completed.draft.isReady, isTrue);
 
     expect(jsonDecode(received.first as String), <String, Object?>{
       'type': 'start',
@@ -89,20 +164,266 @@ void main() {
     });
   });
 
+  test(
+    'decodes ephemeral voice-to-text events from the frozen endpoint',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+      final received = <Object>[];
+      final handled = Completer<void>();
+      server.listen((request) async {
+        expect(
+          request.uri.path,
+          '/v1/agent-threads/$_threadId/voice-transcriptions/realtime',
+        );
+        expect(
+          request.headers.value(HttpHeaders.authorizationHeader),
+          'Bearer sess_voice',
+        );
+        final socket = await WebSocketTransformer.upgrade(
+          request,
+          protocolSelector: (protocols) {
+            expect(protocols, contains('speakup.voice-input.v1'));
+            return 'speakup.voice-input.v1';
+          },
+        );
+        await for (final message in socket) {
+          received.add(message);
+          if (received.length == 1) {
+            socket.add(
+              jsonEncode(const <String, Object>{
+                'type': 'transcription.started',
+                'data': <String, Object>{},
+              }),
+            );
+            socket.add(
+              jsonEncode(const <String, Object>{
+                'type': 'transcription.updated',
+                'data': <String, Object>{
+                  'transcript': 'Partial answer',
+                  'final': false,
+                },
+              }),
+            );
+          }
+          if (message is String &&
+              (jsonDecode(message) as Map<String, dynamic>)['type'] ==
+                  'finish') {
+            socket.add(
+              jsonEncode(const <String, Object>{
+                'type': 'transcription.completed',
+                'data': <String, Object>{
+                  'transcript': 'Completed answer',
+                  'final': true,
+                },
+              }),
+            );
+            await socket.close();
+            handled.complete();
+            break;
+          }
+        }
+      });
+      final client = WireAgentVoiceClient(
+        baseUri: Uri.parse('http://${server.address.address}:${server.port}'),
+        credentialProvider: () => _credential,
+        invalidateSession: _ignoreInvalidation,
+        apiTransport: _ScriptedVoiceTransport(const <_Step>[]),
+        signedAudioTransport: _ScriptedVoiceTransport(const <_Step>[]),
+      );
+      addTearDown(client.dispose);
+
+      final events = await client
+          .transcribeRealtime(
+            threadId: _threadId,
+            audioChunks: Stream<Uint8List>.value(
+              Uint8List.fromList(const <int>[1, 0, 2, 0]),
+            ),
+            idempotencyKey: 'voice_input_001',
+          )
+          .toList();
+      await handled.future;
+
+      expect(events, hasLength(3));
+      expect(events[0], isA<AgentVoiceInputStarted>());
+      expect(
+        (events[1] as AgentVoiceInputUpdated).transcript,
+        'Partial answer',
+      );
+      expect(
+        (events[2] as AgentVoiceInputCompleted).transcript,
+        'Completed answer',
+      );
+      expect(jsonDecode(received.first as String), <String, Object?>{
+        'type': 'start',
+        'idempotency_key': 'voice_input_001',
+        'sample_rate': 16000,
+      });
+      expect(received[1], <int>[1, 0, 2, 0]);
+      expect(jsonDecode(received.last as String), <String, Object?>{
+        'type': 'finish',
+      });
+    },
+  );
+
+  test(
+    'rejects a completed voice transcript unless final is exactly true',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+      final handled = Completer<void>();
+      server.listen((request) async {
+        final socket = await WebSocketTransformer.upgrade(
+          request,
+          protocolSelector: (_) => 'speakup.voice-input.v1',
+        );
+        await for (final message in socket) {
+          if (message is String &&
+              (jsonDecode(message) as Map<String, dynamic>)['type'] ==
+                  'start') {
+            socket.add(
+              jsonEncode(const <String, Object>{
+                'type': 'transcription.started',
+                'data': <String, Object>{},
+              }),
+            );
+          }
+          if (message is String &&
+              (jsonDecode(message) as Map<String, dynamic>)['type'] ==
+                  'finish') {
+            socket.add(
+              jsonEncode(const <String, Object>{
+                'type': 'transcription.completed',
+                'data': <String, Object>{
+                  'transcript': 'Not terminal',
+                  'final': false,
+                },
+              }),
+            );
+            await socket.close();
+            handled.complete();
+            break;
+          }
+        }
+      });
+      final client = WireAgentVoiceClient(
+        baseUri: Uri.parse('http://${server.address.address}:${server.port}'),
+        credentialProvider: () => _credential,
+        invalidateSession: _ignoreInvalidation,
+        apiTransport: _ScriptedVoiceTransport(const <_Step>[]),
+        signedAudioTransport: _ScriptedVoiceTransport(const <_Step>[]),
+      );
+      addTearDown(client.dispose);
+
+      await expectLater(
+        client.transcribeRealtime(
+          threadId: _threadId,
+          audioChunks: Stream<Uint8List>.value(
+            Uint8List.fromList(const <int>[1, 0]),
+          ),
+          idempotencyKey: 'voice_input_002',
+        ),
+        emitsInOrder(<Object>[
+          isA<AgentVoiceInputStarted>(),
+          emitsError(
+            isA<AgentClientException>().having(
+              (error) => error.kind,
+              'kind',
+              AgentClientFailureKind.invalidResponse,
+            ),
+          ),
+        ]),
+      );
+      await handled.future;
+    },
+  );
+
+  test(
+    'cancelling ephemeral transcription sends cancel instead of finish',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+      final receivedTypes = <String>[];
+      final handled = Completer<void>();
+      server.listen((request) async {
+        final socket = await WebSocketTransformer.upgrade(
+          request,
+          protocolSelector: (_) => 'speakup.voice-input.v1',
+        );
+        await for (final message in socket) {
+          if (message is! String) {
+            continue;
+          }
+          final type = (jsonDecode(message) as Map<String, dynamic>)['type'];
+          if (type is! String) {
+            continue;
+          }
+          receivedTypes.add(type);
+          if (type == 'start') {
+            socket.add(
+              jsonEncode(const <String, Object>{
+                'type': 'transcription.started',
+                'data': <String, Object>{},
+              }),
+            );
+          } else if (type == 'cancel') {
+            if (!handled.isCompleted) {
+              handled.complete();
+            }
+            await socket.close();
+            break;
+          }
+        }
+      });
+      final client = WireAgentVoiceClient(
+        baseUri: Uri.parse('http://${server.address.address}:${server.port}'),
+        credentialProvider: () => _credential,
+        invalidateSession: _ignoreInvalidation,
+        apiTransport: _ScriptedVoiceTransport(const <_Step>[]),
+        signedAudioTransport: _ScriptedVoiceTransport(const <_Step>[]),
+      );
+      addTearDown(client.dispose);
+      final audio = StreamController<Uint8List>();
+      addTearDown(audio.close);
+      final started = Completer<void>();
+      final subscription = client
+          .transcribeRealtime(
+            threadId: _threadId,
+            audioChunks: audio.stream,
+            idempotencyKey: 'voice_input_003',
+          )
+          .listen((event) {
+            if (event is AgentVoiceInputStarted && !started.isCompleted) {
+              started.complete();
+            }
+          });
+
+      await started.future.timeout(const Duration(seconds: 2));
+      await subscription.cancel();
+      await handled.future.timeout(const Duration(seconds: 2));
+
+      expect(
+        receivedTypes,
+        containsAllInOrder(const <String>['start', 'cancel']),
+      );
+      expect(receivedTypes, isNot(contains('finish')));
+    },
+  );
+
   test('confirms one voice Message with exact strict JSON', () async {
     final transport = _ScriptedVoiceTransport([
       _Step(
         method: 'POST',
-        path: '/v1/agent-voice-message-candidates/$_candidateId/confirmations',
+        path: '/v1/agent-voice-drafts/$_draftId/confirmations',
         verify: (request) {
           expect(jsonDecode(utf8.decode(request.body!)), <String, Object?>{
-            'candidate_version': 1,
+            'draft_version': 1,
             'client_message_id': 'voice_message_001',
             'confirmed_text': 'Edited confirmed transcript',
           });
         },
         response: _jsonResponse(HttpStatus.accepted, <String, Object?>{
-          'candidate': _candidateJson(status: 'confirmed', confirmed: true),
+          'draft': _draftJson(status: 'confirmed', confirmed: true),
           'message': _voiceMessageJson(content: 'Edited confirmed transcript'),
           'run': _runJson(status: 'pending'),
         }),
@@ -111,9 +432,9 @@ void main() {
     final client = _client(transport);
     addTearDown(client.dispose);
 
-    final confirmation = await client.confirmCandidate(
-      candidateId: _candidateId,
-      candidateVersion: 1,
+    final confirmation = await client.confirmDraft(
+      draftId: _draftId,
+      draftVersion: 1,
       clientMessageId: 'voice_message_001',
       confirmedText: 'Edited confirmed transcript',
     );
@@ -121,101 +442,394 @@ void main() {
     expect(confirmation.message.modality, AgentMessageModality.voice);
     expect(confirmation.message.audio?.id, _audioId);
     expect(confirmation.run.status, AgentVoiceRunStatus.pending);
-    expect(confirmation.candidate.confirmedMessageId, _messageId);
+    expect(confirmation.draft.confirmedMessageId, _messageId);
     transport.expectDone();
   });
 
-  test('keeps a confirmation SSE stream open across assistant deltas', () async {
-    final completedRun = _runJson(status: 'completed')
-      ..['assistant_message_id'] = _assistantMessageId
-      ..['provider_completion_id'] = 'completion-voice-001'
-      ..['provider_model'] = 'qwen-plus'
-      ..['finish_reason'] = 'stop'
-      ..['usage'] = <String, Object?>{
-        'input_tokens': 10,
-        'output_tokens': 4,
-        'total_tokens': 14,
-      }
-      ..['started_at'] = _timestamp
-      ..['completed_at'] = _timestamp;
+  test('rejects obsolete durable Message audio states', () async {
+    final message = _voiceMessageJson(content: 'Edited confirmed transcript');
+    (message['audio']! as Map<String, Object?>)['status'] = 'deleted';
     final transport = _ScriptedVoiceTransport([
       _Step(
         method: 'POST',
-        path:
-            '/v1/agent-voice-message-candidates/$_candidateId/confirmations/stream',
+        path: '/v1/agent-voice-drafts/$_draftId/confirmations',
+        response: _jsonResponse(HttpStatus.accepted, <String, Object?>{
+          'draft': _draftJson(status: 'confirmed', confirmed: true),
+          'message': message,
+          'run': _runJson(status: 'pending'),
+        }),
+      ),
+    ]);
+    final client = _client(transport);
+    addTearDown(client.dispose);
+
+    await expectLater(
+      client.confirmDraft(
+        draftId: _draftId,
+        draftVersion: 1,
+        clientMessageId: 'voice_message_001',
+        confirmedText: 'Edited confirmed transcript',
+      ),
+      throwsA(
+        isA<AgentClientException>().having(
+          (error) => error.kind,
+          'kind',
+          AgentClientFailureKind.invalidResponse,
+        ),
+      ),
+    );
+    transport.expectDone();
+  });
+
+  test(
+    'keeps a confirmation SSE stream open across assistant deltas',
+    () async {
+      final completedRun = _runJson(status: 'completed')
+        ..['assistant_message_id'] = _assistantMessageId
+        ..['completion_source'] = 'model'
+        ..['provider_completion_id'] = 'completion-voice-001'
+        ..['provider_model'] = 'qwen-plus'
+        ..['finish_reason'] = 'stop'
+        ..['usage'] = <String, Object?>{
+          'input_tokens': 10,
+          'output_tokens': 4,
+          'total_tokens': 14,
+        }
+        ..['started_at'] = _timestamp
+        ..['completed_at'] = _timestamp;
+      final transport = _ScriptedVoiceTransport([
+        _Step(
+          method: 'POST',
+          path: '/v1/agent-voice-drafts/$_draftId/confirmations/stream',
+          response: _sseResponse(<(String, Object?)>[
+            (
+              'input.committed',
+              <String, Object?>{
+                'draft': _draftJson(status: 'confirmed', confirmed: true),
+                'message': _voiceMessageJson(
+                  content: 'Edited confirmed transcript',
+                ),
+                'run': _runJson(status: 'pending'),
+              },
+            ),
+            (
+              'assistant.output.started',
+              <String, Object?>{
+                'run_id': _runId,
+                'output_id': _assistantMessageId,
+              },
+            ),
+            (
+              'assistant.output.delta',
+              <String, Object?>{
+                'run_id': _runId,
+                'output_id': _assistantMessageId,
+                'sequence': 1,
+                'delta': 'Hello',
+              },
+            ),
+            (
+              'assistant.output.delta',
+              <String, Object?>{
+                'run_id': _runId,
+                'output_id': _assistantMessageId,
+                'sequence': 2,
+                'delta': ', how can I help?',
+              },
+            ),
+            (
+              'assistant.output.completed',
+              <String, Object?>{
+                'run_id': _runId,
+                'output_id': _assistantMessageId,
+                'text': 'Hello, how can I help?',
+              },
+            ),
+            ('run.completed', <String, Object?>{'run': completedRun}),
+          ]),
+        ),
+      ]);
+      final client = _client(transport);
+      addTearDown(client.dispose);
+
+      final events = await client
+          .confirmDraftStream(
+            draftId: _draftId,
+            draftVersion: 1,
+            clientMessageId: 'voice_message_001',
+            confirmedText: 'Edited confirmed transcript',
+          )
+          .toList();
+
+      expect(events, hasLength(6));
+      expect(
+        events.whereType<AgentVoiceAssistantOutputDelta>().map(
+          (event) => event.delta,
+        ),
+        <String>['Hello', ', how can I help?'],
+      );
+      expect(events.last, isA<AgentVoiceRunCompleted>());
+      transport.expectDone();
+    },
+  );
+
+  test('decodes a domain-completed Run from stream and recovery GET', () async {
+    final completedRun = _completedRunJson(completionSource: 'domain');
+    final transport = _ScriptedVoiceTransport([
+      _Step(
+        method: 'POST',
+        path: '/v1/agent-voice-drafts/$_draftId/confirmations/stream',
         response: _sseResponse(<(String, Object?)>[
           (
             'input.committed',
             <String, Object?>{
-              'candidate': _candidateJson(status: 'confirmed', confirmed: true),
+              'draft': _draftJson(status: 'confirmed', confirmed: true),
               'message': _voiceMessageJson(
                 content: 'Edited confirmed transcript',
               ),
               'run': _runJson(status: 'pending'),
             },
           ),
-          ('assistant.started', <String, Object?>{'run_id': _runId}),
           (
-            'assistant.delta',
-            <String, Object?>{'run_id': _runId, 'delta': 'Hello'},
+            'assistant.output.started',
+            <String, Object?>{
+              'run_id': _runId,
+              'output_id': _assistantMessageId,
+            },
           ),
           (
-            'assistant.delta',
-            <String, Object?>{'run_id': _runId, 'delta': ', how can I help?'},
+            'assistant.output.delta',
+            <String, Object?>{
+              'run_id': _runId,
+              'output_id': _assistantMessageId,
+              'sequence': 1,
+              'delta': 'Your practice is ready.',
+            },
+          ),
+          (
+            'assistant.output.completed',
+            <String, Object?>{
+              'run_id': _runId,
+              'output_id': _assistantMessageId,
+              'text': 'Your practice is ready.',
+            },
           ),
           ('run.completed', <String, Object?>{'run': completedRun}),
         ]),
+      ),
+      _Step(
+        method: 'GET',
+        path: '/v1/agent-runs/$_runId',
+        response: _jsonResponse(HttpStatus.ok, completedRun),
       ),
     ]);
     final client = _client(transport);
     addTearDown(client.dispose);
 
     final events = await client
-        .confirmCandidateStream(
-          candidateId: _candidateId,
-          candidateVersion: 1,
+        .confirmDraftStream(
+          draftId: _draftId,
+          draftVersion: 1,
           clientMessageId: 'voice_message_001',
           confirmedText: 'Edited confirmed transcript',
         )
         .toList();
+    final streamed = (events.last as AgentVoiceRunCompleted).run;
+    final restored = await client.getRun(runId: _runId);
 
-    expect(events, hasLength(5));
-    expect(
-      events.whereType<AgentVoiceAssistantDelta>().map((event) => event.delta),
-      <String>['Hello', ', how can I help?'],
-    );
-    expect(events.last, isA<AgentVoiceRunCompleted>());
+    expect(streamed.status, AgentVoiceRunStatus.completed);
+    expect(restored.status, AgentVoiceRunStatus.completed);
+    expect(restored.assistantMessageId, _assistantMessageId);
+    expect(streamed.attempt, 1);
+    expect(streamed.threadId, _threadId);
+    expect(streamed.inputMessageId, _messageId);
+    expect(streamed.completion, isA<AgentDomainRunCompletion>());
     transport.expectDone();
   });
 
   test(
-    'decodes confirmation fields for confirmed deleting and deleted candidates',
+    'preserves the authoritative failed Run from the terminal event',
     () async {
-      for (final status in <String>['confirmed', 'deleting', 'deleted']) {
-        final candidateJson = _candidateJson(status: status, confirmed: true);
-        if (status == 'deleted') {
-          candidateJson['deleted_at'] = _timestamp;
-        }
-        final transport = _ScriptedVoiceTransport([
-          _Step(
-            method: 'GET',
-            path: '/v1/agent-voice-message-candidates/$_candidateId',
-            response: _jsonResponse(HttpStatus.ok, candidateJson),
-          ),
-        ]);
-        final client = _client(transport);
-        addTearDown(client.dispose);
+      final failedRun = _runJson(status: 'failed')
+        ..addAll(<String, Object?>{
+          'failure': <String, Object?>{
+            'kind': 'provider_unavailable',
+            'retryable': true,
+          },
+          'started_at': _timestamp,
+          'completed_at': _timestamp,
+        });
+      final transport = _ScriptedVoiceTransport([
+        _Step(
+          method: 'POST',
+          path: '/v1/agent-voice-drafts/$_draftId/confirmations/stream',
+          response: _sseResponse(<(String, Object?)>[
+            (
+              'input.committed',
+              <String, Object?>{
+                'draft': _draftJson(status: 'confirmed', confirmed: true),
+                'message': _voiceMessageJson(
+                  content: 'Edited confirmed transcript',
+                ),
+                'run': _runJson(status: 'pending'),
+              },
+            ),
+            (
+              'run.failed',
+              <String, Object?>{
+                'run': failedRun,
+                'kind': 'provider_unavailable',
+                'retryable': true,
+              },
+            ),
+          ]),
+        ),
+      ]);
+      final client = _client(transport);
+      addTearDown(client.dispose);
 
-        final candidate = await client.getCandidate(candidateId: _candidateId);
+      final events = await client
+          .confirmDraftStream(
+            draftId: _draftId,
+            draftVersion: 1,
+            clientMessageId: 'voice_message_001',
+            confirmedText: 'Edited confirmed transcript',
+          )
+          .toList();
 
-        expect(candidate.confirmedMessageId, _messageId, reason: status);
-        expect(candidate.confirmedRunId, _runId, reason: status);
-        expect(candidate.messageAudioId, _audioId, reason: status);
-        expect(candidate.confirmedAt, isNotNull, reason: status);
-        transport.expectDone();
-      }
+      final terminal = events.last as AgentVoiceRunFailed;
+      expect(terminal.run?.status, AgentRunStatus.failed);
+      expect(terminal.run?.threadId, _threadId);
+      expect(terminal.run?.inputMessageId, _messageId);
+      expect(terminal.run?.failureKind, 'provider_unavailable');
+      transport.expectDone();
     },
   );
+
+  test('rejects a retry response with different retry identity', () async {
+    final mismatched = _runJson(
+      status: 'pending',
+      runId: _retryRunId,
+      attempt: 2,
+      retryOfRunId: _assistantMessageId,
+      clientRetryId: 'voice_retry_001',
+    );
+    final transport = _ScriptedVoiceTransport([
+      _Step(
+        method: 'POST',
+        path: '/v1/agent-runs/$_runId/retries',
+        response: _jsonResponse(HttpStatus.accepted, mismatched),
+      ),
+    ]);
+    final client = _client(transport);
+    addTearDown(client.dispose);
+
+    await expectLater(
+      client.retryRun(runId: _runId, clientRetryId: 'voice_retry_001'),
+      throwsA(
+        isA<AgentClientException>().having(
+          (error) => error.kind,
+          'kind',
+          AgentClientFailureKind.invalidResponse,
+        ),
+      ),
+    );
+    transport.expectDone();
+  });
+
+  test('rejects a non-contiguous assistant output sequence', () async {
+    final transport = _ScriptedVoiceTransport([
+      _Step(
+        method: 'POST',
+        path: '/v1/agent-voice-drafts/$_draftId/confirmations/stream',
+        response: _sseResponse(<(String, Object?)>[
+          (
+            'input.committed',
+            <String, Object?>{
+              'draft': _draftJson(status: 'confirmed', confirmed: true),
+              'message': _voiceMessageJson(
+                content: 'Edited confirmed transcript',
+              ),
+              'run': _runJson(status: 'pending'),
+            },
+          ),
+          (
+            'assistant.output.started',
+            <String, Object?>{
+              'run_id': _runId,
+              'output_id': _assistantMessageId,
+            },
+          ),
+          (
+            'assistant.output.delta',
+            <String, Object?>{
+              'run_id': _runId,
+              'output_id': _assistantMessageId,
+              'sequence': 2,
+              'delta': 'Skipped sequence one.',
+            },
+          ),
+        ]),
+      ),
+    ]);
+    final client = _client(transport);
+    addTearDown(client.dispose);
+
+    await expectLater(
+      client
+          .confirmDraftStream(
+            draftId: _draftId,
+            draftVersion: 1,
+            clientMessageId: 'voice_message_001',
+            confirmedText: 'Edited confirmed transcript',
+          )
+          .toList(),
+      throwsA(
+        isA<AgentClientException>().having(
+          (error) => error.kind,
+          'kind',
+          AgentClientFailureKind.invalidResponse,
+        ),
+      ),
+    );
+    transport.expectDone();
+  });
+
+  test('decodes exactly four durable draft states', () async {
+    final transport = _ScriptedVoiceTransport([
+      for (final status in const <String>[
+        'transcribing',
+        'ready',
+        'failed',
+        'confirmed',
+      ])
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-voice-drafts/$_draftId',
+          response: _jsonResponse(
+            HttpStatus.ok,
+            _draftJson(status: status, confirmed: status == 'confirmed'),
+          ),
+        ),
+    ]);
+    final client = _client(transport);
+    addTearDown(client.dispose);
+
+    final drafts = <AgentVoiceDraft>[];
+    for (var index = 0; index < 4; index++) {
+      drafts.add(await client.getDraft(draftId: _draftId));
+    }
+
+    expect(drafts.map((draft) => draft.status), AgentVoiceDraftStatus.values);
+    expect(drafts.take(3).every((draft) => draft.expiresAt != null), isTrue);
+    final confirmed = drafts.last;
+    expect(confirmed.expiresAt, isNull);
+    expect(confirmed.confirmedMessageId, _messageId);
+    expect(confirmed.confirmedRunId, _runId);
+    expect(confirmed.messageAudioId, _audioId);
+    expect(confirmed.confirmedAt, isNotNull);
+    transport.expectDone();
+  });
 
   test(
     'decodes absent modality as text and rejects text carrying audio',
@@ -270,28 +884,77 @@ void main() {
     },
   );
 
+  test('finds an assistant Message after multimodal history', () async {
+    final transport = _ScriptedVoiceTransport([
+      _Step(
+        method: 'GET',
+        path: '/v1/agent-threads/$_threadId/messages?page_size=100',
+        response: _jsonResponse(HttpStatus.ok, {
+          'messages': <Object?>[
+            <String, Object?>{
+              'message_id': '88888888-8888-4888-8888-888888888888',
+              'thread_id': _threadId,
+              'sequence': 1,
+              'role': 'user',
+              'client_message_id': 'image-message-001',
+              'modality': 'multimodal',
+              'content': 'Please use this image.',
+              'images': <Object?>[
+                <String, Object?>{
+                  'image_asset_id': '99999999-9999-4999-8999-999999999999',
+                  'content_type': 'image/jpeg',
+                  'size_bytes': 2048,
+                  'width': 640,
+                  'height': 480,
+                  'status': 'ready',
+                  'created_at': _timestamp,
+                  'attached_at': _timestamp,
+                },
+              ],
+              'created_at': _timestamp,
+            },
+            _assistantMessageJson()..['sequence'] = 2,
+          ],
+        }),
+      ),
+    ]);
+    final client = _client(transport);
+    addTearDown(client.dispose);
+
+    final message = await client.getMessage(
+      threadId: _threadId,
+      messageId: _assistantMessageId,
+    );
+
+    expect(message?.id, _assistantMessageId);
+    transport.expectDone();
+  });
+
   test(
-    'restores an assistant Message carrying a practice plan handoff',
+    'restores an assistant Message carrying a practice plan client action',
     () async {
       final assistant = _assistantMessageJson()
-        ..['handoffs'] = <Object?>[
+        ..['client_actions'] = <Object?>[
           <String, Object?>{
-            'type': 'confirm_practice_plan',
-            'label': '确认并开始练习',
-            'practice_plan_id': _practicePlanId,
-            'plan_revision': 2,
-            'target': '阿里高级 Java 开发面试',
-            'scene_name': '项目经历深挖',
-            'practice_experience': 'INTERVIEW',
-            'scene_category': 'INTERVIEW_PROFESSIONAL',
-            'practice_mode': 'FULL_SIMULATION',
-            'roles': <Object?>['面试官', '候选人'],
-            'practice_scope': '围绕项目难点完成三轮追问',
-            'suggested_duration_seconds': 720,
-            'min_effective_turns': 3,
-            'max_effective_turns': 5,
-            'executable_status': 'ready',
-            'confirmation_prompt': '请确认是否按此方案开始练习。',
+            'type': practicePlanConfirmClientActionType,
+            'payload': <String, Object?>{
+              'label': '确认并开始练习',
+              'practice_plan_id': _practicePlanId,
+              'plan_version': 2,
+              'scene_id': 'scn_interview_project_deep_dive',
+              'scene_name': '项目经历深挖',
+              'user_role': '候选人',
+              'ai_roles': <Object?>['面试官'],
+              'practice_goal': '阿里高级 Java 开发面试',
+              'practice_experience': 'INTERVIEW',
+              'scene_category': 'INTERVIEW_PROFESSIONAL',
+              'practice_mode': 'FULL_SIMULATION',
+              'practice_scope': '围绕项目难点完成三轮追问',
+              'suggested_duration_seconds': 720,
+              'min_effective_turns': 3,
+              'max_effective_turns': 5,
+              'confirmation_prompt': '请确认是否按此方案开始练习。',
+            },
           },
         ];
       final transport = _ScriptedVoiceTransport([
@@ -311,11 +974,11 @@ void main() {
         messageId: _assistantMessageId,
       );
 
-      expect(message?.handoffs, hasLength(1));
-      expect(
-        (message?.handoffs.single as ConfirmPracticePlanHandoff).practicePlanId,
-        _practicePlanId,
+      expect(message?.clientActions, hasLength(1));
+      final action = decodeConfirmPracticePlanClientAction(
+        message!.clientActions.single,
       );
+      expect(action.practicePlanId, _practicePlanId);
       transport.expectDone();
     },
   );
@@ -495,31 +1158,38 @@ AgentVoiceWireResponse _sseResponse(Iterable<(String, Object?)> events) {
   );
 }
 
-Map<String, Object?> _candidateJson({
+Map<String, Object?> _draftJson({
   required String status,
   bool confirmed = false,
 }) {
+  final hasTranscript = status == 'ready' || status == 'confirmed';
   return <String, Object?>{
-    'candidate_id': _candidateId,
+    'draft_id': _draftId,
     'thread_id': _threadId,
     'status': status,
     'asr_attempt': 1,
-    'candidate_version': 1,
+    'draft_version': 1,
     'recording': <String, Object?>{
       'content_type': 'audio/wav',
       'size_bytes': _waveBytes.length,
       'duration_ms': 3000,
       'sample_rate': 16000,
     },
-    'transcript': <String, Object?>{
-      'candidate_text': 'Candidate transcript',
-      'request_id': 'request-voice-001',
-      'provider': 'qwen',
-      'model': 'qwen-asr',
-      'language': 'en',
-      'finish_reason': 'stop',
-    },
-    'expires_at': '2026-07-26T13:00:00Z',
+    if (hasTranscript)
+      'transcript': <String, Object?>{
+        'text': 'Draft transcript',
+        'request_id': 'request-voice-001',
+        'provider': 'qwen',
+        'model': 'qwen-asr',
+        'language': 'en',
+        'finish_reason': 'stop',
+      },
+    if (status == 'failed')
+      'failure': <String, Object?>{
+        'kind': 'provider_unavailable',
+        'retryable': true,
+      },
+    if (!confirmed) 'expires_at': '2026-07-26T13:00:00Z',
     if (confirmed) ...<String, Object?>{
       'confirmed_message_id': _messageId,
       'confirmed_run_id': _runId,
@@ -568,12 +1238,22 @@ Map<String, Object?> _assistantMessageJson() {
   };
 }
 
-Map<String, Object?> _runJson({required String status}) {
+Map<String, Object?> _runJson({
+  required String status,
+  String runId = _runId,
+  String threadId = _threadId,
+  String inputMessageId = _messageId,
+  int attempt = 1,
+  String? retryOfRunId,
+  String? clientRetryId,
+}) {
   return <String, Object?>{
-    'run_id': _runId,
-    'thread_id': _threadId,
-    'input_message_id': _messageId,
-    'attempt': 1,
+    'run_id': runId,
+    'thread_id': threadId,
+    'input_message_id': inputMessageId,
+    'attempt': attempt,
+    'retry_of_run_id': ?retryOfRunId,
+    'client_retry_id': ?clientRetryId,
     'status': status,
     'requested_provider': 'qwen',
     'requested_model': 'qwen-plus',
@@ -583,10 +1263,33 @@ Map<String, Object?> _runJson({required String status}) {
   };
 }
 
+Map<String, Object?> _completedRunJson({required String completionSource}) {
+  return _runJson(status: 'completed')..addAll(<String, Object?>{
+    'assistant_message_id': _assistantMessageId,
+    'completion_source': completionSource,
+    if (completionSource == 'model') ...<String, Object?>{
+      'provider_completion_id': 'completion-voice-001',
+      'provider_model': 'qwen-plus',
+      'finish_reason': 'stop',
+      'usage': <String, Object?>{
+        'input_tokens': 10,
+        'output_tokens': 4,
+        'total_tokens': 14,
+      },
+    } else ...<String, Object?>{
+      'domain_tool_call_id': 'call-practice-preview-1',
+      'domain_tool_name': 'practice.preview.v2',
+    },
+    'started_at': _timestamp,
+    'completed_at': _timestamp,
+  });
+}
+
 const _threadId = '11111111-1111-4111-8111-111111111111';
-const _candidateId = '22222222-2222-4222-8222-222222222222';
+const _draftId = '22222222-2222-4222-8222-222222222222';
 const _messageId = '33333333-3333-4333-8333-333333333333';
 const _runId = '44444444-4444-4444-8444-444444444444';
+const _retryRunId = '44444444-4444-4444-8444-444444444445';
 const _audioId = '55555555-5555-4555-8555-555555555555';
 const _assistantMessageId = '66666666-6666-4666-8666-666666666666';
 const _practicePlanId = '77777777-7777-4777-8777-777777777777';

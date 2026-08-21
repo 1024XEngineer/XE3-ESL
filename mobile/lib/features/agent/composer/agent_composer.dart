@@ -377,6 +377,7 @@ class _AgentComposerState extends State<AgentComposer> {
         starting ||
         recording ||
         (widget.onStartVoice != null &&
+            widget.pendingImages.isEmpty &&
             widget.voiceEnabled &&
             widget.enabled &&
             !widget.isBusy);
@@ -474,6 +475,7 @@ class _AgentComposerState extends State<AgentComposer> {
                         widget.onTakePhoto != null,
                     onAddImages: _showImageSource,
                     onShowText: _showTextComposer,
+                    liveTranscript: voice?.liveTranscript,
                   ),
           ),
         ),

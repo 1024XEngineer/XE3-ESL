@@ -1,38 +1,16 @@
 package conversation
 
-import (
-	"strings"
-	"testing"
-	"unicode/utf8"
-)
+import "testing"
 
 func TestDeriveThreadTitle(t *testing.T) {
 	t.Parallel()
-	cases := map[string]struct {
-		input string
-		want  string
-	}{
-		"empty": {input: " \n\t ", want: ""},
-		"collapse whitespace": {
-			input: "  Help me\nprepare\tEnglish  ",
-			want:  "Help me prepare English",
-		},
-		"short Unicode": {input: "我想练习英文自我介绍", want: "我想练习英文自我介绍"},
-		"truncate Unicode": {
-			input: strings.Repeat("面", ThreadTitleContentLimit+1),
-			want:  strings.Repeat("面", ThreadTitleContentLimit) + "…",
-		},
+	if got := DeriveThreadTitle("  Prepare\nmy\tinterview  "); got != "Prepare my interview" {
+		t.Fatalf("title = %q", got)
 	}
-	for name, testCase := range cases {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			got := DeriveThreadTitle(testCase.input)
-			if got != testCase.want {
-				t.Fatalf("DeriveThreadTitle(%q) = %q, want %q", testCase.input, got, testCase.want)
-			}
-			if utf8.RuneCountInString(got) > ThreadTitleContentLimit+1 {
-				t.Fatalf("title length = %d", utf8.RuneCountInString(got))
-			}
-		})
+	if got := []rune(DeriveThreadTitle("一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三")); len(got) != MaxThreadTitleRunes {
+		t.Fatalf("title rune count = %d", len(got))
+	}
+	if got := DeriveThreadTitle("Create a custom life role-play: I am a community volunteer"); got != "Create a custom life role-play:" {
+		t.Fatalf("title with truncation boundary whitespace = %q", got)
 	}
 }

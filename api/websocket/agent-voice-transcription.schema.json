@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://speak-up.top/api/schemas/websocket/agent-voice-transcription.schema.json",
+  "title": "Agent ephemeral voice transcription",
+  "description": "Client text controls and server events for one authenticated, non-persistent Agent voice transcription WebSocket.",
+  "$defs": {
+    "ClientTextFrame": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/StartFrame"
+        },
+        {
+          "$ref": "#/$defs/FinishFrame"
+        },
+        {
+          "$ref": "#/$defs/CancelFrame"
+        }
+      ]
+    },
+    "StartFrame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "idempotency_key", "sample_rate"],
+      "properties": {
+        "type": {
+          "const": "start"
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 128,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+        },
+        "sample_rate": {
+          "const": 16000
+        }
+      }
+    },
+    "FinishFrame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "const": "finish"
+        }
+      }
+    },
+    "CancelFrame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "const": "cancel"
+        }
+      }
+    },
+    "ServerEvent": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/TranscriptionStarted"
+        },
+        {
+          "$ref": "#/$defs/TranscriptionUpdated"
+        },
+        {
+          "$ref": "#/$defs/TranscriptionCompleted"
+        },
+        {
+          "$ref": "#/$defs/TranscriptionFailed"
+        }
+      ]
+    },
+    "TranscriptionStarted": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "data"],
+      "properties": {
+        "type": {
+          "const": "transcription.started"
+        },
+        "data": {
+          "type": "object",
+          "additionalProperties": false
+        }
+      }
+    },
+    "TranscriptionUpdated": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "data"],
+      "properties": {
+        "type": {
+          "const": "transcription.updated"
+        },
+        "data": {
+          "$ref": "#/$defs/PartialTranscript"
+        }
+      }
+    },
+    "TranscriptionCompleted": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "data"],
+      "properties": {
+        "type": {
+          "const": "transcription.completed"
+        },
+        "data": {
+          "$ref": "#/$defs/FinalTranscript"
+        }
+      }
+    },
+    "TranscriptionFailed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "data"],
+      "properties": {
+        "type": {
+          "const": "transcription.failed"
+        },
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "retryable"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "minLength": 1
+            },
+            "retryable": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    "PartialTranscript": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transcript", "final"],
+      "properties": {
+        "transcript": {
+          "type": "string",
+          "minLength": 1
+        },
+        "final": {
+          "const": false
+        }
+      }
+    },
+    "FinalTranscript": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transcript", "final"],
+      "properties": {
+        "transcript": {
+          "type": "string",
+          "minLength": 1
+        },
+        "final": {
+          "const": true
+        }
+      }
+    }
+  }
+}

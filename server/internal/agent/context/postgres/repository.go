@@ -49,6 +49,5 @@ func mapSourcePostgresError(err error) error {
 }
 
 var (
-	_ agentcontext.Repository         = (*Repository)(nil)
-	_ agentcontext.ManifestRepository = (*Repository)(nil)
+	_ agentcontext.Repository = (*Repository)(nil)
 )

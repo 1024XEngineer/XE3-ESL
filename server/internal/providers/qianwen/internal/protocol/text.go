@@ -101,13 +101,21 @@ type TextMessage struct {
 type TextResponseFormat string
 
 const (
-	TextResponseFormatDefault TextResponseFormat = ""
-	TextResponseFormatJSON    TextResponseFormat = "json_object"
+	TextResponseFormatDefault    TextResponseFormat = ""
+	TextResponseFormatJSON       TextResponseFormat = "json_object"
+	TextResponseFormatJSONSchema TextResponseFormat = "json_schema"
 )
 
 func (format TextResponseFormat) Valid() bool {
 	return format == TextResponseFormatDefault ||
-		format == TextResponseFormatJSON
+		format == TextResponseFormatJSON ||
+		format == TextResponseFormatJSONSchema
+}
+
+type JSONSchemaDefinition struct {
+	Name   string
+	Strict bool
+	Schema map[string]any
 }
 
 type TextRequest struct {
@@ -115,6 +123,7 @@ type TextRequest struct {
 	Tools          []ToolDefinition
 	ToolChoice     ToolChoice
 	ResponseFormat TextResponseFormat
+	ResponseSchema *JSONSchemaDefinition
 }
 
 type TokenUsage struct {
@@ -141,6 +150,20 @@ func ValidateTextRequest(request TextRequest) error {
 	}
 	if !request.ResponseFormat.Valid() {
 		return errors.New("text generation response format is unsupported")
+	}
+	if request.ResponseFormat == TextResponseFormatJSONSchema {
+		if err := validateJSONSchemaDefinition(request.ResponseSchema); err != nil {
+			return err
+		}
+		if len(request.Tools) != 0 || request.ToolChoice != (ToolChoice{}) {
+			return errors.New(
+				"text generation JSON Schema output cannot include tools",
+			)
+		}
+	} else if request.ResponseSchema != nil {
+		return errors.New(
+			"text generation response schema requires JSON Schema output",
+		)
 	}
 	toolNames := make(map[string]struct{}, len(request.Tools))
 	for index, definition := range request.Tools {
@@ -235,6 +258,21 @@ func ValidateTextRequest(request TextRequest) error {
 	finalRole := request.Messages[len(request.Messages)-1].Role
 	if finalRole != TextRoleUser && finalRole != TextRoleTool {
 		return errors.New("text generation requires the final message to have the user or tool role")
+	}
+	return nil
+}
+
+func validateJSONSchemaDefinition(definition *JSONSchemaDefinition) error {
+	if definition == nil || !validToolName(definition.Name) ||
+		!definition.Strict || definition.Schema == nil ||
+		definition.Schema["type"] != "object" ||
+		definition.Schema["additionalProperties"] != false {
+		return errors.New("text generation JSON Schema definition is invalid")
+	}
+	if _, err := json.Marshal(definition.Schema); err != nil {
+		return errors.New(
+			"text generation response schema must be JSON serializable",
+		)
 	}
 	return nil
 }

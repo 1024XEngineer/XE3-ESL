@@ -13,7 +13,7 @@ import 'turn_feedback_fixture.dart';
 
 void main() {
   test('wire client follows the exact Actor-owned status URL', () async {
-    final fixture = speechFeedbackContractFixture()['ready_provisional'];
+    final fixture = readyPracticeFeedbackFixture();
     final transport = _Transport(
       IdentityHttpResponse(
         statusCode: HttpStatus.ok,
@@ -22,12 +22,10 @@ void main() {
     );
     final client = _client(transport);
 
-    final result = await client.getFeedback(
-      '/v1/speech-feedback/speech_feedback_ready_001',
-    );
+    final result = await client.getFeedback(practiceStatusUrl);
 
     expect(result.feedbackStatus, SpeechFeedbackStatus.ready);
-    expect(transport.uri.path, '/v1/speech-feedback/speech_feedback_ready_001');
+    expect(transport.uri.path, practiceStatusUrl);
     expect(transport.uri.query, isEmpty);
     expect(transport.method, 'GET');
     expect(transport.authorization, 'Bearer sess_speech_feedback');
@@ -40,9 +38,9 @@ void main() {
     final client = _client(transport);
 
     for (final value in [
-      'https://other.test/v1/speech-feedback/feedback_001',
-      '/v1/speech-feedback/feedback_001?token=secret',
-      '/v1/speech-feedback/%2e%2e',
+      'https://other.test$practiceStatusUrl',
+      '$practiceStatusUrl?token=secret',
+      '/v1/practice-turns/%2e%2e/evaluation',
     ]) {
       await expectLater(
         client.getFeedback(value),
@@ -62,13 +60,13 @@ void main() {
     final transport = _Transport(
       IdentityHttpResponse(
         statusCode: HttpStatus.ok,
-        body: jsonEncode(speechFeedbackContractFixture()['queued']),
+        body: jsonEncode(pendingPracticeFeedbackFixture('QUEUED')),
       ),
     );
     final client = _client(transport);
 
     await expectLater(
-      client.getFeedback('/v1/speech-feedback/speech_feedback_running_001'),
+      client.getFeedback(agentStatusUrl),
       throwsA(
         isA<SpeechFeedbackException>().having(
           (error) => error.kind,
@@ -115,7 +113,7 @@ void main() {
         );
 
         await expectLater(
-          client.getFeedback('/v1/speech-feedback/feedback_000000000001'),
+          client.getFeedback(practiceStatusUrl),
           throwsA(
             isA<SpeechFeedbackException>()
                 .having((error) => error.kind, 'kind', testCase.kind)
@@ -133,16 +131,14 @@ void main() {
   test('account clear fences a late private response', () async {
     final transport = _CompleterTransport();
     final client = _client(transport);
-    final pending = client.getFeedback(
-      '/v1/speech-feedback/speech_feedback_ready_001',
-    );
+    final pending = client.getFeedback(practiceStatusUrl);
     await transport.started.future;
 
     await client.clearAccountState();
     transport.response.complete(
       IdentityHttpResponse(
         statusCode: HttpStatus.ok,
-        body: jsonEncode(speechFeedbackContractFixture()['ready_provisional']),
+        body: jsonEncode(readyPracticeFeedbackFixture()),
       ),
     );
 
@@ -187,6 +183,7 @@ final class _Transport implements IdentityHttpTransport {
     required Uri uri,
     required Map<String, String> headers,
     String? body,
+    List<int>? bodyBytes,
   }) async {
     calls++;
     this.method = method;
@@ -206,6 +203,7 @@ final class _CompleterTransport implements IdentityHttpTransport {
     required Uri uri,
     required Map<String, String> headers,
     String? body,
+    List<int>? bodyBytes,
   }) {
     started.complete();
     return response.future;

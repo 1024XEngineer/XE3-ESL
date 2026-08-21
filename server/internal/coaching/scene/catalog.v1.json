@@ -1,0 +1,2192 @@
+{
+  "schema_version": 1,
+  "scenes": [
+    {
+      "scene_id": "scn_daily_small_talk",
+      "practice_experience": "LIFE_AND_TRAVEL",
+      "scene_category": "LIFE_DAILY",
+      "name": "自我介绍与寒暄",
+      "scene_version": 1,
+      "status": "active",
+      "prompt": {
+        "public_scene_brief": "与新朋友、邻居或同学自然打招呼、介绍自己并延续简短话题。",
+        "practice_goal": "自然开启话题并完成一段轻松的双向交流。",
+        "user_role": "自己",
+        "ai_role": "新朋友",
+        "persona_summary": "A friendly new acquaintance who opens with a natural topic and responds conversationally without turning the exchange into an interview.",
+        "focus_areas": [
+          "greeting",
+          "self_introduction",
+          "shared_topic"
+        ],
+        "turn_blueprints": [
+          "先打招呼并提供一个自然话题",
+          "回应用户的自我介绍",
+          "围绕共同点继续一句",
+          "自然结束简短寒暄"
+        ]
+      },
+      "roles": [
+        {
+          "role_definition_id": "role_daily_small_talk_counterpart",
+          "scene_id": "scn_daily_small_talk",
+          "role_type": "NEW_ACQUAINTANCE",
+          "display_name": "新朋友",
+          "responsibilities": "自然开启话题并完成一段轻松的双向交流。",
+          "style": "Natural, concise, and appropriate to the current role.",
+          "practice_objectives": [
+            {
+              "objective_id": "greeting",
+              "description": "Open the conversation with a natural, context-appropriate greeting."
+            },
+            {
+              "objective_id": "self_introduction",
+              "description": "Introduce yourself with concise, relevant personal information."
+            },
+            {
+              "objective_id": "shared_topic",
+              "description": "Find and develop a topic that both participants can discuss naturally."
+            }
+          ]
+        }
+      ],
+      "practice_options": [
+        {
+          "practice_option_id": "option_daily_small_talk_full",
+          "scene_id": "scn_daily_small_talk",
+          "practice_mode": "FULL_SIMULATION",
+          "display_name": "完整模拟",
+          "suggested_duration_seconds": 360,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "daily.practice.session.v1",
+          "evaluation_policy_ref": "daily.general.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_daily_small_talk_focus",
+          "scene_id": "scn_daily_small_talk",
+          "role_definition_id": "role_daily_small_talk_counterpart",
+          "practice_mode": "FOCUS",
+          "display_name": "重点练习",
+          "suggested_duration_seconds": 360,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "daily.practice.session.v1",
+          "evaluation_policy_ref": "daily.general.evaluation.v1"
+        }
+      ]
+    },
+    {
+      "scene_id": "scn_ielts_speaking",
+      "practice_experience": "IELTS_SPEAKING",
+      "scene_category": "IELTS_SPEAKING",
+      "name": "IELTS 口语",
+      "scene_version": 1,
+      "status": "active",
+      "prompt": {
+        "public_scene_brief": "选择 Part 1、Part 2、Part 3 或完整模考，并从当前题库冻结本次练习题目。",
+        "practice_goal": "按所选 IELTS 口语模式完成真实节奏的连续表达。",
+        "user_role": "考生",
+        "ai_role": "IELTS 口语考官",
+        "persona_summary": "A neutral IELTS speaking examiner who follows the frozen question sequence, asks exactly one item at a time, and never teaches or scores during the simulation.",
+        "focus_areas": [
+          "fluency_and_coherence",
+          "lexical_resource",
+          "grammatical_range_and_accuracy",
+          "pronunciation"
+        ],
+        "turn_blueprints": [
+          "Freeze the selected published IELTS Speaking question set before practice starts."
+        ]
+      },
+      "roles": [
+        {
+          "role_definition_id": "role_ielts_speaking_examiner",
+          "scene_id": "scn_ielts_speaking",
+          "role_type": "IELTS_EXAMINER",
+          "display_name": "IELTS 口语考官",
+          "responsibilities": "Run the frozen IELTS Speaking question sequence without coaching or scoring.",
+          "style": "Neutral, concise, and exam appropriate.",
+          "practice_objectives": [
+            {
+              "objective_id": "fluency_and_coherence",
+              "description": "Develop answers fluently with a clear and coherent progression."
+            },
+            {
+              "objective_id": "lexical_resource",
+              "description": "Use vocabulary precisely and flexibly for the selected topic."
+            },
+            {
+              "objective_id": "grammatical_range_and_accuracy",
+              "description": "Use a useful range of grammatical structures accurately."
+            },
+            {
+              "objective_id": "pronunciation",
+              "description": "Speak clearly with intelligible rhythm, stress, and sounds."
+            }
+          ]
+        }
+      ],
+      "practice_options": [
+        {
+          "practice_option_id": "option_ielts_speaking_full_mock",
+          "scene_id": "scn_ielts_speaking",
+          "practice_mode": "FULL_MOCK",
+          "display_name": "完整模考",
+          "suggested_duration_seconds": 900,
+          "turn_policy_ref": "ielts.speaking_full_mock.turn.v1",
+          "session_policy_ref": "ielts.speaking_full_mock.session.v1",
+          "evaluation_policy_ref": "ielts.speaking_full_mock.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_ielts_speaking_part_1",
+          "scene_id": "scn_ielts_speaking",
+          "practice_mode": "PART_1",
+          "display_name": "Part 1",
+          "suggested_duration_seconds": 300,
+          "turn_policy_ref": "ielts.speaking_part1.turn.v1",
+          "session_policy_ref": "ielts.speaking_part1.session.v1",
+          "evaluation_policy_ref": "ielts.speaking_practice.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_ielts_speaking_part_2",
+          "scene_id": "scn_ielts_speaking",
+          "practice_mode": "PART_2",
+          "display_name": "Part 2",
+          "suggested_duration_seconds": 600,
+          "turn_policy_ref": "ielts.speaking_part2.turn.v1",
+          "session_policy_ref": "ielts.speaking_part2.session.v1",
+          "evaluation_policy_ref": "ielts.speaking_practice.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_ielts_speaking_part_3",
+          "scene_id": "scn_ielts_speaking",
+          "practice_mode": "PART_3",
+          "display_name": "Part 3",
+          "suggested_duration_seconds": 300,
+          "turn_policy_ref": "ielts.speaking_part3.turn.v1",
+          "session_policy_ref": "ielts.speaking_part3.session.v1",
+          "evaluation_policy_ref": "ielts.speaking_practice.evaluation.v1"
+        }
+      ]
+    },
+    {
+      "scene_id": "scn_interview_self_introduction",
+      "practice_experience": "INTERVIEW",
+      "scene_category": "INTERVIEW_RECRUITER",
+      "name": "英文自我介绍",
+      "scene_version": 1,
+      "status": "active",
+      "prompt": {
+        "public_scene_brief": "向招聘方做一段 60～90 秒的英文自我介绍，并围绕亮点继续交流。",
+        "practice_goal": "说清背景、优势和岗位匹配，并自然回应一到两个追问。",
+        "user_role": "候选人",
+        "ai_role": "招聘方",
+        "persona_summary": "A warm recruiter who invites a concise introduction and follows up on one concrete strength without scoring the candidate.",
+        "focus_areas": [
+          "background",
+          "strength",
+          "role_fit"
+        ],
+        "turn_blueprints": [
+          "邀请候选人做简短自我介绍",
+          "围绕一个具体亮点自然追问",
+          "澄清亮点与岗位的关联",
+          "请候选人简短总结匹配度"
+        ]
+      },
+      "roles": [
+        {
+          "role_definition_id": "role_interview_self_introduction_counterpart",
+          "scene_id": "scn_interview_self_introduction",
+          "role_type": "RECRUITER",
+          "display_name": "招聘方",
+          "responsibilities": "说清背景、优势和岗位匹配，并自然回应一到两个追问。",
+          "style": "Natural, concise, and appropriate to the current role.",
+          "practice_objectives": [
+            {
+              "objective_id": "background",
+              "description": "Summarize relevant experience and background for the role."
+            },
+            {
+              "objective_id": "strength",
+              "description": "Describe a relevant strength and support it with an example."
+            },
+            {
+              "objective_id": "role_fit",
+              "description": "Connect relevant strengths and experience to the role’s needs."
+            }
+          ]
+        }
+      ],
+      "practice_options": [
+        {
+          "practice_option_id": "option_interview_self_introduction_full",
+          "scene_id": "scn_interview_self_introduction",
+          "practice_mode": "FULL_SIMULATION",
+          "display_name": "完整模拟",
+          "suggested_duration_seconds": 480,
+          "turn_policy_ref": "interview.practice.turn.v1",
+          "session_policy_ref": "interview.user_controlled.session.v1",
+          "evaluation_policy_ref": "interview.shadow.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_interview_self_introduction_focus",
+          "scene_id": "scn_interview_self_introduction",
+          "role_definition_id": "role_interview_self_introduction_counterpart",
+          "practice_mode": "FOCUS",
+          "display_name": "重点练习",
+          "suggested_duration_seconds": 480,
+          "turn_policy_ref": "interview.practice.turn.v1",
+          "session_policy_ref": "interview.user_controlled.session.v1",
+          "evaluation_policy_ref": "interview.shadow.evaluation.v1"
+        }
+      ]
+    },
+    {
+      "scene_id": "scn_workplace_progress_risk_update",
+      "practice_experience": "WORKPLACE",
+      "scene_category": "WORKPLACE_GENERAL",
+      "name": "进度与风险汇报",
+      "scene_version": 1,
+      "status": "active",
+      "prompt": {
+        "public_scene_brief": "向直属领导汇报项目进展、证据、风险和需要的支持。",
+        "practice_goal": "用结果导向的方式说明状态、风险、方案和决策请求。",
+        "user_role": "项目负责人",
+        "ai_role": "直属领导",
+        "persona_summary": "A direct manager who asks for evidence, mitigation, and a concrete decision or support request.",
+        "focus_areas": [
+          "status",
+          "evidence",
+          "risk_mitigation",
+          "decision_or_support"
+        ],
+        "turn_blueprints": [
+          "请用户概括当前状态",
+          "核实进展证据和影响",
+          "追问主要风险与缓解方案",
+          "确认需要的决策或支持"
+        ]
+      },
+      "roles": [
+        {
+          "role_definition_id": "role_direct_manager",
+          "scene_id": "scn_workplace_progress_risk_update",
+          "role_type": "DIRECT_MANAGER",
+          "display_name": "直属领导",
+          "responsibilities": "Clarify delivery status, impact, mitigation, and the requested decision.",
+          "style": "Direct, outcome oriented, and constructive.",
+          "practice_objectives": [
+            {
+              "objective_id": "evidence",
+              "description": "Support claims with concrete evidence."
+            },
+            {
+              "objective_id": "risk_mitigation",
+              "description": "Present a concrete mitigation plan for the main risk."
+            },
+            {
+              "objective_id": "decision_or_support",
+              "description": "Make a specific decision request or ask for the support needed."
+            }
+          ]
+        }
+      ],
+      "practice_options": [
+        {
+          "practice_option_id": "option_workplace_full_simulation",
+          "scene_id": "scn_workplace_progress_risk_update",
+          "practice_mode": "FULL_SIMULATION",
+          "display_name": "完整模拟",
+          "suggested_duration_seconds": 600,
+          "turn_policy_ref": "workplace.progress_risk_update.turn.v1",
+          "session_policy_ref": "workplace.progress_risk_update.session.v1",
+          "evaluation_policy_ref": "workplace.general.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_direct_manager_focus",
+          "scene_id": "scn_workplace_progress_risk_update",
+          "role_definition_id": "role_direct_manager",
+          "practice_mode": "FOCUS",
+          "display_name": "重点练习",
+          "suggested_duration_seconds": 600,
+          "turn_policy_ref": "workplace.progress_risk_update.turn.v1",
+          "session_policy_ref": "workplace.progress_risk_update.session.v1",
+          "evaluation_policy_ref": "workplace.general.evaluation.v1"
+        }
+      ]
+    },
+    {
+      "scene_id": "scn_daily_restaurant_ordering",
+      "practice_experience": "LIFE_AND_TRAVEL",
+      "scene_category": "LIFE_DAILY",
+      "name": "餐厅点餐",
+      "scene_version": 1,
+      "status": "active",
+      "prompt": {
+        "public_scene_brief": "在餐厅询问菜品、说明偏好、完成点餐并确认订单。",
+        "practice_goal": "理解服务员问题，清楚表达选择和饮食偏好。",
+        "user_role": "顾客",
+        "ai_role": "服务员",
+        "persona_summary": "A helpful restaurant server who follows a realistic ordering flow and may explain availability, flavors, or set-menu options.",
+        "focus_areas": [
+          "menu_question",
+          "preference",
+          "order",
+          "confirmation"
+        ],
+        "turn_blueprints": [
+          "欢迎顾客并询问是否需要介绍",
+          "回应菜品问题或说明一个选择",
+          "确认偏好和具体点单",
+          "复述并确认订单"
+        ]
+      },
+      "roles": [
+        {
+          "role_definition_id": "role_daily_restaurant_ordering_counterpart",
+          "scene_id": "scn_daily_restaurant_ordering",
+          "role_type": "RESTAURANT_SERVER",
+          "display_name": "服务员",
+          "responsibilities": "理解服务员问题，清楚表达选择和饮食偏好。",
+          "style": "Natural, concise, and appropriate to the current role.",
+          "practice_objectives": [
+            {
+              "objective_id": "menu_question",
+              "description": "Ask specific questions needed to understand menu choices."
+            },
+            {
+              "objective_id": "preference",
+              "description": "Express preferences and any important constraints clearly."
+            },
+            {
+              "objective_id": "order",
+              "description": "Place the order accurately with all required details."
+            },
+            {
+              "objective_id": "confirmation",
+              "description": "Restate and confirm the agreed details accurately."
+            }
+          ]
+        }
+      ],
+      "practice_options": [
+        {
+          "practice_option_id": "option_daily_restaurant_ordering_full",
+          "scene_id": "scn_daily_restaurant_ordering",
+          "practice_mode": "FULL_SIMULATION",
+          "display_name": "完整模拟",
+          "suggested_duration_seconds": 480,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "daily.practice.session.v1",
+          "evaluation_policy_ref": "daily.general.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_daily_restaurant_ordering_focus",
+          "scene_id": "scn_daily_restaurant_ordering",
+          "role_definition_id": "role_daily_restaurant_ordering_counterpart",
+          "practice_mode": "FOCUS",
+          "display_name": "重点练习",
+          "suggested_duration_seconds": 480,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "daily.practice.session.v1",
+          "evaluation_policy_ref": "daily.general.evaluation.v1"
+        }
+      ]
+    },
+    {
+      "scene_id": "scn_interview_recruiter_screening",
+      "practice_experience": "INTERVIEW",
+      "scene_category": "INTERVIEW_RECRUITER",
+      "name": "招聘初筛",
+      "scene_version": 1,
+      "status": "active",
+      "prompt": {
+        "public_scene_brief": "与招聘专员讨论求职动机、岗位理解、基本条件和候选人反问。",
+        "practice_goal": "清楚表达动机与岗位理解，并完成一轮双向确认。",
+        "user_role": "候选人",
+        "ai_role": "招聘专员",
+        "persona_summary": "A professional recruiter who keeps the screening focused on motivation, role understanding, practical conditions, and candidate questions.",
+        "focus_areas": [
+          "motivation",
+          "role_understanding",
+          "conditions",
+          "candidate_questions"
+        ],
+        "turn_blueprints": [
+          "询问候选人的求职动机",
+          "澄清对岗位的理解",
+          "确认一项基本求职条件",
+          "邀请候选人提出一个问题"
+        ]
+      },
+      "roles": [
+        {
+          "role_definition_id": "role_interview_recruiter_screening_counterpart",
+          "scene_id": "scn_interview_recruiter_screening",
+          "role_type": "RECRUITER",
+          "display_name": "招聘专员",
+          "responsibilities": "清楚表达动机与岗位理解，并完成一轮双向确认。",
+          "style": "Natural, concise, and appropriate to the current role.",
+          "practice_objectives": [
+            {
+              "objective_id": "motivation",
+              "description": "Explain authentic motivation for the role or opportunity."
+            },
+            {
+              "objective_id": "role_understanding",
+              "description": "Explain an accurate understanding of the role and its expectations."
+            },
+            {
+              "objective_id": "conditions",
+              "description": "Confirm the key conditions, expectations, and limitations of the role."
+            },
+            {
+              "objective_id": "candidate_questions",
+              "description": "Ask thoughtful questions that clarify the role and company."
+            }
+          ]
+        }
+      ],
+      "practice_options": [
+        {
+          "practice_option_id": "option_interview_recruiter_screening_full",
+          "scene_id": "scn_interview_recruiter_screening",
+          "practice_mode": "FULL_SIMULATION",
+          "display_name": "完整模拟",
+          "suggested_duration_seconds": 600,
+          "turn_policy_ref": "interview.practice.turn.v1",
+          "session_policy_ref": "interview.user_controlled.session.v1",
+          "evaluation_policy_ref": "interview.shadow.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_interview_recruiter_screening_focus",
+          "scene_id": "scn_interview_recruiter_screening",
+          "role_definition_id": "role_interview_recruiter_screening_counterpart",
+          "practice_mode": "FOCUS",
+          "display_name": "重点练习",
+          "suggested_duration_seconds": 600,
+          "turn_policy_ref": "interview.practice.turn.v1",
+          "session_policy_ref": "interview.user_controlled.session.v1",
+          "evaluation_policy_ref": "interview.shadow.evaluation.v1"
+        }
+      ]
+    },
+    {
+      "scene_id": "scn_workplace_meeting_disagreement",
+      "practice_experience": "WORKPLACE",
+      "scene_category": "WORKPLACE_GENERAL",
+      "name": "会议发言与表达异议",
+      "scene_version": 1,
+      "status": "active",
+      "prompt": {
+        "public_scene_brief": "在会议中针对当前方案清楚表达观点、不同意见和替代建议。",
+        "practice_goal": "说明立场与原因，并推动形成可执行的下一步。",
+        "user_role": "参会者",
+        "ai_role": "会议主持人",
+        "persona_summary": "A constructive meeting facilitator who responds to the user's position and asks for one clear reason or alternative.",
+        "focus_areas": [
+          "position",
+          "reason",
+          "alternative",
+          "next_step"
+        ],
+        "turn_blueprints": [
+          "介绍当前讨论背景并邀请发言",
+          "追问用户立场背后的原因",
+          "请用户提出一个替代方案",
+          "确认下一步行动"
+        ]
+      },
+      "roles": [
+        {
+          "role_definition_id": "role_workplace_meeting_disagreement_counterpart",
+          "scene_id": "scn_workplace_meeting_disagreement",
+          "role_type": "MEETING_FACILITATOR",
+          "display_name": "会议主持人",
+          "responsibilities": "说明立场与原因，并推动形成可执行的下一步。",
+          "style": "Natural, concise, and appropriate to the current role.",
+          "practice_objectives": [
+            {
+              "objective_id": "position",
+              "description": "State a clear position on the proposal under discussion."
+            },
+            {
+              "objective_id": "reason",
+              "description": "Give a clear reason that supports the stated position."
+            },
+            {
+              "objective_id": "alternative",
+              "description": "Offer a practical alternative that addresses the other party’s concern."
+            },
+            {
+              "objective_id": "next_step",
+              "description": "Agree on a specific owner, action, and timing for the next step."
+            }
+          ]
+        }
+      ],
+      "practice_options": [
+        {
+          "practice_option_id": "option_workplace_meeting_disagreement_full",
+          "scene_id": "scn_workplace_meeting_disagreement",
+          "practice_mode": "FULL_SIMULATION",
+          "display_name": "完整模拟",
+          "suggested_duration_seconds": 600,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "workplace.practice.session.v1",
+          "evaluation_policy_ref": "workplace.general.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_workplace_meeting_disagreement_focus",
+          "scene_id": "scn_workplace_meeting_disagreement",
+          "role_definition_id": "role_workplace_meeting_disagreement_counterpart",
+          "practice_mode": "FOCUS",
+          "display_name": "重点练习",
+          "suggested_duration_seconds": 600,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "workplace.practice.session.v1",
+          "evaluation_policy_ref": "workplace.general.evaluation.v1"
+        }
+      ]
+    },
+    {
+      "scene_id": "scn_daily_product_shopping",
+      "practice_experience": "LIFE_AND_TRAVEL",
+      "scene_category": "LIFE_DAILY",
+      "name": "商品咨询与购买",
+      "scene_version": 1,
+      "status": "active",
+      "prompt": {
+        "public_scene_brief": "向销售店员询问商品功能、价格和差异，表达偏好并完成购买。",
+        "practice_goal": "询问商品功能、价格和差异，表达偏好并完成购买。",
+        "user_role": "顾客",
+        "ai_role": "销售店员",
+        "persona_summary": "A helpful sales assistant who learns the customer's needs, explains relevant product differences and prices, and supports a clear purchase decision without pressure.",
+        "focus_areas": [
+          "shopping_needs",
+          "product_comparison",
+          "price_and_features",
+          "purchase_decision"
+        ],
+        "turn_blueprints": [
+          "欢迎顾客，并询问想找什么商品及主要需求",
+          "澄清预算、偏好和使用场景",
+          "比较合适商品的功能、价格和关键差异",
+          "复述顾客选择，并确认数量、付款或购买的下一步"
+        ]
+      },
+      "roles": [
+        {
+          "role_definition_id": "role_daily_product_shopping_counterpart",
+          "scene_id": "scn_daily_product_shopping",
+          "role_type": "SALES_ASSISTANT",
+          "display_name": "销售店员",
+          "responsibilities": "了解顾客需求，介绍商品功能、价格和差异，并协助完成购买决定。",
+          "style": "Natural, concise, and appropriate to the current role.",
+          "practice_objectives": [
+            {
+              "objective_id": "shopping_needs",
+              "description": "Explain the intended use, preferences, budget, and other purchase requirements."
+            },
+            {
+              "objective_id": "product_comparison",
+              "description": "Ask focused questions and compare the most relevant product options."
+            },
+            {
+              "objective_id": "price_and_features",
+              "description": "Clarify product features, prices, and the differences that matter to the decision."
+            },
+            {
+              "objective_id": "purchase_decision",
+              "description": "State a clear preference and confirm the selected item and purchase details."
+            }
+          ]
+        }
+      ],
+      "practice_options": [
+        {
+          "practice_option_id": "option_daily_product_shopping_full",
+          "scene_id": "scn_daily_product_shopping",
+          "practice_mode": "FULL_SIMULATION",
+          "display_name": "完整模拟",
+          "suggested_duration_seconds": 480,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "daily.practice.session.v1",
+          "evaluation_policy_ref": "daily.general.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_daily_product_shopping_focus",
+          "scene_id": "scn_daily_product_shopping",
+          "role_definition_id": "role_daily_product_shopping_counterpart",
+          "practice_mode": "FOCUS",
+          "display_name": "重点练习",
+          "suggested_duration_seconds": 480,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "daily.practice.session.v1",
+          "evaluation_policy_ref": "daily.general.evaluation.v1"
+        }
+      ]
+    },
+    {
+      "scene_id": "scn_daily_return_refund",
+      "practice_experience": "LIFE_AND_TRAVEL",
+      "scene_category": "LIFE_DAILY",
+      "name": "换货与退款",
+      "scene_version": 1,
+      "status": "active",
+      "prompt": {
+        "public_scene_brief": "向售后店员说明商品问题和购买情况，了解门店政策并确认换货或退款方案。",
+        "practice_goal": "说明商品问题和购买情况，了解门店政策并确认换货或退款方案。",
+        "user_role": "购买者",
+        "ai_role": "售后店员",
+        "persona_summary": "A realistic after-sales assistant who verifies the item and proof of purchase, explains the applicable policy, and confirms an exchange or refund outcome.",
+        "focus_areas": [
+          "product_issue",
+          "purchase_verification",
+          "return_policy",
+          "exchange_or_refund"
+        ],
+        "turn_blueprints": [
+          "询问用户希望换货还是退款，并核实商品和购买凭证",
+          "澄清商品问题、购买时间和使用情况",
+          "说明适用的换货退款政策和可行选项",
+          "复述处理方案，并确认退款方式、换货安排或下一步"
+        ]
+      },
+      "roles": [
+        {
+          "role_definition_id": "role_daily_return_refund_counterpart",
+          "scene_id": "scn_daily_return_refund",
+          "role_type": "AFTER_SALES_ASSISTANT",
+          "display_name": "售后店员",
+          "responsibilities": "核实商品问题和购买情况，说明门店政策，并确认换货或退款方案。",
+          "style": "Natural, concise, and appropriate to the current role.",
+          "practice_objectives": [
+            {
+              "objective_id": "product_issue",
+              "description": "Describe the product problem and its impact clearly."
+            },
+            {
+              "objective_id": "purchase_verification",
+              "description": "Provide the purchase date, receipt, order, and relevant item condition."
+            },
+            {
+              "objective_id": "return_policy",
+              "description": "Ask about and confirm the relevant return or exchange policy."
+            },
+            {
+              "objective_id": "exchange_or_refund",
+              "description": "Confirm whether the item will be exchanged or refunded and how the outcome will be completed."
+            }
+          ]
+        }
+      ],
+      "practice_options": [
+        {
+          "practice_option_id": "option_daily_return_refund_full",
+          "scene_id": "scn_daily_return_refund",
+          "practice_mode": "FULL_SIMULATION",
+          "display_name": "完整模拟",
+          "suggested_duration_seconds": 480,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "daily.practice.session.v1",
+          "evaluation_policy_ref": "daily.general.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_daily_return_refund_focus",
+          "scene_id": "scn_daily_return_refund",
+          "role_definition_id": "role_daily_return_refund_counterpart",
+          "practice_mode": "FOCUS",
+          "display_name": "重点练习",
+          "suggested_duration_seconds": 480,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "daily.practice.session.v1",
+          "evaluation_policy_ref": "daily.general.evaluation.v1"
+        }
+      ]
+    },
+    {
+      "scene_id": "scn_programmer_interview",
+      "practice_experience": "INTERVIEW",
+      "scene_category": "INTERVIEW_PROFESSIONAL",
+      "name": "项目经历深挖",
+      "scene_version": 1,
+      "status": "active",
+      "prompt": {
+        "public_scene_brief": "围绕一个真实项目说明个人职责、关键难点、技术取舍和结果。",
+        "practice_goal": "清楚表达个人贡献、决策依据、结果与反思。",
+        "user_role": "候选人",
+        "ai_role": "技术面试官",
+        "persona_summary": "A precise technical interviewer who probes evidence and trade-offs without inventing candidate experience.",
+        "focus_areas": [
+          "background_responsibility",
+          "key_challenge",
+          "technical_tradeoff",
+          "result_reflection"
+        ],
+        "turn_blueprints": [
+          "澄清项目背景和候选人的具体职责",
+          "追问最关键的技术难点",
+          "讨论方案选择和技术取舍",
+          "核实结果、影响和复盘"
+        ]
+      },
+      "roles": [
+        {
+          "role_definition_id": "role_technical_interviewer",
+          "scene_id": "scn_programmer_interview",
+          "role_type": "TECHNICAL_INTERVIEWER",
+          "display_name": "技术面试官",
+          "responsibilities": "Probe technical depth, engineering trade-offs, and decision making.",
+          "style": "Precise and evidence seeking.",
+          "practice_objectives": [
+            {
+              "objective_id": "key_challenge",
+              "description": "Describe the hardest challenge and why it mattered."
+            },
+            {
+              "objective_id": "technical_tradeoff",
+              "description": "Compare technical options and justify the chosen trade-off."
+            }
+          ]
+        },
+        {
+          "role_definition_id": "role_hr_interviewer",
+          "scene_id": "scn_programmer_interview",
+          "role_type": "HR_INTERVIEWER",
+          "display_name": "招聘专员",
+          "responsibilities": "Explore career motivation and communication clarity.",
+          "style": "Warm and structured.",
+          "practice_objectives": [
+            {
+              "objective_id": "motivation",
+              "description": "Explain authentic motivation for the role or opportunity."
+            },
+            {
+              "objective_id": "communication",
+              "description": "Communicate ideas clearly and adapt them to the listener."
+            }
+          ]
+        },
+        {
+          "role_definition_id": "role_project_manager",
+          "scene_id": "scn_programmer_interview",
+          "role_type": "PROJECT_MANAGER",
+          "display_name": "项目经理",
+          "responsibilities": "Explore delivery ownership and cross-functional collaboration.",
+          "style": "Outcome oriented and collaborative.",
+          "practice_objectives": [
+            {
+              "objective_id": "delivery",
+              "description": "Explain the delivery plan, ownership, and expected outcome."
+            },
+            {
+              "objective_id": "collaboration",
+              "description": "Explain how people or teams worked together to reach the outcome."
+            }
+          ]
+        },
+        {
+          "role_definition_id": "role_executive_interviewer",
+          "scene_id": "scn_programmer_interview",
+          "role_type": "EXECUTIVE_INTERVIEWER",
+          "display_name": "用人经理",
+          "responsibilities": "Explore leadership judgment and measurable impact for senior or management roles.",
+          "style": "Concise, high level, and optional for advanced roles.",
+          "practice_objectives": [
+            {
+              "objective_id": "impact",
+              "description": "Explain the concrete impact on people, work, or outcomes."
+            },
+            {
+              "objective_id": "judgment",
+              "description": "Explain the reasoning behind a professional judgment."
+            }
+          ]
+        }
+      ],
+      "practice_options": [
+        {
+          "practice_option_id": "option_full_simulation",
+          "scene_id": "scn_programmer_interview",
+          "practice_mode": "FULL_SIMULATION",
+          "display_name": "完整模拟",
+          "suggested_duration_seconds": 900,
+          "turn_policy_ref": "interview.project_deep_dive.turn.v1",
+          "session_policy_ref": "interview.project_deep_dive.user_controlled.session.v1",
+          "evaluation_policy_ref": "interview.shadow.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_technical_focus",
+          "scene_id": "scn_programmer_interview",
+          "role_definition_id": "role_technical_interviewer",
+          "practice_mode": "FOCUS",
+          "display_name": "技术深挖",
+          "suggested_duration_seconds": 900,
+          "turn_policy_ref": "interview.project_deep_dive.turn.v1",
+          "session_policy_ref": "interview.project_deep_dive.user_controlled.session.v1",
+          "evaluation_policy_ref": "interview.shadow.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_hr_focus",
+          "scene_id": "scn_programmer_interview",
+          "role_definition_id": "role_hr_interviewer",
+          "practice_mode": "FOCUS",
+          "display_name": "动机与沟通",
+          "suggested_duration_seconds": 900,
+          "turn_policy_ref": "interview.project_deep_dive.turn.v1",
+          "session_policy_ref": "interview.project_deep_dive.user_controlled.session.v1",
+          "evaluation_policy_ref": "interview.shadow.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_project_manager_focus",
+          "scene_id": "scn_programmer_interview",
+          "role_definition_id": "role_project_manager",
+          "practice_mode": "FOCUS",
+          "display_name": "交付与协作",
+          "suggested_duration_seconds": 900,
+          "turn_policy_ref": "interview.project_deep_dive.turn.v1",
+          "session_policy_ref": "interview.project_deep_dive.user_controlled.session.v1",
+          "evaluation_policy_ref": "interview.shadow.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_executive_focus",
+          "scene_id": "scn_programmer_interview",
+          "role_definition_id": "role_executive_interviewer",
+          "practice_mode": "FOCUS",
+          "display_name": "领导力与影响",
+          "suggested_duration_seconds": 900,
+          "turn_policy_ref": "interview.project_deep_dive.turn.v1",
+          "session_policy_ref": "interview.project_deep_dive.user_controlled.session.v1",
+          "evaluation_policy_ref": "interview.shadow.evaluation.v1"
+        }
+      ]
+    },
+    {
+      "scene_id": "scn_workplace_cross_team_alignment",
+      "practice_experience": "WORKPLACE",
+      "scene_category": "WORKPLACE_GENERAL",
+      "name": "跨团队对齐与请求资源",
+      "scene_version": 1,
+      "status": "active",
+      "prompt": {
+        "public_scene_brief": "与合作团队负责人对齐目标、优先级、责任、依赖和资源需求。",
+        "practice_goal": "在时间或资源约束下推动双方形成清楚安排。",
+        "user_role": "项目负责人",
+        "ai_role": "合作团队负责人",
+        "persona_summary": "A partner-team lead with a realistic capacity constraint who seeks clear priorities, ownership, and an executable agreement.",
+        "focus_areas": [
+          "goal",
+          "priority",
+          "dependency",
+          "resource_request"
+        ],
+        "turn_blueprints": [
+          "带着一个时间或资源约束开场",
+          "澄清共同目标和优先级",
+          "确认责任与依赖",
+          "形成可执行的资源安排"
+        ]
+      },
+      "roles": [
+        {
+          "role_definition_id": "role_workplace_cross_team_alignment_counterpart",
+          "scene_id": "scn_workplace_cross_team_alignment",
+          "role_type": "PARTNER_TEAM_LEAD",
+          "display_name": "合作团队负责人",
+          "responsibilities": "在时间或资源约束下推动双方形成清楚安排。",
+          "style": "Natural, concise, and appropriate to the current role.",
+          "practice_objectives": [
+            {
+              "objective_id": "goal",
+              "description": "State the desired outcome of the conversation clearly."
+            },
+            {
+              "objective_id": "priority",
+              "description": "Rank competing needs and explain the most important priority."
+            },
+            {
+              "objective_id": "dependency",
+              "description": "Identify dependencies and confirm who owns each one."
+            },
+            {
+              "objective_id": "resource_request",
+              "description": "Request the exact people, time, or resources needed."
+            }
+          ]
+        }
+      ],
+      "practice_options": [
+        {
+          "practice_option_id": "option_workplace_cross_team_alignment_full",
+          "scene_id": "scn_workplace_cross_team_alignment",
+          "practice_mode": "FULL_SIMULATION",
+          "display_name": "完整模拟",
+          "suggested_duration_seconds": 720,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "workplace.practice.session.v1",
+          "evaluation_policy_ref": "workplace.general.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_workplace_cross_team_alignment_focus",
+          "scene_id": "scn_workplace_cross_team_alignment",
+          "role_definition_id": "role_workplace_cross_team_alignment_counterpart",
+          "practice_mode": "FOCUS",
+          "display_name": "重点练习",
+          "suggested_duration_seconds": 720,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "workplace.practice.session.v1",
+          "evaluation_policy_ref": "workplace.general.evaluation.v1"
+        }
+      ]
+    },
+    {
+      "scene_id": "scn_travel_airport_checkin",
+      "practice_experience": "LIFE_AND_TRAVEL",
+      "scene_category": "LIFE_TRAVEL",
+      "name": "机场值机与航班信息",
+      "scene_version": 1,
+      "status": "active",
+      "prompt": {
+        "public_scene_brief": "在机场向航空公司地勤办理值机和行李托运，确认航班时间、登机口及航班变化。",
+        "practice_goal": "完成值机和行李沟通，确认航班时间、登机口及航班变化。",
+        "user_role": "旅客",
+        "ai_role": "航空公司地勤",
+        "persona_summary": "A professional airline ground agent who verifies the booking, handles check-in and baggage questions, and provides accurate flight and gate information.",
+        "focus_areas": [
+          "booking_verification",
+          "checkin_and_baggage",
+          "flight_information",
+          "flight_change"
+        ],
+        "turn_blueprints": [
+          "欢迎旅客，并询问目的地和预订信息",
+          "核实证件、航班和行李托运需求",
+          "说明航班时间、登机口或航班变化",
+          "复述值机结果，并确认安检和登机的下一步"
+        ]
+      },
+      "roles": [
+        {
+          "role_definition_id": "role_travel_airport_checkin_counterpart",
+          "scene_id": "scn_travel_airport_checkin",
+          "role_type": "AIRLINE_GROUND_AGENT",
+          "display_name": "航空公司地勤",
+          "responsibilities": "核实预订和证件，协助完成值机与行李沟通，并提供准确的航班和登机信息。",
+          "style": "Natural, concise, and appropriate to the current role.",
+          "practice_objectives": [
+            {
+              "objective_id": "booking_verification",
+              "description": "Provide and confirm the booking, identity, destination, and flight details."
+            },
+            {
+              "objective_id": "checkin_and_baggage",
+              "description": "Complete check-in and clarify baggage allowance, labels, or special handling."
+            },
+            {
+              "objective_id": "flight_information",
+              "description": "Confirm the departure time, boarding gate, boarding time, and relevant airport instructions."
+            },
+            {
+              "objective_id": "flight_change",
+              "description": "Understand a delay, cancellation, or gate change and confirm the available next step."
+            }
+          ]
+        }
+      ],
+      "practice_options": [
+        {
+          "practice_option_id": "option_travel_airport_checkin_full",
+          "scene_id": "scn_travel_airport_checkin",
+          "practice_mode": "FULL_SIMULATION",
+          "display_name": "完整模拟",
+          "suggested_duration_seconds": 480,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "daily.practice.session.v1",
+          "evaluation_policy_ref": "daily.general.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_travel_airport_checkin_focus",
+          "scene_id": "scn_travel_airport_checkin",
+          "role_definition_id": "role_travel_airport_checkin_counterpart",
+          "practice_mode": "FOCUS",
+          "display_name": "重点练习",
+          "suggested_duration_seconds": 480,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "daily.practice.session.v1",
+          "evaluation_policy_ref": "daily.general.evaluation.v1"
+        }
+      ]
+    },
+    {
+      "scene_id": "scn_interview_behavioral",
+      "practice_experience": "INTERVIEW",
+      "scene_category": "INTERVIEW_BEHAVIORAL",
+      "name": "行为面试",
+      "scene_version": 1,
+      "status": "active",
+      "prompt": {
+        "public_scene_brief": "围绕一个真实的协作、冲突、失败或成长经历进行行为面试。",
+        "practice_goal": "用具体情境、行动、结果和反思说明个人能力。",
+        "user_role": "候选人",
+        "ai_role": "行为面试官",
+        "persona_summary": "A focused behavioral interviewer who explores one real example at a time and never invents candidate experience.",
+        "focus_areas": [
+          "situation",
+          "action",
+          "result",
+          "reflection"
+        ],
+        "turn_blueprints": [
+          "给出一个明确的行为主题",
+          "澄清当时的情境与个人责任",
+          "追问采取的具体行动和结果",
+          "询问复盘与成长"
+        ]
+      },
+      "roles": [
+        {
+          "role_definition_id": "role_interview_behavioral_counterpart",
+          "scene_id": "scn_interview_behavioral",
+          "role_type": "BEHAVIORAL_INTERVIEWER",
+          "display_name": "行为面试官",
+          "responsibilities": "用具体情境、行动、结果和反思说明个人能力。",
+          "style": "Natural, concise, and appropriate to the current role.",
+          "practice_objectives": [
+            {
+              "objective_id": "situation",
+              "description": "Set the context with the essential people, constraints, and stakes."
+            },
+            {
+              "objective_id": "action",
+              "description": "State the action taken and explain why it was appropriate."
+            },
+            {
+              "objective_id": "result",
+              "description": "Describe the outcome and connect it to the action taken."
+            },
+            {
+              "objective_id": "reflection",
+              "description": "Reflect on what was learned and what would be changed next time."
+            }
+          ]
+        }
+      ],
+      "practice_options": [
+        {
+          "practice_option_id": "option_interview_behavioral_full",
+          "scene_id": "scn_interview_behavioral",
+          "practice_mode": "FULL_SIMULATION",
+          "display_name": "完整模拟",
+          "suggested_duration_seconds": 720,
+          "turn_policy_ref": "interview.practice.turn.v1",
+          "session_policy_ref": "interview.user_controlled.session.v1",
+          "evaluation_policy_ref": "interview.shadow.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_interview_behavioral_focus",
+          "scene_id": "scn_interview_behavioral",
+          "role_definition_id": "role_interview_behavioral_counterpart",
+          "practice_mode": "FOCUS",
+          "display_name": "重点练习",
+          "suggested_duration_seconds": 720,
+          "turn_policy_ref": "interview.practice.turn.v1",
+          "session_policy_ref": "interview.user_controlled.session.v1",
+          "evaluation_policy_ref": "interview.shadow.evaluation.v1"
+        }
+      ]
+    },
+    {
+      "scene_id": "scn_workplace_feedback_conflict",
+      "practice_experience": "WORKPLACE",
+      "scene_category": "WORKPLACE_GENERAL",
+      "name": "向同事提供反馈",
+      "scene_version": 1,
+      "status": "active",
+      "prompt": {
+        "public_scene_brief": "向同事说明具体事实、影响和期望，并确认改进措施。",
+        "practice_goal": "说明具体事实、影响和期望，并确认改进措施。",
+        "user_role": "反馈提供者",
+        "ai_role": "接受反馈的同事",
+        "persona_summary": "A colleague who may accept, clarify, or defensively question feedback depending on the user's wording, while staying professional.",
+        "focus_areas": [
+          "fact",
+          "impact",
+          "expectation",
+          "next_step"
+        ],
+        "turn_blueprints": [
+          "说明知道用户想讨论工作情况，并邀请用户开始",
+          "回应用户描述的事实，并澄清必要背景",
+          "讨论具体影响和用户期望的改进",
+          "复述反馈重点，并确认改进措施、负责人和时间"
+        ]
+      },
+      "roles": [
+        {
+          "role_definition_id": "role_workplace_feedback_conflict_counterpart",
+          "scene_id": "scn_workplace_feedback_conflict",
+          "role_type": "COLLEAGUE",
+          "display_name": "接受反馈的同事",
+          "responsibilities": "倾听并澄清反馈，回应事实和影响，并与反馈提供者确认可执行的改进措施。",
+          "style": "Natural, concise, and appropriate to the current role.",
+          "practice_objectives": [
+            {
+              "objective_id": "fact",
+              "description": "Describe observable facts without mixing in assumptions."
+            },
+            {
+              "objective_id": "impact",
+              "description": "Explain the concrete impact on people, work, or outcomes."
+            },
+            {
+              "objective_id": "expectation",
+              "description": "State the expected behavior or outcome clearly."
+            },
+            {
+              "objective_id": "next_step",
+              "description": "Agree on a specific owner, action, and timing for the next step."
+            }
+          ]
+        }
+      ],
+      "practice_options": [
+        {
+          "practice_option_id": "option_workplace_feedback_conflict_full",
+          "scene_id": "scn_workplace_feedback_conflict",
+          "practice_mode": "FULL_SIMULATION",
+          "display_name": "完整模拟",
+          "suggested_duration_seconds": 600,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "workplace.practice.session.v1",
+          "evaluation_policy_ref": "workplace.general.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_workplace_feedback_conflict_focus",
+          "scene_id": "scn_workplace_feedback_conflict",
+          "role_definition_id": "role_workplace_feedback_conflict_counterpart",
+          "practice_mode": "FOCUS",
+          "display_name": "重点练习",
+          "suggested_duration_seconds": 600,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "workplace.practice.session.v1",
+          "evaluation_policy_ref": "workplace.general.evaluation.v1"
+        }
+      ]
+    },
+    {
+      "scene_id": "scn_workplace_conflict_resolution",
+      "practice_experience": "WORKPLACE",
+      "scene_category": "WORKPLACE_GENERAL",
+      "name": "处理职场冲突",
+      "scene_version": 1,
+      "status": "active",
+      "prompt": {
+        "public_scene_brief": "与合作同事澄清具体分歧、双方观点、利益和边界，形成可执行的下一步。",
+        "practice_goal": "澄清双方观点、利益和边界，形成可执行的下一步。",
+        "user_role": "冲突参与者",
+        "ai_role": "合作同事",
+        "persona_summary": "A professional colleague involved in a concrete workplace disagreement who explains their perspective and constraints, tests proposed boundaries, and works toward an executable next step.",
+        "focus_areas": [
+          "disagreement_facts",
+          "perspectives_and_interests",
+          "boundaries",
+          "resolution_next_step"
+        ],
+        "turn_blueprints": [
+          "提出一个具体分歧及其影响，并邀请用户讨论",
+          "澄清双方对事实、目标和约束的不同理解",
+          "讨论各自利益和边界，并评估可行解决方案",
+          "复述共同点和剩余分歧，并确认负责人、行动和时间"
+        ]
+      },
+      "roles": [
+        {
+          "role_definition_id": "role_workplace_conflict_resolution_counterpart",
+          "scene_id": "scn_workplace_conflict_resolution",
+          "role_type": "COLLABORATING_COLLEAGUE",
+          "display_name": "合作同事",
+          "responsibilities": "说明自身观点、利益和边界，回应解决方案，并共同形成可执行的下一步。",
+          "style": "Natural, concise, and appropriate to the current role.",
+          "practice_objectives": [
+            {
+              "objective_id": "disagreement_facts",
+              "description": "Describe the concrete disagreement and separate observable facts from assumptions."
+            },
+            {
+              "objective_id": "perspectives_and_interests",
+              "description": "Clarify each party's perspective, goals, constraints, and underlying interests."
+            },
+            {
+              "objective_id": "boundaries",
+              "description": "State professional boundaries and identify acceptable trade-offs."
+            },
+            {
+              "objective_id": "resolution_next_step",
+              "description": "Agree on an executable action, owner, timing, and follow-up checkpoint."
+            }
+          ]
+        }
+      ],
+      "practice_options": [
+        {
+          "practice_option_id": "option_workplace_conflict_resolution_full",
+          "scene_id": "scn_workplace_conflict_resolution",
+          "practice_mode": "FULL_SIMULATION",
+          "display_name": "完整模拟",
+          "suggested_duration_seconds": 600,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "workplace.practice.session.v1",
+          "evaluation_policy_ref": "workplace.general.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_workplace_conflict_resolution_focus",
+          "scene_id": "scn_workplace_conflict_resolution",
+          "role_definition_id": "role_workplace_conflict_resolution_counterpart",
+          "practice_mode": "FOCUS",
+          "display_name": "重点练习",
+          "suggested_duration_seconds": 600,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "workplace.practice.session.v1",
+          "evaluation_policy_ref": "workplace.general.evaluation.v1"
+        }
+      ]
+    },
+    {
+      "scene_id": "scn_travel_hotel_checkin",
+      "practice_experience": "LIFE_AND_TRAVEL",
+      "scene_category": "LIFE_TRAVEL",
+      "name": "酒店入住",
+      "scene_version": 1,
+      "status": "active",
+      "prompt": {
+        "public_scene_brief": "在酒店前台核验预订、入住日期、房型、付款和酒店服务，完成入住。",
+        "practice_goal": "核验预订、入住日期、房型、付款和酒店服务，完成入住。",
+        "user_role": "住客",
+        "ai_role": "酒店前台",
+        "persona_summary": "A professional hotel receptionist who verifies the reservation, confirms room and payment details, explains relevant services, and completes check-in.",
+        "focus_areas": [
+          "reservation_verification",
+          "stay_details",
+          "payment_and_services",
+          "checkin_confirmation"
+        ],
+        "turn_blueprints": [
+          "欢迎住客，并询问预订姓名",
+          "核验入住日期、房型和住客信息",
+          "确认付款方式，并说明早餐、网络等相关服务",
+          "复述房间和服务信息，并确认入住完成及下一步"
+        ]
+      },
+      "roles": [
+        {
+          "role_definition_id": "role_hotel_front_desk",
+          "scene_id": "scn_travel_hotel_checkin",
+          "role_type": "HOTEL_FRONT_DESK",
+          "display_name": "酒店前台",
+          "responsibilities": "Verify the reservation and stay details, confirm payment and relevant services, and complete check-in.",
+          "style": "Professional, calm, and service oriented.",
+          "practice_objectives": [
+            {
+              "objective_id": "reservation_verification",
+              "description": "Verify the reservation identity, dates, room, and booking details."
+            },
+            {
+              "objective_id": "stay_details",
+              "description": "Confirm the check-in and check-out dates, room type, guests, and special requests."
+            },
+            {
+              "objective_id": "payment_and_services",
+              "description": "Clarify payment, deposit, breakfast, internet, and relevant hotel services."
+            },
+            {
+              "objective_id": "checkin_confirmation",
+              "description": "Restate the room and service details and confirm the next step after check-in."
+            }
+          ]
+        }
+      ],
+      "practice_options": [
+        {
+          "practice_option_id": "option_hotel_full_simulation",
+          "scene_id": "scn_travel_hotel_checkin",
+          "practice_mode": "FULL_SIMULATION",
+          "display_name": "完整模拟",
+          "suggested_duration_seconds": 480,
+          "turn_policy_ref": "daily.hotel_checkin_issue.turn.v1",
+          "session_policy_ref": "daily.hotel_checkin_issue.session.v1",
+          "evaluation_policy_ref": "daily.general.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_hotel_front_desk_focus",
+          "scene_id": "scn_travel_hotel_checkin",
+          "role_definition_id": "role_hotel_front_desk",
+          "practice_mode": "FOCUS",
+          "display_name": "重点练习",
+          "suggested_duration_seconds": 480,
+          "turn_policy_ref": "daily.hotel_checkin_issue.turn.v1",
+          "session_policy_ref": "daily.hotel_checkin_issue.session.v1",
+          "evaluation_policy_ref": "daily.general.evaluation.v1"
+        }
+      ]
+    },
+    {
+      "scene_id": "scn_interview_system_design_spoken",
+      "practice_experience": "INTERVIEW",
+      "scene_category": "INTERVIEW_PROFESSIONAL",
+      "name": "系统设计口述",
+      "scene_version": 1,
+      "status": "active",
+      "prompt": {
+        "public_scene_brief": "用英语口述一个系统设计方案，从需求澄清逐步讨论架构、瓶颈和取舍。",
+        "practice_goal": "有条理地澄清需求、组织方案并解释关键技术取舍。",
+        "user_role": "候选人",
+        "ai_role": "系统设计面试官",
+        "persona_summary": "A technical interviewer who asks one system-design question at a time and probes the candidate's own architecture and trade-offs.",
+        "focus_areas": [
+          "requirements",
+          "architecture",
+          "bottleneck",
+          "tradeoff"
+        ],
+        "turn_blueprints": [
+          "给出一个边界清楚的系统设计任务",
+          "请候选人澄清需求和规模",
+          "围绕候选人的方案追问瓶颈",
+          "讨论一个关键技术取舍"
+        ]
+      },
+      "roles": [
+        {
+          "role_definition_id": "role_interview_system_design_spoken_counterpart",
+          "scene_id": "scn_interview_system_design_spoken",
+          "role_type": "SYSTEM_DESIGN_INTERVIEWER",
+          "display_name": "系统设计面试官",
+          "responsibilities": "有条理地澄清需求、组织方案并解释关键技术取舍。",
+          "style": "Natural, concise, and appropriate to the current role.",
+          "practice_objectives": [
+            {
+              "objective_id": "requirements",
+              "description": "Clarify functional and non-functional requirements before proposing a solution."
+            },
+            {
+              "objective_id": "architecture",
+              "description": "Describe the system architecture and how its components interact."
+            },
+            {
+              "objective_id": "bottleneck",
+              "description": "Identify the main system bottleneck and its impact."
+            },
+            {
+              "objective_id": "tradeoff",
+              "description": "Explain what was gained and sacrificed by a decision."
+            }
+          ]
+        }
+      ],
+      "practice_options": [
+        {
+          "practice_option_id": "option_interview_system_design_spoken_full",
+          "scene_id": "scn_interview_system_design_spoken",
+          "practice_mode": "FULL_SIMULATION",
+          "display_name": "完整模拟",
+          "suggested_duration_seconds": 900,
+          "turn_policy_ref": "interview.practice.turn.v1",
+          "session_policy_ref": "interview.user_controlled.session.v1",
+          "evaluation_policy_ref": "interview.shadow.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_interview_system_design_spoken_focus",
+          "scene_id": "scn_interview_system_design_spoken",
+          "role_definition_id": "role_interview_system_design_spoken_counterpart",
+          "practice_mode": "FOCUS",
+          "display_name": "重点练习",
+          "suggested_duration_seconds": 900,
+          "turn_policy_ref": "interview.practice.turn.v1",
+          "session_policy_ref": "interview.user_controlled.session.v1",
+          "evaluation_policy_ref": "interview.shadow.evaluation.v1"
+        }
+      ]
+    },
+    {
+      "scene_id": "scn_workplace_client_delay",
+      "practice_experience": "WORKPLACE",
+      "scene_category": "WORKPLACE_GENERAL",
+      "name": "客户延期沟通",
+      "scene_version": 1,
+      "status": "active",
+      "prompt": {
+        "public_scene_brief": "向客户代表说明延期原因、当前状态和业务影响，提出替代方案并确认新的交付时间。",
+        "practice_goal": "说明延期原因、当前状态和业务影响，提出替代方案并确认新的交付时间。",
+        "user_role": "项目负责人",
+        "ai_role": "客户代表",
+        "persona_summary": "A concerned client representative who asks for the cause, current status, business impact, alternatives, and a concrete revised delivery date.",
+        "focus_areas": [
+          "delay_cause",
+          "current_status",
+          "impact",
+          "alternative_and_timeline"
+        ],
+        "turn_blueprints": [
+          "询问当前交付状态，以及为什么不能按原计划完成",
+          "追问延期对业务、范围和依赖方的具体影响",
+          "要求可行的替代方案和现实的新交付时间",
+          "复述双方决定，并确认新的承诺、负责人和检查点"
+        ]
+      },
+      "roles": [
+        {
+          "role_definition_id": "role_workplace_client_delay_counterpart",
+          "scene_id": "scn_workplace_client_delay",
+          "role_type": "CLIENT",
+          "display_name": "客户代表",
+          "responsibilities": "核实延期原因、当前状态和业务影响，评估替代方案，并确认新的交付承诺。",
+          "style": "Natural, concise, and appropriate to the current role.",
+          "practice_objectives": [
+            {
+              "objective_id": "delay_cause",
+              "description": "Explain the cause of the delay accurately without hiding relevant constraints."
+            },
+            {
+              "objective_id": "current_status",
+              "description": "State what has been completed, what remains, and which dependencies are blocking delivery."
+            },
+            {
+              "objective_id": "impact",
+              "description": "Explain the concrete impact on people, work, or outcomes."
+            },
+            {
+              "objective_id": "alternative_and_timeline",
+              "description": "Offer a practical alternative and commit to a realistic revised timeline with checkpoints."
+            }
+          ]
+        }
+      ],
+      "practice_options": [
+        {
+          "practice_option_id": "option_workplace_client_delay_full",
+          "scene_id": "scn_workplace_client_delay",
+          "practice_mode": "FULL_SIMULATION",
+          "display_name": "完整模拟",
+          "suggested_duration_seconds": 720,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "workplace.practice.session.v1",
+          "evaluation_policy_ref": "workplace.general.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_workplace_client_delay_focus",
+          "scene_id": "scn_workplace_client_delay",
+          "role_definition_id": "role_workplace_client_delay_counterpart",
+          "practice_mode": "FOCUS",
+          "display_name": "重点练习",
+          "suggested_duration_seconds": 720,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "workplace.practice.session.v1",
+          "evaluation_policy_ref": "workplace.general.evaluation.v1"
+        }
+      ]
+    },
+    {
+      "scene_id": "scn_workplace_requirement_clarification",
+      "practice_experience": "WORKPLACE",
+      "scene_category": "WORKPLACE_GENERAL",
+      "name": "客户需求澄清",
+      "scene_version": 1,
+      "status": "active",
+      "prompt": {
+        "public_scene_brief": "向客户业务负责人澄清业务目标、范围、优先级、时间和验收标准。",
+        "practice_goal": "澄清业务目标、范围、优先级、时间和验收标准。",
+        "user_role": "解决方案负责人",
+        "ai_role": "客户业务负责人",
+        "persona_summary": "A client business owner who starts with an incomplete request, answers focused questions with realistic details, and expects the solution lead to confirm scope and acceptance criteria.",
+        "focus_areas": [
+          "business_goal",
+          "scope_and_priority",
+          "timeline_and_constraints",
+          "acceptance_criteria"
+        ],
+        "turn_blueprints": [
+          "给出一个较模糊的业务需求，并邀请用户进一步提问",
+          "根据用户问题澄清业务目标、用户和当前痛点",
+          "补充范围、优先级、时间或限制，并要求用户确认理解",
+          "复述已澄清的需求，并确认验收标准和下一步"
+        ]
+      },
+      "roles": [
+        {
+          "role_definition_id": "role_workplace_requirement_clarification_counterpart",
+          "scene_id": "scn_workplace_requirement_clarification",
+          "role_type": "CLIENT_BUSINESS_OWNER",
+          "display_name": "客户业务负责人",
+          "responsibilities": "提供业务背景和约束，回答澄清问题，并确认范围、优先级和验收标准。",
+          "style": "Natural, concise, and appropriate to the current role.",
+          "practice_objectives": [
+            {
+              "objective_id": "business_goal",
+              "description": "Clarify the business outcome, affected users, and problem that the request should solve."
+            },
+            {
+              "objective_id": "scope_and_priority",
+              "description": "Define what is in and out of scope and which requirements have the highest priority."
+            },
+            {
+              "objective_id": "timeline_and_constraints",
+              "description": "Confirm timing, dependencies, policies, budget, and other practical constraints."
+            },
+            {
+              "objective_id": "acceptance_criteria",
+              "description": "Restate the requirement and agree on observable acceptance criteria and next steps."
+            }
+          ]
+        }
+      ],
+      "practice_options": [
+        {
+          "practice_option_id": "option_workplace_requirement_clarification_full",
+          "scene_id": "scn_workplace_requirement_clarification",
+          "practice_mode": "FULL_SIMULATION",
+          "display_name": "完整模拟",
+          "suggested_duration_seconds": 720,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "workplace.practice.session.v1",
+          "evaluation_policy_ref": "workplace.general.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_workplace_requirement_clarification_focus",
+          "scene_id": "scn_workplace_requirement_clarification",
+          "role_definition_id": "role_workplace_requirement_clarification_counterpart",
+          "practice_mode": "FOCUS",
+          "display_name": "重点练习",
+          "suggested_duration_seconds": 720,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "workplace.practice.session.v1",
+          "evaluation_policy_ref": "workplace.general.evaluation.v1"
+        }
+      ]
+    },
+    {
+      "scene_id": "scn_daily_rental_viewing",
+      "practice_experience": "LIFE_AND_TRAVEL",
+      "scene_category": "LIFE_DAILY",
+      "name": "看房与租赁咨询",
+      "scene_version": 1,
+      "status": "active",
+      "prompt": {
+        "public_scene_brief": "向房产中介了解房屋条件、租金费用、租期和入住要求，判断房屋是否合适。",
+        "practice_goal": "了解房屋条件、租金费用、租期和入住要求，判断房屋是否合适。",
+        "user_role": "准租客",
+        "ai_role": "房产中介",
+        "persona_summary": "A knowledgeable real estate agent who explains the property's condition, costs, lease terms, and move-in requirements without pressuring the prospective tenant.",
+        "focus_areas": [
+          "property_condition",
+          "rent_and_fees",
+          "lease_terms",
+          "move_in_requirements"
+        ],
+        "turn_blueprints": [
+          "欢迎用户看房，并询问最关注的房屋信息",
+          "澄清用户对房型、设施和入住时间的要求",
+          "说明租金费用、租期和关键入住条件",
+          "复述用户关注点，并确认看房、申请或继续比较的下一步"
+        ]
+      },
+      "roles": [
+        {
+          "role_definition_id": "role_daily_rental_viewing_counterpart",
+          "scene_id": "scn_daily_rental_viewing",
+          "role_type": "REAL_ESTATE_AGENT",
+          "display_name": "房产中介",
+          "responsibilities": "介绍房屋条件、相关费用、租期和入住要求，并回应准租客的问题。",
+          "style": "Natural, concise, and appropriate to the current role.",
+          "practice_objectives": [
+            {
+              "objective_id": "property_condition",
+              "description": "Ask about and assess the property's layout, condition, and facilities."
+            },
+            {
+              "objective_id": "rent_and_fees",
+              "description": "Clarify the rent, deposit, utilities, and any additional fees."
+            },
+            {
+              "objective_id": "lease_terms",
+              "description": "Confirm the lease length, renewal terms, and important restrictions."
+            },
+            {
+              "objective_id": "move_in_requirements",
+              "description": "Understand the application, documentation, and move-in requirements."
+            }
+          ]
+        }
+      ],
+      "practice_options": [
+        {
+          "practice_option_id": "option_daily_rental_viewing_full",
+          "scene_id": "scn_daily_rental_viewing",
+          "practice_mode": "FULL_SIMULATION",
+          "display_name": "完整模拟",
+          "suggested_duration_seconds": 480,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "daily.practice.session.v1",
+          "evaluation_policy_ref": "daily.general.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_daily_rental_viewing_focus",
+          "scene_id": "scn_daily_rental_viewing",
+          "role_definition_id": "role_daily_rental_viewing_counterpart",
+          "practice_mode": "FOCUS",
+          "display_name": "重点练习",
+          "suggested_duration_seconds": 480,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "daily.practice.session.v1",
+          "evaluation_policy_ref": "daily.general.evaluation.v1"
+        }
+      ]
+    },
+    {
+      "scene_id": "scn_daily_rental_maintenance",
+      "practice_experience": "LIFE_AND_TRAVEL",
+      "scene_category": "LIFE_DAILY",
+      "name": "租房报修",
+      "scene_version": 1,
+      "status": "active",
+      "prompt": {
+        "public_scene_brief": "向物业工作人员准确描述租住房屋的故障及影响，协商维修安排并确认责任。",
+        "practice_goal": "准确描述故障及影响，协商维修时间、进入方式、责任和后续安排。",
+        "user_role": "租客",
+        "ai_role": "物业工作人员",
+        "persona_summary": "A practical property staff member who asks for fault details, has realistic scheduling limits, and confirms responsibility and follow-up.",
+        "focus_areas": [
+          "fault_description",
+          "access_arrangement",
+          "responsibility",
+          "follow_up"
+        ],
+        "turn_blueprints": [
+          "确认报修请求，并请租客描述具体故障",
+          "澄清故障影响、维修紧迫性和可进入方式",
+          "协商一个现实的维修时间并说明责任",
+          "复述维修安排，并确认进入方式和后续跟进"
+        ]
+      },
+      "roles": [
+        {
+          "role_definition_id": "role_daily_rental_maintenance_counterpart",
+          "scene_id": "scn_daily_rental_maintenance",
+          "role_type": "PROPERTY_STAFF",
+          "display_name": "物业工作人员",
+          "responsibilities": "核实故障及影响，协商维修时间、进入方式、责任和后续安排。",
+          "style": "Natural, concise, and appropriate to the current role.",
+          "practice_objectives": [
+            {
+              "objective_id": "fault_description",
+              "description": "Describe the fault and its symptoms precisely."
+            },
+            {
+              "objective_id": "access_arrangement",
+              "description": "Agree on a workable repair time and how maintenance staff may enter."
+            },
+            {
+              "objective_id": "responsibility",
+              "description": "Clarify who is responsible for handling the issue."
+            },
+            {
+              "objective_id": "follow_up",
+              "description": "Agree on a specific follow-up action and timing."
+            }
+          ]
+        }
+      ],
+      "practice_options": [
+        {
+          "practice_option_id": "option_daily_rental_maintenance_full",
+          "scene_id": "scn_daily_rental_maintenance",
+          "practice_mode": "FULL_SIMULATION",
+          "display_name": "完整模拟",
+          "suggested_duration_seconds": 480,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "daily.practice.session.v1",
+          "evaluation_policy_ref": "daily.general.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_daily_rental_maintenance_focus",
+          "scene_id": "scn_daily_rental_maintenance",
+          "role_definition_id": "role_daily_rental_maintenance_counterpart",
+          "practice_mode": "FOCUS",
+          "display_name": "重点练习",
+          "suggested_duration_seconds": 480,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "daily.practice.session.v1",
+          "evaluation_policy_ref": "daily.general.evaluation.v1"
+        }
+      ]
+    },
+    {
+      "scene_id": "scn_interview_hiring_manager",
+      "practice_experience": "INTERVIEW",
+      "scene_category": "INTERVIEW_HIRING_MANAGER",
+      "name": "Hiring Manager 面试",
+      "scene_version": 1,
+      "status": "active",
+      "prompt": {
+        "public_scene_brief": "与用人经理讨论岗位动机、业务影响、判断和跨团队协作方式。",
+        "practice_goal": "说明岗位匹配、高影响经历和做出判断的依据。",
+        "user_role": "候选人",
+        "ai_role": "用人经理",
+        "persona_summary": "A concise hiring manager who probes role fit, judgment, collaboration, and measurable business impact.",
+        "focus_areas": [
+          "role_fit",
+          "business_impact",
+          "judgment",
+          "collaboration"
+        ],
+        "turn_blueprints": [
+          "询问候选人选择该岗位的原因",
+          "追问一段高影响经历",
+          "澄清关键判断和跨团队协作",
+          "确认可衡量的结果"
+        ]
+      },
+      "roles": [
+        {
+          "role_definition_id": "role_interview_hiring_manager_counterpart",
+          "scene_id": "scn_interview_hiring_manager",
+          "role_type": "HIRING_MANAGER",
+          "display_name": "用人经理",
+          "responsibilities": "说明岗位匹配、高影响经历和做出判断的依据。",
+          "style": "Natural, concise, and appropriate to the current role.",
+          "practice_objectives": [
+            {
+              "objective_id": "role_fit",
+              "description": "Connect relevant strengths and experience to the role’s needs."
+            },
+            {
+              "objective_id": "business_impact",
+              "description": "Connect a decision or result to measurable business impact."
+            },
+            {
+              "objective_id": "judgment",
+              "description": "Explain the reasoning behind a professional judgment."
+            },
+            {
+              "objective_id": "collaboration",
+              "description": "Explain how people or teams worked together to reach the outcome."
+            }
+          ]
+        }
+      ],
+      "practice_options": [
+        {
+          "practice_option_id": "option_interview_hiring_manager_full",
+          "scene_id": "scn_interview_hiring_manager",
+          "practice_mode": "FULL_SIMULATION",
+          "display_name": "完整模拟",
+          "suggested_duration_seconds": 720,
+          "turn_policy_ref": "interview.practice.turn.v1",
+          "session_policy_ref": "interview.user_controlled.session.v1",
+          "evaluation_policy_ref": "interview.shadow.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_interview_hiring_manager_focus",
+          "scene_id": "scn_interview_hiring_manager",
+          "role_definition_id": "role_interview_hiring_manager_counterpart",
+          "practice_mode": "FOCUS",
+          "display_name": "重点练习",
+          "suggested_duration_seconds": 720,
+          "turn_policy_ref": "interview.practice.turn.v1",
+          "session_policy_ref": "interview.user_controlled.session.v1",
+          "evaluation_policy_ref": "interview.shadow.evaluation.v1"
+        }
+      ]
+    },
+    {
+      "scene_id": "scn_workplace_solution_presentation",
+      "practice_experience": "WORKPLACE",
+      "scene_category": "WORKPLACE_GENERAL",
+      "name": "方案介绍与问答",
+      "scene_version": 1,
+      "status": "active",
+      "prompt": {
+        "public_scene_brief": "向领导、客户或评审者简洁介绍方案并回答价值、风险和落地问题。",
+        "practice_goal": "结构化介绍方案，并根据听众问题清楚回应。",
+        "user_role": "汇报人",
+        "ai_role": "方案评审者",
+        "persona_summary": "A pragmatic reviewer who listens to the user's proposal and asks the single most relevant question about value, risk, or execution.",
+        "focus_areas": [
+          "value",
+          "risk",
+          "execution",
+          "question_response"
+        ],
+        "turn_blueprints": [
+          "邀请用户简洁介绍方案",
+          "根据介绍追问最相关的价值问题",
+          "澄清一个风险或落地条件",
+          "确认结论和下一步"
+        ]
+      },
+      "roles": [
+        {
+          "role_definition_id": "role_workplace_solution_presentation_counterpart",
+          "scene_id": "scn_workplace_solution_presentation",
+          "role_type": "SOLUTION_REVIEWER",
+          "display_name": "方案评审者",
+          "responsibilities": "结构化介绍方案，并根据听众问题清楚回应。",
+          "style": "Natural, concise, and appropriate to the current role.",
+          "practice_objectives": [
+            {
+              "objective_id": "value",
+              "description": "Explain the proposal’s value in terms relevant to the listener."
+            },
+            {
+              "objective_id": "risk",
+              "description": "Identify key risks and explain their likely consequences."
+            },
+            {
+              "objective_id": "execution",
+              "description": "Explain how the proposal will be implemented in practical steps."
+            },
+            {
+              "objective_id": "question_response",
+              "description": "Answer follow-up questions directly and with relevant evidence."
+            }
+          ]
+        }
+      ],
+      "practice_options": [
+        {
+          "practice_option_id": "option_workplace_solution_presentation_full",
+          "scene_id": "scn_workplace_solution_presentation",
+          "practice_mode": "FULL_SIMULATION",
+          "display_name": "完整模拟",
+          "suggested_duration_seconds": 720,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "workplace.practice.session.v1",
+          "evaluation_policy_ref": "workplace.general.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_workplace_solution_presentation_focus",
+          "scene_id": "scn_workplace_solution_presentation",
+          "role_definition_id": "role_workplace_solution_presentation_counterpart",
+          "practice_mode": "FOCUS",
+          "display_name": "重点练习",
+          "suggested_duration_seconds": 720,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "workplace.practice.session.v1",
+          "evaluation_policy_ref": "workplace.general.evaluation.v1"
+        }
+      ]
+    },
+    {
+      "scene_id": "scn_daily_medical_appointment",
+      "practice_experience": "LIFE_AND_TRAVEL",
+      "scene_category": "LIFE_DAILY",
+      "name": "医疗预约",
+      "scene_version": 1,
+      "status": "active",
+      "prompt": {
+        "public_scene_brief": "与医疗前台预约时间、描述基础情况并确认准备事项。",
+        "practice_goal": "完成基础预约沟通，不把练习当作医疗诊断。",
+        "user_role": "患者",
+        "ai_role": "医疗前台",
+        "persona_summary": "A medical receptionist who handles scheduling and basic preparation only, never diagnoses, and directs emergencies to real urgent care.",
+        "focus_areas": [
+          "appointment_reason",
+          "availability",
+          "time_confirmation",
+          "preparation"
+        ],
+        "turn_blueprints": [
+          "询问预约原因和是否紧急",
+          "澄清可用时间",
+          "提供并确认一个预约时段",
+          "说明基础准备事项"
+        ]
+      },
+      "roles": [
+        {
+          "role_definition_id": "role_daily_medical_appointment_counterpart",
+          "scene_id": "scn_daily_medical_appointment",
+          "role_type": "MEDICAL_RECEPTIONIST",
+          "display_name": "医疗前台",
+          "responsibilities": "完成基础预约沟通，不把练习当作医疗诊断。",
+          "style": "Natural, concise, and appropriate to the current role.",
+          "practice_objectives": [
+            {
+              "objective_id": "appointment_reason",
+              "description": "Explain the reason for the appointment with relevant details."
+            },
+            {
+              "objective_id": "availability",
+              "description": "Ask about and confirm a workable time or service slot."
+            },
+            {
+              "objective_id": "time_confirmation",
+              "description": "Repeat and confirm the final appointment time."
+            },
+            {
+              "objective_id": "preparation",
+              "description": "Ask what preparation or documents are needed before the appointment."
+            }
+          ]
+        }
+      ],
+      "practice_options": [
+        {
+          "practice_option_id": "option_daily_medical_appointment_full",
+          "scene_id": "scn_daily_medical_appointment",
+          "practice_mode": "FULL_SIMULATION",
+          "display_name": "完整模拟",
+          "suggested_duration_seconds": 420,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "daily.practice.session.v1",
+          "evaluation_policy_ref": "daily.general.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_daily_medical_appointment_focus",
+          "scene_id": "scn_daily_medical_appointment",
+          "role_definition_id": "role_daily_medical_appointment_counterpart",
+          "practice_mode": "FOCUS",
+          "display_name": "重点练习",
+          "suggested_duration_seconds": 420,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "daily.practice.session.v1",
+          "evaluation_policy_ref": "daily.general.evaluation.v1"
+        }
+      ]
+    },
+    {
+      "scene_id": "scn_workplace_negotiation",
+      "practice_experience": "WORKPLACE",
+      "scene_category": "WORKPLACE_GENERAL",
+      "name": "条件协商",
+      "scene_version": 1,
+      "status": "active",
+      "prompt": {
+        "public_scene_brief": "与对手方澄清双方利益与底线，并尝试用交换条件形成方案。",
+        "practice_goal": "识别优先级，提出清楚的条件式方案。",
+        "user_role": "协商方",
+        "ai_role": "对手方",
+        "persona_summary": "A realistic negotiation counterpart with one firm constraint who considers conditional trades but does not concede automatically.",
+        "focus_areas": [
+          "interest",
+          "priority",
+          "constraint",
+          "conditional_offer"
+        ],
+        "turn_blueprints": [
+          "给出初始立场和一个明确约束",
+          "请用户澄清最重要的优先级",
+          "回应用户提出的交换条件",
+          "确认可接受的方案或分歧"
+        ]
+      },
+      "roles": [
+        {
+          "role_definition_id": "role_workplace_negotiation_counterpart",
+          "scene_id": "scn_workplace_negotiation",
+          "role_type": "NEGOTIATION_COUNTERPART",
+          "display_name": "对手方",
+          "responsibilities": "识别优先级，提出清楚的条件式方案。",
+          "style": "Natural, concise, and appropriate to the current role.",
+          "practice_objectives": [
+            {
+              "objective_id": "interest",
+              "description": "Identify the underlying interests behind each side’s position."
+            },
+            {
+              "objective_id": "priority",
+              "description": "Rank competing needs and explain the most important priority."
+            },
+            {
+              "objective_id": "constraint",
+              "description": "Explain the relevant constraint and how it shapes the available options."
+            },
+            {
+              "objective_id": "conditional_offer",
+              "description": "Propose a clear if-then trade that respects both sides’ constraints."
+            }
+          ]
+        }
+      ],
+      "practice_options": [
+        {
+          "practice_option_id": "option_workplace_negotiation_full",
+          "scene_id": "scn_workplace_negotiation",
+          "practice_mode": "FULL_SIMULATION",
+          "display_name": "完整模拟",
+          "suggested_duration_seconds": 720,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "workplace.practice.session.v1",
+          "evaluation_policy_ref": "workplace.general.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_workplace_negotiation_focus",
+          "scene_id": "scn_workplace_negotiation",
+          "role_definition_id": "role_workplace_negotiation_counterpart",
+          "practice_mode": "FOCUS",
+          "display_name": "重点练习",
+          "suggested_duration_seconds": 720,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "workplace.practice.session.v1",
+          "evaluation_policy_ref": "workplace.general.evaluation.v1"
+        }
+      ]
+    },
+    {
+      "scene_id": "scn_daily_phone_call",
+      "practice_experience": "LIFE_AND_TRAVEL",
+      "scene_category": "LIFE_DAILY",
+      "name": "电话信息确认",
+      "scene_version": 1,
+      "status": "active",
+      "prompt": {
+        "public_scene_brief": "通过电话向机构接待人员说明身份和来电目的，询问信息并复述确认。",
+        "practice_goal": "通过电话说明身份和来电目的，询问信息并复述确认。",
+        "user_role": "来电者",
+        "ai_role": "机构接待人员",
+        "persona_summary": "A clear institutional receptionist who identifies the organization, confirms the caller's identity and purpose, answers relevant questions, and checks the final details.",
+        "focus_areas": [
+          "identity",
+          "purpose",
+          "clarification",
+          "confirmation"
+        ],
+        "turn_blueprints": [
+          "接听电话，说明机构身份并询问来电目的",
+          "核实来电者身份，并澄清一项关键信息",
+          "回答用户的问题，并在必要时请求重复",
+          "复述关键信息，并确认处理结果或下一步"
+        ]
+      },
+      "roles": [
+        {
+          "role_definition_id": "role_daily_phone_call_counterpart",
+          "scene_id": "scn_daily_phone_call",
+          "role_type": "INSTITUTION_RECEPTIONIST",
+          "display_name": "机构接待人员",
+          "responsibilities": "说明机构身份，核实来电者和来电目的，回答问题并确认关键信息。",
+          "style": "Natural, concise, and appropriate to the current role.",
+          "practice_objectives": [
+            {
+              "objective_id": "identity",
+              "description": "Identify the caller and intended recipient clearly."
+            },
+            {
+              "objective_id": "purpose",
+              "description": "State the purpose of the call or conversation early."
+            },
+            {
+              "objective_id": "clarification",
+              "description": "Ask focused questions to resolve ambiguity."
+            },
+            {
+              "objective_id": "confirmation",
+              "description": "Restate and confirm the agreed details accurately."
+            }
+          ]
+        }
+      ],
+      "practice_options": [
+        {
+          "practice_option_id": "option_daily_phone_call_full",
+          "scene_id": "scn_daily_phone_call",
+          "practice_mode": "FULL_SIMULATION",
+          "display_name": "完整模拟",
+          "suggested_duration_seconds": 420,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "daily.practice.session.v1",
+          "evaluation_policy_ref": "daily.general.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_daily_phone_call_focus",
+          "scene_id": "scn_daily_phone_call",
+          "role_definition_id": "role_daily_phone_call_counterpart",
+          "practice_mode": "FOCUS",
+          "display_name": "重点练习",
+          "suggested_duration_seconds": 420,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "daily.practice.session.v1",
+          "evaluation_policy_ref": "daily.general.evaluation.v1"
+        }
+      ]
+    },
+    {
+      "scene_id": "scn_daily_complaint_help",
+      "practice_experience": "LIFE_AND_TRAVEL",
+      "scene_category": "LIFE_DAILY",
+      "name": "投诉与求助",
+      "scene_version": 1,
+      "status": "active",
+      "prompt": {
+        "public_scene_brief": "向服务人员清楚说明问题、提出诉求并确认解决办法。",
+        "practice_goal": "有条理地说明事实与期望，理解可行范围。",
+        "user_role": "顾客或旅客",
+        "ai_role": "服务人员",
+        "persona_summary": "A calm service staff member who clarifies facts and realistic limits before offering a solution.",
+        "focus_areas": [
+          "problem",
+          "fact",
+          "request",
+          "resolution"
+        ],
+        "turn_blueprints": [
+          "请用户说明遇到的问题",
+          "澄清一个关键事实",
+          "确认用户的具体诉求",
+          "提供并确认可行方案"
+        ]
+      },
+      "roles": [
+        {
+          "role_definition_id": "role_daily_complaint_help_counterpart",
+          "scene_id": "scn_daily_complaint_help",
+          "role_type": "SERVICE_STAFF",
+          "display_name": "服务人员",
+          "responsibilities": "有条理地说明事实与期望，理解可行范围。",
+          "style": "Natural, concise, and appropriate to the current role.",
+          "practice_objectives": [
+            {
+              "objective_id": "problem",
+              "description": "Describe the problem, its context, and its immediate effect."
+            },
+            {
+              "objective_id": "fact",
+              "description": "Describe observable facts without mixing in assumptions."
+            },
+            {
+              "objective_id": "request",
+              "description": "Make a specific, actionable request."
+            },
+            {
+              "objective_id": "resolution",
+              "description": "Agree on a concrete resolution that addresses the reported issue."
+            }
+          ]
+        }
+      ],
+      "practice_options": [
+        {
+          "practice_option_id": "option_daily_complaint_help_full",
+          "scene_id": "scn_daily_complaint_help",
+          "practice_mode": "FULL_SIMULATION",
+          "display_name": "完整模拟",
+          "suggested_duration_seconds": 480,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "daily.practice.session.v1",
+          "evaluation_policy_ref": "daily.general.evaluation.v1"
+        },
+        {
+          "practice_option_id": "option_daily_complaint_help_focus",
+          "scene_id": "scn_daily_complaint_help",
+          "role_definition_id": "role_daily_complaint_help_counterpart",
+          "practice_mode": "FOCUS",
+          "display_name": "重点练习",
+          "suggested_duration_seconds": 480,
+          "turn_policy_ref": "generic.practice.turn.v1",
+          "session_policy_ref": "daily.practice.session.v1",
+          "evaluation_policy_ref": "daily.general.evaluation.v1"
+        }
+      ]
+    }
+  ]
+}

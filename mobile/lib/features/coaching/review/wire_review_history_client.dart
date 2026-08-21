@@ -239,7 +239,7 @@ Map<String, Object?> _object(
 bool _validCursor(String value) =>
     value.isNotEmpty &&
     value.length <= 512 &&
-    RegExp(r'^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$').hasMatch(value);
+    RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(value);
 
 bool _isBefore(ReviewHistoryItem item, ReviewHistoryItem boundary) =>
     item.createdAt.isBefore(boundary.createdAt) ||
@@ -257,7 +257,11 @@ final class _IoReviewHistoryHttpTransport implements IdentityHttpTransport {
     required Uri uri,
     required Map<String, String> headers,
     String? body,
+    List<int>? bodyBytes,
   }) async {
+    if (body != null && bodyBytes != null) {
+      throw ArgumentError('Only one request body may be provided.');
+    }
     final client = HttpClient()..connectionTimeout = _requestTimeout;
     HttpClientRequest? request;
     try {
@@ -265,7 +269,9 @@ final class _IoReviewHistoryHttpTransport implements IdentityHttpTransport {
         request = await client.openUrl(method, uri);
         request!.followRedirects = false;
         headers.forEach(request!.headers.set);
-        if (body != null) {
+        if (bodyBytes != null) {
+          request!.add(bodyBytes);
+        } else if (body != null) {
           request!.add(utf8.encode(body));
         }
         final response = await request!.close();

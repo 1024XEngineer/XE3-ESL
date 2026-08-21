@@ -153,6 +153,7 @@ void main() {
           conversationController: harness.conversation,
           composerController: harness.composer,
           messageAudioController: harness.messageAudio,
+          messageTranslationClient: null,
           practiceController: harness.practice,
           preparationController: preparationController,
           ieltsPreparationController: ieltsPreparationController,
@@ -165,7 +166,7 @@ void main() {
 
       await tester.tap(find.byKey(const Key('conversation-menu-button')));
       await tester.pumpAndSettle();
-      expect(find.text('已连接当前账号'), findsOneWidget);
+      expect(find.text('聊天'), findsOneWidget);
       expect(find.textContaining('本地 Fake 预览'), findsNothing);
       Navigator.of(tester.element(find.byType(Drawer))).pop();
       await tester.pumpAndSettle();
@@ -174,6 +175,8 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('learner@example.com'), findsOneWidget);
 
+      await tester.tap(find.byKey(const Key('profile-account-menu')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('profile-logout-button')));
       await tester.pumpAndSettle();
 
@@ -217,6 +220,7 @@ void main() {
         conversationController: harness.conversation,
         composerController: harness.composer,
         messageAudioController: harness.messageAudio,
+        messageTranslationClient: null,
         practiceController: harness.practice,
         preparationController: preparationController,
         ieltsPreparationController: ieltsPreparationController,
@@ -348,7 +352,6 @@ _AgentHarness _agentHarness({PracticeClient? practiceClient}) {
     composer: ComposerController(
       conversationController: conversation,
       voiceClient: voiceClient,
-      onAssistantCommitted: messageAudio.playCommittedAssistant,
     ),
     messageAudio: messageAudio,
     practice: PracticeController(

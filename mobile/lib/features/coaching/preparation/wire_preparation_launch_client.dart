@@ -2,43 +2,13 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:speakup/features/coaching/ielts/ielts_assignment.dart';
-import 'package:speakup/features/coaching/ielts/ielts_question_bank.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_client.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_models.dart';
 import 'package:speakup/features/coaching/preparation/preparation_models.dart';
 import 'package:speakup/features/coaching/preparation/preparation_wire_codec.dart';
-import 'package:speakup/features/coaching/scene/scene.dart';
-import 'package:speakup/features/coaching/scene/scene_wire_codec.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
 import 'package:speakup/identity/network/transport_security.dart';
-
-const _practiceExperiences = <String>{
-  'INTERVIEW',
-  'IELTS_SPEAKING',
-  'WORKPLACE',
-  'LIFE_AND_TRAVEL',
-};
-const _sceneCategories = <String>{
-  'INTERVIEW_RECRUITER',
-  'INTERVIEW_BEHAVIORAL',
-  'INTERVIEW_PROFESSIONAL',
-  'INTERVIEW_HIRING_MANAGER',
-  'INTERVIEW_CUSTOM',
-  'IELTS_SPEAKING',
-  'WORKPLACE_GENERAL',
-  'LIFE_TRAVEL',
-  'LIFE_DAILY',
-};
-const _practiceModes = <String>{
-  'FULL_SIMULATION',
-  'FOCUS',
-  'FULL_MOCK',
-  'PART_1',
-  'PART_2',
-  'PART_3',
-};
 
 final class WirePreparationLaunchClient implements PreparationLaunchClient {
   factory WirePreparationLaunchClient({
@@ -78,103 +48,99 @@ final class WirePreparationLaunchClient implements PreparationLaunchClient {
   int _accountGeneration = 0;
 
   @override
-  Future<PreparationProfile> createProfile({
-    required CreatePreparationProfileInput input,
-    required String idempotencyKey,
-  }) async {
-    _requireProfileInput(input);
-    final response = await _post(
-      path: '/v1/preparation-profiles',
-      idempotencyKey: idempotencyKey,
-      body: <String, Object?>{
-        'background_summary': input.backgroundSummary,
-        'resume_id': ?input.resumeId,
-        'resume_revision': ?input.resumeRevision,
-        'job_description_ref': ?input.jobDescriptionRef,
-        'job_target_id': ?input.jobTargetId,
-        'job_target_confirmation_version': ?input.jobTargetConfirmationVersion,
-      },
-      stage: PreparationLaunchStage.profile,
-    );
-    return _decodeCreated(
-      stage: PreparationLaunchStage.profile,
-      decode: () {
-        final profile = decodePreparationProfileBody(response.body);
-        if (profile.backgroundSummary != input.backgroundSummary ||
-            profile.resumeId != input.resumeId ||
-            profile.resumeRevision != input.resumeRevision ||
-            profile.jobDescriptionRef != input.jobDescriptionRef ||
-            profile.jobTargetId != input.jobTargetId ||
-            profile.jobTargetConfirmationVersion !=
-                input.jobTargetConfirmationVersion) {
-          throw _invalidResponse();
-        }
-        return profile;
-      },
-    );
-  }
-
-  @override
-  Future<PreparationSnapshot> createSnapshot({
-    required String profileId,
-    required int sourceVersion,
-    required String idempotencyKey,
-  }) async {
-    _requireResourceId(profileId);
-    if (sourceVersion < 1) {
-      throw const PreparationLaunchException(
-        kind: PreparationLaunchFailureKind.invalidRequest,
-        stage: PreparationLaunchStage.snapshot,
-      );
-    }
-    final response = await _post(
-      path:
-          '/v1/preparation-profiles/${Uri.encodeComponent(profileId)}'
-          '/snapshots',
-      idempotencyKey: idempotencyKey,
-      body: <String, Object?>{'source_version': sourceVersion},
-      stage: PreparationLaunchStage.snapshot,
-    );
-    return _decodeCreated(
-      stage: PreparationLaunchStage.snapshot,
-      decode: () {
-        final snapshot = decodePreparationSnapshotBody(response.body);
-        if (snapshot.sourceProfileId != profileId ||
-            snapshot.sourceVersion != sourceVersion) {
-          throw _invalidResponse();
-        }
-        return snapshot;
-      },
-    );
-  }
-
-  @override
   Future<PracticePlan> createPlan({
-    required CreatePreparationPlanInput input,
+    required CreatePracticePlanInput input,
     required String idempotencyKey,
   }) async {
     _requirePlanInput(input);
-    _requireResourceId(input.preparationSnapshotId);
-    final response = await _post(
+    final response = await _request(
+      method: 'POST',
       path: '/v1/practice-plans',
+      stage: PreparationLaunchStage.plan,
+      expectedStatus: HttpStatus.created,
       idempotencyKey: idempotencyKey,
       body: <String, Object?>{
-        'source_thread_id': ?input.sourceThreadId,
-        'goal_id': ?input.goalId,
-        'preparation_snapshot_id': input.preparationSnapshotId,
+        if (input.sourceThreadId != null)
+          'source_thread_id': input.sourceThreadId,
+        if (input.backgroundSummary.isNotEmpty)
+          'background_summary': input.backgroundSummary,
+        if (input.interviewPreparationId != null)
+          'interview_preparation_id': input.interviewPreparationId,
+        if (input.expectedInterviewVersion != null)
+          'expected_interview_version': input.expectedInterviewVersion,
         'scene_id': input.sceneId,
         'scene_version': input.sceneVersion,
         'selected_role_ids': input.selectedRoleIds,
         'practice_option_id': input.practiceOptionId,
-        'max_effective_turns': ?input.maxEffectiveTurns,
+        if (input.maxEffectiveTurns != null)
+          'max_effective_turns': input.maxEffectiveTurns,
         if (input.ieltsSelection case final selection?)
           'ielts_selection': selection.toJson(),
+        if (input.ieltsPreparedAnswers.isNotEmpty)
+          'ielts_prepared_answers': input.ieltsPreparedAnswers
+              .map((answer) => answer.toJson())
+              .toList(growable: false),
       },
-      stage: PreparationLaunchStage.plan,
     );
-    return _decodeCreated(
+    return _decode(
       stage: PreparationLaunchStage.plan,
-      decode: () => _plan(_decode(response.body), expected: input),
+      statusCode: response.statusCode,
+      decode: () {
+        final plan = decodePracticePlanBody(response.body);
+        _requireMatchingPlan(plan, input);
+        return plan;
+      },
+    );
+  }
+
+  @override
+  Future<PracticePlan> getPlan(String planId) async {
+    _requireAggregateId(planId);
+    final response = await _request(
+      method: 'GET',
+      path: '/v1/practice-plans/${Uri.encodeComponent(planId)}',
+      stage: PreparationLaunchStage.plan,
+      expectedStatus: HttpStatus.ok,
+    );
+    return _decode(
+      stage: PreparationLaunchStage.plan,
+      statusCode: response.statusCode,
+      decode: () {
+        final plan = decodePracticePlanBody(response.body);
+        if (plan.id != planId) throw const PreparationWireFormatException();
+        return plan;
+      },
+    );
+  }
+
+  @override
+  Future<PracticePlan> confirmPlan({
+    required String planId,
+    required int expectedVersion,
+    required String idempotencyKey,
+  }) async {
+    _requireAggregateId(planId);
+    if (expectedVersion < 1) throw _invalidRequest(PreparationLaunchStage.plan);
+    final response = await _request(
+      method: 'POST',
+      path: '/v1/practice-plans/${Uri.encodeComponent(planId)}/confirm',
+      stage: PreparationLaunchStage.plan,
+      expectedStatus: HttpStatus.ok,
+      idempotencyKey: idempotencyKey,
+      body: <String, Object?>{'expected_version': expectedVersion},
+    );
+    return _decode(
+      stage: PreparationLaunchStage.plan,
+      statusCode: response.statusCode,
+      decode: () {
+        final plan = decodePracticePlanBody(response.body);
+        if (plan.id != planId ||
+            plan.status != PracticePlanStatus.ready ||
+            plan.version < expectedVersion) {
+          throw const PreparationWireFormatException();
+        }
+        return plan;
+      },
     );
   }
 
@@ -184,77 +150,32 @@ final class WirePreparationLaunchClient implements PreparationLaunchClient {
     required CreatePreparationSessionInput input,
     required String idempotencyKey,
   }) async {
-    _requireResourceId(plan.id);
-    if (input.expectedPlanRevision != plan.revision ||
-        !input.userConfirmed ||
-        plan.status != PracticePlanStatus.ready) {
-      throw const PreparationLaunchException(
-        kind: PreparationLaunchFailureKind.invalidRequest,
-        stage: PreparationLaunchStage.session,
-      );
+    _requireAggregateId(plan.id);
+    if (plan.status != PracticePlanStatus.ready ||
+        input.expectedPlanVersion != plan.version) {
+      throw _invalidRequest(PreparationLaunchStage.session);
     }
-    final response = await _post(
+    final response = await _request(
+      method: 'POST',
       path:
           '/v1/practice-plans/${Uri.encodeComponent(plan.id)}'
           '/practice-sessions',
-      idempotencyKey: idempotencyKey,
-      body: <String, Object?>{
-        'expected_plan_revision': input.expectedPlanRevision,
-        'user_confirmed': input.userConfirmed,
-      },
       stage: PreparationLaunchStage.session,
-    );
-    return _decodeCreated(
-      stage: PreparationLaunchStage.session,
-      decode: () => _bootstrap(_decode(response.body), expectedPlan: plan),
-    );
-  }
-
-  Future<PracticePlan> getPlan(String planId) async {
-    _requireResourceId(planId);
-    final response = await _get(
-      path: '/v1/practice-plans/${Uri.encodeComponent(planId)}',
-      stage: PreparationLaunchStage.plan,
-    );
-    return _decodeSucceeded(
-      stage: PreparationLaunchStage.plan,
-      statusCode: HttpStatus.ok,
-      decode: () {
-        final plan = decodePracticePlanBody(response.body);
-        if (plan.id != planId) {
-          throw _invalidResponse();
-        }
-        return plan;
-      },
-    );
-  }
-
-  Future<IdentityHttpResponse> _post({
-    required String path,
-    required String idempotencyKey,
-    required Map<String, Object?> body,
-    required PreparationLaunchStage stage,
-  }) {
-    _requireIdempotencyKey(idempotencyKey);
-    return _request(
-      method: 'POST',
-      path: path,
-      stage: stage,
       expectedStatus: HttpStatus.created,
       idempotencyKey: idempotencyKey,
-      body: body,
+      body: <String, Object?>{
+        'expected_plan_version': input.expectedPlanVersion,
+      },
+    );
+    return _decode(
+      stage: PreparationLaunchStage.session,
+      statusCode: response.statusCode,
+      decode: () => decodePreparationPracticeBootstrapBody(
+        response.body,
+        expectedPlan: plan,
+      ),
     );
   }
-
-  Future<IdentityHttpResponse> _get({
-    required String path,
-    required PreparationLaunchStage stage,
-  }) => _request(
-    method: 'GET',
-    path: path,
-    stage: stage,
-    expectedStatus: HttpStatus.ok,
-  );
 
   Future<IdentityHttpResponse> _request({
     required String method,
@@ -264,18 +185,20 @@ final class WirePreparationLaunchClient implements PreparationLaunchClient {
     String? idempotencyKey,
     Map<String, Object?>? body,
   }) async {
+    if (idempotencyKey != null) _requireIdempotencyKey(idempotencyKey, stage);
     final generation = _accountGeneration;
     final uri = _baseUri.resolve(path);
     _trustedOrigin.validateResourceUri(uri);
     validateNoSessionCredentialInUri(uri);
-    late final IdentityHttpResponse response;
     final headers = <String, String>{
       HttpHeaders.acceptHeader: ContentType.json.mimeType,
+      if (body != null)
+        HttpHeaders.contentTypeHeader: ContentType.json.mimeType,
     };
-    if (body != null && idempotencyKey != null) {
-      headers[HttpHeaders.contentTypeHeader] = ContentType.json.mimeType;
+    if (idempotencyKey != null) {
       headers['Idempotency-Key'] = idempotencyKey;
     }
+    late final IdentityHttpResponse response;
     try {
       response = await _transport
           .send(
@@ -297,29 +220,13 @@ final class WirePreparationLaunchClient implements PreparationLaunchClient {
         statusCode: HttpStatus.unauthorized,
       );
     } on TimeoutException {
-      throw PreparationLaunchException(
-        kind: PreparationLaunchFailureKind.network,
-        stage: stage,
-        retryable: true,
-      );
+      throw _network(stage);
     } on SocketException {
-      throw PreparationLaunchException(
-        kind: PreparationLaunchFailureKind.network,
-        stage: stage,
-        retryable: true,
-      );
+      throw _network(stage);
     } on HttpException {
-      throw PreparationLaunchException(
-        kind: PreparationLaunchFailureKind.network,
-        stage: stage,
-        retryable: true,
-      );
+      throw _network(stage);
     } on IOException {
-      throw PreparationLaunchException(
-        kind: PreparationLaunchFailureKind.network,
-        stage: stage,
-        retryable: true,
-      );
+      throw _network(stage);
     }
     if (generation != _accountGeneration) {
       throw PreparationLaunchException(
@@ -332,53 +239,52 @@ final class WirePreparationLaunchClient implements PreparationLaunchClient {
         throw PreparationLaunchException(
           kind: PreparationLaunchFailureKind.invalidResponse,
           stage: stage,
-          statusCode: expectedStatus,
+          statusCode: response.statusCode,
           retryable: true,
         );
       }
       return response;
     }
-    final errorCode = _errorCode(response.body);
-    final exception = switch (response.statusCode) {
+    final code = _errorCode(response.body);
+    throw switch (response.statusCode) {
       HttpStatus.badRequest => PreparationLaunchException(
         kind: PreparationLaunchFailureKind.invalidRequest,
         stage: stage,
         statusCode: response.statusCode,
-        errorCode: errorCode,
+        errorCode: code,
       ),
       HttpStatus.unauthorized => PreparationLaunchException(
         kind: PreparationLaunchFailureKind.authenticationRequired,
         stage: stage,
         statusCode: response.statusCode,
-        errorCode: errorCode,
+        errorCode: code,
       ),
       HttpStatus.notFound => PreparationLaunchException(
         kind: PreparationLaunchFailureKind.notFound,
         stage: stage,
         statusCode: response.statusCode,
-        errorCode: errorCode,
+        errorCode: code,
       ),
       HttpStatus.conflict => PreparationLaunchException(
         kind: PreparationLaunchFailureKind.conflict,
         stage: stage,
         statusCode: response.statusCode,
-        errorCode: errorCode,
+        errorCode: code,
       ),
       _ when response.statusCode >= 500 => PreparationLaunchException(
         kind: PreparationLaunchFailureKind.server,
         stage: stage,
         statusCode: response.statusCode,
-        errorCode: errorCode,
+        errorCode: code,
         retryable: true,
       ),
       _ => PreparationLaunchException(
         kind: PreparationLaunchFailureKind.invalidResponse,
         stage: stage,
         statusCode: response.statusCode,
-        errorCode: errorCode,
+        errorCode: code,
       ),
     };
-    throw exception;
   }
 
   @override
@@ -387,34 +293,13 @@ final class WirePreparationLaunchClient implements PreparationLaunchClient {
   }
 }
 
-T _decodeCreated<T>({
-  required PreparationLaunchStage stage,
-  required T Function() decode,
-}) {
-  return _decodeSucceeded(
-    stage: stage,
-    statusCode: HttpStatus.created,
-    decode: decode,
-  );
-}
-
-T _decodeSucceeded<T>({
+T _decode<T>({
   required PreparationLaunchStage stage,
   required int statusCode,
   required T Function() decode,
 }) {
   try {
     return decode();
-  } on PreparationLaunchException catch (error) {
-    if (error.kind != PreparationLaunchFailureKind.invalidResponse) {
-      rethrow;
-    }
-    throw PreparationLaunchException(
-      kind: PreparationLaunchFailureKind.invalidResponse,
-      stage: stage,
-      statusCode: statusCode,
-      retryable: true,
-    );
   } on PreparationWireFormatException {
     throw PreparationLaunchException(
       kind: PreparationLaunchFailureKind.invalidResponse,
@@ -425,415 +310,88 @@ T _decodeSucceeded<T>({
   }
 }
 
-PracticePlan _plan(
-  Object? value, {
-  required CreatePreparationPlanInput expected,
-}) {
-  final plan = decodePracticePlan(value);
-  final selection = plan.sceneSelection;
-  if (plan.sourceThreadId != expected.sourceThreadId ||
-      plan.goalSnapshot?.id != expected.goalId ||
-      plan.preparationSnapshot.id != expected.preparationSnapshotId ||
-      selection.scene.id != expected.sceneId ||
-      selection.scene.version != expected.sceneVersion ||
-      !_sameStrings(selection.selectedRoleIds, expected.selectedRoleIds) ||
-      selection.practiceOptionId != expected.practiceOptionId ||
-      (expected.maxEffectiveTurns != null &&
-          plan.sessionPolicy.maxEffectiveTurns != expected.maxEffectiveTurns) ||
-      !_matchesIeltsSelection(plan.ieltsAssignment, expected.ieltsSelection) ||
-      plan.status != PracticePlanStatus.ready) {
-    throw _invalidResponse();
-  }
-  return plan;
-}
-
-SceneSelectionSnapshot _decodeSceneSelection(Object? value) {
-  try {
-    return decodeSceneSelectionSnapshot(value);
-  } on SceneWireFormatException {
-    throw _invalidResponse();
+void _requireMatchingPlan(PracticePlan plan, CreatePracticePlanInput input) {
+  final interview = plan.preparationSnapshot.interview;
+  if (plan.sourceThreadId != input.sourceThreadId ||
+      plan.preparationSnapshot.backgroundSummary != input.backgroundSummary ||
+      interview?.id != input.interviewPreparationId ||
+      interview?.version != input.expectedInterviewVersion ||
+      plan.sceneSelection.scene.id != input.sceneId ||
+      plan.sceneSelection.scene.version != input.sceneVersion ||
+      !_sameStrings(
+        plan.sceneSelection.selectedRoleIds,
+        input.selectedRoleIds,
+      ) ||
+      plan.sceneSelection.practiceOptionId != input.practiceOptionId ||
+      (input.maxEffectiveTurns != null &&
+          plan.sessionPolicy.maxEffectiveTurns != input.maxEffectiveTurns)) {
+    throw const PreparationWireFormatException();
   }
 }
 
-bool _sameStrings(List<String> left, List<String> right) {
-  if (left.length != right.length) {
-    return false;
+void _requirePlanInput(CreatePracticePlanInput input) {
+  if (input.sourceThreadId != null) _requireAggregateId(input.sourceThreadId!);
+  final hasInterview = input.interviewPreparationId != null;
+  if (hasInterview != (input.expectedInterviewVersion != null) ||
+      (input.expectedInterviewVersion != null &&
+          input.expectedInterviewVersion! < 1) ||
+      input.sceneVersion < 1 ||
+      input.selectedRoleIds.isEmpty ||
+      input.selectedRoleIds.toSet().length != input.selectedRoleIds.length ||
+      (input.maxEffectiveTurns != null && input.maxEffectiveTurns! < 1) ||
+      input.backgroundSummary.trim() != input.backgroundSummary ||
+      input.backgroundSummary.contains('\u0000') ||
+      utf8.encode(input.backgroundSummary).length > 64 * 1024) {
+    throw _invalidRequest(PreparationLaunchStage.plan);
   }
-  for (var index = 0; index < left.length; index++) {
-    if (left[index] != right[index]) {
-      return false;
+  if (input.interviewPreparationId != null) {
+    _requireAggregateId(input.interviewPreparationId!);
+  }
+  _requireResourceId(input.sceneId);
+  _requireResourceId(input.practiceOptionId);
+  for (final role in input.selectedRoleIds) {
+    _requireResourceId(role);
+  }
+  if (input.ieltsSelection case final selection?) {
+    if (!selection.isValidCreateShape) {
+      throw _invalidRequest(PreparationLaunchStage.plan);
     }
   }
-  return true;
 }
 
-PreparationPracticeBootstrap _bootstrap(
-  Object? value, {
-  required PracticePlan expectedPlan,
-}) {
-  final root = _object(
-    value,
-    required: const <String>{'practice_session', 'snapshot'},
-  );
-  final sessionObject = _object(
-    root['practice_session'],
-    required: const <String>{
-      'practice_session_id',
-      'practice_plan_id',
-      'plan_revision',
-      'practice_experience',
-      'scene_category',
-      'practice_mode',
-      'evaluation_policy_ref',
-      'snapshot_id',
-      'practice_session_status',
-      'session_version',
-      'created_at',
-    },
-    optional: const <String>{'started_at', 'ended_at', 'end_reason'},
-  );
-  final sessionId = _resourceId(sessionObject['practice_session_id']);
-  final snapshotId = _resourceId(sessionObject['snapshot_id']);
-  final status = _enumText(sessionObject['practice_session_status'], const {
-    'starting',
-    'in_progress',
-  });
-  final practiceExperience =
-      PracticeExperience.fromWireValue(
-        _enumText(sessionObject['practice_experience'], _practiceExperiences),
-      ) ??
-      (throw _invalidResponse());
-  final sceneCategory =
-      SceneCategory.fromWireValue(
-        _enumText(sessionObject['scene_category'], _sceneCategories),
-      ) ??
-      (throw _invalidResponse());
-  final practiceMode =
-      PracticeMode.fromWireValue(
-        _enumText(sessionObject['practice_mode'], _practiceModes),
-      ) ??
-      (throw _invalidResponse());
-  final expectedScene = expectedPlan.sceneSelection.scene;
-  final expectedOption = expectedScene.practiceOptions
-      .where(
-        (option) => option.id == expectedPlan.sceneSelection.practiceOptionId,
-      )
-      .firstOrNull;
-  if (_resourceId(sessionObject['practice_plan_id']) != expectedPlan.id ||
-      _version(sessionObject['plan_revision']) != expectedPlan.revision ||
-      practiceExperience != expectedScene.experience ||
-      sceneCategory != expectedScene.category ||
-      expectedOption == null ||
-      practiceMode != expectedOption.mode ||
-      _resourceId(sessionObject['evaluation_policy_ref']) !=
-          expectedOption.evaluationPolicyRef ||
-      (status == 'starting' && sessionObject['started_at'] != null) ||
-      (status == 'in_progress' && sessionObject['started_at'] == null) ||
-      sessionObject['ended_at'] != null ||
-      sessionObject['end_reason'] != null) {
-    throw _invalidResponse();
-  }
-  if (status == 'in_progress') {
-    _dateTime(sessionObject['started_at']);
-  }
-  final snapshotObject = _object(
-    root['snapshot'],
-    required: const <String>{
-      'snapshot_id',
-      'practice_session_id',
-      'plan_revision',
-      'practice_experience',
-      'scene_category',
-      'practice_mode',
-      'scene_selection',
-      'preparation_snapshot',
-      'participants',
-      'session_policy',
-      'practice_objectives',
-      'created_at',
-    },
-    optional: const <String>{'ielts_assignment'},
-  );
-  if (_resourceId(snapshotObject['snapshot_id']) != snapshotId ||
-      _resourceId(snapshotObject['practice_session_id']) != sessionId ||
-      _version(snapshotObject['plan_revision']) != expectedPlan.revision ||
-      _enumText(snapshotObject['practice_experience'], _practiceExperiences) !=
-          expectedScene.experience.wireValue ||
-      _enumText(snapshotObject['scene_category'], _sceneCategories) !=
-          expectedScene.category.wireValue ||
-      _enumText(snapshotObject['practice_mode'], _practiceModes) !=
-          practiceMode.wireValue) {
-    throw _invalidResponse();
-  }
-  final sceneSelection = _decodeSceneSelection(
-    snapshotObject['scene_selection'],
-  );
-  if (!samePracticeSceneSelection(
-    sceneSelection,
-    expectedPlan.sceneSelection,
-  )) {
-    throw _invalidResponse();
-  }
-  final preparation = decodePreparationSnapshot(
-    snapshotObject['preparation_snapshot'],
-  );
-  if (!_samePreparationSnapshot(
-    preparation,
-    expectedPlan.preparationSnapshot,
-  )) {
-    throw _invalidResponse();
-  }
-  if (expectedPlan.sceneSelection.selectedRoleIds.length != 1) {
-    throw _invalidResponse();
-  }
-  _validateParticipants(
-    snapshotObject['participants'],
-    sessionId: sessionId,
-    roleId: expectedPlan.sceneSelection.selectedRoleIds.single,
-    sceneId: expectedScene.id,
-    candidateUserId: expectedPlan.userId,
-  );
-  final ieltsAssignment = snapshotObject.containsKey('ielts_assignment')
-      ? decodeIeltsPracticeAssignment(snapshotObject['ielts_assignment'])
-      : null;
-  final policy = decodePreparationSessionPolicy(
-    snapshotObject['session_policy'],
-  );
-  final objectives = decodePracticeObjectives(
-    snapshotObject['practice_objectives'],
-  );
-  if (!_sameSessionPolicy(policy, expectedPlan.sessionPolicy) ||
-      !_sameObjectives(objectives, expectedPlan.practiceObjectives) ||
-      ieltsAssignment != expectedPlan.ieltsAssignment ||
-      (ieltsAssignment != null &&
-          ieltsAssignment.turnBlueprints.length != policy.maxEffectiveTurns)) {
-    throw _invalidResponse();
-  }
-  _dateTime(snapshotObject['created_at']);
-  return PreparationPracticeBootstrap(
-    session: PreparationPracticeSession(
-      id: sessionId,
-      planId: expectedPlan.id,
-      practiceExperience: practiceExperience,
-      sceneCategory: sceneCategory,
-      practiceMode: practiceMode,
-      snapshotId: snapshotId,
-      status: status,
-      version: _version(sessionObject['session_version']),
-      createdAt: _dateTime(sessionObject['created_at']),
-    ),
-    preparationSnapshotId: preparation.id,
-    maxEffectiveTurns: policy.maxEffectiveTurns,
-  );
-}
-
-bool _matchesIeltsSelection(
-  IeltsPracticeAssignment? assignment,
-  IeltsPracticeSelection? selection,
-) {
-  if (selection == null) {
-    return assignment == null;
-  }
-  return assignment?.matchesSelection(selection) ?? false;
-}
-
-void _validateParticipants(
-  Object? value, {
-  required String sessionId,
-  required String roleId,
-  required String sceneId,
-  required String candidateUserId,
-}) {
-  if (value is! List<Object?> || value.length < 2 || value.length > 16) {
-    throw _invalidResponse();
-  }
-  var selectedRoleCount = 0;
-  var candidateCount = 0;
-  final participantIds = <String>{};
-  final orders = <int>{};
-  for (final raw in value) {
-    final object = _object(
-      raw,
-      required: const <String>{
-        'practice_participant_id',
-        'practice_session_id',
-        'participant_role',
-        'subject_ref',
-        'participant_order',
-      },
-      optional: const <String>{'role_definition_id', 'role_snapshot'},
-    );
-    if (_resourceId(object['practice_session_id']) != sessionId ||
-        !participantIds.add(_resourceId(object['practice_participant_id']))) {
-      throw _invalidResponse();
-    }
-    final order = _version(object['participant_order']);
-    if (!orders.add(order)) {
-      throw _invalidResponse();
-    }
-    final role = _enumText(object['participant_role'], const {
-      'FACILITATOR',
-      'LEARNER',
-    });
-    final subject = _object(
-      object['subject_ref'],
-      required: const <String>{'namespace', 'subject_id'},
-    );
-    final subjectNamespace = _text(subject['namespace']);
-    final subjectId = _resourceId(subject['subject_id']);
-    if (role == 'LEARNER') {
-      candidateCount++;
-      if (object['role_definition_id'] != null ||
-          object['role_snapshot'] != null ||
-          subjectNamespace != 'speakup.user' ||
-          subjectId != candidateUserId) {
-        throw _invalidResponse();
-      }
-    } else {
-      if (_resourceId(object['role_definition_id']) != roleId) {
-        throw _invalidResponse();
-      }
-      _validateRoleSnapshot(
-        object['role_snapshot'],
-        roleId: roleId,
-        sceneId: sceneId,
-      );
-      selectedRoleCount++;
-    }
-  }
-  if (candidateCount != 1 || selectedRoleCount != 1) {
-    throw _invalidResponse();
+void _requireAggregateId(String value) {
+  if (!_uuidV4.hasMatch(value)) {
+    throw _invalidRequest(PreparationLaunchStage.plan);
   }
 }
 
-void _validateRoleSnapshot(
-  Object? value, {
-  required String roleId,
-  required String sceneId,
-}) {
-  late final RoleDefinition role;
-  try {
-    role = decodeRoleDefinition(value);
-  } on SceneWireFormatException {
-    throw _invalidResponse();
-  }
-  if (role.id != roleId || role.sceneId != sceneId) {
-    throw _invalidResponse();
+void _requireResourceId(String value) {
+  if (!_resourceId.hasMatch(value)) {
+    throw _invalidRequest(PreparationLaunchStage.plan);
   }
 }
 
-bool _samePreparationSnapshot(
-  PreparationSnapshot left,
-  PreparationSnapshot right,
-) =>
-    left.id == right.id &&
-    left.sourceProfileId == right.sourceProfileId &&
-    left.sourceVersion == right.sourceVersion &&
-    left.sourceJobTargetId == right.sourceJobTargetId &&
-    left.sourceJobTargetConfirmationVersion ==
-        right.sourceJobTargetConfirmationVersion &&
-    left.jobTargetInput == right.jobTargetInput &&
-    left.jobTargetCandidate == right.jobTargetCandidate &&
-    left.resumeSnapshot == right.resumeSnapshot &&
-    left.jobDescriptionSnapshot == right.jobDescriptionSnapshot &&
-    left.backgroundSnapshot == right.backgroundSnapshot &&
-    left.createdAt == right.createdAt;
-
-bool _sameSessionPolicy(
-  PreparationSessionPolicy left,
-  PreparationSessionPolicy right,
-) =>
-    left.suggestedDurationSeconds == right.suggestedDurationSeconds &&
-    left.minEffectiveTurns == right.minEffectiveTurns &&
-    left.maxEffectiveTurns == right.maxEffectiveTurns &&
-    left.coverageCheckpointTurn == right.coverageCheckpointTurn &&
-    left.maxFollowUpsPerQuestion == right.maxFollowUpsPerQuestion &&
-    left.earlyCompletionRule == right.earlyCompletionRule &&
-    left.retryAllowed == right.retryAllowed &&
-    left.questionTranslationAllowed == right.questionTranslationAllowed &&
-    left.questionTipsAllowed == right.questionTipsAllowed &&
-    left.avatarAllowed == right.avatarAllowed &&
-    left.speechFeedbackAllowed == right.speechFeedbackAllowed;
-
-bool _sameObjectives(
-  List<PracticeObjective> left,
-  List<PracticeObjective> right,
-) =>
-    left.length == right.length &&
-    List<bool>.generate(
-      left.length,
-      (index) =>
-          left[index].id == right[index].id &&
-          left[index].description == right[index].description,
-    ).every((same) => same);
-
-Object? _decode(String body) {
-  try {
-    return jsonDecode(body);
-  } on FormatException {
-    throw _invalidResponse();
-  }
-}
-
-Map<String, Object?> _object(
-  Object? value, {
-  Set<String> required = const <String>{},
-  Set<String> optional = const <String>{},
-}) {
-  if (value is! Map<String, Object?> ||
-      !value.keys.toSet().containsAll(required) ||
-      value.keys.any(
-        (key) => !required.contains(key) && !optional.contains(key),
-      )) {
-    throw _invalidResponse();
-  }
-  return value;
-}
-
-String _resourceId(Object? value) {
-  final result = _text(value, maxBytes: 128);
-  if (result.length > 128) {
-    throw _invalidResponse();
-  }
-  return result;
-}
-
-String _text(Object? value, {int maxBytes = 256 * 1024}) {
-  if (value is! String ||
-      value.isEmpty ||
+void _requireIdempotencyKey(String value, PreparationLaunchStage stage) {
+  if (value.length < 8 ||
+      value.length > 128 ||
       value.trim() != value ||
-      value.contains('\u0000') ||
-      utf8.encode(value).length > maxBytes) {
-    throw _invalidResponse();
+      value.contains('\u0000')) {
+    throw _invalidRequest(stage);
   }
-  return value;
 }
 
-String _enumText(Object? value, Set<String> allowed) {
-  final result = _text(value, maxBytes: 128);
-  if (!allowed.contains(result)) {
-    throw _invalidResponse();
-  }
-  return result;
-}
+PreparationLaunchException _invalidRequest(PreparationLaunchStage stage) =>
+    PreparationLaunchException(
+      kind: PreparationLaunchFailureKind.invalidRequest,
+      stage: stage,
+    );
 
-int _version(Object? value) {
-  if (value is! int || value < 1) {
-    throw _invalidResponse();
-  }
-  return value;
-}
-
-DateTime _dateTime(Object? value) {
-  if (value is! String) {
-    throw _invalidResponse();
-  }
-  final result = DateTime.tryParse(value);
-  if (result == null) {
-    throw _invalidResponse();
-  }
-  return result;
-}
+PreparationLaunchException _network(PreparationLaunchStage stage) =>
+    PreparationLaunchException(
+      kind: PreparationLaunchFailureKind.network,
+      stage: stage,
+      retryable: true,
+    );
 
 String? _errorCode(String body) {
   try {
@@ -842,135 +400,22 @@ String? _errorCode(String body) {
         root['error'] is! Map<String, Object?>) {
       return null;
     }
-    final code = (root['error'] as Map<String, Object?>)['code'];
+    final code = (root['error']! as Map<String, Object?>)['code'];
     return code is String && code.length <= 128 ? code : null;
   } on FormatException {
     return null;
   }
 }
 
-Never _invalidResponse() => throw const PreparationLaunchException(
-  kind: PreparationLaunchFailureKind.invalidResponse,
+bool _sameStrings(List<String> left, List<String> right) {
+  if (left.length != right.length) return false;
+  for (var index = 0; index < left.length; index++) {
+    if (left[index] != right[index]) return false;
+  }
+  return true;
+}
+
+final RegExp _uuidV4 = RegExp(
+  r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
 );
-
-void _requireResourceId(String value) {
-  if (value.isEmpty ||
-      value.length > 128 ||
-      value.trim() != value ||
-      value.contains('\u0000')) {
-    throw const PreparationLaunchException(
-      kind: PreparationLaunchFailureKind.invalidRequest,
-    );
-  }
-}
-
-void _requireBackground(String value) {
-  if (value.isEmpty ||
-      value.trim() != value ||
-      value.contains('\u0000') ||
-      utf8.encode(value).length > 64 * 1024) {
-    throw const PreparationLaunchException(
-      kind: PreparationLaunchFailureKind.invalidRequest,
-      stage: PreparationLaunchStage.profile,
-    );
-  }
-}
-
-void _requireProfileInput(CreatePreparationProfileInput input) {
-  _requireBackground(input.backgroundSummary);
-  final hasResume = input.resumeId != null;
-  if (hasResume != (input.resumeRevision != null)) {
-    throw const PreparationLaunchException(
-      kind: PreparationLaunchFailureKind.invalidRequest,
-      stage: PreparationLaunchStage.profile,
-    );
-  }
-  if (input.resumeId case final value?) {
-    _requireResourceId(value);
-  }
-  if (input.resumeRevision case final value? when value < 1) {
-    throw const PreparationLaunchException(
-      kind: PreparationLaunchFailureKind.invalidRequest,
-      stage: PreparationLaunchStage.profile,
-    );
-  }
-  if (input.jobDescriptionRef case final value?) {
-    _requireText(value, 16 * 1024);
-  }
-  final hasJobTarget = input.jobTargetId != null;
-  if (hasJobTarget != (input.jobTargetConfirmationVersion != null)) {
-    throw const PreparationLaunchException(
-      kind: PreparationLaunchFailureKind.invalidRequest,
-      stage: PreparationLaunchStage.profile,
-    );
-  }
-  if (input.jobTargetId case final value?) {
-    _requireResourceId(value);
-  }
-  if (input.jobTargetConfirmationVersion case final value? when value < 1) {
-    throw const PreparationLaunchException(
-      kind: PreparationLaunchFailureKind.invalidRequest,
-      stage: PreparationLaunchStage.profile,
-    );
-  }
-}
-
-void _requirePlanInput(CreatePreparationPlanInput input) {
-  if (input.sourceThreadId case final value?) {
-    _requireResourceId(value);
-  }
-  if (input.goalId case final value?) {
-    _requireResourceId(value);
-  }
-  _requireResourceId(input.preparationSnapshotId);
-  _requireResourceId(input.sceneId);
-  _requireResourceId(input.practiceOptionId);
-  for (final roleId in input.selectedRoleIds) {
-    _requireResourceId(roleId);
-  }
-  if (input.ieltsSelection case final selection?) {
-    if ((selection.part1SetId == null && selection.topicGroupId == null)) {
-      throw const PreparationLaunchException(
-        kind: PreparationLaunchFailureKind.invalidRequest,
-        stage: PreparationLaunchStage.plan,
-      );
-    }
-    if (selection.part1SetId case final value?) {
-      _requireResourceId(value);
-    }
-    if (selection.topicGroupId case final value?) {
-      _requireResourceId(value);
-    }
-  }
-  if (input.sceneVersion < 1 ||
-      input.selectedRoleIds.isEmpty ||
-      input.selectedRoleIds.toSet().length != input.selectedRoleIds.length ||
-      (input.maxEffectiveTurns != null && input.maxEffectiveTurns! < 1)) {
-    throw const PreparationLaunchException(
-      kind: PreparationLaunchFailureKind.invalidRequest,
-      stage: PreparationLaunchStage.plan,
-    );
-  }
-}
-
-void _requireText(String value, int maxBytes) {
-  if (value.trim().isEmpty ||
-      value.trim() != value ||
-      value.contains('\u0000') ||
-      utf8.encode(value).length > maxBytes) {
-    throw const PreparationLaunchException(
-      kind: PreparationLaunchFailureKind.invalidRequest,
-    );
-  }
-}
-
-void _requireIdempotencyKey(String value) {
-  if (value.length < 8 ||
-      value.length > 128 ||
-      value.trim() != value ||
-      value.contains('\u0000')) {
-    throw const PreparationLaunchException(
-      kind: PreparationLaunchFailureKind.invalidRequest,
-    );
-  }
-}
+final RegExp _resourceId = RegExp(r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$');

@@ -8,15 +8,15 @@ import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.da
 void main() {
   test('polls each source independently until its feedback is READY', () async {
     final client = _QueueClient({
-      '/v1/speech-feedback/feedback_000000000001': [
-        _feedback(status: SpeechFeedbackStatus.queued),
-        _feedback(status: SpeechFeedbackStatus.running),
-        _feedback(status: SpeechFeedbackStatus.ready),
+      _statusUrl1: [
+        _feedback(status: SpeechFeedbackStatus.queued, statusUrl: _statusUrl1),
+        _feedback(status: SpeechFeedbackStatus.running, statusUrl: _statusUrl1),
+        _feedback(status: SpeechFeedbackStatus.ready, statusUrl: _statusUrl1),
       ],
-      '/v1/speech-feedback/feedback_000000000002': [
+      _statusUrl2: [
         _feedback(
-          id: 'feedback_000000000002',
-          statusUrl: '/v1/speech-feedback/feedback_000000000002',
+          evaluationId: _evaluationId2,
+          statusUrl: _statusUrl2,
           status: SpeechFeedbackStatus.ready,
         ),
       ],
@@ -29,25 +29,19 @@ void main() {
     addTearDown(controller.dispose);
 
     await Future.wait([
-      controller.load(
-        sourceKey: 'turn_001',
-        statusUrl: '/v1/speech-feedback/feedback_000000000001',
-      ),
-      controller.load(
-        sourceKey: 'turn_002',
-        statusUrl: '/v1/speech-feedback/feedback_000000000002',
-      ),
+      controller.load(sourceKey: 'turn_001', statusUrl: _statusUrl1),
+      controller.load(sourceKey: 'turn_002', statusUrl: _statusUrl2),
     ]);
 
-    expect(client.calls['/v1/speech-feedback/feedback_000000000001'], 3);
-    expect(client.calls['/v1/speech-feedback/feedback_000000000002'], 1);
+    expect(client.calls[_statusUrl1], 3);
+    expect(client.calls[_statusUrl2], 1);
     expect(
       controller.projectionFor('turn_001')?.feedback?.feedbackStatus,
       SpeechFeedbackStatus.ready,
     );
     expect(
-      controller.projectionFor('turn_002')?.feedback?.speechFeedbackId,
-      'feedback_000000000002',
+      controller.projectionFor('turn_002')?.feedback?.evaluationId,
+      _evaluationId2,
     );
   });
 
@@ -82,18 +76,18 @@ void main() {
 
     final oldLoad = controller.load(
       sourceKey: 'message_001',
-      statusUrl: '/v1/speech-feedback/feedback_000000000001',
+      statusUrl: _statusUrl1,
     );
     await client.oldStarted.future;
     final newLoad = controller.load(
       sourceKey: 'message_001',
-      statusUrl: '/v1/speech-feedback/feedback_000000000002',
+      statusUrl: _statusUrl2,
     );
     await client.newStarted.future;
     client.newResponse.complete(
       _feedback(
-        id: 'feedback_000000000002',
-        statusUrl: '/v1/speech-feedback/feedback_000000000002',
+        evaluationId: _evaluationId2,
+        statusUrl: _statusUrl2,
         status: SpeechFeedbackStatus.ready,
       ),
     );
@@ -102,8 +96,8 @@ void main() {
     await oldLoad;
 
     expect(
-      controller.projectionFor('message_001')?.feedback?.speechFeedbackId,
-      'feedback_000000000002',
+      controller.projectionFor('message_001')?.feedback?.evaluationId,
+      _evaluationId2,
     );
   });
 
@@ -117,7 +111,7 @@ void main() {
       );
       addTearDown(controller.dispose);
       const sourceKey = 'message_001';
-      const statusUrl = '/v1/speech-feedback/feedback_000000000001';
+      const statusUrl = _statusUrl1;
 
       final oldLoad = controller.load(
         sourceKey: sourceKey,
@@ -154,7 +148,7 @@ void main() {
       addTearDown(controller.dispose);
       final pending = controller.load(
         sourceKey: 'turn_001',
-        statusUrl: '/v1/speech-feedback/feedback_000000000001',
+        statusUrl: _statusUrl1,
       );
       await client.started.future;
 
@@ -169,38 +163,34 @@ void main() {
 }
 
 SpeechFeedback _feedback({
-  String id = 'feedback_000000000001',
-  String statusUrl = '/v1/speech-feedback/feedback_000000000001',
+  String evaluationId = _evaluationId1,
+  String statusUrl = _statusUrl1,
   required SpeechFeedbackStatus status,
 }) {
   final ready = status == SpeechFeedbackStatus.ready;
+  final sourceId = speechFeedbackStatusSource(statusUrl)!.sourceId;
   return SpeechFeedback(
-    speechFeedbackId: id,
-    source: const ConversationTurnFeedbackSource(
-      practiceSessionId: 'session_001',
-      turnId: 'turn_001',
-      inputRevision: 1,
-      evidenceSnapshotId: 'evidence_001',
+    evaluationId: evaluationId,
+    source: SpeechFeedbackSource(
+      kind: SpeechFeedbackSourceKind.practiceTurn,
+      sourceId: sourceId,
+      contextId: _sessionId,
     ),
     feedbackStatus: status,
     scoreabilityStatus: ready
         ? SpeechFeedbackScoreabilityStatus.provisional
         : null,
-    gateStatus: ready ? SpeechFeedbackGateStatus.feedbackOnly : null,
+    summary: ready ? 'Use the past tense.' : null,
     reasonCodes: const [],
-    schemaVersion: 'speech-feedback/v1',
-    strategyRef: 'qianwen-speech-feedback/v1',
-    pipelineVersion: 'speech-feedback-pipeline/v1',
-    isFinal: false,
     items: ready
         ? [
             SpeechFeedbackItem(
               feedbackItemId: 'item_001',
-              speechFeedbackId: id,
+              evaluationId: evaluationId,
+              position: 1,
               kind: SpeechFeedbackItemKind.correction,
-              anchor: const ConversationTranscriptFeedbackAnchor(
-                evidenceRefId: 'evidence_001',
-                turnId: 'turn_001',
+              anchor: SpeechFeedbackAnchor(
+                evidenceRefId: sourceId,
                 startUtf8Byte: 0,
                 endUtf8Byte: 4,
                 originalExcerpt: 'I am',
@@ -212,17 +202,25 @@ SpeechFeedback _feedback({
             ),
           ]
         : const [],
-    acousticAssessment: const SpeechFeedbackAcousticAssessment(
-      pronunciation: SpeechFeedbackAssessmentStatus.notAssessed,
-      acousticFluency: SpeechFeedbackAssessmentStatus.notAssessed,
-      reasonCode: 'ACOUSTIC_EVIDENCE_UNAVAILABLE',
-    ),
+    acousticAssessment: ready
+        ? const SpeechFeedbackAcousticAssessment.notAssessed(
+            reason: 'ACOUSTIC_EVIDENCE_UNAVAILABLE',
+          )
+        : null,
+    stableFailure: null,
     statusUrl: statusUrl,
     createdAt: DateTime.utc(2026, 7, 30, 10),
     updatedAt: DateTime.utc(2026, 7, 30, 10, 0, 1),
-    completedAt: ready ? DateTime.utc(2026, 7, 30, 10, 0, 1) : null,
   );
 }
+
+const _evaluationId1 = '10000000-0000-4000-8000-000000000001';
+const _evaluationId2 = '10000000-0000-4000-8000-000000000002';
+const _turnId1 = '20000000-0000-4000-8000-000000000001';
+const _turnId2 = '20000000-0000-4000-8000-000000000002';
+const _sessionId = '30000000-0000-4000-8000-000000000001';
+const _statusUrl1 = '/v1/practice-turns/$_turnId1/evaluation';
+const _statusUrl2 = '/v1/practice-turns/$_turnId2/evaluation';
 
 final class _QueueClient implements SpeechFeedbackClient {
   _QueueClient(this.responses);
@@ -252,7 +250,7 @@ final class _RebindingClient implements SpeechFeedbackClient {
 
   @override
   Future<SpeechFeedback> getFeedback(String statusUrl) {
-    if (statusUrl.endsWith('0001')) {
+    if (statusUrl == _statusUrl1) {
       oldStarted.complete();
       return oldResponse.future;
     }

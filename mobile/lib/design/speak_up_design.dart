@@ -2,19 +2,21 @@ import 'package:flutter/material.dart';
 
 /// The single visual source of truth for SpeakUp's mobile surfaces.
 abstract final class SpeakUpDesign {
-  static const canvas = Color(0xFFF6F7FA);
+  static const canvas = Color(0xFFFFFFFF);
   static const surface = Color(0xFFFFFFFF);
-  static const surfaceMuted = Color(0xFFF0F1F3);
-  static const ink = Color(0xFF111216);
-  static const secondary = Color(0xFF6E727B);
-  static const tertiary = Color(0xFFA6A9B0);
-  static const border = Color(0xFFE7E8EC);
-  static const primary = Color(0xFF173B47);
-  static const primaryMuted = Color(0xFFDDECF0);
+  static const surfaceMuted = Color(0xFFF5F5F5);
+  static const ink = Color(0xFF000000);
+  static const secondary = Color(0xFF6E6E73);
+  static const tertiary = Color(0xFFA1A1A6);
+  static const border = Color(0xFFE5E5E5);
+  static const primary = ink;
+  static const primaryMuted = Color(0xFFF0F0F0);
   static const success = Color(0xFF285443);
   static const successMuted = Color(0xFFEAF3EF);
+  static const warning = Color(0xFFC58000);
   static const error = Color(0xFF8A2D21);
   static const errorMuted = Color(0xFFFFEDE8);
+  static const darkSurface = Color(0xFF1A1A1A);
 
   static const space4 = 4.0;
   static const space8 = 8.0;
@@ -25,9 +27,9 @@ abstract final class SpeakUpDesign {
   static const space32 = 32.0;
 
   static const radiusControl = 12.0;
-  static const radiusCard = 20.0;
-  static const radiusMedia = 24.0;
-  static const radiusSheet = 28.0;
+  static const radiusCard = 16.0;
+  static const radiusMedia = 20.0;
+  static const radiusSheet = 24.0;
 
   static const minTapTarget = 44.0;
   static const maxContentWidth = 680.0;
@@ -38,6 +40,25 @@ abstract final class SpeakUpDesign {
     fontWeight: FontWeight.w800,
     height: 1.08,
     letterSpacing: -0.35,
+  );
+
+  static const displayTitle = TextStyle(
+    color: ink,
+    fontFamily: 'Allura',
+    fontSize: 48,
+    fontWeight: FontWeight.w400,
+    height: 1,
+  );
+
+  static const secondaryDisplayTitle = TextStyle(
+    color: ink,
+    fontFamily: 'Georgia',
+    fontFamilyFallback: ['serif'],
+    fontSize: 34,
+    fontWeight: FontWeight.w600,
+    fontStyle: FontStyle.italic,
+    height: 1.05,
+    letterSpacing: -0.4,
   );
 
   static const sectionTitle = TextStyle(

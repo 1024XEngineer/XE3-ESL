@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
@@ -21,22 +20,23 @@ func TestSessionApplicationCreatesSessionFromExactExecutablePlan(t *testing.T) {
 		practiceActorFixture(),
 		plan.ID,
 		"session-create-0001",
-		CreateSessionRequest{ExpectedPlanRevision: 3, UserConfirmed: true},
+		CreateSessionRequest{ExpectedPlanVersion: 3},
 	)
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
-	if replayed || reader.planID != plan.ID || reader.revision != 3 {
+	if replayed || reader.planID != plan.ID || reader.version != 3 {
 		t.Fatalf(
 			"CreateSession replay=%t read=(%q,%d)",
 			replayed,
 			reader.planID,
-			reader.revision,
+			reader.version,
 		)
 	}
 	command := repository.created
-	if command.PlanID != plan.ID || command.PlanRevision != plan.Revision ||
-		command.Snapshot.Preparation.ID != plan.Preparation.ID ||
+	if command.PlanID != plan.ID || command.PlanVersion != plan.Version ||
+		command.Snapshot.Preparation.BackgroundSnapshot !=
+			plan.Preparation.BackgroundSnapshot ||
 		command.Snapshot.SceneSelection.Scene.ID !=
 			plan.SceneSelection.Scene.ID ||
 		command.Snapshot.SessionPolicy != plan.SessionPolicy ||
@@ -49,8 +49,8 @@ func TestSessionApplicationCreatesSessionFromExactExecutablePlan(t *testing.T) {
 		command.Snapshot.Participants[1].Role != "LEARNER" {
 		t.Fatalf("participants = %#v", command.Snapshot.Participants)
 	}
-	if created.Session.PlanRevision != plan.Revision ||
-		created.Snapshot.PlanRevision != plan.Revision {
+	if created.Session.PlanVersion != plan.Version ||
+		created.Snapshot.PlanVersion != plan.Version {
 		t.Fatalf("created = %#v", created)
 	}
 }
@@ -84,6 +84,8 @@ func TestSessionApplicationCopiesFrozenIELTSAssignmentFromPlan(t *testing.T) {
 	plan.SessionPolicy.MaxEffectiveTurns = len(blueprints)
 	plan.SessionPolicy.CoverageCheckpointTurn = len(blueprints)
 	plan.SessionPolicy.MaxFollowUpsPerQuestion = 0
+	plan.SessionPolicy.QuestionTranslationAllowed = true
+	plan.SessionPolicy.QuestionTipsAllowed = true
 	plan.SessionPolicy.SpeechFeedbackAllowed = true
 	plan.IELTSAssignment = &IELTSAssignment{
 		BankID: "ielts-bank-1",
@@ -106,10 +108,7 @@ func TestSessionApplicationCopiesFrozenIELTSAssignmentFromPlan(t *testing.T) {
 		practiceActorFixture(),
 		plan.ID,
 		"session-create-ielts",
-		CreateSessionRequest{
-			ExpectedPlanRevision: plan.Revision,
-			UserConfirmed:        true,
-		},
+		CreateSessionRequest{ExpectedPlanVersion: plan.Version},
 	)
 	if err != nil {
 		t.Fatalf("CreateSession IELTS: %v", err)
@@ -129,24 +128,6 @@ func TestSessionApplicationCopiesFrozenIELTSAssignmentFromPlan(t *testing.T) {
 	}
 }
 
-func TestSessionApplicationRejectsUnconfirmedSessionBeforePlanRead(
-	t *testing.T,
-) {
-	t.Parallel()
-	reader := &planReaderStub{err: errors.New("must not read")}
-	application := newContextTestApplication(t, &sessionRepositoryStub{}, reader)
-	_, _, err := application.CreateSession(
-		context.Background(),
-		practiceActorFixture(),
-		"plan-1",
-		"session-create-0002",
-		CreateSessionRequest{ExpectedPlanRevision: 1},
-	)
-	if !errors.Is(err, ErrConfirmationRequired) || reader.calls != 0 {
-		t.Fatalf("CreateSession = %v, reads=%d", err, reader.calls)
-	}
-}
-
 func TestSessionApplicationMapsStaleExecutablePlanToConflict(t *testing.T) {
 	t.Parallel()
 	application := newContextTestApplication(
@@ -157,9 +138,9 @@ func TestSessionApplicationMapsStaleExecutablePlanToConflict(t *testing.T) {
 	_, _, err := application.CreateSession(
 		context.Background(),
 		practiceActorFixture(),
-		"plan-1",
+		"11111111-1111-4111-8111-111111111111",
 		"session-create-0003",
-		CreateSessionRequest{ExpectedPlanRevision: 2, UserConfirmed: true},
+		CreateSessionRequest{ExpectedPlanVersion: 2},
 	)
 	if !errors.Is(err, ErrConflict) {
 		t.Fatalf("CreateSession stale error = %v", err)
@@ -204,10 +185,7 @@ func TestSessionApplicationRejectsUnknownPoliciesBeforeRepositoryWrite(
 				practiceActorFixture(),
 				plan.ID,
 				"unknown-policy-key",
-				CreateSessionRequest{
-					ExpectedPlanRevision: plan.Revision,
-					UserConfirmed:        true,
-				},
+				CreateSessionRequest{ExpectedPlanVersion: plan.Version},
 			)
 			if !errors.Is(err, ErrConflict) || repository.createCalls != 0 {
 				t.Fatalf(
@@ -220,25 +198,6 @@ func TestSessionApplicationRejectsUnknownPoliciesBeforeRepositoryWrite(
 	}
 }
 
-func TestSessionApplicationReplaysSessionWithoutReadingPlan(t *testing.T) {
-	t.Parallel()
-	want := contextBootstrapFixture()
-	repository := &sessionRepositoryStub{replay: want, replayFound: true}
-	reader := &planReaderStub{err: errors.New("must not read")}
-	application := newContextTestApplication(t, repository, reader)
-	got, replayed, err := application.CreateSession(
-		context.Background(),
-		practiceActorFixture(),
-		"plan-1",
-		"session-create-0004",
-		CreateSessionRequest{ExpectedPlanRevision: 1, UserConfirmed: true},
-	)
-	if err != nil || !replayed || got.Session.ID != want.Session.ID ||
-		reader.calls != 0 {
-		t.Fatalf("CreateSession replay = (%#v,%t,%v), reads=%d", got, replayed, err, reader.calls)
-	}
-}
-
 func newContextTestApplication(
 	t *testing.T,
 	repository SessionRepository,
@@ -248,10 +207,9 @@ func newContextTestApplication(
 	application, err := NewSessionApplication(
 		repository,
 		&practiceIDStub{values: []string{
-			"session-1",
-			"snapshot-1",
-			"participant-facilitator",
-			"participant-learner",
+			"22222222-2222-4222-8222-222222222222",
+			"33333333-3333-4333-8333-333333333333",
+			"44444444-4444-4444-8444-444444444444",
 		}},
 		reader,
 	)
@@ -262,7 +220,6 @@ func newContextTestApplication(
 }
 
 func practicePlanFixture() PlanProjection {
-	createdAt := time.Date(2026, 8, 4, 8, 0, 0, 0, time.UTC)
 	definition := SceneDefinition{
 		ID:         "scene-1",
 		Experience: PracticeExperienceInterview,
@@ -302,14 +259,10 @@ func practicePlanFixture() PlanProjection {
 		}},
 	}
 	return PlanProjection{
-		ID:          "plan-1",
+		ID:          "11111111-1111-4111-8111-111111111111",
 		OwnerUserID: "user-1",
 		Preparation: PreparationSnapshot{
-			ID:                 "snapshot-preparation-1",
-			SourceProfileID:    "profile-1",
-			SourceVersion:      1,
 			BackgroundSnapshot: "Backend engineer",
-			CreatedAt:          createdAt,
 		},
 		SceneSelection: SceneSelection{
 			Scene:            definition,
@@ -317,6 +270,7 @@ func practicePlanFixture() PlanProjection {
 			PracticeOptionID: "option-full",
 		},
 		SessionPolicy: SessionPolicy{
+			CompletionMode:           CompletionModeTurnLimited,
 			SuggestedDurationSeconds: 600,
 			MinEffectiveTurns:        4,
 			MaxEffectiveTurns:        6,
@@ -327,7 +281,7 @@ func practicePlanFixture() PlanProjection {
 		PracticeObjectives: []PracticeObjective{{
 			ID: "clarity", Description: "clarity",
 		}},
-		Revision: 3,
+		Version: 3,
 	}
 }
 
@@ -336,22 +290,22 @@ func practiceActorFixture() requestcontext.Actor {
 }
 
 type planReaderStub struct {
-	plan     PlanProjection
-	err      error
-	calls    int
-	planID   string
-	revision int
+	plan    PlanProjection
+	err     error
+	calls   int
+	planID  string
+	version int
 }
 
 func (s *planReaderStub) ReadExecutablePlan(
 	_ context.Context,
 	_ requestcontext.Actor,
 	planID string,
-	revision int,
+	version int,
 ) (PlanProjection, error) {
 	s.calls++
 	s.planID = planID
-	s.revision = revision
+	s.version = version
 	return s.plan, s.err
 }
 
@@ -369,13 +323,12 @@ func (s *practiceIDStub) NewID() (string, error) {
 }
 
 type sessionRepositoryStub struct {
-	replay         SessionBootstrap
-	replayFound    bool
-	created        CreateSessionCommand
-	createErr      error
-	resolved       SessionBootstrap
-	resolvedPlanID string
-	createCalls    int
+	replay      SessionBootstrap
+	replayFound bool
+	created     CreateSessionCommand
+	createErr   error
+	resolved    SessionBootstrap
+	createCalls int
 }
 
 func (s *sessionRepositoryStub) ReplaySession(
@@ -398,9 +351,9 @@ func (s *sessionRepositoryStub) CreateSession(
 	}
 	return SessionBootstrap{
 		Session: Session{
-			ID:           command.SessionID,
-			PlanID:       command.PlanID,
-			PlanRevision: command.PlanRevision,
+			ID:          command.SessionID,
+			PlanID:      command.PlanID,
+			PlanVersion: command.PlanVersion,
 		},
 		Snapshot: command.Snapshot,
 	}, false, nil
@@ -422,15 +375,6 @@ func (s *sessionRepositoryStub) GetSessionSnapshot(
 	return s.resolved.Snapshot, nil
 }
 
-func (s *sessionRepositoryStub) ResolveSessionByPlan(
-	_ context.Context,
-	_ Actor,
-	planID string,
-) (SessionBootstrap, error) {
-	s.resolvedPlanID = planID
-	return s.resolved, nil
-}
-
 func (s *sessionRepositoryStub) TransitionSession(
 	context.Context,
 	Actor,
@@ -448,9 +392,12 @@ func (s *sessionRepositoryStub) DeleteUserData(
 
 func contextBootstrapFixture() SessionBootstrap {
 	return SessionBootstrap{
-		Session: Session{ID: "session-1", PlanID: "plan-1"},
+		Session: Session{
+			ID:     "22222222-2222-4222-8222-222222222222",
+			PlanID: "11111111-1111-4111-8111-111111111111",
+		},
 		Snapshot: SessionSnapshot{
-			ID: "snapshot-1", SessionID: "session-1",
+			SessionID: "22222222-2222-4222-8222-222222222222",
 		},
 	}
 }

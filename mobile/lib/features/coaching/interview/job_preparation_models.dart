@@ -1,68 +1,41 @@
-enum JobTargetSource {
+enum InterviewPreparationSource {
   jobDescription('job_description'),
   quickStart('quick_start');
 
-  const JobTargetSource(this.wireValue);
+  const InterviewPreparationSource(this.wireValue);
 
   final String wireValue;
 }
 
-enum JobTargetStage {
-  draft('draft'),
-  parsing('parsing'),
-  analysisFailed('analysis_failed'),
-  awaitingConfirmation('awaiting_confirmation'),
-  confirmed('confirmed'),
-  discarded('discarded');
-
-  const JobTargetStage(this.wireValue);
-
-  final String wireValue;
-}
-
-enum JobTargetAnalysisStatus {
-  running('running'),
-  succeeded('succeeded'),
-  failed('failed');
-
-  const JobTargetAnalysisStatus(this.wireValue);
-
-  final String wireValue;
-}
-
-final class JobTargetInput {
-  const JobTargetInput({
+final class InterviewPreparationInput {
+  const InterviewPreparationInput({
     required this.source,
     this.jobTitle,
     this.jobDescription,
     this.company,
     this.seniority,
     this.candidateBackground,
-    this.resumeRef,
     this.practiceFocus,
   });
 
-  final JobTargetSource source;
+  final InterviewPreparationSource source;
   final String? jobTitle;
   final String? jobDescription;
   final String? company;
   final String? seniority;
   final String? candidateBackground;
-  final String? resumeRef;
   final String? practiceFocus;
 
   @override
-  bool operator ==(Object other) {
-    return other is JobTargetInput &&
-        other.source == source &&
-        other.jobTitle == jobTitle &&
-        other.jobDescription == jobDescription &&
-        other.company == company &&
-        other.seniority == seniority &&
-        other.candidateBackground == candidateBackground &&
-        other.resumeRef == resumeRef &&
-        other.practiceFocus == practiceFocus;
-  }
+  bool operator ==(Object other) =>
+      other is InterviewPreparationInput &&
+      other.source == source &&
+      other.jobTitle == jobTitle &&
+      other.jobDescription == jobDescription &&
+      other.company == company &&
+      other.seniority == seniority &&
+      other.candidateBackground == candidateBackground &&
+      other.practiceFocus == practiceFocus;
 
   @override
   int get hashCode => Object.hash(
@@ -72,29 +45,12 @@ final class JobTargetInput {
     company,
     seniority,
     candidateBackground,
-    resumeRef,
     practiceFocus,
   );
 }
 
-final class JobPreparationResumeSelection {
-  const JobPreparationResumeSelection({
-    required this.resumeId,
-    required this.revision,
-    required this.resourceVersion,
-    required this.temporary,
-    required this.title,
-  });
-
-  final String resumeId;
-  final int revision;
-  final int resourceVersion;
-  final bool temporary;
-  final String title;
-}
-
-final class JobTargetCatalogRecommendation {
-  const JobTargetCatalogRecommendation({
+final class InterviewCatalogRecommendation {
+  const InterviewCatalogRecommendation({
     required this.sceneId,
     required this.sceneVersion,
     required this.selectedRoleIds,
@@ -107,11 +63,12 @@ final class JobTargetCatalogRecommendation {
   final String practiceOptionId;
 }
 
-final class JobTargetCandidate {
-  const JobTargetCandidate({
+final class InterviewPreparationCandidate {
+  const InterviewPreparationCandidate({
     required this.source,
     required this.generalAdviceOnly,
     required this.jobTitle,
+    this.company = '',
     required this.seniority,
     required this.responsibilities,
     required this.coreSkills,
@@ -121,87 +78,64 @@ final class JobTargetCandidate {
     required this.catalogRecommendation,
   });
 
-  final JobTargetSource source;
+  final InterviewPreparationSource source;
   final bool generalAdviceOnly;
   final String jobTitle;
+  final String company;
   final String seniority;
   final List<String> responsibilities;
   final List<String> coreSkills;
   final List<String> communicationFocus;
   final List<String> practiceGoals;
   final String scopeNotice;
-  final JobTargetCatalogRecommendation catalogRecommendation;
+  final InterviewCatalogRecommendation catalogRecommendation;
 }
 
-final class JobTargetAnalysis {
-  const JobTargetAnalysis({
-    required this.inputVersion,
-    required this.analysisVersion,
-    required this.attempt,
-    required this.status,
-    required this.startedAt,
-    this.candidate,
-    this.stableErrorCategory,
-    this.finishedAt,
-  });
+enum InterviewPreparationStatus { draft, confirmed, discarded }
 
-  final int inputVersion;
-  final int analysisVersion;
-  final int attempt;
-  final JobTargetAnalysisStatus status;
-  final JobTargetCandidate? candidate;
-  final String? stableErrorCategory;
-  final DateTime startedAt;
-  final DateTime? finishedAt;
-}
-
-final class JobTargetConfirmation {
-  const JobTargetConfirmation({
-    required this.inputVersion,
-    required this.analysisVersion,
-    required this.confirmationVersion,
-    required this.candidate,
-    required this.confirmedAt,
-  });
-
-  final int inputVersion;
-  final int analysisVersion;
-  final int confirmationVersion;
-  final JobTargetCandidate candidate;
-  final DateTime confirmedAt;
-}
-
-final class JobTarget {
-  const JobTarget({
+final class InterviewPreparation {
+  const InterviewPreparation({
     required this.id,
     required this.userId,
     required this.input,
-    required this.inputVersion,
-    required this.stage,
+    required this.candidate,
+    required this.status,
+    required this.version,
     required this.createdAt,
     required this.updatedAt,
-    this.analysis,
-    this.confirmation,
+    this.resumeUsed = false,
   });
 
   final String id;
   final String userId;
-  final JobTargetInput input;
-  final int inputVersion;
-  final JobTargetStage stage;
-  final JobTargetAnalysis? analysis;
-  final JobTargetConfirmation? confirmation;
+  final InterviewPreparationInput input;
+  final InterviewPreparationCandidate candidate;
+  final bool resumeUsed;
+  final InterviewPreparationStatus status;
+  final int version;
   final DateTime createdAt;
   final DateTime updatedAt;
 }
 
+final class InterviewPreparationSnapshot {
+  const InterviewPreparationSnapshot({
+    required this.id,
+    required this.version,
+    required this.input,
+    required this.candidate,
+    this.resumeUsed = false,
+  });
+
+  final String id;
+  final int version;
+  final InterviewPreparationInput input;
+  final InterviewPreparationCandidate candidate;
+  final bool resumeUsed;
+}
+
 enum JobPreparationOperationStage {
-  target,
-  analysis,
+  interviewPreparation,
   confirmation,
-  profile,
-  snapshot,
-  goal,
   plan,
   session,
   voice,
@@ -234,8 +168,6 @@ final class JobPreparationException implements Exception {
   final bool retryable;
 
   @override
-  String toString() {
-    return 'JobPreparationException(kind: ${kind.name}, '
-        'stage: ${stage?.name})';
-  }
+  String toString() =>
+      'JobPreparationException(kind: ${kind.name}, stage: ${stage?.name})';
 }

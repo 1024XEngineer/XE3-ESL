@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"regexp"
 	"time"
@@ -9,292 +10,296 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	agentsummary "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/summary"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func (r *Repository) ClaimJob(
+func (r *Repository) Claim(
 	ctx context.Context,
 	configuration agentsummary.WorkerConfiguration,
-) (agentsummary.JobClaim, bool, error) {
+) (agentsummary.Claim, bool, error) {
 	if ctx == nil || !configuration.Valid() {
-		return agentsummary.JobClaim{}, false, conversation.ErrInvalidRequest
-	}
-	leaseToken, err := r.ids.NewID()
-	if err != nil {
-		return agentsummary.JobClaim{}, false, conversation.ErrRepository
+		return agentsummary.Claim{}, false, conversation.ErrInvalidRequest
 	}
 	tx, err := r.database.Begin(ctx)
 	if err != nil {
-		return agentsummary.JobClaim{}, false, conversation.ErrRepository
+		return agentsummary.Claim{}, false, conversation.ErrRepository
 	}
 	defer rollback(tx)
 
-	if _, err := tx.Exec(ctx, `
-UPDATE agent_thread_summary_jobs
-SET
-    status = 'failed',
-    lease_token = NULL,
-    lease_expires_at = NULL,
-    outcome_reason = 'attempts_exhausted',
-    updated_at = transaction_timestamp(),
-    completed_at = transaction_timestamp()
-WHERE status = 'running'
-  AND lease_expires_at <= clock_timestamp()
-  AND attempt_count >= $1`,
-		configuration.MaxAttempts,
-	); err != nil {
-		return agentsummary.JobClaim{}, false, mapSummaryPostgresError(err)
-	}
-
-	job, err := scanSummaryJob(tx.QueryRow(ctx, `
-WITH next_job AS (
-    SELECT jobs.source_run_id
-    FROM agent_thread_summary_jobs AS jobs
-    INNER JOIN agent_threads AS threads
-        ON threads.id = jobs.source_thread_id
-       AND threads.owner_user_id = jobs.owner_user_id
-    WHERE (
-        (
-                jobs.status = 'pending'
-                AND jobs.next_attempt_at <= transaction_timestamp()
-            )
-            OR (
-                jobs.status = 'running'
-                AND jobs.lease_expires_at <= clock_timestamp()
-                AND jobs.attempt_count < $1
-            )
-        )
-    AND NOT EXISTS (
-        SELECT 1
-        FROM agent_thread_summary_jobs AS active
-        WHERE active.owner_user_id = jobs.owner_user_id
-          AND active.source_thread_id = jobs.source_thread_id
-          AND active.source_run_id <> jobs.source_run_id
-          AND active.status = 'running'
-          AND active.lease_expires_at > clock_timestamp()
-    )
-    ORDER BY
-        CASE WHEN jobs.status = 'running' THEN 0 ELSE 1 END,
-        jobs.next_attempt_at,
-        jobs.source_completed_at,
-        jobs.source_run_id
-    FOR UPDATE OF jobs, threads SKIP LOCKED
-    LIMIT 1
-)
-UPDATE agent_thread_summary_jobs AS jobs
-SET
-    status = 'running',
-    attempt_count = jobs.attempt_count + 1,
-    lease_token = $2,
-    lease_expires_at =
-        transaction_timestamp() + make_interval(secs => $3),
-    trigger_policy_version = $4,
-    summary_policy_version = $5,
-    prompt_version = $6,
-    provider = $7,
-    model = $8,
-    target_covered_through_sequence = NULL,
-    outcome_reason = NULL,
-    updated_at = transaction_timestamp()
-FROM next_job
-WHERE jobs.source_run_id = next_job.source_run_id
-RETURNING `+summaryJobColumns("jobs"),
-		configuration.MaxAttempts,
-		leaseToken,
-		configuration.LeaseDuration.Seconds(),
-		configuration.TriggerPolicyVersion,
-		configuration.Summary.PolicyVersion,
-		configuration.Summary.PromptVersion,
-		configuration.Summary.Provider,
-		configuration.Summary.Model,
-	))
+	// Select an owner without taking a row lock, then lock that owner before
+	// touching any Thread row. Account deletion uses the same user -> domain-row
+	// order, so summary claims cannot race an active account into deletion or
+	// create the reverse half of a deadlock.
+	var ownerID string
+	err = tx.QueryRow(ctx, `
+SELECT thread.user_id::text
+FROM agent_threads AS thread
+INNER JOIN users AS owner ON owner.id = thread.user_id
+WHERE thread.deleted_at IS NULL AND owner.status = 'active'
+  AND thread.summary_target_sequence IS NOT NULL
+  AND thread.summary_target_sequence >
+      COALESCE(thread.summary_through_sequence, 0)
+  AND thread.summary_error IS NULL
+  AND thread.summary_attempt_count < $1
+  AND (
+      (thread.summary_lease_token IS NULL
+       AND thread.summary_available_at <= CURRENT_TIMESTAMP)
+      OR thread.summary_lease_expires_at <= CURRENT_TIMESTAMP
+  )
+ORDER BY thread.summary_available_at, thread.updated_at, thread.id
+LIMIT 1`, configuration.MaxAttempts).Scan(&ownerID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		if commitErr := tx.Commit(ctx); commitErr != nil {
-			return agentsummary.JobClaim{}, false, conversation.ErrRepository
+		if err := tx.Commit(ctx); err != nil {
+			return agentsummary.Claim{}, false, conversation.ErrRepository
 		}
-		return agentsummary.JobClaim{}, false, nil
+		return agentsummary.Claim{}, false, nil
 	}
 	if err != nil {
-		return agentsummary.JobClaim{}, false, mapSummaryPostgresError(err)
+		return agentsummary.Claim{}, false, mapSummaryPostgresError(err)
+	}
+	active, err := lockActiveSummaryOwner(ctx, tx, ownerID)
+	if err != nil {
+		return agentsummary.Claim{}, false, err
+	}
+	if !active {
+		if err := tx.Commit(ctx); err != nil {
+			return agentsummary.Claim{}, false, conversation.ErrRepository
+		}
+		return agentsummary.Claim{}, false, nil
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE agent_threads
+SET summary_lease_token = NULL,
+    summary_lease_expires_at = NULL,
+    summary_error = 'attempts_exhausted',
+    updated_at = CURRENT_TIMESTAMP
+WHERE user_id = $1
+  AND summary_lease_token IS NOT NULL
+  AND summary_lease_expires_at <= CURRENT_TIMESTAMP
+  AND summary_attempt_count >= $2`, ownerID, configuration.MaxAttempts); err != nil {
+		return agentsummary.Claim{}, false, mapSummaryPostgresError(err)
+	}
+
+	var claim agentsummary.Claim
+	err = tx.QueryRow(ctx, `
+WITH candidate AS (
+    SELECT thread.id
+    FROM agent_threads AS thread
+    WHERE thread.user_id = $3
+      AND thread.deleted_at IS NULL
+      AND thread.summary_target_sequence IS NOT NULL
+      AND thread.summary_target_sequence >
+          COALESCE(thread.summary_through_sequence, 0)
+      AND thread.summary_error IS NULL
+      AND thread.summary_attempt_count < $1
+      AND thread.summary_available_at <= CURRENT_TIMESTAMP
+      AND (
+          thread.summary_lease_token IS NULL
+          OR thread.summary_lease_expires_at <= CURRENT_TIMESTAMP
+      )
+    ORDER BY thread.summary_available_at, thread.updated_at, thread.id
+    FOR UPDATE OF thread SKIP LOCKED
+    LIMIT 1
+), claimed AS (
+    UPDATE agent_threads AS thread
+    SET summary_attempt_count = thread.summary_attempt_count + 1,
+        summary_lease_token = gen_random_uuid(),
+        summary_lease_expires_at =
+            CURRENT_TIMESTAMP + make_interval(secs => $2),
+        summary_error = NULL,
+        updated_at = CURRENT_TIMESTAMP
+    FROM candidate
+    WHERE thread.id = candidate.id
+    RETURNING thread.*
+)
+SELECT claimed.user_id::text, claimed.id::text,
+       claimed.summary_target_sequence, claimed.summary_attempt_count,
+       claimed.summary_lease_token::text, claimed.summary_lease_expires_at
+FROM claimed`,
+		configuration.MaxAttempts,
+		configuration.LeaseDuration.Seconds(),
+		ownerID,
+	).Scan(
+		&claim.OwnerID,
+		&claim.ThreadID,
+		&claim.TargetSequence,
+		&claim.AttemptCount,
+		&claim.LeaseToken,
+		&claim.LeaseExpiresAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if err := tx.Commit(ctx); err != nil {
+			return agentsummary.Claim{}, false, conversation.ErrRepository
+		}
+		return agentsummary.Claim{}, false, nil
+	}
+	if err != nil {
+		return agentsummary.Claim{}, false, mapSummaryPostgresError(err)
+	}
+	claim.LeaseExpiresAt = claim.LeaseExpiresAt.UTC()
+	if !claim.Valid() {
+		return agentsummary.Claim{}, false, conversation.ErrRepository
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return agentsummary.JobClaim{}, false, conversation.ErrRepository
-	}
-	claim := agentsummary.JobClaim{Job: job}
-	if !claim.Valid() {
-		return agentsummary.JobClaim{}, false, conversation.ErrRepository
+		return agentsummary.Claim{}, false, conversation.ErrRepository
 	}
 	return claim, true, nil
 }
 
-func (r *Repository) CompleteJob(
+func lockActiveSummaryOwner(
 	ctx context.Context,
-	claim agentsummary.JobClaim,
-	targetCoveredThrough int64,
-	checkpoint agentsummary.Checkpoint,
-) (agentsummary.Job, error) {
-	if ctx == nil ||
-		!claim.Valid() ||
-		targetCoveredThrough < 1 ||
-		!checkpoint.Valid() ||
-		checkpoint.OwnerID != claim.OwnerID ||
-		checkpoint.ThreadID != claim.ThreadID ||
-		checkpoint.CoveredThroughSequence != targetCoveredThrough {
-		return agentsummary.Job{}, conversation.ErrInvalidRequest
-	}
-	job, err := scanSummaryJob(r.database.QueryRow(ctx, `
-UPDATE agent_thread_summary_jobs
-SET
-    status = 'completed',
-    lease_token = NULL,
-    lease_expires_at = NULL,
-    target_covered_through_sequence = $4,
-    checkpoint_id = $5,
-    outcome_reason = NULL,
-    updated_at = transaction_timestamp(),
-    completed_at = transaction_timestamp()
-WHERE source_run_id = $1
-  AND owner_user_id = $2
-  AND status = 'running'
-  AND lease_token = $3
-  AND lease_expires_at > clock_timestamp()
-RETURNING `+summaryJobColumns("agent_thread_summary_jobs"),
-		claim.SourceRunID,
-		claim.OwnerID,
-		claim.LeaseToken,
-		targetCoveredThrough,
-		checkpoint.ID,
-	))
+	tx pgx.Tx,
+	ownerID string,
+) (bool, error) {
+	var status string
+	err := tx.QueryRow(ctx, `
+SELECT status
+FROM users
+WHERE id = $1
+FOR SHARE`, ownerID).Scan(&status)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return agentsummary.Job{}, conversation.ErrConflict
+		return false, nil
 	}
 	if err != nil {
-		return agentsummary.Job{}, mapSummaryPostgresError(err)
+		return false, mapSummaryPostgresError(err)
 	}
-	return job, nil
+	return status == "active", nil
 }
 
-func (r *Repository) FinishJob(
+func (r *Repository) Complete(
 	ctx context.Context,
-	claim agentsummary.JobClaim,
-	status agentsummary.JobStatus,
-	targetCoveredThrough int64,
-	reason string,
-) (agentsummary.Job, error) {
-	validTarget := status == agentsummary.JobSkipped &&
-		targetCoveredThrough == 0 ||
-		status == agentsummary.JobSuperseded &&
-			targetCoveredThrough >= 1
-	if ctx == nil ||
-		!claim.Valid() ||
-		!validTarget ||
-		!summaryJobReasonPattern.MatchString(reason) {
-		return agentsummary.Job{}, conversation.ErrInvalidRequest
+	claim agentsummary.Claim,
+	coveredThrough int64,
+	content agentsummary.Content,
+) error {
+	if ctx == nil || !claim.Valid() || coveredThrough < 1 ||
+		coveredThrough > claim.TargetSequence || !content.Valid() {
+		return conversation.ErrInvalidRequest
 	}
-	var target any
-	if targetCoveredThrough > 0 {
-		target = targetCoveredThrough
+	encoded, err := json.Marshal(content)
+	if err != nil {
+		return conversation.ErrInvalidRequest
 	}
-	job, err := scanSummaryJob(r.database.QueryRow(ctx, `
-UPDATE agent_thread_summary_jobs
-SET
-    status = $4,
-    lease_token = NULL,
-    lease_expires_at = NULL,
-    target_covered_through_sequence = $5,
-    checkpoint_id = NULL,
-    outcome_reason = $6,
-    updated_at = transaction_timestamp(),
-    completed_at = transaction_timestamp()
-WHERE source_run_id = $1
-  AND owner_user_id = $2
-  AND status = 'running'
-  AND lease_token = $3
-  AND lease_expires_at > clock_timestamp()
-RETURNING `+summaryJobColumns("agent_thread_summary_jobs"),
-		claim.SourceRunID,
+	tag, err := r.database.Exec(ctx, `
+UPDATE agent_threads
+SET summary_content = $4::jsonb,
+    summary_through_sequence = $5,
+    summary_target_sequence = CASE
+        WHEN summary_target_sequence > $5 THEN summary_target_sequence
+        ELSE NULL
+    END,
+    summary_attempt_count = 0,
+    summary_lease_token = NULL,
+    summary_lease_expires_at = NULL,
+    summary_available_at = CURRENT_TIMESTAMP,
+    summary_error = NULL,
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = $1 AND user_id = $2
+  AND summary_lease_token = $3
+  AND summary_lease_expires_at > CURRENT_TIMESTAMP
+  AND summary_target_sequence >= $5
+  AND COALESCE(summary_through_sequence, 0) < $5`,
+		claim.ThreadID,
 		claim.OwnerID,
 		claim.LeaseToken,
-		status,
-		target,
-		reason,
-	))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return agentsummary.Job{}, conversation.ErrConflict
-	}
+		encoded,
+		coveredThrough,
+	)
 	if err != nil {
-		return agentsummary.Job{}, mapSummaryPostgresError(err)
+		return mapSummaryPostgresError(err)
 	}
-	return job, nil
+	if tag.RowsAffected() != 1 {
+		return conversation.ErrConflict
+	}
+	return nil
 }
 
-func (r *Repository) FailJob(
+func (r *Repository) Skip(ctx context.Context, claim agentsummary.Claim) error {
+	if ctx == nil || !claim.Valid() {
+		return conversation.ErrInvalidRequest
+	}
+	tag, err := r.database.Exec(ctx, `
+UPDATE agent_threads
+SET summary_target_sequence = CASE
+        WHEN summary_target_sequence > $4 THEN summary_target_sequence
+        ELSE NULL
+    END,
+    summary_attempt_count = 0,
+    summary_lease_token = NULL,
+    summary_lease_expires_at = NULL,
+    summary_available_at = CURRENT_TIMESTAMP,
+    summary_error = NULL,
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = $1 AND user_id = $2
+  AND summary_lease_token = $3
+  AND summary_lease_expires_at > CURRENT_TIMESTAMP`,
+		claim.ThreadID,
+		claim.OwnerID,
+		claim.LeaseToken,
+		claim.TargetSequence,
+	)
+	if err != nil {
+		return mapSummaryPostgresError(err)
+	}
+	if tag.RowsAffected() != 1 {
+		return conversation.ErrConflict
+	}
+	return nil
+}
+
+func (r *Repository) Fail(
 	ctx context.Context,
-	claim agentsummary.JobClaim,
-	targetCoveredThrough int64,
+	claim agentsummary.Claim,
 	failureKind string,
 	retryable bool,
 	configuration agentsummary.WorkerConfiguration,
-) (agentsummary.Job, error) {
-	if ctx == nil ||
-		!claim.Valid() ||
-		targetCoveredThrough < 0 ||
-		!summaryJobReasonPattern.MatchString(failureKind) ||
-		!configuration.Valid() {
-		return agentsummary.Job{}, conversation.ErrInvalidRequest
+) (bool, error) {
+	if ctx == nil || !claim.Valid() ||
+		!failureKindPattern.MatchString(failureKind) || !configuration.Valid() {
+		return false, conversation.ErrInvalidRequest
 	}
-	status := agentsummary.JobFailed
-	if retryable && claim.AttemptCount < configuration.MaxAttempts {
-		status = agentsummary.JobPending
-	}
-	var target any
-	if targetCoveredThrough > 0 {
-		target = targetCoveredThrough
-	}
-	backoff := summaryJobBackoff(claim.AttemptCount)
-	job, err := scanSummaryJob(r.database.QueryRow(ctx, `
-UPDATE agent_thread_summary_jobs
-SET
-    status = $4,
-    lease_token = NULL,
-    lease_expires_at = NULL,
-    next_attempt_at = CASE
-        WHEN $4 = 'pending'
-        THEN transaction_timestamp() + make_interval(secs => $5)
-        ELSE next_attempt_at
+	retryCurrent := retryable && claim.AttemptCount < configuration.MaxAttempts
+	backoff := summaryBackoff(claim.AttemptCount)
+	var retry bool
+	err := r.database.QueryRow(ctx, `
+UPDATE agent_threads
+SET summary_attempt_count = CASE
+        WHEN summary_target_sequence > $4 THEN 0
+        ELSE summary_attempt_count
     END,
-    target_covered_through_sequence = $6,
-    checkpoint_id = NULL,
-    outcome_reason = $7,
-    updated_at = transaction_timestamp(),
-    completed_at = CASE
-        WHEN $4 = 'pending' THEN NULL
-        ELSE transaction_timestamp()
-    END
-WHERE source_run_id = $1
-  AND owner_user_id = $2
-  AND status = 'running'
-  AND lease_token = $3
-  AND lease_expires_at > clock_timestamp()
-RETURNING `+summaryJobColumns("agent_thread_summary_jobs"),
-		claim.SourceRunID,
+    summary_lease_token = NULL,
+    summary_lease_expires_at = NULL,
+    summary_available_at = CASE
+        WHEN summary_target_sequence > $4 THEN CURRENT_TIMESTAMP
+        WHEN $5 THEN CURRENT_TIMESTAMP + make_interval(secs => $6)
+        ELSE summary_available_at
+    END,
+    summary_error = CASE
+        WHEN summary_target_sequence > $4 OR $5 THEN NULL
+        ELSE $7
+    END,
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = $1 AND user_id = $2
+  AND summary_lease_token = $3
+  AND summary_lease_expires_at > CURRENT_TIMESTAMP
+RETURNING summary_error IS NULL AND summary_target_sequence IS NOT NULL`,
+		claim.ThreadID,
 		claim.OwnerID,
 		claim.LeaseToken,
-		status,
+		claim.TargetSequence,
+		retryCurrent,
 		backoff.Seconds(),
-		target,
 		failureKind,
-	))
+	).Scan(&retry)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return agentsummary.Job{}, conversation.ErrConflict
+		return false, conversation.ErrConflict
 	}
 	if err != nil {
-		return agentsummary.Job{}, mapSummaryPostgresError(err)
+		return false, mapSummaryPostgresError(err)
 	}
-	return job, nil
+	return retry, nil
 }
 
-func summaryJobBackoff(attempt int) time.Duration {
+func summaryBackoff(attempt int) time.Duration {
 	if attempt < 1 {
 		return time.Second
 	}
@@ -305,85 +310,4 @@ func summaryJobBackoff(attempt int) time.Duration {
 	return backoff
 }
 
-func summaryJobColumns(alias string) string {
-	return `
-    ` + alias + `.source_run_id::text,
-    ` + alias + `.owner_user_id::text,
-    ` + alias + `.source_thread_id::text,
-    ` + alias + `.observed_through_sequence,
-    ` + alias + `.source_completed_at,
-    ` + alias + `.status,
-    ` + alias + `.attempt_count,
-    COALESCE(` + alias + `.lease_token::text, ''),
-    ` + alias + `.lease_expires_at,
-    ` + alias + `.next_attempt_at,
-    COALESCE(` + alias + `.trigger_policy_version, ''),
-    COALESCE(` + alias + `.summary_policy_version, ''),
-    COALESCE(` + alias + `.prompt_version, ''),
-    COALESCE(` + alias + `.provider, ''),
-    COALESCE(` + alias + `.model, ''),
-    COALESCE(` + alias + `.target_covered_through_sequence, 0),
-    COALESCE(` + alias + `.checkpoint_id::text, ''),
-    COALESCE(` + alias + `.outcome_reason, ''),
-    ` + alias + `.created_at,
-    ` + alias + `.updated_at,
-    ` + alias + `.completed_at`
-}
-
-func scanSummaryJob(row rowScanner) (agentsummary.Job, error) {
-	var job agentsummary.Job
-	var status string
-	var leaseExpiresAt pgtype.Timestamptz
-	var completedAt pgtype.Timestamptz
-	if err := row.Scan(
-		&job.SourceRunID,
-		&job.OwnerID,
-		&job.ThreadID,
-		&job.ObservedThroughSequence,
-		&job.SourceCompletedAt,
-		&status,
-		&job.AttemptCount,
-		&job.LeaseToken,
-		&leaseExpiresAt,
-		&job.NextAttemptAt,
-		&job.TriggerPolicyVersion,
-		&job.SummaryPolicyVersion,
-		&job.PromptVersion,
-		&job.Provider,
-		&job.Model,
-		&job.TargetCoveredThrough,
-		&job.CheckpointID,
-		&job.OutcomeReason,
-		&job.CreatedAt,
-		&job.UpdatedAt,
-		&completedAt,
-	); err != nil {
-		return agentsummary.Job{}, err
-	}
-	job.Status = agentsummary.JobStatus(status)
-	job.SourceCompletedAt = job.SourceCompletedAt.UTC()
-	job.NextAttemptAt = job.NextAttemptAt.UTC()
-	job.CreatedAt = job.CreatedAt.UTC()
-	job.UpdatedAt = job.UpdatedAt.UTC()
-	if leaseExpiresAt.Valid {
-		job.LeaseExpiresAt = leaseExpiresAt.Time.UTC()
-	}
-	if completedAt.Valid {
-		job.CompletedAt = completedAt.Time.UTC()
-	}
-	if !job.Status.Valid() ||
-		!conversation.ValidUUID(job.SourceRunID) ||
-		!conversation.ValidUUID(job.OwnerID) ||
-		!conversation.ValidUUID(job.ThreadID) ||
-		job.ObservedThroughSequence < 1 ||
-		job.SourceCompletedAt.IsZero() ||
-		job.AttemptCount < 0 {
-		return agentsummary.Job{}, conversation.ErrRepository
-	}
-	return job, nil
-}
-
-var (
-	summaryJobReasonPattern                            = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
-	_                       agentsummary.JobRepository = (*Repository)(nil)
-)
+var failureKindPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)

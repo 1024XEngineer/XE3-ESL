@@ -2,7 +2,6 @@ package voice
 
 import (
 	"context"
-	"reflect"
 	"strings"
 	"time"
 
@@ -29,11 +28,16 @@ func ValidProviderID(value string) bool {
 }
 
 func ValidModelID(value string) bool {
-	return run.ValidModelID(value)
+	return run.ValidOpaqueID(value)
 }
 
 func validConfiguration(configuration run.Configuration) bool {
-	return run.ValidConfiguration(configuration)
+	return ValidProviderID(configuration.Provider) &&
+		ValidModelID(configuration.Model) &&
+		configuration.MaxOutputTokens > 0 &&
+		configuration.MaxOutputTokens <= run.MaxBudget &&
+		configuration.MaxInputCharacters >= 5000 &&
+		configuration.MaxInputCharacters <= run.MaxBudget
 }
 
 func validIdempotencyKey(value string) bool {
@@ -44,7 +48,7 @@ func validIdempotencyKey(value string) bool {
 }
 
 func ValidTranscription(result TranscriptionResult) bool {
-	return ValidModelID(result.ID) &&
+	return run.ValidOpaqueID(result.ID) &&
 		ValidProviderID(result.Provider) &&
 		ValidModelID(result.Model) &&
 		ValidMessageContent(result.Transcript) &&
@@ -58,18 +62,4 @@ func runPersistenceContext(ctx context.Context) (context.Context, context.Cancel
 		context.WithoutCancel(ctx),
 		runPersistenceTimeout,
 	)
-}
-
-func nilDependency(value any) bool {
-	if value == nil {
-		return true
-	}
-	reflected := reflect.ValueOf(value)
-	switch reflected.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map,
-		reflect.Pointer, reflect.Slice:
-		return reflected.IsNil()
-	default:
-		return false
-	}
 }

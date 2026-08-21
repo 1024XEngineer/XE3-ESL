@@ -49,17 +49,22 @@ final class UserProfile {
     required this.userId,
     required this.displayName,
     required this.profileVersion,
+    this.avatar,
     required this.createdAt,
     required this.updatedAt,
   });
 
   factory UserProfile.fromJson(Map<String, Object?> json) {
-    if (!_hasExactKeys(json, const {
+    const requiredKeys = {
       'user_id',
       'display_name',
       'profile_version',
       'created_at',
       'updated_at',
+    };
+    if (!_hasRequiredAndAllowedKeys(json, requiredKeys, const {
+      ...requiredKeys,
+      'avatar',
     })) {
       throw const FormatException('Invalid user profile response.');
     }
@@ -68,6 +73,7 @@ final class UserProfile {
     final profileVersion = json['profile_version'];
     final createdAt = json['created_at'];
     final updatedAt = json['updated_at'];
+    final avatarJson = json['avatar'];
     if (userId.length > 128 ||
         !_userIdPattern.hasMatch(userId) ||
         displayName.trim() != displayName ||
@@ -89,6 +95,11 @@ final class UserProfile {
       userId: userId,
       displayName: displayName,
       profileVersion: profileVersion,
+      avatar: avatarJson == null
+          ? null
+          : avatarJson is Map<String, Object?>
+          ? UserProfileAvatar.fromJson(avatarJson)
+          : throw const FormatException('Invalid user profile response.'),
       createdAt: parsedCreatedAt,
       updatedAt: parsedUpdatedAt,
     );
@@ -97,7 +108,47 @@ final class UserProfile {
   final String userId;
   final String displayName;
   final int profileVersion;
+  final UserProfileAvatar? avatar;
   final DateTime createdAt;
+  final DateTime updatedAt;
+}
+
+final class UserProfileAvatar {
+  const UserProfileAvatar({
+    required this.width,
+    required this.height,
+    required this.updatedAt,
+  });
+
+  factory UserProfileAvatar.fromJson(Map<String, Object?> json) {
+    if (!_hasExactKeys(json, const {'width', 'height', 'updated_at'})) {
+      throw const FormatException('Invalid user profile avatar response.');
+    }
+    final width = json['width'];
+    final height = json['height'];
+    final updatedAt = json['updated_at'];
+    if (width is! int ||
+        width < 1 ||
+        width > 16384 ||
+        height is! int ||
+        height < 1 ||
+        height > 16384 ||
+        updatedAt is! String) {
+      throw const FormatException('Invalid user profile avatar response.');
+    }
+    final parsedUpdatedAt = _tryParseStrictRfc3339(updatedAt);
+    if (parsedUpdatedAt == null) {
+      throw const FormatException('Invalid user profile avatar response.');
+    }
+    return UserProfileAvatar(
+      width: width,
+      height: height,
+      updatedAt: parsedUpdatedAt,
+    );
+  }
+
+  final int width;
+  final int height;
   final DateTime updatedAt;
 }
 
@@ -149,6 +200,14 @@ final class LoginResult {
 
 bool _hasExactKeys(Map<String, Object?> json, Set<String> expected) {
   return json.length == expected.length && expected.every(json.containsKey);
+}
+
+bool _hasRequiredAndAllowedKeys(
+  Map<String, Object?> json,
+  Set<String> required,
+  Set<String> allowed,
+) {
+  return required.every(json.containsKey) && json.keys.every(allowed.contains);
 }
 
 DateTime? _tryParseStrictRfc3339(String value) {

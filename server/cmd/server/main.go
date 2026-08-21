@@ -10,25 +10,31 @@ import (
 	"syscall"
 	"time"
 
+	ieltsdata "github.com/1024XEngineer/XE3-ESL/server/data/ielts"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/avatar"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/bootstrap"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/scoring"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/app"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 	speechfeedback "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/speechfeedback"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/ielts"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
-	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
+	practiceavatar "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/avatar"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review"
+	reviewpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene/ielts"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/database"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/logging"
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/providers/spatius"
 )
 
-const shutdownTimeout = 5 * time.Second
+const (
+	shutdownTimeout                = 5 * time.Second
+	voiceAudioUploadLease          = 2 * time.Minute
+	voiceASRFinalizationTimeMargin = 15 * time.Second
+)
 
 func main() {
 	os.Exit(run())
@@ -47,37 +53,27 @@ func run() int {
 		logger.Error("text generation configuration failed")
 		return 1
 	}
-	modelProviders, err := bootstrap.NewAgentModelProviders(textConfig)
+	modelProviders, err := app.NewAgentModelProviders(textConfig)
 	if err != nil {
 		logger.Error("text generation startup failed")
 		return 1
 	}
 	preparationJobTargets, err :=
-		bootstrap.NewPreparationJobTargetGenerator(textConfig)
+		app.NewPreparationJobTargetGenerator(textConfig)
 	if err != nil {
 		logger.Error("Preparation job target generation startup failed")
 		return 1
 	}
 	evaluationScoringGenerator, err :=
-		bootstrap.NewEvaluationScoringGenerator(textConfig)
+		app.NewEvaluationScoringGenerator(textConfig)
 	if err != nil {
 		logger.Error("evaluation scoring startup failed")
 		return 1
 	}
 	evaluationSpeechFeedbackGenerator, err :=
-		bootstrap.NewEvaluationSpeechFeedbackGenerator(textConfig)
+		app.NewEvaluationSpeechFeedbackGenerator(textConfig)
 	if err != nil {
 		logger.Error("evaluation speech feedback startup failed")
-		return 1
-	}
-	embeddingConfig, err := config.LoadEmbedding()
-	if err != nil {
-		logger.Error("embedding configuration failed")
-		return 1
-	}
-	embedder, err := bootstrap.NewMemoryEmbedder(embeddingConfig)
-	if err != nil {
-		logger.Error("embedding startup failed")
 		return 1
 	}
 	asrConfig, err := config.LoadSpeechRecognition()
@@ -90,39 +86,38 @@ func run() int {
 		logger.Error("speech synthesis configuration failed")
 		return 1
 	}
-	recognizer, err := bootstrap.NewAgentSpeechRecognizer(asrConfig)
+	recognizer, err := app.NewAgentSpeechRecognizer(asrConfig)
 	if err != nil {
 		logger.Error("speech recognition startup failed")
 		return 1
 	}
-	synthesizer, err := bootstrap.NewAgentSpeechSynthesizer(ttsConfig)
+	synthesizer, err := app.NewAgentSpeechSynthesizer(ttsConfig)
 	if err != nil {
 		logger.Error("speech synthesis startup failed")
 		return 1
 	}
-	practiceRecognizer, err := bootstrap.NewPracticeSpeechRecognizer(asrConfig)
+	practiceRecognizer, err := app.NewPracticeSpeechRecognizer(asrConfig)
 	if err != nil {
 		logger.Error("Practice speech recognition startup failed")
 		return 1
 	}
-	practiceSynthesizer, err := bootstrap.NewPracticeSpeechSynthesizer(ttsConfig)
+	practiceRecordedRecognizer, err :=
+		app.NewPracticeRecordedSpeechRecognizer(asrConfig)
+	if err != nil {
+		logger.Error("recorded Practice speech recognition startup failed")
+		return 1
+	}
+	practiceSynthesizer, err := app.NewPracticeSpeechSynthesizer(ttsConfig)
 	if err != nil {
 		logger.Error("Practice speech synthesis startup failed")
 		return 1
 	}
-	practiceQuestions, err := bootstrap.NewPracticeQuestionGenerator(textConfig)
+	practiceQuestions, err := app.NewPracticeQuestionGenerator(textConfig)
 	if err != nil {
 		logger.Error("Practice question generation startup failed")
 		return 1
 	}
-	practiceQuestionTranslator, err := bootstrap.NewPracticeQuestionTranslator(
-		textConfig,
-	)
-	if err != nil {
-		logger.Error("Practice question translation startup failed")
-		return 1
-	}
-	practiceAnswerTips, err := bootstrap.NewPracticeAnswerTipGenerator(textConfig)
+	practiceAnswerTips, err := app.NewPracticeAnswerTipGenerator(textConfig)
 	if err != nil {
 		logger.Error("Practice answer Tip generation startup failed")
 		return 1
@@ -130,19 +125,6 @@ func run() int {
 	temporaryAudioConfig, err := config.LoadTemporaryAudio()
 	if err != nil {
 		logger.Error("temporary audio configuration failed")
-		return 1
-	}
-	reviewHistoryConfig, err := config.LoadReviewHistory()
-	if err != nil {
-		logger.Error("Review history configuration failed")
-		return 1
-	}
-	spatiusConfig, err := config.LoadSpatius()
-	if err != nil {
-		logger.Error(
-			"avatar provider configuration failed",
-			slog.String("error_kind", "configuration"),
-		)
 		return 1
 	}
 	audioVault, err := platformmedia.NewTemporaryAudioVault(
@@ -171,6 +153,11 @@ func run() int {
 		)
 		return 1
 	}
+	spatiusConfig, err := config.LoadSpatius()
+	if err != nil {
+		logger.Error("Practice avatar configuration invalid")
+		return 1
+	}
 	resumeOCRConfig, err := config.LoadResumeOCR()
 	if err != nil {
 		logger.Error(
@@ -180,7 +167,7 @@ func run() int {
 		return 1
 	}
 	agentVoiceObjectReadHosts, err :=
-		bootstrap.AgentVoiceObjectReadAllowedHosts(storageConfig)
+		app.AgentVoiceObjectReadAllowedHosts(storageConfig)
 	if err != nil {
 		logger.Error(
 			"agent voice object storage configuration invalid",
@@ -202,84 +189,76 @@ func run() int {
 		return 1
 	}
 	defer databasePool.Close()
-	evaluationPolicies := scoring.NewEvaluationPolicyRegistry()
-	sceneCatalog, err := scene.NewPostgresCatalog(
-		databasePool.Native(),
-		evaluationPolicies,
-	)
+	evaluationPolicies := evaluation.NewPolicyRegistry()
+	sceneCatalog, err := scene.NewBuiltinCatalog(evaluationPolicies)
 	if err != nil {
 		logger.Error("Scene catalog startup failed", slog.Any("error", err))
 		return 1
 	}
-	ieltsQuestionBank, err := ielts.NewBank()
+	ieltsCatalogFile, err := ieltsdata.Files.Open(ieltsdata.CurrentFile)
+	if err != nil {
+		logger.Error("IELTS question bank asset unavailable", slog.Any("error", err))
+		return 1
+	}
+	ieltsQuestionBank, err := ielts.LoadCatalog(ieltsCatalogFile)
+	_ = ieltsCatalogFile.Close()
 	if err != nil {
 		logger.Error("IELTS question bank startup failed", slog.Any("error", err))
 		return 1
 	}
+	ieltsSpeechService, err := ielts.NewSpeechService(
+		ieltsQuestionBank,
+		ieltsSpeechSynthesizer{practice: practiceSynthesizer},
+	)
+	if err != nil {
+		logger.Error("IELTS speech startup failed")
+		return 1
+	}
+	ieltsSpeechHTTP, err := ielts.NewSpeechHTTPHandler(ieltsSpeechService)
+	if err != nil {
+		logger.Error("IELTS speech HTTP startup failed")
+		return 1
+	}
+	ieltsAnswerGenerator, err := app.NewIELTSAnswerGenerator(textConfig)
+	if err != nil {
+		logger.Error("IELTS answer generator startup failed", slog.String("error_kind", "dependency"))
+		return 1
+	}
+	ieltsAnswerService, err := ielts.NewAnswerGenerationService(ieltsQuestionBank, ieltsAnswerGenerator)
+	if err != nil {
+		logger.Error("IELTS answer service startup failed", slog.String("error_kind", "dependency"))
+		return 1
+	}
+	ieltsAnswerHTTP, err := ielts.NewAnswerGenerationHTTPHandler(ieltsAnswerService)
+	if err != nil {
+		logger.Error("IELTS answer HTTP startup failed", slog.String("error_kind", "dependency"))
+		return 1
+	}
 
-	resumeComposition, err := buildResumeComposition(
+	interviewResumeConfig, err := buildInterviewResumeConfiguration(
 		ctx,
-		databasePool.Native(),
 		storageConfig,
 		textConfig,
 		resumeOCRConfig,
 	)
 	if err != nil {
 		logger.Error(
-			"Resume composition failed",
+			"Interview Resume composition failed",
 			slog.String("error_kind", "dependency"),
 		)
 		return 1
 	}
 
-	evaluationConfiguration, err := scoring.NewConfiguration(
-		textConfig.Provider,
-		textConfig.Model,
-		textConfig.MaxOutputTokens,
-	)
-	if err != nil {
-		logger.Error(
-			"evaluation configuration failed",
-			slog.String("error_kind", "configuration"),
-		)
-		return 1
-	}
-	evaluationComposition, err := bootstrap.NewEvaluationComposition(
-		databasePool.Native(),
-		evaluationScoringGenerator,
-		evaluationPolicies,
-		evaluationConfiguration,
-	)
-	if err != nil {
-		logger.Error(
-			"evaluation composition failed",
-			slog.String("error_kind", "dependency"),
-		)
-		return 1
-	}
-	memoryIndexComposition, err := bootstrap.NewMemoryIndexComposition(
-		databasePool.Native(),
-		embedder,
-		embeddingConfig,
-	)
-	if err != nil {
-		logger.Error(
-			"memory index composition failed",
-			slog.String("error_kind", "dependency"),
-		)
-		return 1
-	}
-	memoryExtractionWakeup := newWorkerWakeup()
-	memoryIndexWakeup := newWorkerWakeup()
 	threadSummaryWakeup := newWorkerWakeup()
 
 	var recordingStore objectstore.Store
 	var imageStore objectstore.Store
-	var agentImageConfig *bootstrap.AgentImageConfiguration
+	var agentImageConfig *app.AgentImageConfiguration
 	if storageConfig.Enabled {
-		recordingStore, err = productionAudioCleanupFactories.newStore(
+		recordingStore, err = newProtectedObjectStore(
 			ctx,
 			storageConfig,
+			storageConfig.AudioPrefix,
 		)
 		if err != nil {
 			logger.Error(
@@ -296,15 +275,24 @@ func run() int {
 			)
 			return 1
 		}
-		agentImageConfig = &bootstrap.AgentImageConfiguration{
+		agentImageConfig = &app.AgentImageConfiguration{
 			ObjectStore: imageStore,
 			StagedTTL:   24 * time.Hour,
 			UploadLease: 2 * time.Minute,
 		}
 	}
-	var speechFeedbackAcoustics speechfeedback.SpeechFeedbackAcousticProvider
-	speechFeedbackLease := 30 * time.Second
-	if recordingStore != nil && config.ISEConfigured() {
+	var acousticEvaluator evaluation.AcousticEvaluator
+	var acousticProviderTimeout time.Duration
+	iseConfigured := config.ISEConfigured()
+	if iseConfigured && recordingStore == nil {
+		logger.Error(
+			"Evaluation acoustics configured without object storage",
+			slog.String("error_kind", "configuration"),
+		)
+		return 1
+	}
+	acousticsEnabled := recordingStore != nil && iseConfigured
+	if acousticsEnabled {
 		iseConfig, configurationErr := config.LoadISE()
 		if configurationErr != nil {
 			logger.Error(
@@ -313,47 +301,85 @@ func run() int {
 			)
 			return 1
 		}
-		speechFeedbackLease = iseConfig.Timeout + 30*time.Second
-		speechFeedbackAcoustics, err =
-			bootstrap.NewSpeechFeedbackAcousticProvider(
+		acousticProviderTimeout = iseConfig.Timeout
+		acousticEvaluator, err =
+			app.NewEvaluationAcousticEvaluator(
 				databasePool.Native(),
 				recordingStore,
 				iseConfig,
 			)
 		if err != nil {
 			logger.Error(
-				"SpeechFeedback acoustic provider failed",
+				"Evaluation acoustic provider failed",
 				slog.String("error_kind", "dependency"),
 			)
 			return 1
 		}
-	} else if recordingStore != nil {
-		logger.Warn(
-			"iFlytek ISE is not configured; acoustic scoring is unavailable",
-			slog.String("fallback", "transcript_only"),
+	} else {
+		logger.Info(
+			"Evaluation acoustic assessment disabled",
+			slog.String("reason", "ISE_NOT_CONFIGURED"),
 		)
 	}
-	speechFeedbackComposition, err :=
-		bootstrap.NewSpeechFeedbackComposition(
-			databasePool.Native(),
-			evaluationSpeechFeedbackGenerator,
-			bootstrap.SpeechFeedbackConfiguration{
-				Provider:      textConfig.Provider,
-				Model:         textConfig.SpeechFeedbackModel,
-				LeaseDuration: speechFeedbackLease,
-				Acoustics:     speechFeedbackAcoustics,
+	singleRoundDeadline := textConfig.Timeout + 10*time.Second
+	ieltsDeadline := max(
+		2*textConfig.Timeout+10*time.Second,
+		evaluation.MinimumIELTSTwoRoundDeadline,
+	)
+	sessionLease := max(singleRoundDeadline, ieltsDeadline) + 30*time.Second
+	speechDeadline := textConfig.Timeout + 30*time.Second
+	if acousticsEnabled {
+		speechDeadline += speechfeedback.AudioReadTimeout + acousticProviderTimeout
+	}
+	speechLease := speechDeadline + 30*time.Second
+	evaluationComposition, err := app.NewEvaluationComposition(
+		databasePool.Native(),
+		evaluationScoringGenerator,
+		evaluationSpeechFeedbackGenerator,
+		acousticEvaluator,
+		app.EvaluationConfiguration{
+			Provider:     textConfig.Provider,
+			SessionModel: textConfig.EvaluationModel,
+			SpeechModel:  textConfig.SpeechFeedbackModel,
+			Worker: evaluation.WorkerConfiguration{
+				SessionLane: evaluation.ClaimLane{
+					Kinds:         []evaluation.Kind{evaluation.KindSessionReport},
+					LeaseDuration: sessionLease,
+					MaxAttempts:   3,
+				},
+				SpeechLane: evaluation.ClaimLane{
+					Kinds: []evaluation.Kind{
+						evaluation.KindPracticeTurnFeedback,
+						evaluation.KindAgentMessageFeedback,
+					},
+					LeaseDuration: speechLease,
+					MaxAttempts:   3,
+				},
+				AcousticsEnabled:  acousticsEnabled,
+				InterviewDeadline: singleRoundDeadline,
+				IELTSDeadline:     ieltsDeadline,
+				GeneralDeadline:   singleRoundDeadline,
+				SpeechDeadline:    speechDeadline,
+				RetryDelay:        time.Second,
+				DependencyDelay:   5 * time.Second,
+				FinalizeTimeout:   5 * time.Second,
 			},
-		)
+		},
+	)
 	if err != nil {
 		logger.Error(
-			"speech feedback composition failed",
+			"Evaluation composition failed",
 			slog.String("error_kind", "dependency"),
 		)
 		return 1
 	}
+	agentMessageFeedback := evaluationComposition.AgentMessageScheduler()
+	if !storageConfig.Enabled {
+		agentMessageFeedback = nil
+	}
 
 	applicationComposition, err :=
-		bootstrap.NewIdentityAgentAndPracticeCompositionWithWorkerWakeupsAndImages(
+		app.NewIdentityAgentAndPracticeCompositionWithWorkerWakeupsAndImages(
 			ctx,
 			databasePool.Native(),
 			cfg.TrustedProxyCIDRs,
@@ -365,41 +391,98 @@ func run() int {
 				MaxOutputTokens:    textConfig.MaxOutputTokens,
 				MaxInputCharacters: textConfig.MaxContextChars,
 			},
-			memoryIndexComposition.Searcher(),
 			sceneCatalog,
 			ieltsQuestionBank,
 			preparationJobTargets,
-			bootstrap.AgentWorkerWakeups{
-				MemoryExtraction: memoryExtractionWakeup,
-				ThreadSummary:    threadSummaryWakeup,
+			evaluationComposition.PracticeSchedulers(),
+			app.AgentWorkerWakeups{
+				ThreadSummary: threadSummaryWakeup,
 			},
 			agentImageConfig,
-			bootstrap.VoiceConfiguration{
-				Recognizer:             recognizer,
-				Synthesizer:            synthesizer,
-				PracticeRecognizer:     practiceRecognizer,
-				PracticeSynthesizer:    practiceSynthesizer,
-				QuestionGenerator:      practiceQuestions,
-				QuestionTranslator:     practiceQuestionTranslator,
-				AnswerTipGenerator:     practiceAnswerTips,
-				TemporaryAudio:         audioVault,
-				ObjectStore:            recordingStore,
-				AgentVoiceInputEnabled: storageConfig.Enabled,
-				ScratchDirectory:       ttsConfig.TempDirectory,
-				ObjectReadAllowedHosts: agentVoiceObjectReadHosts,
-				AudioStagedTTL:         24 * time.Hour,
-				AudioUploadLease:       2 * time.Minute,
-				ASRLease:               asrConfig.Timeout + 15*time.Second,
-				AudioReadTimeout:       temporaryAudioConfig.ReadTimeout,
-				ReviewHistoryCursorKey: []byte(
-					reviewHistoryConfig.CursorSigningKey.Reveal(),
-				),
-				SpeechFeedbackCoordinator: speechFeedbackComposition.
-					Coordinator(),
+			interviewResumeConfig,
+			app.RuntimeAudioConfiguration{
+				AgentVoice: app.AgentVoiceConfiguration{
+					Recognizer:             recognizer,
+					Synthesizer:            synthesizer,
+					AssistantSpeech:        synthesizer,
+					MessageFeedback:        agentMessageFeedback,
+					InputEnabled:           storageConfig.Enabled,
+					ScratchDirectory:       ttsConfig.TempDirectory,
+					ObjectReadAllowedHosts: agentVoiceObjectReadHosts,
+					ReadTimeout:            temporaryAudioConfig.ReadTimeout,
+					StagedTTL:              24 * time.Hour,
+					ASRLease:               voiceASRLease(asrConfig),
+				},
+				PracticeInteraction: app.PracticeInteractionConfiguration{
+					Recognizer:          practiceRecognizer,
+					RecordedRecognizer:  practiceRecordedRecognizer,
+					Synthesizer:         practiceSynthesizer,
+					QuestionGenerator:   practiceQuestions,
+					QuestionTranslator:  modelProviders.Translation,
+					AnswerTipGenerator:  practiceAnswerTips,
+					TemporaryAudio:      audioVault,
+					AudioStagedTTL:      24 * time.Hour,
+					ASRLease:            voiceASRLease(asrConfig),
+					RealtimeReadTimeout: temporaryAudioConfig.ReadTimeout,
+					RecordedReadTimeout: temporaryAudioConfig.RecordedReadTimeout,
+				},
+				Media: app.AudioMediaConfiguration{
+					ObjectStore: recordingStore,
+					UploadLease: voiceAudioUploadLease,
+				},
 			},
 		)
 	if err != nil {
 		logger.Error("application startup failed", slog.Any("error", err))
+		return 1
+	}
+	var avatarProvider practiceavatar.TokenProvider
+	if spatiusConfig.Enabled {
+		avatarProvider, err = spatius.NewClient(spatius.Config{
+			Enabled: true, ConsoleBaseURL: spatiusConfig.ConsoleBaseURL,
+			APIKey: spatiusConfig.APIKey.Reveal(), Timeout: spatiusConfig.Timeout,
+		})
+		if err != nil {
+			logger.Error("Practice avatar provider startup failed")
+			return 1
+		}
+	}
+	avatarService, err := practiceavatar.NewService(
+		practiceavatar.ServiceConfiguration{
+			Enabled: spatiusConfig.Enabled, AppID: spatiusConfig.AppID,
+			AvatarID: spatiusConfig.AvatarID, Region: spatiusConfig.Region,
+			TokenTTL: spatiusConfig.TokenTTL,
+		},
+		applicationComposition.PracticeRepository(),
+		avatarProvider,
+	)
+	if err != nil {
+		logger.Error("Practice avatar startup failed")
+		return 1
+	}
+	avatarHTTP, err := practiceavatar.NewHTTPHandler(avatarService)
+	if err != nil {
+		logger.Error("Practice avatar HTTP startup failed")
+		return 1
+	}
+	reviewRetryService, err := reviewpostgres.New(
+		databasePool.Native(),
+		evaluationComposition.Store(),
+		applicationComposition.PracticeRepository(),
+	)
+	if err != nil {
+		logger.Error(
+			"Review retry startup failed",
+			slog.String("error_kind", "dependency"),
+		)
+		return 1
+	}
+	reviewRetryHTTP, err := review.NewRetryHTTPHandler(reviewRetryService)
+	if err != nil {
+		logger.Error(
+			"Review retry HTTP startup failed",
+			slog.String("error_kind", "dependency"),
+		)
 		return 1
 	}
 	threadSummary, err := buildThreadSummaryWorker(
@@ -414,216 +497,73 @@ func run() int {
 		)
 		return 1
 	}
-	avatarProvider, err := bootstrap.NewAvatarTokenProvider(spatiusConfig)
-	if err != nil {
-		logger.Error(
-			"avatar provider startup failed",
-			slog.String("error_kind", "dependency"),
-		)
-		return 1
-	}
-	avatarService, err := avatar.NewService(
-		avatar.ServiceConfiguration{
-			Enabled:  spatiusConfig.Enabled,
-			AppID:    spatiusConfig.AppID,
-			AvatarID: spatiusConfig.AvatarID,
-			Region:   spatiusConfig.Region,
-			TokenTTL: spatiusConfig.TokenTTL,
-		},
-		applicationComposition.PracticeApplication(),
-		avatarProvider,
-	)
-	if err != nil {
-		logger.Error(
-			"avatar service startup failed",
-			slog.String("error_kind", "dependency"),
-		)
-		return 1
-	}
-	avatarHTTP, err := avatar.NewHTTPHandler(avatarService)
-	if err != nil {
-		logger.Error(
-			"avatar HTTP startup failed",
-			slog.String("error_kind", "dependency"),
-		)
-		return 1
-	}
-	protectedRegistrars := []bootstrap.ProtectedRouteRegistrar{
-		avatarHTTP,
+	protectedRegistrars := []app.ProtectedRouteRegistrar{
+		ieltsSpeechHTTP,
+		ieltsAnswerHTTP,
 		evaluationComposition.HTTPHandler(),
-		speechFeedbackComposition.HTTPHandler(),
-		speechFeedbackComposition.RetryHTTPHandler(),
-	}
-	if resumeComposition != nil {
-		protectedRegistrars = append(
-			protectedRegistrars,
-			resumeComposition.HTTPHandler(),
-		)
+		reviewRetryHTTP,
+		avatarHTTP,
 	}
 	contextRoutes, err := applicationComposition.ProtectedRoutes(protectedRegistrars...)
 	if err != nil {
 		logger.Error("context route startup failed", slog.Any("error", err))
 		return 1
 	}
-	evaluationShadow, err := buildEvaluationShadowWorker(
+	evaluationWorkers, err := buildEvaluationRuntime(
 		evaluationComposition.Worker(),
 		logger,
 	)
 	if err != nil {
 		logger.Error(
-			"evaluation shadow startup failed",
+			"Evaluation worker startup failed",
 			slog.String("error_kind", "dependency"),
 		)
 		return 1
 	}
-	speechFeedback, err := buildSpeechFeedbackWorker(
-		speechFeedbackComposition.Worker(),
-		logger,
-	)
-	if err != nil {
-		logger.Error(
-			"speech feedback startup failed",
-			slog.String("error_kind", "dependency"),
-		)
-		return 1
-	}
-	agentVoiceCleanup, err := buildAgentVoiceCleanupWorker(
+	mediaCleanup, err := buildMediaCleanupWorker(
 		storageConfig,
-		applicationComposition.AgentVoiceReclaimer(),
+		applicationComposition.MediaReclaimer(),
 		logger,
 	)
 	if err != nil {
 		logger.Error(
-			"agent voice cleanup startup failed",
+			"media cleanup startup failed",
 			slog.String("error_kind", "dependency"),
 		)
 		return 1
 	}
-	agentImageCleanup, err := buildAgentImageCleanupWorker(
-		storageConfig,
-		applicationComposition.AgentImageReclaimer(),
-		logger,
-	)
-	if err != nil {
-		logger.Error(
-			"agent image cleanup startup failed",
-			slog.String("error_kind", "dependency"),
-		)
-		return 1
-	}
-	memoryExtraction, err := buildMemoryExtractionWorker(
-		applicationComposition.MemoryExtractionProcessor(),
-		logger,
-		memoryExtractionWakeup.Events(),
-		memoryIndexWakeup,
-	)
-	if err != nil {
-		logger.Error(
-			"memory extraction startup failed",
-			slog.String("error_kind", "dependency"),
-		)
-		return 1
-	}
-	memoryIndex, err := buildMemoryIndexWorker(
-		memoryIndexComposition.Processor(),
-		logger,
-		memoryIndexWakeup.Events(),
-	)
-	if err != nil {
-		logger.Error(
-			"memory index startup failed",
-			slog.String("error_kind", "dependency"),
-		)
-		return 1
-	}
-
-	cleanupWorker, err := buildAudioCleanupWorker(
-		ctx,
-		storageConfig,
-		databasePool.Native(),
-		logger,
-		productionAudioCleanupFactories,
-	)
-	if err != nil {
-		logger.Error(
-			"audio cleanup startup failed",
-			slog.String("error_kind", "dependency"),
-		)
-		return 1
-	}
-	var cleanupDone chan struct{}
-	if cleanupWorker != nil {
-		cleanupDone = make(chan struct{})
+	var mediaCleanupDone chan struct{}
+	if mediaCleanup != nil {
+		mediaCleanupDone = make(chan struct{})
 		go func() {
-			defer close(cleanupDone)
-			cleanupWorker.Run(ctx)
+			defer close(mediaCleanupDone)
+			mediaCleanup.Run(ctx)
 		}()
 	}
-	var agentVoiceCleanupDone chan struct{}
-	if agentVoiceCleanup != nil {
-		agentVoiceCleanupDone = make(chan struct{})
-		go func() {
-			defer close(agentVoiceCleanupDone)
-			agentVoiceCleanup.Run(ctx)
-		}()
-	}
-	var agentImageCleanupDone chan struct{}
-	if agentImageCleanup != nil {
-		agentImageCleanupDone = make(chan struct{})
-		go func() {
-			defer close(agentImageCleanupDone)
-			agentImageCleanup.Run(ctx)
-		}()
-	}
-	memoryExtractionDone := make(chan struct{})
-	go func() {
-		defer close(memoryExtractionDone)
-		memoryExtraction.Run(ctx)
-	}()
-	memoryIndexDone := make(chan struct{})
-	go func() {
-		defer close(memoryIndexDone)
-		memoryIndex.Run(ctx)
-	}()
 	threadSummaryDone := make(chan struct{})
 	go func() {
 		defer close(threadSummaryDone)
 		threadSummary.Run(ctx)
 	}()
-	evaluationShadowDone := make(chan struct{})
+	evaluationWorkersDone := make(chan struct{})
 	go func() {
-		defer close(evaluationShadowDone)
-		evaluationShadow.Run(ctx)
+		defer close(evaluationWorkersDone)
+		evaluationWorkers.Run(ctx)
 	}()
-	speechFeedbackDone := make(chan struct{})
-	go func() {
-		defer close(speechFeedbackDone)
-		speechFeedback.Run(ctx)
-	}()
-	var resumeWorkerDone chan struct{}
-	if resumeComposition != nil {
-		resumeWorkerDone = make(chan struct{})
-		go func() {
-			defer close(resumeWorkerDone)
-			resumeComposition.Worker().Run(ctx)
-		}()
-	}
 
-	router := bootstrap.NewRouterWithReadinessAndRoutes(
+	router := app.NewRouterWithReadinessAndRoutes(
 		logger,
 		databasePool,
-		[]bootstrap.RouteRegistrar{
+		[]app.RouteRegistrar{
 			applicationComposition.IdentityModule(),
 			applicationComposition.AgentModule(),
 			contextRoutes,
 		},
 		preparation.New(),
 		practice.New(),
-		practicevoice.New(),
-		review.New(),
 	)
-	bootstrap.RegisterSceneCatalog(router, sceneCatalog)
-	bootstrap.RegisterIELTSQuestionBank(router, ieltsQuestionBank)
+	app.RegisterSceneCatalog(router, sceneCatalog)
+	app.RegisterIELTSQuestionBank(router, ieltsQuestionBank)
 
 	server := &http.Server{
 		Addr:              cfg.Address(),
@@ -655,67 +595,16 @@ func run() int {
 		logger.Error("graceful shutdown failed", slog.Any("error", err))
 		exitCode = 1
 	}
-	if cleanupDone != nil {
+	if mediaCleanupDone != nil {
 		select {
-		case <-cleanupDone:
+		case <-mediaCleanupDone:
 		case <-shutdownCtx.Done():
 			logger.Error(
-				"audio cleanup shutdown failed",
+				"media cleanup shutdown failed",
 				slog.String("error_kind", "timeout"),
 			)
 			exitCode = 1
 		}
-	}
-	if agentVoiceCleanupDone != nil {
-		select {
-		case <-agentVoiceCleanupDone:
-		case <-shutdownCtx.Done():
-			logger.Error(
-				"agent voice cleanup shutdown failed",
-				slog.String("error_kind", "timeout"),
-			)
-			exitCode = 1
-		}
-	}
-	if agentImageCleanupDone != nil {
-		select {
-		case <-agentImageCleanupDone:
-		case <-shutdownCtx.Done():
-			logger.Error(
-				"agent image cleanup shutdown failed",
-				slog.String("error_kind", "timeout"),
-			)
-			exitCode = 1
-		}
-	}
-	if resumeWorkerDone != nil {
-		select {
-		case <-resumeWorkerDone:
-		case <-shutdownCtx.Done():
-			logger.Error(
-				"Resume worker shutdown failed",
-				slog.String("error_kind", "timeout"),
-			)
-			exitCode = 1
-		}
-	}
-	select {
-	case <-memoryExtractionDone:
-	case <-shutdownCtx.Done():
-		logger.Error(
-			"memory extraction shutdown failed",
-			slog.String("error_kind", "timeout"),
-		)
-		exitCode = 1
-	}
-	select {
-	case <-memoryIndexDone:
-	case <-shutdownCtx.Done():
-		logger.Error(
-			"memory index shutdown failed",
-			slog.String("error_kind", "timeout"),
-		)
-		exitCode = 1
 	}
 	select {
 	case <-threadSummaryDone:
@@ -727,23 +616,21 @@ func run() int {
 		exitCode = 1
 	}
 	select {
-	case <-evaluationShadowDone:
+	case <-evaluationWorkersDone:
 	case <-shutdownCtx.Done():
 		logger.Error(
-			"evaluation shadow shutdown failed",
-			slog.String("error_kind", "timeout"),
-		)
-		exitCode = 1
-	}
-	select {
-	case <-speechFeedbackDone:
-	case <-shutdownCtx.Done():
-		logger.Error(
-			"speech feedback shutdown failed",
+			"Evaluation worker shutdown failed",
 			slog.String("error_kind", "timeout"),
 		)
 		exitCode = 1
 	}
 
 	return exitCode
+}
+
+func voiceASRLease(configuration config.SpeechRecognitionConfig) time.Duration {
+	return voiceAudioUploadLease + max(
+		configuration.Timeout,
+		configuration.RecordedTimeout,
+	) + voiceASRFinalizationTimeMargin
 }

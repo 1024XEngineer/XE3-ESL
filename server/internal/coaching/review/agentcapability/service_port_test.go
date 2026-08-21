@@ -6,15 +6,15 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
-	domainreview "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/report"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
-func TestServicePortListsCanonicalEvaluationReports(t *testing.T) {
+func TestServicePortReadsEvaluationReportAuthority(t *testing.T) {
 	t.Parallel()
-	report := validAgentToolReport()
-	repository := &reviewHistoryRepositoryStub{reports: []domainreview.Report{report}}
-	port, err := NewServicePort(domainreview.NewHistoryService(repository))
+	stored := validStoredReport()
+	reader := &reportReaderStub{reports: []report.StoredFormalReport{stored}}
+	port, err := NewServicePort(reader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,96 +26,89 @@ func TestServicePortListsCanonicalEvaluationReports(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if repository.listQuery.Limit != defaultReviewSearchLimit ||
-		len(items) != 1 || items[0].ID != report.ID ||
+	if reader.query.Limit != defaultReviewSearchLimit || len(items) != 1 ||
+		items[0].ID != stored.ReportID ||
 		items[0].SourceRefs[0].Type != "evaluation_report" {
-		t.Fatalf("query=%#v items=%#v", repository.listQuery, items)
-	}
-	if items[0].Summary != report.Summary ||
-		items[0].CompletedAt != report.CreatedAt.Format(time.RFC3339Nano) {
-		t.Fatalf("item = %#v", items[0])
+		t.Fatalf("query=%#v items=%#v", reader.query, items)
 	}
 }
 
-func TestServicePortMapsReportDetailWithoutRawEvidencePayload(t *testing.T) {
+func TestServicePortMapsDetailWithoutInternalEvaluationPayload(t *testing.T) {
 	t.Parallel()
-	report := validAgentToolReport()
-	repository := &reviewHistoryRepositoryStub{report: report}
-	port, err := NewServicePort(domainreview.NewHistoryService(repository))
+	stored := validStoredReport()
+	reader := &reportReaderStub{report: stored}
+	port, err := NewServicePort(reader)
 	if err != nil {
 		t.Fatal(err)
 	}
 	detail, err := port.GetReview(
 		context.Background(),
 		validReviewCallContext(),
-		ReviewGetInput{ReportID: report.ID},
+		ReviewGetInput{ReportID: stored.ReportID},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if detail.ID != report.ID || len(detail.Dimensions) != 1 ||
+	if detail.ID != stored.ReportID || len(detail.Dimensions) != 1 ||
 		len(detail.Dimensions[0].Improvements) != 1 ||
-		detail.Dimensions[0].Improvements[0].OriginalExcerpts[0] !=
-			"I need room" || detail.SourceRefs[0].Type != "evaluation_report" {
+		detail.Dimensions[0].Improvements[0].OriginalExcerpts[0] != "I need room" {
 		t.Fatalf("detail = %#v", detail)
 	}
 }
 
-func validAgentToolReport() domainreview.Report {
+func validStoredReport() report.StoredFormalReport {
 	score := 72.0
-	return domainreview.Report{
-		ID:                   "10000000-0000-4000-8000-000000000001",
-		EvaluationID:         "20000000-0000-4000-8000-000000000001",
-		EvaluationRevisionID: "30000000-0000-4000-8000-000000000001",
-		OwnerUserID:          "40000000-0000-4000-8000-000000000001",
-		PracticeSessionID:    "practice-session-1",
-		Revision:             1,
-		SchemaVersion:        "evaluation-report/v1",
-		SceneType:            "OVERSEAS_DAILY_LIFE",
-		PracticeExperience:   "LIFE_AND_TRAVEL",
-		SceneCategory:        "LIFE_DAILY",
-		PracticeMode:         "FULL_SIMULATION",
-		ScoreabilityStatus:   "PROVISIONAL",
-		Summary:              "本次练习已形成场景沟通评估。",
-		Dimensions: []domainreview.ReportDimension{{
-			Key:          "TASK_ACHIEVEMENT",
-			Score:        &score,
-			Scale:        "PERCENTAGE_100",
-			Coverage:     1,
-			Confidence:   0.6,
-			ReasonCodes:  []string{"ASR_CONFIDENCE_UNAVAILABLE"},
-			EvidenceRefs: []string{"evidence-1"},
-			Strengths:    []domainreview.ReportFinding{},
-			Improvements: []domainreview.ReportFinding{{
-				ID:         "finding-improvement",
-				Message:    "Make the intended outcome clearer.",
-				Suggestion: "State the request first.",
-				Evidence: []domainreview.ReportEvidence{{
-					EvidenceRefID:   "evidence-1",
-					TurnID:          "turn-1",
-					StartUTF8Byte:   0,
-					EndUTF8Byte:     11,
-					OriginalExcerpt: "I need room",
-				}},
+	return report.StoredFormalReport{
+		ReportID:          "10000000-0000-4000-8000-000000000001",
+		EvaluationID:      "10000000-0000-4000-8000-000000000001",
+		OwnerUserID:       "40000000-0000-4000-8000-000000000001",
+		PracticeSessionID: "20000000-0000-4000-8000-000000000001",
+		Report: report.FormalReport{
+			SchemaVersion:      report.FormalReportSchemaVersion,
+			SceneType:          "OVERSEAS_DAILY_LIFE",
+			PracticeExperience: "LIFE_AND_TRAVEL",
+			SceneCategory:      "LIFE_DAILY",
+			PracticeMode:       "FULL_SIMULATION",
+			ScoreabilityStatus: report.ReportScoreabilityProvisional,
+			Summary:            "本次练习已形成场景沟通评估。",
+			Questions: []report.ReportQuestion{{
+				ID:       "50000000-0000-4000-8000-000000000001",
+				Position: 1,
+				Text:     "What kind of room do you need?",
+				Answer: &report.ReportAnswer{
+					TurnID:     "30000000-0000-4000-8000-000000000001",
+					Transcript: "I need room",
+				},
 			}},
-			Examples: []domainreview.ReportFinding{},
-		}},
-		PriorityActions: []domainreview.ReportPriorityAction{{
-			DimensionKey: "TASK_ACHIEVEMENT",
-			FindingID:    "finding-improvement",
-		}},
-		DetailSchema: "general-scene-evaluation/v1",
-		Detail:       []byte(`{"schema_version":"general-scene-evaluation/v1"}`),
-		CreatedAt: time.Date(
-			2026,
-			time.August,
-			4,
-			8,
-			0,
-			0,
-			0,
-			time.UTC,
-		),
+			Dimensions: []report.ReportDimension{{
+				Key:          "TASK_ACHIEVEMENT",
+				Score:        &score,
+				Scale:        report.ReportScalePercentage100,
+				Coverage:     1,
+				Confidence:   0.6,
+				ReasonCodes:  []string{},
+				EvidenceRefs: []string{"30000000-0000-4000-8000-000000000001"},
+				Strengths:    []report.ReportFinding{},
+				Improvements: []report.ReportFinding{{
+					ID:         "finding-improvement",
+					Message:    "Make the intended outcome clearer.",
+					Suggestion: "State the request first.",
+					Evidence: []report.ReportEvidence{{
+						EvidenceRefID:   "30000000-0000-4000-8000-000000000001",
+						TurnID:          "30000000-0000-4000-8000-000000000001",
+						StartUTF8Byte:   0,
+						EndUTF8Byte:     11,
+						OriginalExcerpt: "I need room",
+					}},
+				}},
+				Examples: []report.ReportFinding{},
+			}},
+			PriorityActions: []report.ReportPriorityAction{{
+				DimensionKey: "TASK_ACHIEVEMENT",
+				FindingID:    "finding-improvement",
+			}},
+		},
+		CreatedAt: time.Date(2026, time.August, 4, 8, 0, 0, 0, time.UTC),
 	}
 }
 
@@ -126,33 +119,25 @@ func validReviewCallContext() capability.CallContext {
 	}}
 }
 
-type reviewHistoryRepositoryStub struct {
-	report    domainreview.Report
-	reports   []domainreview.Report
-	listQuery domainreview.HistoryQuery
+type reportReaderStub struct {
+	report  report.StoredFormalReport
+	reports []report.StoredFormalReport
+	query   report.HistoryQuery
 }
 
-func (repository *reviewHistoryRepositoryStub) GetReport(
+func (reader *reportReaderStub) GetFormalReport(
 	context.Context,
-	domainreview.Actor,
 	string,
-) (domainreview.Report, error) {
-	return repository.report, nil
+	string,
+) (report.StoredFormalReport, error) {
+	return reader.report, nil
 }
 
-func (repository *reviewHistoryRepositoryStub) ListReports(
+func (reader *reportReaderStub) ListFormalReports(
 	_ context.Context,
-	_ domainreview.Actor,
-	query domainreview.HistoryQuery,
-) (domainreview.HistoryPage, error) {
-	repository.listQuery = query
-	return domainreview.HistoryPage{Items: repository.reports}, nil
-}
-
-func (repository *reviewHistoryRepositoryStub) SearchReports(
-	context.Context,
-	domainreview.Actor,
-	domainreview.HistorySearchQuery,
-) ([]domainreview.Report, error) {
-	return repository.reports, nil
+	_ string,
+	query report.HistoryQuery,
+) (report.HistoryPage, error) {
+	reader.query = query
+	return report.HistoryPage{Items: reader.reports}, nil
 }

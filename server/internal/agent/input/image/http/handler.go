@@ -127,7 +127,12 @@ func (handler *Handler) upload(c *gin.Context) {
 		handler.write(c, mapError(err))
 		return
 	}
-	c.JSON(http.StatusCreated, AssetResponse(asset))
+	status := http.StatusCreated
+	if asset.Status == "staged" {
+		status = http.StatusAccepted
+		c.Header("Retry-After", "1")
+	}
+	c.JSON(status, AssetResponse(asset))
 }
 
 func (handler *Handler) content(c *gin.Context) {
@@ -184,10 +189,9 @@ func uploadContentType(c *gin.Context) (string, bool) {
 	}
 }
 
-func AssetResponse(asset agentimage.Asset) gin.H {
+func AssetResponse(asset agentimage.Image) gin.H {
 	response := gin.H{
 		"image_asset_id": asset.ID,
-		"thread_id":      asset.ThreadID,
 		"content_type":   asset.ContentType,
 		"size_bytes":     asset.Size,
 		"width":          asset.Width,

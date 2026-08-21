@@ -36,7 +36,7 @@ func newAgentRepositories(
 	if err != nil {
 		t.Fatalf("new Agent Run repository: %v", err)
 	}
-	summaryRepository, err := summarypostgres.New(pool, ids)
+	summaryRepository, err := summarypostgres.New(pool)
 	if err != nil {
 		t.Fatalf("new Agent Summary repository: %v", err)
 	}

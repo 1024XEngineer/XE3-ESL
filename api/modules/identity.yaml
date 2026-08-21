@@ -164,11 +164,9 @@ paths:
       description: |
         Creates a missing profile when `expected_profile_version` is omitted,
         or updates an existing profile when the expected version matches.
-        `Idempotency-Key` is required. The trusted User is always derived from
-        the Session and cannot be supplied in the request body.
+        The trusted User is always derived from the Session and cannot be
+        supplied in the request body.
       operationId: updateCurrentUserProfile
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -177,7 +175,7 @@ paths:
               $ref: '#/components/schemas/UpdateUserProfileRequest'
       responses:
         '200':
-          description: The created, updated, or idempotently replayed profile.
+          description: The created or updated profile.
           content:
             application/json:
               schema:
@@ -190,8 +188,119 @@ paths:
           $ref: '#/components/responses/ProfileConflict'
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/me/avatar:
+    post:
+      tags:
+        - Identity
+      summary: Replace the current user's private profile avatar
+      operationId: replaceCurrentUserAvatar
+      parameters:
+        - $ref: '#/components/parameters/ProfileVersionMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          image/jpeg:
+            schema:
+              type: string
+              format: binary
+              maxLength: 10485760
+          image/png:
+            schema:
+              type: string
+              format: binary
+              maxLength: 10485760
+          image/webp:
+            schema:
+              type: string
+              format: binary
+              maxLength: 10485760
+      responses:
+        '200':
+          description: The updated profile after the avatar is committed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        '413':
+          $ref: ../common/errors.yaml#/components/responses/PayloadTooLarge
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+    delete:
+      tags:
+        - Identity
+      summary: Restore the current user's default profile avatar
+      operationId: useDefaultCurrentUserAvatar
+      parameters:
+        - $ref: '#/components/parameters/ProfileVersionMatch'
+      responses:
+        '200':
+          description: The profile after restoring the default avatar.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/me/avatar/content:
+    get:
+      tags:
+        - Identity
+      summary: Read the current private avatar through the authenticated API
+      operationId: getCurrentUserAvatarContent
+      responses:
+        '200':
+          description: Validated private avatar bytes.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            X-Content-Type-Options:
+              schema:
+                type: string
+                const: nosniff
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
 components:
   parameters:
+    ProfileVersionMatch:
+      name: If-Match
+      in: header
+      required: true
+      schema:
+        type: string
+        pattern: '^"[1-9][0-9]*"$'
+      description: Quoted current UserProfile version.
     IdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -200,12 +309,11 @@ components:
         type: string
         minLength: 8
         maxLength: 128
-        pattern: '^[A-Za-z0-9._~+/-]+$'
   responses:
     InvalidCredentials:
       description: |
         Authentication failed. The response is identical for an unknown email,
-        incorrect password, disabled account, or account deletion state.
+        incorrect password, or account deletion state.
       content:
         application/json:
           schema:
@@ -243,28 +351,17 @@ components:
               retryable: false
               correlation_id: corr_profile_not_found
     ProfileConflict:
-      description: |
-        The expected profile version is stale, or the Idempotency-Key was
-        previously used with a different normalized request.
+      description: The expected profile version is stale.
       content:
         application/json:
           schema:
             $ref: ../common/errors.yaml#/components/schemas/ErrorResponse
-          examples:
-            staleVersion:
-              value:
-                error:
-                  code: profile_version_conflict
-                  message: User profile changed before this update.
-                  retryable: false
-                  correlation_id: corr_profile_version_conflict
-            reusedKey:
-              value:
-                error:
-                  code: idempotency_key_conflict
-                  message: Idempotency key was already used for a different request.
-                  retryable: false
-                  correlation_id: corr_idempotency_key_conflict
+          example:
+            error:
+              code: profile_version_conflict
+              message: User profile changed before this update.
+              retryable: false
+              correlation_id: corr_profile_version_conflict
   schemas:
     UserId:
       type: string
@@ -349,9 +446,33 @@ components:
           format: int64
           minimum: 1
           readOnly: true
+        avatar:
+          $ref: '#/components/schemas/UserProfileAvatar'
         created_at:
           type: string
           format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+    UserProfileAvatar:
+      type: object
+      additionalProperties: false
+      required:
+        - width
+        - height
+        - updated_at
+      properties:
+        width:
+          type: integer
+          minimum: 1
+          maximum: 16384
+          readOnly: true
+        height:
+          type: integer
+          minimum: 1
+          maximum: 16384
           readOnly: true
         updated_at:
           type: string

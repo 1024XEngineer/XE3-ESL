@@ -25,7 +25,7 @@ import (
 
 const integrationPasswordHash = "$argon2id$v=19$m=8,t=1,p=1$MDEyMzQ1Njc4OWFiY2RlZg$MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY"
 
-func TestPostgresUserProfileRegistrationVersionAndIdempotency(
+func TestPostgresUserProfileRegistrationAndVersionConflict(
 	t *testing.T,
 ) {
 	pool := identityTestDatabase(t)
@@ -58,146 +58,16 @@ func TestPostgresUserProfileRegistrationVersionAndIdempotency(
 		UserID:                 user.ID,
 		DisplayName:            "林同学",
 		ExpectedProfileVersion: &expected,
-		IdempotencyKey:         "profile-postgres-0001",
-		RequestDigest: profileRequestDigest(
-			"林同学",
-			&expected,
-		),
 	}
 	updated, err := repository.PersistProfile(context.Background(), command)
 	if err != nil || updated.ProfileVersion != 2 {
 		t.Fatalf("update profile/error = %#v / %v", updated, err)
 	}
-	replayed, err := repository.PersistProfile(context.Background(), command)
-	if err != nil ||
-		replayed.ProfileVersion != updated.ProfileVersion ||
-		!replayed.UpdatedAt.Equal(updated.UpdatedAt) {
-		t.Fatalf("replayed profile/error = %#v / %v", replayed, err)
-	}
-
-	conflictingKey := command
-	conflictingKey.DisplayName = "不同昵称"
-	conflictingKey.RequestDigest = profileRequestDigest("不同昵称", &expected)
-	if _, err := repository.PersistProfile(
-		context.Background(),
-		conflictingKey,
-	); !errors.Is(err, ErrIdempotencyKeyConflict) {
-		t.Fatalf("idempotency conflict error = %v", err)
-	}
-
-	stale := command
-	stale.IdempotencyKey = "profile-postgres-0002"
-	stale.RequestDigest = profileRequestDigest(stale.DisplayName, &expected)
-	if _, err := repository.PersistProfile(
-		context.Background(),
-		stale,
-	); !errors.Is(err, ErrProfileVersionConflict) {
-		t.Fatalf("stale version error = %v", err)
-	}
-}
-
-func TestPostgresProfileIdempotencyRetentionAndBound(t *testing.T) {
-	pool := identityTestDatabase(t)
-	repository, err := NewPostgresRepository(pool, NewUUIDv4Generator(nil))
-	if err != nil {
-		t.Fatalf("new repository: %v", err)
-	}
-	displayName := "小林"
-	user, err := repository.CreateUserWithCredential(
-		context.Background(),
-		"profile-retention@example.com",
-		integrationPasswordHash,
-		&displayName,
-	)
-	if err != nil {
-		t.Fatalf("create profiled user: %v", err)
-	}
-	if _, err := pool.Exec(
-		context.Background(),
-		`
-INSERT INTO identity_profile_idempotency (
-    user_id,
-    idempotency_key,
-    request_digest,
-    response_display_name,
-    response_profile_version,
-    response_created_at,
-    response_updated_at,
-    created_at
-)
-SELECT
-    $1,
-    'profile-retention-' || series_value,
-    decode(repeat('00', 32), 'hex'),
-    $2,
-    1,
-    CURRENT_TIMESTAMP,
-    CURRENT_TIMESTAMP,
-    CURRENT_TIMESTAMP - make_interval(mins => series_value)
-FROM generate_series(1, 70) AS generated(series_value)`,
-		user.ID,
-		displayName,
-	); err != nil {
-		t.Fatalf("seed idempotency records: %v", err)
-	}
-	if _, err := pool.Exec(
-		context.Background(),
-		`
-UPDATE identity_profile_idempotency
-SET created_at = CURRENT_TIMESTAMP - INTERVAL '48 hours'
-WHERE user_id = $1
-  AND idempotency_key IN (
-      SELECT idempotency_key
-      FROM identity_profile_idempotency
-      WHERE user_id = $1
-      ORDER BY created_at
-      LIMIT 5
-  )`,
-		user.ID,
-	); err != nil {
-		t.Fatalf("age idempotency records: %v", err)
-	}
-
-	expected := int64(1)
-	command := PersistProfileCommand{
-		UserID:                 user.ID,
-		DisplayName:            "林同学",
-		ExpectedProfileVersion: &expected,
-		IdempotencyKey:         "profile-retention-current",
-		RequestDigest: profileRequestDigest(
-			"林同学",
-			&expected,
-		),
-	}
 	if _, err := repository.PersistProfile(
 		context.Background(),
 		command,
-	); err != nil {
-		t.Fatalf("persist profile: %v", err)
-	}
-
-	var total int
-	var expired int
-	if err := pool.QueryRow(
-		context.Background(),
-		`
-SELECT
-    count(*),
-    count(*) FILTER (
-        WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '24 hours'
-    )
-FROM identity_profile_idempotency
-WHERE user_id = $1`,
-		user.ID,
-	).Scan(&total, &expired); err != nil {
-		t.Fatalf("count idempotency records: %v", err)
-	}
-	if total != profileIdempotencyRecordsPerUser || expired != 0 {
-		t.Fatalf(
-			"idempotency retention total/expired = %d/%d",
-			total,
-			expired,
-		)
+	); !errors.Is(err, ErrProfileVersionConflict) {
+		t.Fatalf("stale version error = %v", err)
 	}
 }
 
@@ -246,6 +116,7 @@ func TestPostgresIdentityVerticalSlice(t *testing.T) {
 		context.Background(),
 		" Learner@Example.COM ",
 		password,
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("register: %v", err)
@@ -372,7 +243,7 @@ func TestPostgresIdentityVerticalSlice(t *testing.T) {
 	}
 	if _, err := pool.Exec(
 		context.Background(),
-		`UPDATE identity_auth_sessions
+		`UPDATE auth_sessions
 SET created_at = CURRENT_TIMESTAMP - INTERVAL '2 hours',
     expires_at = CURRENT_TIMESTAMP - INTERVAL '1 second'
 WHERE token_digest = $1`,
@@ -408,6 +279,7 @@ func TestPostgresCreateSessionRejectsSecurityEventInterleaving(t *testing.T) {
 		context.Background(),
 		"interleave@example.com",
 		integrationPasswordHash,
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("create user: %v", err)
@@ -427,7 +299,7 @@ func TestPostgresCreateSessionRejectsSecurityEventInterleaving(t *testing.T) {
 	defer func() { _ = blocker.Rollback(context.Background()) }()
 	if _, err := blocker.Exec(
 		context.Background(),
-		"SELECT id FROM identity_users WHERE id = $1 FOR UPDATE",
+		"SELECT id FROM users WHERE id = $1 FOR UPDATE",
 		user.ID,
 	); err != nil {
 		t.Fatalf("lock user: %v", err)
@@ -441,7 +313,7 @@ func TestPostgresCreateSessionRejectsSecurityEventInterleaving(t *testing.T) {
 			"security_event",
 		)
 	}()
-	waitForBlockedPostgresQuery(t, pool, "SELECT id::text\nFROM identity_users")
+	waitForBlockedPostgresQuery(t, pool, "SELECT id::text\nFROM users")
 
 	sessionDone := make(chan error, 1)
 	go func() {
@@ -457,7 +329,7 @@ func TestPostgresCreateSessionRejectsSecurityEventInterleaving(t *testing.T) {
 		)
 		sessionDone <- err
 	}()
-	waitForBlockedPostgresQuery(t, pool, "SELECT account_status\nFROM identity_users")
+	waitForBlockedPostgresQuery(t, pool, "SELECT status\nFROM users")
 
 	if err := blocker.Commit(context.Background()); err != nil {
 		t.Fatalf("release blocker: %v", err)
@@ -471,7 +343,7 @@ func TestPostgresCreateSessionRejectsSecurityEventInterleaving(t *testing.T) {
 	var sessions int
 	if err := pool.QueryRow(
 		context.Background(),
-		"SELECT count(*) FROM identity_auth_sessions WHERE user_id = $1",
+		"SELECT count(*) FROM auth_sessions WHERE user_id = $1",
 		user.ID,
 	).Scan(&sessions); err != nil {
 		t.Fatalf("count sessions: %v", err)
@@ -491,6 +363,7 @@ func TestPostgresSessionUsesDatabaseTimeAndCannotRevive(t *testing.T) {
 		context.Background(),
 		"database-time@example.com",
 		integrationPasswordHash,
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("create user: %v", err)
@@ -518,7 +391,7 @@ func TestPostgresSessionUsesDatabaseTimeAndCannotRevive(t *testing.T) {
 	if err := pool.QueryRow(
 		context.Background(),
 		`SELECT created_at, expires_at, CURRENT_TIMESTAMP
-FROM identity_auth_sessions
+FROM auth_sessions
 WHERE id = $1`,
 		session.ID,
 	).Scan(&createdAt, &storedExpiresAt, &databaseNow); err != nil {
@@ -538,7 +411,7 @@ WHERE id = $1`,
 
 	if _, err := pool.Exec(
 		context.Background(),
-		`UPDATE identity_auth_sessions
+		`UPDATE auth_sessions
 SET created_at = CURRENT_TIMESTAMP + INTERVAL '1 hour',
     expires_at = CURRENT_TIMESTAMP + INTERVAL '2 hours'
 WHERE id = $1`,
@@ -563,7 +436,7 @@ WHERE id = $1`,
 	var revokedAt time.Time
 	if err := pool.QueryRow(
 		context.Background(),
-		"SELECT created_at, revoked_at FROM identity_auth_sessions WHERE id = $1",
+		"SELECT created_at, revoked_at FROM auth_sessions WHERE id = $1",
 		session.ID,
 	).Scan(&createdAt, &revokedAt); err != nil {
 		t.Fatalf("read revocation time: %v", err)
@@ -580,11 +453,11 @@ func TestPostgresCreateSessionRequiresCurrentActiveCredential(t *testing.T) {
 	}{
 		{
 			name:   "account deleting",
-			mutate: "UPDATE identity_users SET account_status = 'deleting' WHERE id = $1 AND $2 <> ''",
+			mutate: "UPDATE users SET status = 'deleting' WHERE id = $1 AND $2 <> ''",
 		},
 		{
 			name: "password rotated",
-			mutate: `UPDATE identity_credentials
+			mutate: `UPDATE credentials
 SET password_hash = $2,
     updated_at = GREATEST(CURRENT_TIMESTAMP, updated_at + INTERVAL '1 microsecond')
 WHERE user_id = $1`,
@@ -601,6 +474,7 @@ WHERE user_id = $1`,
 				context.Background(),
 				strings.ReplaceAll(test.name, " ", "-")+"@example.com",
 				integrationPasswordHash,
+				nil,
 			)
 			if err != nil {
 				t.Fatalf("create user: %v", err)
@@ -649,7 +523,7 @@ func TestPostgresCreateUserRollsBackAllFailurePaths(t *testing.T) {
 CREATE FUNCTION reject_credential_insert() RETURNS trigger
 LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'credential failure'; END $$;
 CREATE TRIGGER reject_credential
-BEFORE INSERT ON identity_credentials
+BEFORE INSERT ON credentials
 			FOR EACH ROW EXECUTE FUNCTION reject_credential_insert()`,
 			wantCommit: false,
 		},
@@ -665,7 +539,7 @@ BEGIN
 END
 $$;
 CREATE CONSTRAINT TRIGGER reject_user
-AFTER INSERT ON identity_users
+AFTER INSERT ON users
 DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW EXECUTE FUNCTION reject_user_commit()`,
 			wantCommit:  true,
@@ -690,6 +564,7 @@ FOR EACH ROW EXECUTE FUNCTION reject_user_commit()`,
 				context.Background(),
 				test.name+"@example.com",
 				integrationPasswordHash,
+				nil,
 			); !errors.Is(err, ErrRepository) {
 				t.Fatalf("create failure = %v", err)
 			}
@@ -729,6 +604,7 @@ func TestPostgresCreateUserHonorsCanceledContext(t *testing.T) {
 		ctx,
 		"canceled@example.com",
 		integrationPasswordHash,
+		nil,
 	); !errors.Is(err, ErrRepository) {
 		t.Fatalf("canceled create = %v", err)
 	}
@@ -836,8 +712,8 @@ func assertNoIdentityRows(t *testing.T, pool *pgxpool.Pool) {
 	if err := pool.QueryRow(
 		context.Background(),
 		`SELECT
-    (SELECT count(*) FROM identity_users),
-    (SELECT count(*) FROM identity_credentials)`,
+    (SELECT count(*) FROM users),
+    (SELECT count(*) FROM credentials)`,
 	).Scan(&users, &credentials); err != nil {
 		t.Fatalf("count identity rows: %v", err)
 	}
@@ -860,6 +736,7 @@ func testConcurrentPostgresRegistration(t *testing.T, service *Service) {
 				context.Background(),
 				"concurrent@example.com",
 				"another correct password value",
+				nil,
 			)
 			switch {
 			case err == nil:
@@ -939,12 +816,13 @@ BEGIN
 END
 $$;
 CREATE TRIGGER stabilize_http_session
-BEFORE INSERT ON identity_auth_sessions
+BEFORE INSERT ON auth_sessions
 FOR EACH ROW EXECUTE FUNCTION stabilize_http_session_time()`,
 	); err != nil {
 		t.Fatalf("install deterministic session time: %v", err)
 	}
 	handler, err := NewHTTPHandler(
+		service,
 		service,
 		service,
 		defaultTestRateLimits(),
@@ -1003,7 +881,7 @@ FOR EACH ROW EXECUTE FUNCTION stabilize_http_session_time()`,
 	if err := pool.QueryRow(
 		context.Background(),
 		`SELECT expires_at
-FROM identity_auth_sessions
+FROM auth_sessions
 WHERE id = $1`,
 		repositorySession.ID,
 	).Scan(&databaseExpiresAt); err != nil {
@@ -1102,7 +980,7 @@ func assertDatabaseStoresNoRawCredential(
 	var storedHash string
 	if err := pool.QueryRow(
 		context.Background(),
-		"SELECT password_hash FROM identity_credentials WHERE user_id = $1",
+		"SELECT password_hash FROM credentials WHERE user_id = $1",
 		userID,
 	).Scan(&storedHash); err != nil {
 		t.Fatalf("read password hash: %v", err)
@@ -1119,7 +997,7 @@ func assertDatabaseStoresNoRawCredential(
 	if err := pool.QueryRow(
 		context.Background(),
 		`SELECT count(*)
-FROM identity_auth_sessions
+FROM auth_sessions
 WHERE encode(token_digest, 'escape') = $1`,
 		rawToken,
 	).Scan(&rawTokenMatches); err != nil {
@@ -1140,7 +1018,7 @@ func assertStoredTokenDigest(
 	var stored []byte
 	if err := pool.QueryRow(
 		context.Background(),
-		"SELECT token_digest FROM identity_auth_sessions WHERE token_digest = $1",
+		"SELECT token_digest FROM auth_sessions WHERE token_digest = $1",
 		tokens.Digest(rawToken),
 	).Scan(&stored); err != nil {
 		t.Fatalf("read token digest: %v", err)

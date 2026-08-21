@@ -5,33 +5,20 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
-	"fmt"
-	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
-	practice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 )
 
-// AdvanceTurn is the formal Context-owned voice progression
-// boundary. It intentionally does not reuse the legacy Session state machine:
-// formal lifecycle values, frozen policy, and completion reason are updated in
-// the same transaction as the owner-scoped Turn result.
-func (r *Repository) AdvanceTurn(
-	ctx context.Context,
-	actor practice.Actor,
-	command practice.ConsumeTurnCommand,
-) (practice.TurnResult, error) {
-	if r == nil || r.pool == nil || ctx == nil || !validActor(actor) ||
-		strings.TrimSpace(command.SessionID) == "" ||
-		strings.TrimSpace(command.TurnID) == "" ||
-		len(command.Payload) == 0 {
+func (r *Repository) AdvanceTurn(ctx context.Context, actor practice.Actor, command practice.ConsumeTurnCommand) (practice.TurnResult, error) {
+	if r == nil || r.pool == nil || ctx == nil || !validActor(actor) || !validResourceID(command.SessionID) || !validResourceID(command.TurnID) || len(command.Payload) == 0 {
 		return practice.TurnResult{}, practice.ErrInvalidArgument
 	}
-	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return practice.TurnResult{},
-			fmt.Errorf("begin context voice Turn: %w", err)
+		return practice.TurnResult{}, err
 	}
 	defer rollback(ctx, tx)
 	if err := lockActiveActor(ctx, tx, actor.UserID); err != nil {
@@ -42,230 +29,97 @@ func (r *Repository) AdvanceTurn(
 		return practice.TurnResult{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return practice.TurnResult{},
-			fmt.Errorf("commit Practice Turn: %w", err)
+		return practice.TurnResult{}, err
 	}
 	return result, nil
 }
 
-// AdvanceTurnInTransaction lets the Practice Voice PostgreSQL adapter advance
-// the authoritative Session inside its existing confirmation transaction.
-// The caller owns the active-account fence and transaction commit.
-func (r *Repository) AdvanceTurnInTransaction(
-	ctx context.Context,
-	tx pgx.Tx,
-	actor practice.Actor,
-	command practice.ConsumeTurnCommand,
-) (practice.TurnResult, error) {
-	if r == nil || r.pool == nil || ctx == nil || tx == nil ||
-		!validUserID(actor.UserID) ||
-		strings.TrimSpace(command.SessionID) == "" ||
-		strings.TrimSpace(command.TurnID) == "" ||
-		len(command.Payload) == 0 {
+func (r *Repository) AdvanceTurnInTransaction(ctx context.Context, tx pgx.Tx, actor practice.Actor, command practice.ConsumeTurnCommand) (practice.TurnResult, error) {
+	if r == nil || tx == nil || ctx == nil || !validUserID(actor.UserID) || !validResourceID(command.SessionID) || !validResourceID(command.TurnID) || len(command.Payload) == 0 {
 		return practice.TurnResult{}, practice.ErrInvalidArgument
 	}
 	return r.advanceTurnInTransaction(ctx, tx, actor, command)
 }
 
-func (r *Repository) advanceTurnInTransaction(
-	ctx context.Context,
-	tx pgx.Tx,
-	actor practice.Actor,
-	command practice.ConsumeTurnCommand,
-) (practice.TurnResult, error) {
+func (r *Repository) advanceTurnInTransaction(ctx context.Context, tx pgx.Tx, actor practice.Actor, command practice.ConsumeTurnCommand) (practice.TurnResult, error) {
 	fingerprint := sha256.Sum256(command.Payload)
-
 	var status practice.SessionStatus
-	var snapshotID string
-	var snapshotDocument []byte
-	var version, effectiveTurns, turnLimit int
-	err := tx.QueryRow(ctx, `
-		SELECT session.status, session.version, session.effective_turns,
-		       snapshot.turn_limit, snapshot.snapshot_id,
-		       snapshot.snapshot_document
-		FROM practice_sessions AS session
-		JOIN practice_session_snapshots AS snapshot
-		  ON snapshot.owner_user_id = session.owner_user_id
-		 AND snapshot.session_id = session.session_id
-		 AND snapshot.snapshot_id = session.snapshot_id
-		WHERE session.owner_user_id = $1
-		  AND session.session_id = $2
-		FOR UPDATE OF session
-	`, actor.UserID, command.SessionID).Scan(
-		&status,
-		&version,
-		&effectiveTurns,
-		&turnLimit,
-		&snapshotID,
-		&snapshotDocument,
-	)
+	var version, effective int
+	var snapshotJSON []byte
+	err := tx.QueryRow(ctx, `SELECT status,version,effective_turns,plan_snapshot FROM practice_sessions WHERE user_id=$1 AND session_id=$2 FOR UPDATE`, actor.UserID, command.SessionID).Scan(&status, &version, &effective, &snapshotJSON)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return practice.TurnResult{}, practice.ErrNotFound
 	}
 	if err != nil {
-		return practice.TurnResult{},
-			fmt.Errorf("lock context voice Session: %w", err)
-	}
-
-	result, storedFingerprint, err := loadTurnResult(
-		ctx,
-		tx,
-		actor.UserID,
-		command.TurnID,
-	)
-	if err == nil {
-		if result.SessionID != command.SessionID ||
-			!bytes.Equal(storedFingerprint, fingerprint[:]) {
-			return practice.TurnResult{},
-				practice.ErrIdempotencyConflict
-		}
-		return result, nil
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
 		return practice.TurnResult{}, err
 	}
-
-	snapshot, err := decodeContextSnapshot(snapshotDocument)
-	if err != nil ||
-		snapshot.ID != snapshotID ||
-		snapshot.SessionID != command.SessionID ||
-		snapshot.SessionPolicy.MaxEffectiveTurns != turnLimit ||
-		turnLimit < 1 || turnLimit > practice.MaxPracticeTurns ||
-		effectiveTurns < 0 || effectiveTurns > turnLimit {
-		return practice.TurnResult{}, practice.ErrConflict
+	var stored []byte
+	var progressedAt *time.Time
+	var storedEffective, storedVersion *int
+	err = tx.QueryRow(ctx, `SELECT t.progress_fingerprint,t.progressed_at,t.effective_turns_after,t.session_version_after FROM practice_turns t JOIN practice_sessions s ON s.session_id=t.session_id WHERE s.user_id=$1 AND t.session_id=$2 AND t.turn_id=$3 FOR UPDATE OF t`, actor.UserID, command.SessionID, command.TurnID).Scan(&stored, &progressedAt, &storedEffective, &storedVersion)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return practice.TurnResult{}, practice.ErrNotFound
 	}
-	option, err := snapshot.SceneSelection.PracticeOption()
-	if err != nil || !practice.ValidSessionPolicy(
-		option.SessionPolicyRef,
-		option.Mode,
-		len(snapshot.SceneSelection.Scene.Prompt.TurnBlueprints),
-		option.SuggestedDurationSeconds,
-		snapshot.SessionPolicy,
-	) {
-		return practice.TurnResult{}, practice.ErrConflict
-	}
-	if _, err := practice.ResolveTurnPolicy(
-		option.TurnPolicyRef,
-	); err != nil {
-		return practice.TurnResult{}, practice.ErrConflict
-	}
-	switch status {
-	case practice.SessionStarting:
-		if effectiveTurns != 0 {
-			return practice.TurnResult{}, practice.ErrConflict
-		}
-	case practice.SessionInProgress:
-	case practice.SessionCompleted,
-		practice.SessionEndedEarly:
-		return practice.TurnResult{}, practice.ErrSessionCompleted
-	default:
-		// paused and unknown lifecycle states cannot consume a Turn.
-		return practice.TurnResult{}, practice.ErrConflict
-	}
-	if effectiveTurns >= turnLimit {
-		return practice.TurnResult{}, practice.ErrSessionCompleted
-	}
-
-	round := effectiveTurns
-	if command.CountsTowardTurnLimit {
-		round++
-	}
-	if round < 1 {
-		return practice.TurnResult{}, practice.ErrConflict
-	}
-	completed := command.CountsTowardTurnLimit && round == turnLimit
-	nextVersion := version + 1
-	completionToken := ""
-	if completed {
-		completionToken = fmt.Sprintf(
-			"practice-session:%s:completed:v%d",
-			command.SessionID,
-			nextVersion,
-		)
-	}
-	result = practice.TurnResult{
-		SessionID:       command.SessionID,
-		TurnID:          command.TurnID,
-		Round:           round,
-		EffectiveTurns:  round,
-		SessionVersion:  nextVersion,
-		TurnLimit:       turnLimit,
-		Completed:       completed,
-		CompletionToken: completionToken,
-	}
-	err = tx.QueryRow(ctx, `
-		INSERT INTO practice_turn_results (
-			owner_user_id, session_id, turn_id, payload_fingerprint,
-			round_number, effective_turns, session_version,
-			completed, completion_token
-		)
-		VALUES ($1, $2, $3, $4, $5, $5, $6, $7, $8)
-		RETURNING created_at
-	`, actor.UserID, command.SessionID, command.TurnID, fingerprint[:],
-		round, nextVersion, completed, completionToken).Scan(&result.CreatedAt)
 	if err != nil {
-		return practice.TurnResult{}, classifyWriteError(
-			"insert context voice Turn result",
-			err,
-		)
+		return practice.TurnResult{}, err
 	}
-
+	var snapshot practice.SessionSnapshot
+	if decodeStrictJSON(snapshotJSON, &snapshot) != nil {
+		return practice.TurnResult{}, practice.ErrConflict
+	}
+	turnLimit := snapshot.SessionPolicy.MaxEffectiveTurns
+	if progressedAt != nil {
+		if !bytes.Equal(stored, fingerprint[:]) ||
+			storedEffective == nil || storedVersion == nil {
+			return practice.TurnResult{}, practice.ErrIdempotencyConflict
+		}
+		return practice.TurnResult{SessionID: command.SessionID, TurnID: command.TurnID, Round: *storedEffective, EffectiveTurns: *storedEffective, SessionVersion: *storedVersion, TurnLimit: turnLimit, Completed: status == practice.SessionCompleted, CreatedAt: progressedAt.UTC()}, nil
+	}
+	if status != practice.SessionStarting && status != practice.SessionInProgress {
+		return practice.TurnResult{}, practice.ErrConflict
+	}
+	completionMode := snapshot.SessionPolicy.CompletionMode
+	nextEffective := effective
+	if command.CountsTowardTurnLimit {
+		nextEffective++
+	}
+	if nextEffective < 1 {
+		return practice.TurnResult{}, practice.ErrConflict
+	}
+	completed := completionMode == practice.CompletionModeTurnLimited && command.CountsTowardTurnLimit && nextEffective == turnLimit
+	if completionMode == practice.CompletionModeTurnLimited && (turnLimit < 1 || nextEffective > turnLimit) {
+		return practice.TurnResult{}, practice.ErrSessionCompleted
+	}
 	nextStatus := practice.SessionInProgress
 	if completed {
 		nextStatus = practice.SessionCompleted
 	}
-	tag, err := tx.Exec(ctx, `
-		UPDATE practice_sessions
-		SET status = $3,
-		    version = $4,
-		    effective_turns = $5,
-		    started_at = COALESCE(
-		        started_at,
-		        transaction_timestamp()
-		    ),
-		    completed_at = CASE
-		        WHEN $6 THEN transaction_timestamp()
-		        ELSE NULL
-		    END,
-		    end_reason = CASE
-		        WHEN $6 THEN 'TURN_LIMIT_REACHED'
-		        ELSE NULL
-		    END,
-		    updated_at = transaction_timestamp()
-		WHERE owner_user_id = $1
-		  AND session_id = $2
-		  AND version = $7
-		  AND effective_turns = $8
-		  AND status = $9
-	`, actor.UserID, command.SessionID, nextStatus, nextVersion, round,
-		completed, version, effectiveTurns, status)
+	var progressed time.Time
+	err = tx.QueryRow(ctx, `UPDATE practice_turns t SET progress_fingerprint=$4,effective_turns_after=$5,session_version_after=$6,progressed_at=transaction_timestamp() FROM practice_sessions s WHERE s.session_id=t.session_id AND s.user_id=$1 AND t.session_id=$2 AND t.turn_id=$3 AND t.progressed_at IS NULL RETURNING t.progressed_at`, actor.UserID, command.SessionID, command.TurnID, fingerprint[:], nextEffective, version+1).Scan(&progressed)
 	if err != nil {
-		return practice.TurnResult{},
-			classifyContextWriteError(
-				"advance context voice Session",
-				err,
-			)
+		return practice.TurnResult{}, classifyWriteError("advance practice turn", err)
+	}
+	endSQL := "ended_at"
+	reason := ""
+	if completed {
+		endSQL = "transaction_timestamp()"
+		reason = "turn_limit_reached"
+	}
+	tag, err := tx.Exec(ctx, `UPDATE practice_sessions SET status=$3,version=version+1,effective_turns=$4,started_at=COALESCE(started_at,transaction_timestamp()),ended_at=`+endSQL+`,end_reason=NULLIF($5,''),updated_at=transaction_timestamp() WHERE user_id=$1 AND session_id=$2 AND version=$6`, actor.UserID, command.SessionID, string(nextStatus), nextEffective, reason, version)
+	if err != nil {
+		return practice.TurnResult{}, classifyWriteError("advance practice session", err)
 	}
 	if tag.RowsAffected() != 1 {
 		return practice.TurnResult{}, practice.ErrConflict
 	}
 	if completed {
-		_, err = tx.Exec(ctx, `
-			INSERT INTO practice_completed (
-				owner_user_id, session_id, final_turn_id,
-				session_version, completion_token
-			)
-			VALUES ($1, $2, $3, $4, $5)
-		`, actor.UserID, command.SessionID, command.TurnID,
-			nextVersion, completionToken)
+		evidence, err := r.ReadSessionEvidence(ctx, tx, actor.UserID, command.SessionID)
 		if err != nil {
-			return practice.TurnResult{}, classifyWriteError(
-				"record Practice completion",
-				err,
-			)
+			return practice.TurnResult{}, err
+		}
+		if err := r.completion.ScheduleCompletedSession(ctx, tx, evidence); err != nil {
+			return practice.TurnResult{}, err
 		}
 	}
-	return result, nil
+	return practice.TurnResult{SessionID: command.SessionID, TurnID: command.TurnID, Round: nextEffective, EffectiveTurns: nextEffective, SessionVersion: version + 1, TurnLimit: turnLimit, Completed: completed, CreatedAt: progressed.UTC()}, nil
 }
-
-var _ practice.VoiceSessionRepository = (*Repository)(nil)

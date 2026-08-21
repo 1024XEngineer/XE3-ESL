@@ -16,8 +16,11 @@ import (
 const (
 	// MaxAudioBytes keeps a Base64 data URL below Qwen ASR's documented
 	// 10 MB encoded-input limit, including the media-type prefix.
-	MaxAudioBytes    int64 = 7_400_000
-	MaxAudioDuration       = 120 * time.Second
+	MaxAudioBytes int64 = 7_400_000
+	// MaxAudioDuration is a transport validation boundary. The two-second
+	// margin lets a client stop a 120-second recording without rejecting the
+	// final PCM frames queued by the native recorder.
+	MaxAudioDuration = 122 * time.Second
 
 	ContentTypeWAV = "audio/wav"
 )

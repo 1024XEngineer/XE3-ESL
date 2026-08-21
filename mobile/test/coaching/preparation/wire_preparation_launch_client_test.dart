@@ -5,534 +5,219 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/features/coaching/ielts/ielts_assignment.dart';
 import 'package:speakup/features/coaching/ielts/ielts_question_bank.dart';
-import 'package:speakup/features/coaching/preparation/preparation_models.dart';
 import 'package:speakup/features/coaching/preparation/preparation_launch_models.dart';
-import 'package:speakup/features/coaching/preparation/preparation_wire_codec.dart';
-import 'package:speakup/features/coaching/scene/scene.dart';
+import 'package:speakup/features/coaching/preparation/preparation_models.dart';
 import 'package:speakup/features/coaching/preparation/wire_preparation_launch_client.dart';
+import 'package:speakup/features/coaching/scene/scene.dart';
+import 'package:speakup/features/coaching/scene/scene_wire_codec.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
 
+import '../../support/preparation_contract_fixtures.dart';
+
 void main() {
-  test('accepts an idempotent Session replay already in progress', () async {
-    final response = _bootstrapJson();
-    final session = response['practice_session']! as Map<String, Object?>;
-    session['practice_session_status'] = 'in_progress';
-    session['session_version'] = 2;
-    session['started_at'] = _time;
-    final client = _client(_QueueTransport([_response(response)]));
-
-    final bootstrap = await client.createSession(
-      plan: decodePracticePlan(_planJson()),
-      input: const CreatePreparationSessionInput(
-        expectedPlanRevision: 1,
-        userConfirmed: true,
-      ),
-      idempotencyKey: 'session-replay-key',
-    );
-
-    expect(bootstrap.session.status, 'in_progress');
-    expect(bootstrap.session.version, 2);
-  });
-
   test(
-    'sends the exact authenticated Profile to Session production chain',
+    'direct Scene creates one Plan then freezes its version in Session',
     () async {
-      final transport = _QueueTransport([
-        _response(_profileJson()),
-        _response(_snapshotJson()),
-        _response(_planJson()),
-        _response(_bootstrapJson()),
+      final plan = contractPlan();
+      final transport = _QueueTransport(<IdentityHttpResponse>[
+        _response(HttpStatus.created, contractPlanJson()),
+        _response(HttpStatus.created, contractBootstrapJson(plan)),
       ]);
       final client = _client(transport);
 
-      final profile = await client.createProfile(
-        input: const CreatePreparationProfileInput(
-          backgroundSummary: _background,
+      final created = await client.createPlan(
+        input: const CreatePracticePlanInput(
+          backgroundSummary: contractBackground,
+          sceneId: 'project-deep-dive',
+          sceneVersion: 1,
+          selectedRoleIds: <String>['technical-interviewer'],
+          practiceOptionId: 'full-simulation',
         ),
-        idempotencyKey: 'profile-key-123',
-      );
-      final snapshot = await client.createSnapshot(
-        profileId: profile.id,
-        sourceVersion: profile.version,
-        idempotencyKey: 'snapshot-key-123',
-      );
-      final plan = await client.createPlan(
-        input: CreatePreparationPlanInput(
-          sourceThreadId: _threadId,
-          goalId: _goalId,
-          preparationSnapshotId: snapshot.id,
-          sceneId: _selection.scene.id,
-          sceneVersion: _selection.scene.version,
-          selectedRoleIds: _selection.selectedRoleIds,
-          practiceOptionId: _selection.practiceOptionId,
-        ),
-        idempotencyKey: 'plan-key-123456',
+        idempotencyKey: 'direct-plan-key',
       );
       final bootstrap = await client.createSession(
-        plan: plan,
+        plan: created,
         input: CreatePreparationSessionInput(
-          expectedPlanRevision: plan.revision,
-          userConfirmed: true,
+          expectedPlanVersion: created.version,
         ),
-        idempotencyKey: 'session-key-123',
+        idempotencyKey: 'direct-session-key',
       );
 
-      expect(bootstrap.session.id, _sessionId);
-      expect(transport.calls.map((call) => call.uri.path), [
-        '/v1/preparation-profiles',
-        '/v1/preparation-profiles/$_profileId/snapshots',
+      expect(bootstrap.session.id, contractSessionId);
+      expect(bootstrap.session.planVersion, created.version);
+      expect(transport.calls.map((call) => call.uri.path), <String>[
         '/v1/practice-plans',
-        '/v1/practice-plans/$_planId/practice-sessions',
+        '/v1/practice-plans/$contractPlanId/practice-sessions',
       ]);
-      expect(jsonDecode(transport.calls.first.body!), {
-        'background_summary': _background,
-      });
-      expect(jsonDecode(transport.calls[2].body!), {
-        'source_thread_id': _threadId,
-        'goal_id': _goalId,
-        'preparation_snapshot_id': _preparationSnapshotId,
-        'scene_id': _sceneId,
+      expect(jsonDecode(transport.calls.first.body!), <String, Object?>{
+        'background_summary': contractBackground,
+        'scene_id': 'project-deep-dive',
         'scene_version': 1,
-        'selected_role_ids': [_roleId],
-        'practice_option_id': _optionId,
+        'selected_role_ids': <String>['technical-interviewer'],
+        'practice_option_id': 'full-simulation',
       });
-      expect(jsonDecode(transport.calls.last.body!), {
-        'expected_plan_revision': 1,
-        'user_confirmed': true,
+      expect(jsonDecode(transport.calls.last.body!), <String, Object?>{
+        'expected_plan_version': 1,
       });
-      for (final call in transport.calls) {
-        expect(
-          call.headers[HttpHeaders.authorizationHeader],
-          'Bearer sess_account-a',
-        );
-        expect(call.headers[HttpHeaders.contentTypeHeader], 'application/json');
-        expect(call.headers['Idempotency-Key'], isNotEmpty);
-      }
     },
   );
 
-  test('accepts the complete canonical selection in a created Plan', () async {
-    final response = _planJson();
-    final client = _client(_QueueTransport([_response(response)]));
-
-    final plan = await client.createPlan(
-      input: _planInput(),
-      idempotencyKey: 'configured-plan-key',
-    );
-
-    expect(plan.id, _planId);
-  });
-
   test(
-    'marks malformed 201 creates ambiguous and retries Session with one key',
+    'Agent draft confirmation uses expected_version before Session creation',
     () async {
-      final transport = _QueueTransport([
-        _rawResponse(HttpStatus.created, '{"truncated":'),
-        _rawResponse(HttpStatus.created, '{"truncated":'),
-        _rawResponse(HttpStatus.created, '{"truncated":'),
-        _rawResponse(HttpStatus.created, '{"truncated":'),
-        _response(_bootstrapJson()),
+      final transport = _QueueTransport(<IdentityHttpResponse>[
+        _response(
+          HttpStatus.ok,
+          contractPlanJson(status: PracticePlanStatus.ready, version: 2),
+        ),
       ]);
       final client = _client(transport);
-      const sessionInput = CreatePreparationSessionInput(
-        expectedPlanRevision: 1,
-        userConfirmed: true,
-      );
-      final plan = decodePracticePlan(_planJson());
-      final operations =
-          <({PreparationLaunchStage stage, Future<Object?> Function() run})>[
-            (
-              stage: PreparationLaunchStage.profile,
-              run: () => client.createProfile(
-                input: const CreatePreparationProfileInput(
-                  backgroundSummary: _background,
-                ),
-                idempotencyKey: 'profile-malformed-key',
-              ),
-            ),
-            (
-              stage: PreparationLaunchStage.snapshot,
-              run: () => client.createSnapshot(
-                profileId: _profileId,
-                sourceVersion: 1,
-                idempotencyKey: 'snapshot-malformed-key',
-              ),
-            ),
-            (
-              stage: PreparationLaunchStage.plan,
-              run: () => client.createPlan(
-                input: _planInput(),
-                idempotencyKey: 'plan-malformed-key',
-              ),
-            ),
-            (
-              stage: PreparationLaunchStage.session,
-              run: () => client.createSession(
-                plan: plan,
-                input: sessionInput,
-                idempotencyKey: 'session-malformed-key',
-              ),
-            ),
-          ];
 
-      for (final operation in operations) {
-        await expectLater(
-          operation.run(),
-          throwsA(
-            isA<PreparationLaunchException>()
-                .having(
-                  (error) => error.kind,
-                  'kind',
-                  PreparationLaunchFailureKind.invalidResponse,
-                )
-                .having((error) => error.stage, 'stage', operation.stage)
-                .having(
-                  (error) => error.statusCode,
-                  'statusCode',
-                  HttpStatus.created,
-                )
-                .having((error) => error.retryable, 'retryable', isTrue),
-          ),
-        );
-      }
-
-      final bootstrap = await client.createSession(
-        plan: plan,
-        input: sessionInput,
-        idempotencyKey: 'session-malformed-key',
+      final confirmed = await client.confirmPlan(
+        planId: contractPlanId,
+        expectedVersion: 1,
+        idempotencyKey: 'confirm-plan-key',
       );
 
-      expect(bootstrap.session.id, _sessionId);
-      final sessionCalls = transport.calls.where(
-        (call) => call.uri.path.endsWith('/practice-sessions'),
-      );
-      expect(sessionCalls, hasLength(2));
+      expect(confirmed.status, PracticePlanStatus.ready);
+      expect(confirmed.version, 2);
       expect(
-        sessionCalls.map((call) => call.headers['Idempotency-Key']),
-        everyElement('session-malformed-key'),
+        transport.calls.single.uri.path,
+        '/v1/practice-plans/$contractPlanId/confirm',
       );
+      expect(jsonDecode(transport.calls.single.body!), <String, Object?>{
+        'expected_version': 1,
+      });
     },
   );
 
-  test(
-    'keeps a definite 400 create validation failure non-retryable',
-    () async {
-      final client = _client(
-        _QueueTransport([
-          _rawResponse(
-            HttpStatus.badRequest,
-            jsonEncode({
-              'error': {'code': 'invalid_request'},
-            }),
-          ),
-        ]),
-      );
-
-      await expectLater(
-        client.createProfile(
-          input: const CreatePreparationProfileInput(
-            backgroundSummary: _background,
-          ),
-          idempotencyKey: 'profile-validation-key',
-        ),
-        throwsA(
-          isA<PreparationLaunchException>()
-              .having(
-                (error) => error.kind,
-                'kind',
-                PreparationLaunchFailureKind.invalidRequest,
-              )
-              .having((error) => error.statusCode, 'statusCode', 400)
-              .having((error) => error.retryable, 'retryable', isFalse),
-        ),
-      );
-    },
-  );
-
-  test('rejects a Plan bound to a different Agent Goal', () async {
-    final response = _planJson();
-    (response['goal_snapshot']! as Map<String, Object?>)['goal_id'] =
-        'goal-other';
-    final transport = _QueueTransport([_response(response)]);
+  test('reads and confirms a historical Plan with legacy Scene data', () async {
+    final transport = _QueueTransport(<IdentityHttpResponse>[
+      _response(
+        HttpStatus.ok,
+        _legacyPlanJson(status: PracticePlanStatus.draft, version: 1),
+      ),
+      _response(
+        HttpStatus.ok,
+        _legacyPlanJson(status: PracticePlanStatus.ready, version: 2),
+      ),
+    ]);
     final client = _client(transport);
 
-    await expectLater(
-      client.createPlan(input: _planInput(), idempotencyKey: 'plan-key-123456'),
-      throwsA(_invalidResponse),
+    final historical = await client.getPlan(contractPlanId);
+    final confirmed = await client.confirmPlan(
+      planId: historical.id,
+      expectedVersion: historical.version,
+      idempotencyKey: 'legacy-plan-confirm-key',
     );
-  });
 
-  test('rejects an unknown Plan response field', () async {
-    final response = _planJson()..['unexpected_field'] = true;
-    final client = _client(_QueueTransport([_response(response)]));
-
-    await expectLater(
-      client.createPlan(input: _planInput(), idempotencyKey: 'plan-key-123456'),
-      throwsA(_invalidResponse),
-    );
-  });
-
-  test('rejects an IELTS assignment on a non-IELTS Plan', () {
-    final response = _planJson()..['ielts_assignment'] = _ieltsAssignmentJson();
-
+    expect(historical.sceneSelection.source.type, SceneSourceType.catalog);
+    expect(historical.sceneSelection.source.sceneId, contractScene.id);
     expect(
-      () => decodePracticePlan(response),
-      throwsA(isA<PreparationWireFormatException>()),
+      historical.sceneSelection.source.sceneVersion,
+      contractScene.version,
     );
+    expect(confirmed.status, PracticePlanStatus.ready);
+    expect(confirmed.version, 2);
+    expect(transport.calls.map((call) => call.uri.path), <String>[
+      '/v1/practice-plans/$contractPlanId',
+      '/v1/practice-plans/$contractPlanId/confirm',
+    ]);
   });
 
-  test('decodes the canonical IELTS Part 3 assignment shape', () {
-    final assignment = decodeIeltsPracticeAssignment(<String, Object?>{
-      'bank_id': 'ielts-2026-05-08',
-      'season': '2026-05-08',
-      'mode': 'PART_3',
-      'parts': <Object?>[
-        <String, Object?>{
-          'part': 'PART_3',
-          'source_id': 'p23-new-001',
-          'topic_title': '语言学习',
-          'turn_blueprints': <String>['Question 1', 'Question 2'],
-        },
-      ],
-    });
-
-    expect(assignment.mode, PracticeMode.part3);
-    expect(assignment.part(IeltsSpeakingPart.part3)?.cueCard, isNull);
-    expect(assignment.turnBlueprints, hasLength(2));
-  });
-
-  test(
-    'rejects IELTS assignments with invalid part boundaries or metadata',
-    () {
-      for (final mutate in <void Function(Map<String, Object?>)>[
-        (root) => _ieltsAssignmentPart(root, 0)['topic_title'] = 'Not allowed',
-        (root) => _ieltsAssignmentPart(root, 1).remove('cue_card'),
-        (root) => _ieltsAssignmentPart(root, 1)['turn_blueprints'] = <String>[
-          'Cue card 1',
-          'Cue card 2',
-        ],
-        (root) => _ieltsAssignmentPart(root, 2)['cue_card'] = 'Not allowed',
-        (root) => _ieltsAssignmentPart(root, 2)['source_id'] = 'other-topic',
-        (root) {
-          final parts = root['parts']! as List<Object?>;
-          final first = parts[0];
-          parts[0] = parts[1];
-          parts[1] = first;
-        },
-        (root) => _ieltsAssignmentPart(root, 2)['turn_blueprints'] =
-            List<String>.generate(56, (index) => 'Extra ${index + 1}'),
-      ]) {
-        final invalid = _ieltsAssignmentJson();
-        mutate(invalid);
-
-        expect(
-          () => decodeIeltsPracticeAssignment(invalid),
-          throwsA(isA<PreparationWireFormatException>()),
-        );
-      }
-    },
-  );
-
-  group('rejects cross-resource Session bootstrap data', () {
-    final cases = <String, void Function(Map<String, Object?>)>{
-      'unknown role field': (root) {
-        _roleSnapshot(root)['version'] = 99;
-      },
-      'role scene': (root) {
-        _roleSnapshot(root)['scene_id'] = 'scene-other';
-      },
-      'background': (root) {
-        _preparationSnapshot(root)['background_snapshot'] = 'Other account';
-      },
-      'source profile': (root) {
-        _preparationSnapshot(root)['source_profile_id'] = 'profile-other';
-      },
-      'source version': (root) {
-        _preparationSnapshot(root)['source_version'] = 2;
-      },
-      'unexpected resume snapshot': (root) {
-        _preparationSnapshot(root)['resume_snapshot'] = 'Unexpected';
-      },
-      'candidate user': (root) {
-        _candidateSubject(root)['subject_id'] = 'user-other';
-      },
-      'option turn budget': (root) {
-        _sessionPolicy(root)['max_effective_turns'] = 6;
-      },
-      'missing turn policy reference': (root) {
-        _practiceOptionSnapshot(root).remove('turn_policy_ref');
-      },
-      'invalid session policy reference': (root) {
-        _practiceOptionSnapshot(root)['session_policy_ref'] = '';
-      },
-    };
-
-    for (final entry in cases.entries) {
-      test(entry.key, () async {
-        final response = _bootstrapJson();
-        entry.value(response);
-        final client = _client(_QueueTransport([_response(response)]));
-
-        await expectLater(
-          client.createSession(
-            plan: decodePracticePlan(_planJson()),
-            input: const CreatePreparationSessionInput(
-              expectedPlanRevision: 1,
-              userConfirmed: true,
-            ),
-            idempotencyKey: 'session-key-123',
-          ),
-          throwsA(_invalidResponse),
-        );
-      });
-    }
-  });
-
-  test('accepts the frozen six-turn full simulation budget', () async {
-    final response = _bootstrapJson(selection: _fullSelection);
-    final policy = _sessionPolicy(response);
-    policy
-      ..['min_effective_turns'] = 4
-      ..['max_effective_turns'] = 6
-      ..['coverage_checkpoint_turn'] = 4;
-    final planJson = _planJson(selection: _fullSelection);
-    final planPolicy = planJson['session_policy']! as Map<String, Object?>;
-    planPolicy
-      ..['min_effective_turns'] = 4
-      ..['max_effective_turns'] = 6
-      ..['coverage_checkpoint_turn'] = 4;
-    final client = _client(_QueueTransport([_response(response)]));
-
-    final bootstrap = await client.createSession(
-      plan: decodePracticePlan(planJson),
-      input: const CreatePreparationSessionInput(
-        expectedPlanRevision: 1,
-        userConfirmed: true,
-      ),
-      idempotencyKey: 'session-full-key',
-    );
-
-    expect(bootstrap.maxEffectiveTurns, 6);
-  });
-
-  test('accepts the dedicated fourteen-turn IELTS full mock budget', () async {
-    final response = _bootstrapJson(selection: _ieltsFullSelection);
-    final policy = _sessionPolicy(response);
-    policy
-      ..['suggested_duration_seconds'] = 900
-      ..['min_effective_turns'] = 14
-      ..['max_effective_turns'] = 14
-      ..['coverage_checkpoint_turn'] = 14
-      ..['max_follow_ups_per_question'] = 0;
-    final planJson = _planJson(selection: _ieltsFullSelection);
-    final planPolicy = planJson['session_policy']! as Map<String, Object?>;
-    planPolicy
-      ..['suggested_duration_seconds'] = 900
-      ..['min_effective_turns'] = 14
-      ..['max_effective_turns'] = 14
-      ..['coverage_checkpoint_turn'] = 14
-      ..['max_follow_ups_per_question'] = 0;
-    final transport = _QueueTransport([
-      _response(planJson),
-      _response(response),
+  test('accepts a Part 2 Plan with a frozen prepared answer', () async {
+    final transport = _QueueTransport(<IdentityHttpResponse>[
+      _response(HttpStatus.created, _ieltsPlanJson()),
     ]);
     final client = _client(transport);
 
     final plan = await client.createPlan(
-      input: _planInput(selection: _ieltsFullSelection),
-      idempotencyKey: 'plan-ielts-full-key',
-    );
-    final bootstrap = await client.createSession(
-      plan: plan,
-      input: const CreatePreparationSessionInput(
-        expectedPlanRevision: 1,
-        userConfirmed: true,
-      ),
-      idempotencyKey: 'session-ielts-full-key',
+      input: _ieltsPlanInput,
+      idempotencyKey: 'ielts-part-2-plan-key',
     );
 
-    expect(bootstrap.maxEffectiveTurns, 14);
-    expect(bootstrap.session.sceneCategory, SceneCategory.ieltsSpeaking);
+    final preparedAnswer = plan.ieltsAssignment!
+        .part(IeltsSpeakingPart.part2)!
+        .preparedAnswers
+        .single;
+    expect(preparedAnswer.bankId, 'ielts-bank');
+    expect(preparedAnswer.part, 'PART_2');
+    expect(preparedAnswer.sourceId, 'famous-person');
+    expect(preparedAnswer.questionPosition, 1);
     expect(
-      plan.ieltsAssignment?.part(IeltsSpeakingPart.part2)?.sourceId,
-      'p23-new-001',
+      preparedAnswer.answer,
+      'I would like to meet a songwriter I admire.',
     );
-    expect(jsonDecode(transport.calls.first.body!), {
-      'source_thread_id': _threadId,
-      'goal_id': _goalId,
-      'preparation_snapshot_id': _preparationSnapshotId,
-      'scene_id': _ieltsSceneId,
-      'scene_version': 2,
-      'selected_role_ids': [_roleId],
-      'practice_option_id': _ieltsFullOptionId,
-      'ielts_selection': {
-        'part_1_set_id': 'p1-002',
-        'topic_group_id': 'p23-new-001',
-      },
-    });
-    expect(jsonDecode(transport.calls.last.body!), {
-      'expected_plan_revision': 1,
-      'user_confirmed': true,
-    });
+    expect(preparedAnswer.personalized, isTrue);
   });
 
-  test(
-    'rejects Session IELTS data that differs from its frozen Plan',
-    () async {
-      final planJson = _planJson(selection: _ieltsFullSelection);
-      final planPolicy = planJson['session_policy']! as Map<String, Object?>;
-      _configureIeltsPolicy(planPolicy);
-      final response = _bootstrapJson(selection: _ieltsFullSelection);
-      _configureIeltsPolicy(_sessionPolicy(response));
-      final snapshot = response['snapshot']! as Map<String, Object?>;
-      final assignment = snapshot['ielts_assignment']! as Map<String, Object?>;
-      final parts = assignment['parts']! as List<Object?>;
-      final part2 = parts[1]! as Map<String, Object?>;
-      part2['topic_title'] = 'A different frozen topic';
-      final client = _client(_QueueTransport([_response(response)]));
-
-      await expectLater(
-        client.createSession(
-          plan: decodePracticePlan(planJson),
-          input: const CreatePreparationSessionInput(
-            expectedPlanRevision: 1,
-            userConfirmed: true,
-          ),
-          idempotencyKey: 'session-ielts-mismatch-key',
-        ),
-        throwsA(_invalidResponse),
-      );
-    },
-  );
-
-  test('rejects an IELTS Plan without a frozen assignment', () async {
-    final response = _planJson(selection: _ieltsFullSelection);
-    _configureIeltsPolicy(response['session_policy']! as Map<String, Object?>);
-    response.remove('ielts_assignment');
-    final client = _client(_QueueTransport([_response(response)]));
+  test('rejects unknown fields in a frozen prepared answer', () async {
+    final response = _ieltsPlanJson();
+    final assignment = response['ielts_assignment']! as Map<String, Object?>;
+    final parts = assignment['parts']! as List<Object?>;
+    final part2 = parts.first! as Map<String, Object?>;
+    final answers = part2['prepared_answers']! as List<Object?>;
+    final answer = answers.single! as Map<String, Object?>;
+    answer['unexpected'] = true;
+    final client = _client(
+      _QueueTransport(<IdentityHttpResponse>[
+        _response(HttpStatus.created, response),
+      ]),
+    );
 
     await expectLater(
       client.createPlan(
-        input: _planInput(selection: _ieltsFullSelection),
-        idempotencyKey: 'plan-ielts-missing-assignment',
+        input: _ieltsPlanInput,
+        idempotencyKey: 'strict-ielts-plan-key',
       ),
-      throwsA(_invalidResponse),
+      throwsA(
+        isA<PreparationLaunchException>().having(
+          (error) => error.kind,
+          'kind',
+          PreparationLaunchFailureKind.invalidResponse,
+        ),
+      ),
     );
   });
 
-  test('fences a response that completes after account cleanup', () async {
-    final transport = _CompleterTransport();
-    final client = _client(transport);
-    final operation = client.createProfile(
-      input: const CreatePreparationProfileInput(
-        backgroundSummary: _background,
-      ),
-      idempotencyKey: 'profile-key-123',
+  test('rejects the removed plan_revision response field', () async {
+    final response = contractPlanJson();
+    response['plan_revision'] = response.remove('version');
+    final client = _client(
+      _QueueTransport(<IdentityHttpResponse>[
+        _response(HttpStatus.created, response),
+      ]),
     );
 
+    await expectLater(
+      client.createPlan(
+        input: const CreatePracticePlanInput(
+          backgroundSummary: contractBackground,
+          sceneId: 'project-deep-dive',
+          sceneVersion: 1,
+          selectedRoleIds: <String>['technical-interviewer'],
+          practiceOptionId: 'full-simulation',
+        ),
+        idempotencyKey: 'strict-plan-key',
+      ),
+      throwsA(
+        isA<PreparationLaunchException>().having(
+          (error) => error.kind,
+          'kind',
+          PreparationLaunchFailureKind.invalidResponse,
+        ),
+      ),
+    );
+  });
+
+  test('account cleanup fences an in-flight response', () async {
+    final transport = _CompleterTransport();
+    final client = _client(transport);
+    final operation = client.getPlan(contractPlanId);
+
     await client.clearAccountState();
-    transport.complete(_response(_profileJson()));
+    transport.complete(_response(HttpStatus.ok, contractPlanJson()));
 
     await expectLater(
       operation,
@@ -553,7 +238,7 @@ WirePreparationLaunchClient _client(IdentityHttpTransport transport) {
     generation: 1,
   );
   return WirePreparationLaunchClient(
-    baseUri: Uri.parse('https://api.speak-up.top'),
+    baseUri: Uri.parse('https://api.speak-up.test'),
     credentialProvider: () => credential,
     invalidateSession:
         ({required expectedSessionToken, required expectedGeneration}) async {},
@@ -561,11 +246,8 @@ WirePreparationLaunchClient _client(IdentityHttpTransport transport) {
   );
 }
 
-Matcher get _invalidResponse => isA<PreparationLaunchException>().having(
-  (error) => error.kind,
-  'kind',
-  PreparationLaunchFailureKind.invalidResponse,
-);
+IdentityHttpResponse _response(int status, Map<String, Object?> body) =>
+    IdentityHttpResponse(statusCode: status, body: jsonEncode(body));
 
 final class _TransportCall {
   const _TransportCall({
@@ -585,7 +267,7 @@ final class _QueueTransport implements IdentityHttpTransport {
   _QueueTransport(this.responses);
 
   final List<IdentityHttpResponse> responses;
-  final calls = <_TransportCall>[];
+  final List<_TransportCall> calls = <_TransportCall>[];
 
   @override
   Future<IdentityHttpResponse> send({
@@ -593,6 +275,7 @@ final class _QueueTransport implements IdentityHttpTransport {
     required Uri uri,
     required Map<String, String> headers,
     String? body,
+    List<int>? bodyBytes,
   }) async {
     calls.add(
       _TransportCall(
@@ -607,11 +290,10 @@ final class _QueueTransport implements IdentityHttpTransport {
 }
 
 final class _CompleterTransport implements IdentityHttpTransport {
-  final _responseCompleter = Completer<IdentityHttpResponse>();
+  final Completer<IdentityHttpResponse> _response =
+      Completer<IdentityHttpResponse>();
 
-  void complete(IdentityHttpResponse response) {
-    _responseCompleter.complete(response);
-  }
+  void complete(IdentityHttpResponse response) => _response.complete(response);
 
   @override
   Future<IdentityHttpResponse> send({
@@ -619,498 +301,140 @@ final class _CompleterTransport implements IdentityHttpTransport {
     required Uri uri,
     required Map<String, String> headers,
     String? body,
-  }) {
-    return _responseCompleter.future;
-  }
+    List<int>? bodyBytes,
+  }) => _response.future;
 }
 
-IdentityHttpResponse _response(Map<String, Object?> body) {
-  return IdentityHttpResponse(
-    statusCode: HttpStatus.created,
-    body: jsonEncode(body),
-  );
-}
-
-IdentityHttpResponse _rawResponse(int statusCode, String body) {
-  return IdentityHttpResponse(statusCode: statusCode, body: body);
-}
-
-Map<String, Object?> _profileJson() => {
-  'preparation_profile_id': _profileId,
-  'user_id': _userId,
-  'background_summary': _background,
-  'version': 1,
-  'updated_at': _time,
-};
-
-Map<String, Object?> _snapshotJson() => {
-  'preparation_snapshot_id': _preparationSnapshotId,
-  'source_profile_id': _profileId,
-  'source_version': 1,
-  'background_snapshot': _background,
-  'created_at': _time,
-};
-
-Map<String, Object?> _planJson({
-  PreparationLaunchSelection selection = _selection,
-}) {
-  return {
-    'practice_plan_id': _planId,
-    'user_id': _userId,
-    'source_thread_id': _threadId,
-    'goal_snapshot': {
-      'goal_id': _goalId,
-      'title': selection.scene.name,
-      'version': 1,
-    },
-    'preparation_snapshot': _snapshotJson(),
-    'scene_selection': _sceneSelectionJson(selection),
-    'session_policy': _sessionPolicyJson(),
-    'practice_objectives': _practiceObjectivesJson(),
-    if (selection.ieltsSelection != null)
-      'ielts_assignment': _ieltsAssignmentJson(),
-    'plan_revision': 1,
-    'practice_plan_status': 'ready',
-    'created_at': _time,
-    'updated_at': _time,
-  };
-}
-
-Map<String, Object?> _bootstrapJson({
-  PreparationLaunchSelection selection = _selection,
-}) {
-  final role = selection.scene.roles.singleWhere(
-    (role) => role.id == selection.selectedRoleIds.single,
-  );
-  final option = selection.scene.practiceOptions.singleWhere(
-    (option) => option.id == selection.practiceOptionId,
-  );
-  return {
-    'practice_session': {
-      'practice_session_id': _sessionId,
-      'practice_plan_id': _planId,
-      'plan_revision': 1,
-      'practice_experience': selection.scene.experience.wireValue,
-      'scene_category': selection.scene.category.wireValue,
-      'practice_mode': option.mode.wireValue,
-      'evaluation_policy_ref': option.evaluationPolicyRef,
-      'snapshot_id': _sessionSnapshotId,
-      'practice_session_status': 'starting',
-      'session_version': 1,
-      'created_at': _time,
-    },
-    'snapshot': {
-      'snapshot_id': _sessionSnapshotId,
-      'practice_session_id': _sessionId,
-      'plan_revision': 1,
-      'practice_experience': selection.scene.experience.wireValue,
-      'scene_category': selection.scene.category.wireValue,
-      'practice_mode': option.mode.wireValue,
-      'scene_selection': _sceneSelectionJson(selection),
-      'preparation_snapshot': _snapshotJson(),
-      'participants': [
-        {
-          'practice_participant_id': 'participant-interviewer',
-          'practice_session_id': _sessionId,
-          'participant_role': 'FACILITATOR',
-          'subject_ref': {
-            'namespace': 'mock.actor',
-            'subject_id': 'interviewer-technical',
-          },
-          'role_definition_id': role.id,
-          'role_snapshot': _roleJson(role),
-          'participant_order': 1,
-        },
-        {
-          'practice_participant_id': 'participant-candidate',
-          'practice_session_id': _sessionId,
-          'participant_role': 'LEARNER',
-          'subject_ref': {'namespace': 'speakup.user', 'subject_id': _userId},
-          'participant_order': 2,
-        },
-      ],
-      'session_policy': _sessionPolicyJson(),
-      'practice_objectives': _practiceObjectivesJson(),
-      if (selection.ieltsSelection != null)
-        'ielts_assignment': _ieltsAssignmentJson(),
-      'created_at': _time,
-    },
-  };
-}
-
-Map<String, Object?> _sceneSelectionJson(
-  PreparationLaunchSelection selection,
-) => <String, Object?>{
-  'scene': <String, Object?>{
-    ..._sceneJson(selection.scene),
-    'roles': selection.scene.roles
-        .where((role) => selection.selectedRoleIds.contains(role.id))
-        .map(_roleJson)
-        .toList(),
-    'practice_options': selection.scene.practiceOptions
-        .where((option) => option.id == selection.practiceOptionId)
-        .map(_practiceOptionJson)
-        .toList(),
-  },
-  'selected_role_ids': selection.selectedRoleIds,
-  'practice_option_id': selection.practiceOptionId,
-};
-
-Map<String, Object?> _sceneJson(SceneDefinition scene) => <String, Object?>{
-  'scene_id': scene.id,
-  'practice_experience': scene.experience.wireValue,
-  'scene_category': scene.category.wireValue,
-  'name': scene.name,
-  'scene_version': scene.version,
-  'status': scene.status.name,
-  'prompt': <String, Object?>{
-    'public_scene_brief': scene.prompt.publicSceneBrief,
-    'practice_goal': scene.prompt.practiceGoal,
-    'user_role': scene.prompt.userRole,
-    'ai_role': scene.prompt.aiRole,
-    'persona_summary': scene.prompt.personaSummary,
-    'focus_areas': scene.prompt.focusAreas,
-    'turn_blueprints': scene.category == SceneCategory.ieltsSpeaking
-        ? _ieltsTurnBlueprints()
-        : scene.prompt.turnBlueprints,
-  },
-  'roles': scene.roles.map(_roleJson).toList(growable: false),
-  'practice_options': scene.practiceOptions
-      .map(_practiceOptionJson)
-      .toList(growable: false),
-};
-
-Map<String, Object?> _roleJson(RoleDefinition role) => <String, Object?>{
-  'role_definition_id': role.id,
-  'scene_id': role.sceneId,
-  'role_type': role.type,
-  'display_name': role.displayName,
-  'responsibilities': role.responsibilities,
-  'style': role.style,
-  'practice_objectives': role.practiceObjectives
-      .map(
-        (objective) => <String, Object?>{
-          'objective_id': objective.objectiveId,
-          'description': objective.description,
-        },
-      )
-      .toList(growable: false),
-  'voice_config_ref': ?role.voiceConfigRef,
-};
-
-Map<String, Object?> _practiceOptionJson(PracticeOption option) =>
-    <String, Object?>{
-      'practice_option_id': option.id,
-      'scene_id': option.sceneId,
-      'practice_mode': option.mode.wireValue,
-      'display_name': option.displayName,
-      'role_definition_id': ?option.roleId,
-      'suggested_duration_seconds': option.suggestedDurationSeconds,
-      'turn_policy_ref': option.turnPolicyRef,
-      'session_policy_ref': option.sessionPolicyRef,
-      'evaluation_policy_ref': option.evaluationPolicyRef,
-    };
-
-Map<String, Object?> _sessionPolicyJson() => <String, Object?>{
-  'suggested_duration_seconds': 300,
-  'min_effective_turns': 1,
-  'max_effective_turns': 3,
-  'coverage_checkpoint_turn': 1,
-  'max_follow_ups_per_question': 1,
-  'early_completion_rule': 'COVERAGE_SATISFIED_AFTER_CHECKPOINT',
-  'retry_allowed': false,
-  'question_translation_allowed': true,
-  'question_tips_allowed': true,
-  'avatar_allowed': false,
-  'speech_feedback_allowed': true,
-};
-
-CreatePreparationPlanInput _planInput({
-  PreparationLaunchSelection selection = _selection,
-}) => CreatePreparationPlanInput(
-  sourceThreadId: _threadId,
-  goalId: _goalId,
-  preparationSnapshotId: _preparationSnapshotId,
-  sceneId: selection.scene.id,
-  sceneVersion: selection.scene.version,
-  selectedRoleIds: selection.selectedRoleIds,
-  practiceOptionId: selection.practiceOptionId,
-  ieltsSelection: selection.ieltsSelection,
-);
-
-Map<String, Object?> _ieltsAssignmentJson() => <String, Object?>{
-  'bank_id': 'ielts-2026-05-08',
-  'season': '2026-05-08',
-  'mode': 'FULL_MOCK',
-  'parts': <Object?>[
-    <String, Object?>{
-      'part': 'PART_1',
-      'source_id': 'p1-002',
-      'turn_blueprints': _ieltsTurnBlueprints().sublist(0, 8),
-    },
-    <String, Object?>{
-      'part': 'PART_2',
-      'source_id': 'p23-new-001',
-      'topic_title': '语言学习',
-      'cue_card': 'Describe a language you would like to learn',
-      'turn_blueprints': <String>[_ieltsTurnBlueprints()[8]],
-    },
-    <String, Object?>{
-      'part': 'PART_3',
-      'source_id': 'p23-new-001',
-      'topic_title': '语言学习',
-      'turn_blueprints': _ieltsTurnBlueprints().sublist(9),
-    },
-  ],
-};
-
-Map<String, Object?> _ieltsAssignmentPart(
-  Map<String, Object?> assignment,
-  int index,
-) => (assignment['parts']! as List<Object?>)[index]! as Map<String, Object?>;
-
-List<String> _ieltsTurnBlueprints() => List<String>.generate(
-  14,
-  (index) => 'Question ${index + 1}',
-  growable: false,
-);
-
-void _configureIeltsPolicy(Map<String, Object?> policy) {
-  policy
-    ..['suggested_duration_seconds'] = 900
-    ..['min_effective_turns'] = 14
-    ..['max_effective_turns'] = 14
-    ..['coverage_checkpoint_turn'] = 14
-    ..['max_follow_ups_per_question'] = 0;
-}
-
-List<Object?> _practiceObjectivesJson() => <Object?>[
-  <String, Object?>{
-    'objective_id': 'system_design',
-    'description': 'Explain one design trade-off.',
-  },
-];
-
-Map<String, Object?> _roleSnapshot(Map<String, Object?> root) {
-  final snapshot = root['snapshot']! as Map<String, Object?>;
-  final participants = snapshot['participants']! as List<Object?>;
-  final interviewer = participants.first as Map<String, Object?>;
-  return interviewer['role_snapshot']! as Map<String, Object?>;
-}
-
-Map<String, Object?> _sceneSnapshot(Map<String, Object?> root) {
-  final snapshot = root['snapshot']! as Map<String, Object?>;
-  final selection = snapshot['scene_selection']! as Map<String, Object?>;
-  return selection['scene']! as Map<String, Object?>;
-}
-
-Map<String, Object?> _practiceOptionSnapshot(Map<String, Object?> root) {
-  final options = _sceneSnapshot(root)['practice_options']! as List<Object?>;
-  return options.single! as Map<String, Object?>;
-}
-
-Map<String, Object?> _preparationSnapshot(Map<String, Object?> root) {
-  final snapshot = root['snapshot']! as Map<String, Object?>;
-  return snapshot['preparation_snapshot']! as Map<String, Object?>;
-}
-
-Map<String, Object?> _candidateSubject(Map<String, Object?> root) {
-  final snapshot = root['snapshot']! as Map<String, Object?>;
-  final participants = snapshot['participants']! as List<Object?>;
-  final candidate = participants[1] as Map<String, Object?>;
-  return candidate['subject_ref']! as Map<String, Object?>;
-}
-
-Map<String, Object?> _sessionPolicy(Map<String, Object?> root) {
-  final snapshot = root['snapshot']! as Map<String, Object?>;
-  return snapshot['session_policy']! as Map<String, Object?>;
-}
-
-const _time = '2026-07-26T12:00:00Z';
-const _threadId = '20000000-0000-4000-8000-000000000001';
-const _goalId = '10000000-0000-4000-8000-000000000001';
-const _userId = 'user-1';
-const _profileId = 'profile-1';
-const _preparationSnapshotId = 'preparation-snapshot-1';
-const _planId = 'plan-1';
-const _sessionId = 'session-1';
-const _sessionSnapshotId = 'session-snapshot-1';
-const _sceneId = 'scene-1';
-const _roleId = 'role-1';
-const _optionId = 'option-1';
-const _fullOptionId = 'option-full';
-const _ieltsSceneId = 'scn_ielts_speaking_test';
-const _ieltsFullOptionId = 'option_ielts_speaking_full_full';
-const _background = 'Backend engineer preparing a technical interview.';
-
-const _technicalRole = RoleDefinition(
-  id: _roleId,
-  sceneId: _sceneId,
-  type: 'TECHNICAL_INTERVIEWER',
-  displayName: 'Technical interviewer',
-  responsibilities: 'Probe technical depth.',
-  style: 'Precise',
-  practiceObjectives: <RolePracticeObjective>[
-    RolePracticeObjective(
-      objectiveId: 'system_design',
-      description: 'Explain system design decisions.',
-    ),
-  ],
-);
-
-const _focusOption = PracticeOption(
-  id: _optionId,
-  sceneId: _sceneId,
-  mode: PracticeMode.focus,
-  displayName: 'Focused practice',
-  suggestedDurationSeconds: 600,
-  turnPolicyRef: 'interview.project_deep_dive.turn.v1',
-  sessionPolicyRef: 'interview.project_deep_dive.session.v1',
-  evaluationPolicyRef: 'interview.shadow.evaluation.v1',
-  roleId: _roleId,
-);
-
-const _fullOption = PracticeOption(
-  id: _fullOptionId,
-  sceneId: _sceneId,
-  mode: PracticeMode.fullSimulation,
-  displayName: 'Full simulation',
-  suggestedDurationSeconds: 900,
-  turnPolicyRef: 'interview.project_deep_dive.turn.v1',
-  sessionPolicyRef: 'interview.project_deep_dive.session.v1',
-  evaluationPolicyRef: 'interview.shadow.evaluation.v1',
-);
-
-const _scene = SceneDefinition(
-  id: _sceneId,
-  experience: PracticeExperience.interview,
-  category: SceneCategory.interviewProfessional,
-  name: 'Technical interview',
+const _ieltsScene = SceneDefinition(
+  id: 'ielts-speaking',
+  experience: PracticeExperience.ieltsSpeaking,
+  category: SceneCategory.ieltsSpeaking,
+  name: 'IELTS Speaking',
   version: 1,
   status: SceneStatus.active,
   prompt: ScenePrompt(
-    publicSceneBrief: 'Discuss one backend project.',
-    practiceGoal: 'Explain decisions with evidence.',
+    publicSceneBrief: 'Practice IELTS Speaking Part 2 and Part 3.',
+    practiceGoal: 'Answer one cue card and six follow-up questions.',
     userRole: 'Candidate',
-    aiRole: 'Technical interviewer',
-    personaSummary: 'Precise and evidence seeking.',
-    focusAreas: <String>['system_design'],
-    turnBlueprints: <String>['Ask for a project overview.'],
+    aiRole: 'Examiner',
+    personaSummary: 'A neutral IELTS examiner.',
+    focusAreas: <String>['fluency'],
+    turnBlueprints: <String>['Ask the frozen IELTS questions.'],
   ),
-  roles: <RoleDefinition>[_technicalRole],
-  practiceOptions: <PracticeOption>[_focusOption, _fullOption],
-);
-
-const _selection = PreparationLaunchSelection(
-  scene: _scene,
-  selectedRoleIds: <String>[_roleId],
-  practiceOptionId: _optionId,
-);
-
-const _fullSelection = PreparationLaunchSelection(
-  scene: _scene,
-  selectedRoleIds: <String>[_roleId],
-  practiceOptionId: _fullOptionId,
-);
-
-const _ieltsRole = RoleDefinition(
-  id: _roleId,
-  sceneId: _ieltsSceneId,
-  type: 'IELTS_EXAMINER',
-  displayName: 'IELTS examiner',
-  responsibilities: 'Run the complete speaking mock.',
-  style: 'Neutral and concise.',
-  practiceObjectives: <RolePracticeObjective>[
-    RolePracticeObjective(
-      objectiveId: 'part_1',
-      description: 'Answer Part 1 questions.',
-    ),
-    RolePracticeObjective(
-      objectiveId: 'part_2',
-      description: 'Deliver the Part 2 response.',
-    ),
-    RolePracticeObjective(
-      objectiveId: 'part_3',
-      description: 'Develop Part 3 answers.',
+  roles: <RoleDefinition>[
+    RoleDefinition(
+      id: 'ielts-examiner',
+      sceneId: 'ielts-speaking',
+      type: 'EXAMINER',
+      displayName: 'IELTS examiner',
+      responsibilities: 'Ask the frozen questions in order.',
+      style: 'Neutral',
+      practiceObjectives: <RolePracticeObjective>[
+        RolePracticeObjective(
+          objectiveId: 'fluency',
+          description: 'Speak fluently and coherently.',
+        ),
+      ],
     ),
   ],
-);
-
-const _ieltsFullOption = PracticeOption(
-  id: _ieltsFullOptionId,
-  sceneId: _ieltsSceneId,
-  mode: PracticeMode.fullMock,
-  displayName: '完整模考',
-  suggestedDurationSeconds: 900,
-  turnPolicyRef: 'ielts.speaking.full.turn.v2',
-  sessionPolicyRef: 'ielts.speaking.full.session.v2',
-  evaluationPolicyRef: 'ielts.speaking.evaluation.v1',
-);
-
-const _ieltsPart1Option = PracticeOption(
-  id: 'option_ielts_speaking_part_1',
-  sceneId: _ieltsSceneId,
-  mode: PracticeMode.part1,
-  displayName: 'Part 1',
-  suggestedDurationSeconds: 300,
-  turnPolicyRef: 'ielts.speaking.part_1.turn.v2',
-  sessionPolicyRef: 'ielts.speaking.part_1.session.v2',
-  evaluationPolicyRef: 'ielts.speaking.evaluation.v1',
-);
-
-const _ieltsPart2Option = PracticeOption(
-  id: 'option_ielts_speaking_part_2',
-  sceneId: _ieltsSceneId,
-  mode: PracticeMode.part2,
-  displayName: 'Part 2',
-  suggestedDurationSeconds: 420,
-  turnPolicyRef: 'ielts.speaking.part_2.turn.v2',
-  sessionPolicyRef: 'ielts.speaking.part_2.session.v2',
-  evaluationPolicyRef: 'ielts.speaking.evaluation.v1',
-);
-
-const _ieltsPart3Option = PracticeOption(
-  id: 'option_ielts_speaking_part_3',
-  sceneId: _ieltsSceneId,
-  mode: PracticeMode.part3,
-  displayName: 'Part 3',
-  suggestedDurationSeconds: 300,
-  turnPolicyRef: 'ielts.speaking.part_3.turn.v2',
-  sessionPolicyRef: 'ielts.speaking.part_3.session.v2',
-  evaluationPolicyRef: 'ielts.speaking.evaluation.v1',
-);
-
-const _ieltsScene = SceneDefinition(
-  id: _ieltsSceneId,
-  experience: PracticeExperience.ieltsSpeaking,
-  category: SceneCategory.ieltsSpeaking,
-  name: 'IELTS 口语完整模拟',
-  version: 2,
-  status: SceneStatus.active,
-  prompt: ScenePrompt(
-    publicSceneBrief: '按 Part 1、Part 2、Part 3 连续完成。',
-    practiceGoal: 'Complete a full speaking mock.',
-    userRole: 'Candidate',
-    aiRole: 'IELTS examiner',
-    personaSummary: 'Neutral and concise.',
-    focusAreas: <String>['part_1', 'part_2', 'part_3'],
-    turnBlueprints: <String>['Run the complete speaking mock.'],
-  ),
-  roles: <RoleDefinition>[_ieltsRole],
   practiceOptions: <PracticeOption>[
-    _ieltsFullOption,
-    _ieltsPart1Option,
-    _ieltsPart2Option,
-    _ieltsPart3Option,
+    PracticeOption(
+      id: 'ielts-part-2',
+      sceneId: 'ielts-speaking',
+      mode: PracticeMode.part2,
+      displayName: 'Part 2',
+      suggestedDurationSeconds: 600,
+      turnPolicyRef: 'ielts-part-2-turn-policy',
+      sessionPolicyRef: 'ielts-part-2-session-policy',
+      evaluationPolicyRef: 'ielts-part-2-evaluation-policy',
+    ),
   ],
 );
 
-const _ieltsFullSelection = PreparationLaunchSelection(
-  scene: _ieltsScene,
-  selectedRoleIds: <String>[_roleId],
-  practiceOptionId: _ieltsFullOptionId,
-  ieltsSelection: IeltsPracticeSelection(
-    part1SetId: 'p1-002',
-    topicGroupId: 'p23-new-001',
-  ),
+const _ieltsPlanInput = CreatePracticePlanInput(
+  backgroundSummary: contractBackground,
+  sceneId: 'ielts-speaking',
+  sceneVersion: 1,
+  selectedRoleIds: <String>['ielts-examiner'],
+  practiceOptionId: 'ielts-part-2',
+  maxEffectiveTurns: 7,
+  ieltsSelection: IeltsPracticeSelection(topicGroupId: 'famous-person'),
+  ieltsPreparedAnswers: <IeltsPreparedAnswer>[
+    IeltsPreparedAnswer(
+      bankId: 'ielts-bank',
+      part: 'PART_2',
+      sourceId: 'famous-person',
+      questionPosition: 1,
+      answer: 'I would like to meet a songwriter I admire.',
+      personalized: true,
+    ),
+  ],
 );
+
+Map<String, Object?> _ieltsPlanJson() {
+  final response = contractPlanJson();
+  response['scene_selection'] = encodeSceneSelectionSnapshot(
+    const SceneSelectionSnapshot(
+      source: SceneSource.catalog(sceneId: 'ielts-speaking', sceneVersion: 1),
+      scene: _ieltsScene,
+      selectedRoleIds: <String>['ielts-examiner'],
+      practiceOptionId: 'ielts-part-2',
+    ),
+  );
+  response['session_policy'] = <String, Object?>{
+    ...contractSessionPolicyJson(),
+    'max_effective_turns': 7,
+  };
+  response['ielts_assignment'] = _ieltsPart2AssignmentJson();
+  return response;
+}
+
+Map<String, Object?> _legacyPlanJson({
+  required PracticePlanStatus status,
+  required int version,
+}) {
+  final response = contractPlanJson(status: status, version: version);
+  response['scene_selection'] = <String, Object?>{
+    'scene': encodeSceneDefinition(contractScene),
+    'selected_role_ids': <String>['technical-interviewer'],
+    'practice_option_id': 'full-simulation',
+  };
+  return response;
+}
+
+Map<String, Object?> _ieltsPart2AssignmentJson() => <String, Object?>{
+  'bank_id': 'ielts-bank',
+  'season': '2026-08',
+  'mode': 'PART_2',
+  'parts': <Object?>[
+    <String, Object?>{
+      'part': 'PART_2',
+      'source_id': 'famous-person',
+      'topic_title': 'Famous people',
+      'cue_card': 'Describe a famous person you would like to meet.',
+      'turn_blueprints': <String>[
+        'Describe a famous person you would like to meet.',
+      ],
+      'prepared_answers': <Object?>[
+        <String, Object?>{
+          'question_position': 1,
+          'answer': 'I would like to meet a songwriter I admire.',
+          'personalized': true,
+        },
+      ],
+    },
+    <String, Object?>{
+      'part': 'PART_3',
+      'source_id': 'famous-person',
+      'topic_title': 'Famous people',
+      'turn_blueprints': <String>[
+        'Why do people become famous?',
+        'Is talent necessary for fame?',
+        'How does fame affect children?',
+        'What responsibilities do famous people have?',
+        'Is it easier to become famous today?',
+        'Would you like to be famous?',
+      ],
+    },
+  ],
+};

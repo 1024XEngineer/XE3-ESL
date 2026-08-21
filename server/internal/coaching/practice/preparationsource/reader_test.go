@@ -2,7 +2,6 @@ package preparationsource
 
 import (
 	"testing"
-	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
@@ -32,9 +31,13 @@ func TestProjectConfirmedPlanFreezesRetryFromPolicyRefNotSceneMetadata(
 	plan.SceneSelection.Scene.PracticeOptions[0].SessionPolicyRef =
 		practice.InterviewPracticeSessionPolicy
 	plan.SessionPolicy.RetryAllowed = false
+	plan.SessionPolicy.CompletionMode = preparation.CompletionModeTurnLimited
+	plan.SessionPolicy.MinEffectiveTurns = 4
+	plan.SessionPolicy.MaxEffectiveTurns = 6
+	plan.SessionPolicy.CoverageCheckpointTurn = 4
+	plan.SessionPolicy.MaxFollowUpsPerQuestion = 3
 	plan.SessionPolicy.QuestionTranslationAllowed = true
 	plan.SessionPolicy.QuestionTipsAllowed = true
-	plan.SessionPolicy.AvatarAllowed = true
 	plan.SessionPolicy.SpeechFeedbackAllowed = true
 	projection, err = ProjectConfirmedPlan(plan)
 	if err != nil {
@@ -77,6 +80,7 @@ func TestProjectConfirmedPlanPreservesFocusOptionRole(t *testing.T) {
 	option.RoleDefinitionID = "role-selected"
 	option.SessionPolicyRef = practice.InterviewProjectDeepDiveSessionPolicy
 	plan.SessionPolicy = preparation.SessionPolicy{
+		CompletionMode:             preparation.CompletionModeTurnLimited,
 		SuggestedDurationSeconds:   600,
 		MinEffectiveTurns:          1,
 		MaxEffectiveTurns:          3,
@@ -85,7 +89,6 @@ func TestProjectConfirmedPlanPreservesFocusOptionRole(t *testing.T) {
 		EarlyCompletionRule:        preparation.EarlyCompletionCoverageSatisfiedAfterCheckpoint,
 		QuestionTranslationAllowed: true,
 		QuestionTipsAllowed:        true,
-		AvatarAllowed:              true,
 		SpeechFeedbackAllowed:      true,
 	}
 
@@ -125,29 +128,25 @@ func confirmedPlanFixture() preparation.PracticePlan {
 		ID:     "plan-1",
 		UserID: "user-1",
 		PreparationSnapshot: preparation.Snapshot{
-			ID:                 "preparation-1",
-			SourceProfileID:    "profile-1",
-			SourceVersion:      1,
-			BackgroundSnapshot: "background",
-			CreatedAt:          time.Date(2026, 8, 5, 8, 0, 0, 0, time.UTC),
+			BackgroundSummary: "background",
 		},
 		SceneSelection: scene.SelectionSnapshot{
-			Scene: scene.SceneDefinition{
-				ID:         "scene-1",
+			Source: scene.SceneSource{Type: scene.SceneSourceCatalog, SceneID: "scene-1", SceneVersion: 1},
+			Scene: scene.ExecutableSceneSnapshot{
+				Key:        "scene-1",
 				Experience: scene.PracticeExperienceLifeAndTravel,
 				Category:   scene.SceneCategoryLifeDaily,
 				Name:       "Scene",
-				Version:    1,
-				Status:     scene.SceneStatusActive,
+				Revision:   1,
 				Prompt:     prompt,
-				Roles: []scene.RoleDefinition{
-					{ID: "role-selected", SceneID: "scene-1", DisplayName: "selected"},
-					{ID: "role-unselected", SceneID: "scene-1", DisplayName: "unselected"},
+				Roles: []scene.RoleSnapshot{
+					{ID: "role-selected", SceneKey: "scene-1", DisplayName: "selected"},
+					{ID: "role-unselected", SceneKey: "scene-1", DisplayName: "unselected"},
 				},
-				PracticeOptions: []scene.PracticeOption{
+				PracticeOptions: []scene.PracticeOptionSnapshot{
 					{
 						ID:                       "option-selected",
-						SceneID:                  "scene-1",
+						SceneKey:                 "scene-1",
 						Mode:                     scene.PracticeModeFullSimulation,
 						SuggestedDurationSeconds: 600,
 						TurnPolicyRef:            practice.GenericPracticeTurnPolicy,
@@ -156,7 +155,7 @@ func confirmedPlanFixture() preparation.PracticePlan {
 					},
 					{
 						ID:                       "option-unselected",
-						SceneID:                  "scene-1",
+						SceneKey:                 "scene-1",
 						Mode:                     scene.PracticeModeFullSimulation,
 						SuggestedDurationSeconds: 600,
 						TurnPolicyRef:            practice.GenericPracticeTurnPolicy,
@@ -169,21 +168,23 @@ func confirmedPlanFixture() preparation.PracticePlan {
 			PracticeOptionID: "option-selected",
 		},
 		SessionPolicy: preparation.SessionPolicy{
+			CompletionMode:           preparation.CompletionModeUserControlled,
 			SuggestedDurationSeconds: 600,
-			MinEffectiveTurns:        4,
-			MaxEffectiveTurns:        6,
-			CoverageCheckpointTurn:   4,
+			MinEffectiveTurns:        1,
+			MaxEffectiveTurns:        0,
+			CoverageCheckpointTurn:   1,
 			MaxFollowUpsPerQuestion:  1,
 			EarlyCompletionRule: preparation.
 				EarlyCompletionCoverageSatisfiedAfterCheckpoint,
-			RetryAllowed:          true,
-			AvatarAllowed:         true,
-			SpeechFeedbackAllowed: true,
+			RetryAllowed:               true,
+			QuestionTranslationAllowed: true,
+			QuestionTipsAllowed:        true,
+			SpeechFeedbackAllowed:      true,
 		},
 		PracticeObjectives: []preparation.PracticeObjective{{
 			ID: "clarity", Description: "Speak clearly.",
 		}},
-		Revision: 1,
-		Status:   preparation.PlanStatusReady,
+		Version: 1,
+		Status:  preparation.PlanStatusReady,
 	}
 }

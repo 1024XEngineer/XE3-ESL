@@ -12,13 +12,9 @@ abstract interface class AgentClient {
 
   Future<AgentThreadPage> listThreads({int pageSize = 20, String? cursor});
 
-  Future<AgentThreadSnapshot?> getFocusedThread();
+  Future<AgentThreadSnapshot> getThread({required String threadId});
 
   Future<AgentThreadSummary> createThread();
-
-  Future<AgentThreadSnapshot> setFocusedThread({required String threadId});
-
-  Future<void> clearFocusedThread();
 
   Future<void> deleteThread({required String threadId});
 
@@ -44,6 +40,22 @@ abstract interface class AgentStreamingTextClient {
   });
 }
 
+abstract interface class AgentMessageTranslationClient {
+  Future<AgentMessageTranslation> translateMessage({required String messageId});
+}
+
+final class AgentMessageTranslation {
+  const AgentMessageTranslation({
+    required this.messageId,
+    required this.targetLanguage,
+    required this.content,
+  });
+
+  final String messageId;
+  final String targetLanguage;
+  final String content;
+}
+
 sealed class AgentTextStreamEvent {
   const AgentTextStreamEvent({required this.runId});
 
@@ -56,23 +68,63 @@ final class AgentInputCommitted extends AgentTextStreamEvent {
   final AgentMessage userMessage;
 }
 
-final class AgentAssistantStarted extends AgentTextStreamEvent {
-  const AgentAssistantStarted({required super.runId});
+enum AgentToolStepStatus { started, completed, failed }
+
+final class AgentToolStepEvent extends AgentTextStreamEvent {
+  const AgentToolStepEvent({
+    required super.runId,
+    required this.stepId,
+    required this.name,
+    required this.status,
+  });
+
+  final String stepId;
+  final String name;
+  final AgentToolStepStatus status;
 }
 
-final class AgentAssistantDelta extends AgentTextStreamEvent {
-  const AgentAssistantDelta({required super.runId, required this.delta});
+final class AgentAssistantOutputStarted extends AgentTextStreamEvent {
+  const AgentAssistantOutputStarted({
+    required super.runId,
+    required this.outputId,
+  });
 
+  final String outputId;
+}
+
+final class AgentAssistantOutputDelta extends AgentTextStreamEvent {
+  const AgentAssistantOutputDelta({
+    required super.runId,
+    required this.outputId,
+    required this.sequence,
+    required this.delta,
+  });
+
+  final String outputId;
+  final int sequence;
   final String delta;
+}
+
+final class AgentAssistantOutputCompleted extends AgentTextStreamEvent {
+  const AgentAssistantOutputCompleted({
+    required super.runId,
+    required this.outputId,
+    required this.text,
+  });
+
+  final String outputId;
+  final String text;
 }
 
 final class AgentRunCompleted extends AgentTextStreamEvent {
   const AgentRunCompleted({
     required super.runId,
     required this.assistantMessageId,
+    this.run,
   });
 
   final String assistantMessageId;
+  final AgentRun? run;
 }
 
 final class AgentRunFailed extends AgentTextStreamEvent {
@@ -80,10 +132,12 @@ final class AgentRunFailed extends AgentTextStreamEvent {
     required super.runId,
     required this.kind,
     required this.retryable,
+    this.run,
   });
 
   final String kind;
   final bool retryable;
+  final AgentRun? run;
 }
 
 enum AgentClientFailureKind {
@@ -147,7 +201,6 @@ final class FakeAgentClient implements AgentClient {
   int _threadSequence = 0;
   int _accountGeneration = 0;
   bool _seededPreviewThread = false;
-  String? _focusedThreadId;
   final Map<String, AgentThreadSummary> _threads = {};
   final Map<String, List<AgentMessage>> _threadMessages = {};
   final Map<String, AgentExchange> _textExchanges = {};
@@ -160,7 +213,6 @@ final class FakeAgentClient implements AgentClient {
     _messageSequence = 0;
     _threadSequence = 0;
     _seededPreviewThread = false;
-    _focusedThreadId = null;
     _threads.clear();
     _threadMessages.clear();
     _textExchanges.clear();
@@ -194,20 +246,24 @@ final class FakeAgentClient implements AgentClient {
         threads: List<AgentThreadSummary>.unmodifiable(
           values.sublist(offset, end),
         ),
-        focusedThreadId: _focusedThreadId,
         nextCursor: end < values.length ? 'threads:$end' : null,
       );
     });
   }
 
   @override
-  Future<AgentThreadSnapshot?> getFocusedThread() {
+  Future<AgentThreadSnapshot> getThread({required String threadId}) {
     return _runAccountOperation((generation) async {
       await _wait(generation);
       _requireCurrentGeneration(generation);
       _seedPreviewThread(generation);
-      final threadId = _focusedThreadId;
-      return threadId == null ? null : _snapshotFor(threadId);
+      if (!_threads.containsKey(threadId)) {
+        throw const AgentClientException(
+          kind: AgentClientFailureKind.notFound,
+          errorCode: 'resource_not_found',
+        );
+      }
+      return _snapshotFor(threadId);
     });
   }
 
@@ -230,31 +286,6 @@ final class FakeAgentClient implements AgentClient {
   }
 
   @override
-  Future<AgentThreadSnapshot> setFocusedThread({required String threadId}) {
-    return _runAccountOperation((generation) async {
-      await _wait(generation);
-      _requireCurrentGeneration(generation);
-      if (!_threads.containsKey(threadId)) {
-        throw const AgentClientException(
-          kind: AgentClientFailureKind.notFound,
-          errorCode: 'resource_not_found',
-        );
-      }
-      _focusedThreadId = threadId;
-      return _snapshotFor(threadId);
-    });
-  }
-
-  @override
-  Future<void> clearFocusedThread() {
-    return _runAccountOperation((generation) async {
-      await _wait(generation);
-      _requireCurrentGeneration(generation);
-      _focusedThreadId = null;
-    });
-  }
-
-  @override
   Future<void> deleteThread({required String threadId}) {
     return _runAccountOperation((generation) async {
       await _wait(generation);
@@ -267,9 +298,6 @@ final class FakeAgentClient implements AgentClient {
       }
       _threads.remove(threadId);
       _threadMessages.remove(threadId);
-      if (_focusedThreadId == threadId) {
-        _focusedThreadId = null;
-      }
     });
   }
 
@@ -342,12 +370,11 @@ final class FakeAgentClient implements AgentClient {
           for (final id in imageAssetIds)
             AgentImageAsset(
               id: id,
-              threadId: threadId,
               contentType: 'image/png',
               sizeBytes: 1,
               width: 1,
               height: 1,
-              status: AgentImageAssetStatus.attached,
+              status: AgentImageAssetStatus.ready,
               createdAt: now,
               attachedAt: now,
             ),
@@ -392,7 +419,6 @@ final class FakeAgentClient implements AgentClient {
     );
     _threads[thread.id] = thread;
     _threadMessages[thread.id] = <AgentMessage>[];
-    _focusedThreadId = thread.id;
   }
 
   AgentThreadSnapshot _snapshotFor(String threadId) {
@@ -400,7 +426,6 @@ final class FakeAgentClient implements AgentClient {
     return AgentThreadSnapshot(
       threadId: thread.id,
       title: thread.title,
-      activeGoalId: thread.activeGoalId,
       messages: List<AgentMessage>.unmodifiable(
         _threadMessages[threadId] ?? const <AgentMessage>[],
       ),
@@ -425,7 +450,6 @@ final class FakeAgentClient implements AgentClient {
     _threads[threadId] = AgentThreadSummary(
       id: thread.id,
       title: thread.title,
-      activeGoalId: thread.activeGoalId,
       createdAt: thread.createdAt,
       updatedAt: now.isBefore(thread.updatedAt) ? thread.updatedAt : now,
     );

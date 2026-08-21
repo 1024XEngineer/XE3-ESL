@@ -13,7 +13,6 @@ import 'package:speakup/features/agent/composer/voice/agent_voice_recording.dart
 import 'package:speakup/providers/agent/wire_agent_client.dart';
 import 'package:speakup/providers/agent/wire_agent_voice_client.dart';
 import 'package:speakup/app/speak_up_app.dart';
-import 'package:speakup/features/coaching/interview/job_preparation_draft_store.dart';
 import 'package:speakup/features/coaching/preparation/practice_launch_record_store.dart';
 import 'package:speakup/features/coaching/interview/wire_job_preparation_client.dart';
 import 'package:speakup/features/coaching/scene/wire_scene_client.dart';
@@ -27,7 +26,7 @@ import 'package:speakup/features/coaching/practice/practice_media.dart';
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
 import 'package:speakup/features/coaching/practice/wire_practice_client.dart';
 import 'package:speakup/features/coaching/review/wire_review_history_client.dart';
-import 'package:speakup/features/coaching/review/wire_interview_report_client.dart';
+import 'package:speakup/features/coaching/evaluation/session_evaluation_client.dart';
 
 import 'review/evaluation_report_fixture.dart';
 
@@ -82,12 +81,11 @@ void main() {
                 'updated_at': _timestamp,
               },
             ],
-            'focused_thread_id': _threadId,
           },
         ),
         _Response(
           method: 'GET',
-          path: '/v1/agent-threads/focused',
+          path: '/v1/agent-threads/$_threadId',
           statusCode: HttpStatus.ok,
           body: {
             'thread_id': _threadId,
@@ -104,7 +102,8 @@ void main() {
         ),
       ]);
       final reviewHistoryTransport = _ControlledReviewHistoryTransport();
-      final interviewReportTransport = _ControlledInterviewReportTransport();
+      final sessionEvaluationTransport =
+          _ControlledSessionEvaluationTransport();
       final practiceLaunchRecordStore = _BlockingPracticeLaunchRecordStore();
       final preparationTransport = _Transport([
         _Response(
@@ -164,7 +163,7 @@ void main() {
         ),
       ]);
       addTearDown(reviewHistoryTransport.completeEmptyIfPending);
-      addTearDown(interviewReportTransport.completeFailureIfPending);
+      addTearDown(sessionEvaluationTransport.completeFailureIfPending);
       addTearDown(practiceLaunchRecordStore.releaseDelete);
       final practiceRecorder = _TrackingPracticeRecorder();
       final practiceMediaClient = _TrackingPracticeMediaClient();
@@ -178,7 +177,7 @@ void main() {
         agentTransport: agentTransport,
         preparationTransport: preparationTransport,
         reviewHistoryTransport: reviewHistoryTransport,
-        interviewReportTransport: interviewReportTransport,
+        sessionEvaluationTransport: sessionEvaluationTransport,
         practiceTransport: _PracticeTransport(),
         practiceRecorder: practiceRecorder,
         agentVoiceRecorder: agentVoiceRecorder,
@@ -186,7 +185,6 @@ void main() {
         agentMessageAudioPlayer: agentMessageAudioPlayer,
         practiceMediaClient: practiceMediaClient,
         practiceAudioPlayer: practiceAudioPlayer,
-        jobPreparationDraftStore: MemoryJobPreparationDraftStore(),
         practiceLaunchRecordStore: practiceLaunchRecordStore,
         sessionStore: _MemorySessionStore('sess_main-wiring'),
       );
@@ -199,7 +197,7 @@ void main() {
       addTearDown(dependencies.preparationLaunchController.dispose);
       addTearDown(dependencies.jobPreparationController.dispose);
       addTearDown(dependencies.reviewHistoryController.dispose);
-      addTearDown(dependencies.interviewReportController.dispose);
+      addTearDown(dependencies.sessionEvaluationController.dispose);
 
       expect(
         dependencies.conversationController.client,
@@ -226,10 +224,6 @@ void main() {
         same(agentVoiceRecorder),
       );
       expect(
-        dependencies.composerController.voiceController?.audioPlayer,
-        same(agentComposerAudioPlayer),
-      );
-      expect(
         dependencies.messageAudioController.audioPlayer,
         same(agentMessageAudioPlayer),
       );
@@ -238,8 +232,8 @@ void main() {
         isA<WireReviewHistoryClient>(),
       );
       expect(
-        dependencies.interviewReportController.client,
-        isA<WireInterviewReportClient>(),
+        dependencies.sessionEvaluationController.client,
+        isA<WireSessionEvaluationClient>(),
       );
       expect(dependencies.preparationController.client, isA<WireSceneClient>());
       expect(
@@ -257,13 +251,14 @@ void main() {
           conversationController: dependencies.conversationController,
           composerController: dependencies.composerController,
           messageAudioController: dependencies.messageAudioController,
+          messageTranslationClient: dependencies.messageTranslationClient,
           practiceController: dependencies.practiceController,
           preparationController: dependencies.preparationController,
           ieltsPreparationController: dependencies.ieltsPreparationController,
           jobPreparationController: dependencies.jobPreparationController,
           preparationLaunchController: dependencies.preparationLaunchController,
           reviewHistoryController: dependencies.reviewHistoryController,
-          interviewReportController: dependencies.interviewReportController,
+          sessionEvaluationController: dependencies.sessionEvaluationController,
         ),
       );
       for (var attempt = 0; attempt < 100; attempt++) {
@@ -305,7 +300,6 @@ void main() {
         isTrue,
       );
       expect(agentVoiceRecorder.clearCount, 0);
-      expect(agentComposerAudioPlayer.clearCount, 0);
       expect(agentMessageAudioPlayer.clearCount, 0);
 
       await dependencies.preparationController.loadIfNeeded();
@@ -318,10 +312,10 @@ void main() {
       expect(find.byKey(const Key('primary-navigation')), findsOneWidget);
       await tester.tap(find.byKey(const Key('practice-hub-interview')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('open-job-preparation')));
+      await tester.tap(find.byKey(const Key('create-interview-plan')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('job-preparation-wizard')), findsOneWidget);
-      expect(find.byKey(const Key('job-description-field')), findsOneWidget);
+      expect(find.byKey(const Key('job-input-field')), findsOneWidget);
       expect(find.byKey(const Key('primary-navigation')), findsNothing);
       await tester.tap(find.byKey(const Key('job-wizard-close')));
       await tester.pumpAndSettle();
@@ -334,15 +328,15 @@ void main() {
       await dependencies.preparationLaunchController.activateAccount(
         'user_fixture',
       );
-      final pendingReport = dependencies.interviewReportController.load(
-        'session_interview_report_wiring',
+      final pendingReport = dependencies.sessionEvaluationController.load(
+        _evaluationSessionId,
       );
-      await interviewReportTransport.started.future;
+      await sessionEvaluationTransport.started.future;
       expect(
-        dependencies.interviewReportController.practiceSessionId,
-        'session_interview_report_wiring',
+        dependencies.sessionEvaluationController.practiceSessionId,
+        _evaluationSessionId,
       );
-      expect(dependencies.interviewReportController.isLoading, isTrue);
+      expect(dependencies.sessionEvaluationController.isLoading, isTrue);
 
       final logout = dependencies.authController.logout();
       await tester.pump();
@@ -350,14 +344,20 @@ void main() {
         const Duration(seconds: 1),
       );
 
-      expect(dependencies.interviewReportController.envelope, isNull);
-      expect(dependencies.interviewReportController.practiceSessionId, isNull);
-      expect(dependencies.interviewReportController.isLoading, isFalse);
+      expect(dependencies.sessionEvaluationController.evaluation, isNull);
+      expect(
+        dependencies.sessionEvaluationController.practiceSessionId,
+        isNull,
+      );
+      expect(dependencies.sessionEvaluationController.isLoading, isFalse);
 
-      interviewReportTransport.completeFailureIfPending();
+      sessionEvaluationTransport.completeFailureIfPending();
       await pendingReport.timeout(const Duration(seconds: 1));
-      expect(dependencies.interviewReportController.envelope, isNull);
-      expect(dependencies.interviewReportController.practiceSessionId, isNull);
+      expect(dependencies.sessionEvaluationController.evaluation, isNull);
+      expect(
+        dependencies.sessionEvaluationController.practiceSessionId,
+        isNull,
+      );
 
       practiceLaunchRecordStore.releaseDelete();
       await logout.timeout(const Duration(seconds: 1));
@@ -366,11 +366,17 @@ void main() {
       expect(dependencies.reviewHistoryController.items, isEmpty);
       expect(dependencies.reviewHistoryController.errorMessage, isNull);
       expect(dependencies.reviewHistoryController.isLoading, isFalse);
-      expect(dependencies.interviewReportController.envelope, isNull);
-      expect(dependencies.interviewReportController.practiceSessionId, isNull);
+      expect(dependencies.sessionEvaluationController.evaluation, isNull);
+      expect(
+        dependencies.sessionEvaluationController.practiceSessionId,
+        isNull,
+      );
       expect(dependencies.preparationController.scenes, isEmpty);
       expect(dependencies.preparationController.selectedScene, isNull);
-      expect(dependencies.jobPreparationController.target, isNull);
+      expect(
+        dependencies.jobPreparationController.interviewPreparation,
+        isNull,
+      );
       expect(dependencies.jobPreparationController.plan, isNull);
       expect(dependencies.conversationController.threadId, isNull);
       expect(dependencies.conversationController.messages, isEmpty);
@@ -444,12 +450,11 @@ void main() {
                 'updated_at': _timestamp,
               },
             ],
-            'focused_thread_id': _threadId,
           },
         ),
         _Response(
           method: 'GET',
-          path: '/v1/agent-threads/focused',
+          path: '/v1/agent-threads/$_threadId',
           statusCode: HttpStatus.ok,
           body: {
             'thread_id': _threadId,
@@ -483,7 +488,6 @@ void main() {
         agentMessageAudioPlayer: agentMessageAudioPlayer,
         practiceMediaClient: practiceMediaClient,
         practiceAudioPlayer: practiceAudioPlayer,
-        jobPreparationDraftStore: MemoryJobPreparationDraftStore(),
         practiceLaunchRecordStore: launchRecordStore,
         sessionStore: _MemorySessionStore('sess_cleanup'),
       );
@@ -495,7 +499,7 @@ void main() {
       addTearDown(dependencies.preparationLaunchController.dispose);
       addTearDown(dependencies.jobPreparationController.dispose);
       addTearDown(dependencies.reviewHistoryController.dispose);
-      addTearDown(dependencies.interviewReportController.dispose);
+      addTearDown(dependencies.sessionEvaluationController.dispose);
 
       await dependencies.authController.initialize();
       await dependencies.conversationController.initialize();
@@ -718,6 +722,7 @@ final class _ControlledReviewHistoryTransport implements IdentityHttpTransport {
     required Uri uri,
     required Map<String, String> headers,
     String? body,
+    List<int>? bodyBytes,
   }) {
     expect(method, 'GET');
     expect(uri.path, '/v1/evaluation-reports');
@@ -758,7 +763,7 @@ final class _ControlledReviewHistoryTransport implements IdentityHttpTransport {
   }
 }
 
-final class _ControlledInterviewReportTransport
+final class _ControlledSessionEvaluationTransport
     implements IdentityHttpTransport {
   final started = Completer<void>();
   final _response = Completer<IdentityHttpResponse>();
@@ -769,12 +774,10 @@ final class _ControlledInterviewReportTransport
     required Uri uri,
     required Map<String, String> headers,
     String? body,
+    List<int>? bodyBytes,
   }) {
     expect(method, 'GET');
-    expect(
-      uri.path,
-      '/v1/practice-sessions/session_interview_report_wiring/interview-report',
-    );
+    expect(uri.path, '/v1/practice-sessions/$_evaluationSessionId/evaluation');
     expect(headers[HttpHeaders.authorizationHeader], 'Bearer sess_main-wiring');
     if (!started.isCompleted) {
       started.complete();
@@ -790,17 +793,18 @@ final class _ControlledInterviewReportTransport
       IdentityHttpResponse(
         statusCode: HttpStatus.ok,
         body: jsonEncode({
-          'practice_session_id': 'session_interview_report_wiring',
           'evaluation_id': '81000001-0000-4000-8000-000000000001',
-          'evaluation_revision_id': '82000001-0000-4000-8000-000000000001',
-          'revision': 1,
-          'evaluation_status': 'FAILED',
-          'is_final': false,
-          'status_url':
-              '/v1/practice-sessions/session_interview_report_wiring/interview-report',
-          'stable_failure': {
-            'reason_code': 'INTERNAL_RETRYABLE',
+          'kind': 'SESSION_REPORT',
+          'source_id': _evaluationSessionId,
+          'context_id': _evaluationSessionId,
+          'status': 'FAILED',
+          'created_at': _timestamp,
+          'updated_at': _timestamp,
+          'feedback_items': <Object?>[],
+          'error': {
+            'code': 'INTERNAL_RETRYABLE',
             'retryable': true,
+            'message': 'Report generation failed.',
           },
         }),
       ),
@@ -868,6 +872,7 @@ final class _Transport implements IdentityHttpTransport {
     required Uri uri,
     required Map<String, String> headers,
     String? body,
+    List<int>? bodyBytes,
   }) async {
     if (_responses.isEmpty) {
       throw StateError('Unexpected production wiring request.');
@@ -888,4 +893,5 @@ final class _Transport implements IdentityHttpTransport {
 }
 
 const _threadId = '10000000-0000-4000-8000-000000000088';
+const _evaluationSessionId = '20000000-0000-4000-8000-000000000088';
 const _timestamp = '2026-07-25T09:00:00Z';

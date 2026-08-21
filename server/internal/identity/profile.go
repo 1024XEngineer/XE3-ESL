@@ -1,8 +1,6 @@
 package identity
 
 import (
-	"crypto/sha256"
-	"encoding/binary"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -13,9 +11,6 @@ import (
 const (
 	maxDisplayNameCodePoints = 40
 	maxDisplayNameBytes      = 120
-	minIdempotencyKeyBytes   = 8
-	maxIdempotencyKeyBytes   = 128
-	sha256DigestBytes        = sha256.Size
 )
 
 func NormalizeDisplayName(raw string) (string, error) {
@@ -52,43 +47,4 @@ func forbiddenDisplayNameCharacter(character rune) bool {
 	default:
 		return false
 	}
-}
-
-func validIdempotencyKey(value string) bool {
-	if value != strings.TrimSpace(value) ||
-		len(value) < minIdempotencyKeyBytes ||
-		len(value) > maxIdempotencyKeyBytes {
-		return false
-	}
-	for _, character := range value {
-		if !isIdempotencyKeyCharacter(character) {
-			return false
-		}
-	}
-	return true
-}
-
-func isIdempotencyKeyCharacter(character rune) bool {
-	return character >= 'a' && character <= 'z' ||
-		character >= 'A' && character <= 'Z' ||
-		character >= '0' && character <= '9' ||
-		strings.ContainsRune("._~+/-", character)
-}
-
-func profileRequestDigest(
-	displayName string,
-	expectedVersion *int64,
-) []byte {
-	digest := sha256.New()
-	_, _ = digest.Write([]byte(displayName))
-	_, _ = digest.Write([]byte{0})
-	if expectedVersion == nil {
-		_, _ = digest.Write([]byte("create"))
-	} else {
-		var encoded [8]byte
-		binary.BigEndian.PutUint64(encoded[:], uint64(*expectedVersion))
-		_, _ = digest.Write([]byte("update"))
-		_, _ = digest.Write(encoded[:])
-	}
-	return digest.Sum(nil)
 }

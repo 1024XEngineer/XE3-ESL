@@ -2,22 +2,17 @@ import 'package:flutter/material.dart';
 import 'package:speakup/features/coaching/preparation/preparation_catalog_components.dart';
 import 'package:speakup/features/coaching/preparation/preparation_design.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
+import 'package:speakup/features/coaching/scenario/scenario_assets.dart';
 
 enum _ScenarioFilter { recommended, workplace, travel, daily }
 
 class ScenarioCatalog extends StatefulWidget {
   const ScenarioCatalog({
-    required this.title,
-    required this.description,
-    required this.titleKey,
     required this.scenes,
     required this.onScenePressed,
     super.key,
   });
 
-  final String title;
-  final String description;
-  final Key titleKey;
   final List<SceneDefinition> scenes;
   final ValueChanged<SceneDefinition> onScenePressed;
 
@@ -75,12 +70,6 @@ class _ScenarioCatalogState extends State<ScenarioCatalog> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _ScenarioModuleHeader(
-          title: widget.title,
-          description: widget.description,
-          titleKey: widget.titleKey,
-        ),
-        const SizedBox(height: 20),
         if (_availableFilters.length > 2) ...[
           Wrap(
             spacing: 8,
@@ -131,47 +120,6 @@ class _ScenarioCatalogState extends State<ScenarioCatalog> {
             includeCustom: _filter == _ScenarioFilter.recommended,
             onScenePressed: widget.onScenePressed,
           ),
-      ],
-    );
-  }
-}
-
-class _ScenarioModuleHeader extends StatelessWidget {
-  const _ScenarioModuleHeader({
-    required this.title,
-    required this.description,
-    required this.titleKey,
-  });
-
-  final String title;
-  final String description;
-  final Key titleKey;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Semantics(
-                header: true,
-                container: true,
-                child: Text(
-                  title,
-                  key: titleKey,
-                  style: PreparationDesign.pageTitle,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(description, style: PreparationDesign.body),
-            ],
-          ),
-        ),
-        const SizedBox(width: 16),
-        const PreparationCatalogAvatarPreview(size: 58),
       ],
     );
   }
@@ -405,13 +353,14 @@ String _scenarioFilterLabel(_ScenarioFilter filter) {
   Alignment imageAlignment,
 })
 _scenarioCardStyle(SceneDefinition scene) {
+  final assetPath = scenarioAssetPath(scene);
   return switch (scene.category) {
     SceneCategory.workplaceGeneral => (
       background: const Color(0xFFE8EBED),
       foreground: const Color(0xFF273238),
       icon: Icons.groups_outlined,
       category: '职场',
-      assetPath: 'assets/images/scenes/workplace-scene.jpg',
+      assetPath: assetPath,
       imageAlignment: Alignment.topCenter,
     ),
     SceneCategory.lifeTravel => (
@@ -419,7 +368,7 @@ _scenarioCardStyle(SceneDefinition scene) {
       foreground: const Color(0xFF1D4754),
       icon: Icons.flight_outlined,
       category: '旅行',
-      assetPath: 'assets/images/scenes/travel-scene.jpg',
+      assetPath: assetPath,
       imageAlignment: Alignment.center,
     ),
     SceneCategory.lifeDaily => (
@@ -427,7 +376,7 @@ _scenarioCardStyle(SceneDefinition scene) {
       foreground: const Color(0xFF4C392B),
       icon: Icons.chat_bubble_outline_rounded,
       category: '日常',
-      assetPath: 'assets/images/scenes/daily-tutor.jpg',
+      assetPath: assetPath,
       imageAlignment: const Alignment(0, -0.65),
     ),
     _ => (

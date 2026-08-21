@@ -3,7 +3,7 @@ package practice
 import (
 	"context"
 	"strings"
-	"time"
+	"unicode/utf8"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
@@ -14,7 +14,7 @@ import (
 type PlanProjection struct {
 	ID                 string
 	OwnerUserID        string
-	Revision           int
+	Version            int
 	Preparation        PreparationSnapshot
 	SceneSelection     SceneSelection
 	SessionPolicy      SessionPolicy
@@ -194,12 +194,6 @@ type ResumeMaterial struct {
 	Awards               []string                    `json:"awards"`
 }
 
-type ResumeRevisionSnapshot struct {
-	ResumeID string         `json:"resume_id"`
-	Revision int64          `json:"revision"`
-	Material ResumeMaterial `json:"material"`
-}
-
 type JobTargetCatalogRecommendation struct {
 	SceneID          string   `json:"scene_id"`
 	SceneVersion     int      `json:"scene_version"`
@@ -221,27 +215,30 @@ type JobTargetCandidate struct {
 }
 
 type PreparationSnapshot struct {
-	ID                                 string                  `json:"preparation_snapshot_id"`
-	SourceProfileID                    string                  `json:"source_profile_id"`
-	SourceVersion                      int                     `json:"source_version"`
-	SourceJobTargetID                  string                  `json:"source_job_target_id,omitempty"`
-	SourceJobTargetConfirmationVersion int                     `json:"source_job_target_confirmation_version,omitempty"`
-	JobTargetInputSnapshot             *JobTargetInput         `json:"job_target_input_snapshot,omitempty"`
-	JobTargetCandidateSnapshot         *JobTargetCandidate     `json:"job_target_candidate_snapshot,omitempty"`
-	ResumeSnapshot                     *ResumeRevisionSnapshot `json:"resume_snapshot,omitempty"`
-	JobDescriptionSnapshot             string                  `json:"job_description_snapshot,omitempty"`
-	BackgroundSnapshot                 string                  `json:"background_snapshot"`
-	CreatedAt                          time.Time               `json:"created_at"`
+	InterviewPreparationID      string              `json:"interview_preparation_id,omitempty"`
+	InterviewPreparationVersion int                 `json:"interview_preparation_version,omitempty"`
+	JobTargetInputSnapshot      *JobTargetInput     `json:"job_target_input_snapshot,omitempty"`
+	JobTargetCandidateSnapshot  *JobTargetCandidate `json:"job_target_candidate_snapshot,omitempty"`
+	ResumeMaterial              *ResumeMaterial     `json:"resume_material,omitempty"`
+	BackgroundSnapshot          string              `json:"background_snapshot"`
 }
 
 type EarlyCompletionRule string
 
 const EarlyCompletionCoverageSatisfiedAfterCheckpoint EarlyCompletionRule = "COVERAGE_SATISFIED_AFTER_CHECKPOINT"
 
+type CompletionMode string
+
+const (
+	CompletionModeTurnLimited    CompletionMode = "TURN_LIMITED"
+	CompletionModeUserControlled CompletionMode = "USER_CONTROLLED"
+)
+
 // SessionPolicy is Practice's frozen progression policy. RetryAllowed is a
 // concrete value projected once at Session creation; runtime code never
 // infers it again from Scene family or model.
 type SessionPolicy struct {
+	CompletionMode             CompletionMode      `json:"completion_mode"`
 	SuggestedDurationSeconds   int                 `json:"suggested_duration_seconds"`
 	MinEffectiveTurns          int                 `json:"min_effective_turns"`
 	MaxEffectiveTurns          int                 `json:"max_effective_turns"`
@@ -251,7 +248,6 @@ type SessionPolicy struct {
 	RetryAllowed               bool                `json:"retry_allowed"`
 	QuestionTranslationAllowed bool                `json:"question_translation_allowed"`
 	QuestionTipsAllowed        bool                `json:"question_tips_allowed"`
-	AvatarAllowed              bool                `json:"avatar_allowed"`
 	SpeechFeedbackAllowed      bool                `json:"speech_feedback_allowed"`
 }
 
@@ -268,11 +264,18 @@ type IELTSAssignment struct {
 }
 
 type IELTSPart struct {
-	Part           PracticeMode `json:"part"`
-	SourceID       string       `json:"source_id"`
-	TopicTitle     string       `json:"topic_title,omitempty"`
-	CueCard        string       `json:"cue_card,omitempty"`
-	TurnBlueprints []string     `json:"turn_blueprints"`
+	Part            PracticeMode          `json:"part"`
+	SourceID        string                `json:"source_id"`
+	TopicTitle      string                `json:"topic_title,omitempty"`
+	CueCard         string                `json:"cue_card,omitempty"`
+	TurnBlueprints  []string              `json:"turn_blueprints"`
+	PreparedAnswers []IELTSPreparedAnswer `json:"prepared_answers,omitempty"`
+}
+
+type IELTSPreparedAnswer struct {
+	QuestionPosition int    `json:"question_position"`
+	Answer           string `json:"answer"`
+	Personalized     bool   `json:"personalized"`
 }
 
 // ValidIELTSAssignment validates the frozen Part composition and its exact
@@ -323,6 +326,17 @@ func ValidIELTSAssignment(
 				return false
 			}
 		}
+		seenAnswers := make(map[int]struct{}, len(part.PreparedAnswers))
+		for _, answer := range part.PreparedAnswers {
+			if answer.QuestionPosition < 1 || answer.QuestionPosition > len(part.TurnBlueprints) ||
+				!validIELTSPreparedAnswer(answer.Answer) {
+				return false
+			}
+			if _, duplicate := seenAnswers[answer.QuestionPosition]; duplicate {
+				return false
+			}
+			seenAnswers[answer.QuestionPosition] = struct{}{}
+		}
 		switch part.Part {
 		case PracticeModePart1:
 			if part.TopicTitle != "" || part.CueCard != "" {
@@ -348,6 +362,12 @@ func ValidIELTSAssignment(
 		return false
 	}
 	return true
+}
+
+func validIELTSPreparedAnswer(value string) bool {
+	return value != "" && value == strings.TrimSpace(value) &&
+		utf8.ValidString(value) && utf8.RuneCountInString(value) <= 2000 &&
+		!strings.ContainsRune(value, '\x00')
 }
 
 func IELTSAssignmentTurnBlueprints(assignment *IELTSAssignment) []string {

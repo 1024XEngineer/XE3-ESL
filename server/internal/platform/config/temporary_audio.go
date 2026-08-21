@@ -14,6 +14,7 @@ const (
 	defaultTemporaryAudioConcurrent        = 2
 	defaultTemporaryAudioConcurrentPerUser = 1
 	defaultVoiceAudioReadTimeout           = 15 * time.Second
+	defaultVoiceRecordedAudioReadTimeout   = 60 * time.Second
 
 	maximumTemporaryAudioLifetime   = 10 * time.Minute
 	maximumTemporaryAudioMaxItems   = 1024
@@ -31,12 +32,20 @@ type TemporaryAudioConfig struct {
 	MaxConcurrentCaptures        int
 	MaxConcurrentCapturesPerUser int
 	ReadTimeout                  time.Duration
+	RecordedReadTimeout          time.Duration
 }
 
 func LoadTemporaryAudio() (TemporaryAudioConfig, error) {
 	lifetime, err := durationOrDefault(
 		"VOICE_TEMP_AUDIO_LIFETIME",
 		defaultTemporaryAudioLifetime,
+	)
+	if err != nil {
+		return TemporaryAudioConfig{}, err
+	}
+	recordedReadTimeout, err := durationOrDefault(
+		"VOICE_RECORDED_AUDIO_READ_TIMEOUT",
+		defaultVoiceRecordedAudioReadTimeout,
 	)
 	if err != nil {
 		return TemporaryAudioConfig{}, err
@@ -128,6 +137,12 @@ func LoadTemporaryAudio() (TemporaryAudioConfig, error) {
 			"VOICE_AUDIO_READ_TIMEOUT must be greater than zero and at most %s",
 			maximumVoiceAudioReadTimeout,
 		)
+	case recordedReadTimeout <= 0 ||
+		recordedReadTimeout > maximumVoiceAudioReadTimeout:
+		return TemporaryAudioConfig{}, fmt.Errorf(
+			"VOICE_RECORDED_AUDIO_READ_TIMEOUT must be greater than zero and at most %s",
+			maximumVoiceAudioReadTimeout,
+		)
 	}
 	return TemporaryAudioConfig{
 		Lifetime:                     lifetime,
@@ -138,5 +153,6 @@ func LoadTemporaryAudio() (TemporaryAudioConfig, error) {
 		MaxConcurrentCaptures:        maxConcurrent,
 		MaxConcurrentCapturesPerUser: maxConcurrentPerUser,
 		ReadTimeout:                  readTimeout,
+		RecordedReadTimeout:          recordedReadTimeout,
 	}, nil
 }

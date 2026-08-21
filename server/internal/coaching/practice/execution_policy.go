@@ -1,9 +1,13 @@
 package practice
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 const (
 	GenericPracticeTurnPolicy             = "generic.practice.turn.v1"
+	InterviewPracticeTurnPolicy           = "interview.practice.turn.v1"
 	DailyHotelCheckinIssueTurnPolicy      = "daily.hotel_checkin_issue.turn.v1"
 	WorkplaceProgressRiskUpdateTurnPolicy = "workplace.progress_risk_update.turn.v1"
 	InterviewProjectDeepDiveTurnPolicy    = "interview.project_deep_dive.turn.v1"
@@ -12,19 +16,26 @@ const (
 	IELTSSpeakingPart3TurnPolicy          = "ielts.speaking_part3.turn.v1"
 	IELTSSpeakingFullMockTurnPolicy       = "ielts.speaking_full_mock.turn.v1"
 
-	GenericPracticeSessionPolicy             = "generic.practice.session.v1"
-	DailyPracticeSessionPolicy               = "daily.practice.session.v1"
-	WorkplacePracticeSessionPolicy           = "workplace.practice.session.v1"
-	InterviewPracticeSessionPolicy           = "interview.practice.session.v1"
-	ExamPracticeSessionPolicy                = "exam.practice.session.v1"
-	DailyHotelCheckinIssueSessionPolicy      = "daily.hotel_checkin_issue.session.v1"
-	WorkplaceProgressRiskUpdateSessionPolicy = "workplace.progress_risk_update.session.v1"
-	InterviewProjectDeepDiveSessionPolicy    = "interview.project_deep_dive.session.v1"
-	IELTSSpeakingPart1SessionPolicy          = "ielts.speaking_part1.session.v1"
-	IELTSSpeakingPart2SessionPolicy          = "ielts.speaking_part2.session.v1"
-	IELTSSpeakingPart3SessionPolicy          = "ielts.speaking_part3.session.v1"
-	IELTSSpeakingFullMockSessionPolicy       = "ielts.speaking_full_mock.session.v1"
+	GenericPracticeSessionPolicy                        = "generic.practice.session.v1"
+	DailyPracticeSessionPolicy                          = "daily.practice.session.v1"
+	WorkplacePracticeSessionPolicy                      = "workplace.practice.session.v1"
+	InterviewPracticeSessionPolicy                      = "interview.practice.session.v1"
+	InterviewUserControlledSessionPolicy                = "interview.user_controlled.session.v1"
+	ExamPracticeSessionPolicy                           = "exam.practice.session.v1"
+	DailyHotelCheckinIssueSessionPolicy                 = "daily.hotel_checkin_issue.session.v1"
+	WorkplaceProgressRiskUpdateSessionPolicy            = "workplace.progress_risk_update.session.v1"
+	InterviewProjectDeepDiveSessionPolicy               = "interview.project_deep_dive.session.v1"
+	InterviewProjectDeepDiveUserControlledSessionPolicy = "interview.project_deep_dive.user_controlled.session.v1"
+	IELTSSpeakingPart1SessionPolicy                     = "ielts.speaking_part1.session.v1"
+	IELTSSpeakingPart2SessionPolicy                     = "ielts.speaking_part2.session.v1"
+	IELTSSpeakingPart3SessionPolicy                     = "ielts.speaking_part3.session.v1"
+	IELTSSpeakingFullMockSessionPolicy                  = "ielts.speaking_full_mock.session.v1"
 )
+
+func validEvaluationPolicyRef(value string) bool {
+	return len(value) <= 128 && value == strings.TrimSpace(value) &&
+		strings.HasSuffix(value, ".evaluation.v1")
+}
 
 var ErrExecutionPolicyNotFound = errors.New(
 	"practice: execution policy is not registered",
@@ -44,6 +55,7 @@ type TurnPolicy struct {
 }
 
 type sessionPolicyRegistration struct {
+	completionMode             CompletionMode
 	minEffectiveTurns          int
 	maxEffectiveTurns          int
 	coverageCheckpointTurn     int
@@ -52,7 +64,6 @@ type sessionPolicyRegistration struct {
 	retryAllowed               bool
 	questionTranslationAllowed bool
 	questionTipsAllowed        bool
-	avatarAllowed              bool
 	speechFeedbackAllowed      bool
 }
 
@@ -62,7 +73,8 @@ func ResolveTurnPolicy(reference string) (TurnPolicy, error) {
 		DailyHotelCheckinIssueTurnPolicy,
 		WorkplaceProgressRiskUpdateTurnPolicy:
 		return TurnPolicy{Kind: TurnPolicyGenerated}, nil
-	case InterviewProjectDeepDiveTurnPolicy:
+	case InterviewPracticeTurnPolicy,
+		InterviewProjectDeepDiveTurnPolicy:
 		return TurnPolicy{Kind: TurnPolicyInterview}, nil
 	case IELTSSpeakingPart1TurnPolicy:
 		return TurnPolicy{
@@ -110,6 +122,7 @@ func ValidSessionPolicy(
 		return false
 	}
 	return policy.SuggestedDurationSeconds == expected.SuggestedDurationSeconds &&
+		policy.CompletionMode == expected.CompletionMode &&
 		policy.MinEffectiveTurns == expected.MinEffectiveTurns &&
 		policy.MaxEffectiveTurns == expected.MaxEffectiveTurns &&
 		policy.CoverageCheckpointTurn == expected.CoverageCheckpointTurn &&
@@ -118,7 +131,6 @@ func ValidSessionPolicy(
 		policy.RetryAllowed == expected.RetryAllowed &&
 		policy.QuestionTranslationAllowed == expected.QuestionTranslationAllowed &&
 		policy.QuestionTipsAllowed == expected.QuestionTipsAllowed &&
-		policy.AvatarAllowed == expected.AvatarAllowed &&
 		policy.SpeechFeedbackAllowed == expected.SpeechFeedbackAllowed
 }
 
@@ -168,6 +180,7 @@ func resolveSessionPolicyRegistration(
 	reference string,
 ) (sessionPolicyRegistration, bool) {
 	standard := sessionPolicyRegistration{
+		completionMode:          CompletionModeTurnLimited,
 		minEffectiveTurns:       4,
 		maxEffectiveTurns:       6,
 		coverageCheckpointTurn:  4,
@@ -178,31 +191,63 @@ func resolveSessionPolicyRegistration(
 		ExamPracticeSessionPolicy:
 		return standard, true
 	case InterviewPracticeSessionPolicy:
+		standard.maxFollowUpsPerQuestion = 3
 		standard.questionTranslationAllowed = true
 		standard.questionTipsAllowed = true
-		standard.avatarAllowed = true
+		standard.speechFeedbackAllowed = true
+		return standard, true
+	case InterviewUserControlledSessionPolicy:
+		standard.completionMode = CompletionModeUserControlled
+		standard.minEffectiveTurns = 1
+		standard.maxEffectiveTurns = 0
+		standard.coverageCheckpointTurn = 1
+		standard.maxFollowUpsPerQuestion = 3
+		standard.questionTranslationAllowed = true
+		standard.questionTipsAllowed = true
 		standard.speechFeedbackAllowed = true
 		return standard, true
 	case DailyPracticeSessionPolicy,
 		DailyHotelCheckinIssueSessionPolicy,
 		WorkplacePracticeSessionPolicy,
 		WorkplaceProgressRiskUpdateSessionPolicy:
+		standard.completionMode = CompletionModeUserControlled
+		standard.minEffectiveTurns = 1
+		standard.maxEffectiveTurns = 0
+		standard.coverageCheckpointTurn = 1
 		standard.retryAllowed = true
-		standard.avatarAllowed = true
+		standard.questionTranslationAllowed = true
+		standard.questionTipsAllowed = true
 		standard.speechFeedbackAllowed = true
 		return standard, true
 	case InterviewProjectDeepDiveSessionPolicy:
 		standard.maxFollowUpsPerQuestion = 3
 		standard.questionTranslationAllowed = true
 		standard.questionTipsAllowed = true
-		standard.avatarAllowed = true
+		standard.speechFeedbackAllowed = true
+		return standard, true
+	case InterviewProjectDeepDiveUserControlledSessionPolicy:
+		standard.completionMode = CompletionModeUserControlled
+		standard.minEffectiveTurns = 1
+		standard.maxEffectiveTurns = 0
+		standard.coverageCheckpointTurn = 1
+		standard.maxFollowUpsPerQuestion = 3
+		standard.questionTranslationAllowed = true
+		standard.questionTipsAllowed = true
 		standard.speechFeedbackAllowed = true
 		return standard, true
 	case IELTSSpeakingPart1SessionPolicy,
 		IELTSSpeakingPart2SessionPolicy,
-		IELTSSpeakingPart3SessionPolicy,
-		IELTSSpeakingFullMockSessionPolicy:
+		IELTSSpeakingPart3SessionPolicy:
 		return sessionPolicyRegistration{
+			completionMode:             CompletionModeTurnLimited,
+			turnsFromBlueprints:        true,
+			questionTranslationAllowed: true,
+			questionTipsAllowed:        true,
+			speechFeedbackAllowed:      true,
+		}, true
+	case IELTSSpeakingFullMockSessionPolicy:
+		return sessionPolicyRegistration{
+			completionMode:        CompletionModeTurnLimited,
 			turnsFromBlueprints:   true,
 			speechFeedbackAllowed: true,
 		}, true
@@ -231,21 +276,28 @@ func buildSessionPolicy(
 		registration.minEffectiveTurns = blueprintCount
 		registration.maxEffectiveTurns = blueprintCount
 		registration.coverageCheckpointTurn = blueprintCount
-	} else if mode == PracticeModeFocus {
+	} else if mode == PracticeModeFocus &&
+		registration.completionMode == CompletionModeTurnLimited {
 		registration.minEffectiveTurns = 1
 		registration.maxEffectiveTurns = 3
 		registration.coverageCheckpointTurn = 1
-	} else if mode != PracticeModeFullSimulation {
+	} else if mode != PracticeModeFullSimulation &&
+		mode != PracticeModeFocus {
 		return SessionPolicy{}, false
 	}
 	if requestedMaxEffectiveTurns > 0 {
-		if requestedMaxEffectiveTurns < registration.minEffectiveTurns ||
+		if registration.completionMode == CompletionModeUserControlled {
+			requestedMaxEffectiveTurns = 0
+		} else if requestedMaxEffectiveTurns < registration.minEffectiveTurns ||
 			requestedMaxEffectiveTurns > registration.maxEffectiveTurns {
 			return SessionPolicy{}, false
 		}
-		registration.maxEffectiveTurns = requestedMaxEffectiveTurns
+		if requestedMaxEffectiveTurns > 0 {
+			registration.maxEffectiveTurns = requestedMaxEffectiveTurns
+		}
 	}
 	return SessionPolicy{
+		CompletionMode:             registration.completionMode,
 		SuggestedDurationSeconds:   suggestedDurationSeconds,
 		MinEffectiveTurns:          registration.minEffectiveTurns,
 		MaxEffectiveTurns:          registration.maxEffectiveTurns,
@@ -255,7 +307,6 @@ func buildSessionPolicy(
 		RetryAllowed:               registration.retryAllowed,
 		QuestionTranslationAllowed: registration.questionTranslationAllowed,
 		QuestionTipsAllowed:        registration.questionTipsAllowed,
-		AvatarAllowed:              registration.avatarAllowed,
 		SpeechFeedbackAllowed:      registration.speechFeedbackAllowed,
 	}, true
 }

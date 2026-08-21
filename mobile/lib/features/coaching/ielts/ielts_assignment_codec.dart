@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:speakup/features/coaching/ielts/ielts_assignment.dart';
+import 'package:speakup/features/coaching/ielts/ielts_question_bank.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 
@@ -13,6 +14,7 @@ IeltsPracticeAssignment decodeIeltsAssignment(Object? value) {
     value,
     required: const <String>{'bank_id', 'season', 'mode', 'parts'},
   );
+  final bankId = _resourceId(object['bank_id']);
   final mode = PracticeMode.fromWireValue(_text(object['mode'], maxBytes: 16));
   final rawParts = object['parts'];
   if (mode == null ||
@@ -21,7 +23,9 @@ IeltsPracticeAssignment decodeIeltsAssignment(Object? value) {
       rawParts.length > 3) {
     throw const IeltsAssignmentWireFormatException();
   }
-  final parts = rawParts.map(_part).toList(growable: false);
+  final parts = rawParts
+      .map((value) => _part(value, bankId))
+      .toList(growable: false);
   final expectedParts = switch (mode) {
     PracticeMode.fullMock => const <IeltsSpeakingPart>[
       IeltsSpeakingPart.part1,
@@ -53,18 +57,18 @@ IeltsPracticeAssignment decodeIeltsAssignment(Object? value) {
     throw const IeltsAssignmentWireFormatException();
   }
   return IeltsPracticeAssignment(
-    bankId: _resourceId(object['bank_id']),
+    bankId: bankId,
     season: _text(object['season']),
     mode: mode,
     parts: List<IeltsPracticePartAssignment>.unmodifiable(parts),
   );
 }
 
-IeltsPracticePartAssignment _part(Object? value) {
+IeltsPracticePartAssignment _part(Object? value, String bankId) {
   final object = _object(
     value,
     required: const <String>{'part', 'source_id', 'turn_blueprints'},
-    optional: const <String>{'topic_title', 'cue_card'},
+    optional: const <String>{'topic_title', 'cue_card', 'prepared_answers'},
   );
   final part = IeltsSpeakingPart.fromWireValue(
     _text(object['part'], maxBytes: 16),
@@ -86,6 +90,16 @@ IeltsPracticePartAssignment _part(Object? value) {
   final cueCard = object.containsKey('cue_card')
       ? _text(object['cue_card'])
       : null;
+  final sourceId = _resourceId(object['source_id']);
+  final preparedAnswers = object.containsKey('prepared_answers')
+      ? _preparedAnswers(
+          object['prepared_answers'],
+          bankId: bankId,
+          part: part,
+          sourceId: sourceId,
+          turnCount: turnBlueprints.length,
+        )
+      : const <IeltsPreparedAnswer>[];
   final validMetadata = switch (part) {
     IeltsSpeakingPart.part1 => topicTitle == null && cueCard == null,
     IeltsSpeakingPart.part2 =>
@@ -97,11 +111,56 @@ IeltsPracticePartAssignment _part(Object? value) {
   }
   return IeltsPracticePartAssignment(
     part: part,
-    sourceId: _resourceId(object['source_id']),
+    sourceId: sourceId,
     topicTitle: topicTitle,
     cueCard: cueCard,
     turnBlueprints: List<String>.unmodifiable(turnBlueprints),
+    preparedAnswers: preparedAnswers,
   );
+}
+
+List<IeltsPreparedAnswer> _preparedAnswers(
+  Object? value, {
+  required String bankId,
+  required IeltsSpeakingPart part,
+  required String sourceId,
+  required int turnCount,
+}) {
+  if (value is! List<Object?> || value.length > practiceTurnSafetyLimit) {
+    throw const IeltsAssignmentWireFormatException();
+  }
+  final positions = <int>{};
+  final answers = <IeltsPreparedAnswer>[];
+  for (final rawAnswer in value) {
+    final object = _object(
+      rawAnswer,
+      required: const <String>{'question_position', 'answer', 'personalized'},
+    );
+    final position = object['question_position'];
+    final personalized = object['personalized'];
+    if (position is! int ||
+        position < 1 ||
+        position > turnCount ||
+        !positions.add(position) ||
+        personalized is! bool) {
+      throw const IeltsAssignmentWireFormatException();
+    }
+    final answer = _text(object['answer'], maxBytes: 8000);
+    if (answer.runes.length > 2000) {
+      throw const IeltsAssignmentWireFormatException();
+    }
+    answers.add(
+      IeltsPreparedAnswer(
+        bankId: bankId,
+        part: part.wireValue,
+        sourceId: sourceId,
+        questionPosition: position,
+        answer: answer,
+        personalized: personalized,
+      ),
+    );
+  }
+  return List<IeltsPreparedAnswer>.unmodifiable(answers);
 }
 
 Map<String, Object?> _object(

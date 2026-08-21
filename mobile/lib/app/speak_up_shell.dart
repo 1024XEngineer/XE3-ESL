@@ -1,19 +1,24 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:speakup/features/agent/composer/composer_controller.dart';
 import 'package:speakup/features/agent/conversation/agent_message_audio_controller.dart';
+import 'package:speakup/features/agent/conversation/agent_client.dart';
 import 'package:speakup/features/agent/conversation/conversation_controller.dart';
 import 'package:speakup/features/agent/conversation/agent_models.dart';
+import 'package:speakup/features/agent/client_action/agent_client_action.dart';
 import 'package:speakup/app/app_routes.dart';
-import 'package:speakup/app/glass_navigation_bar.dart';
+import 'package:speakup/app/platform_navigation_bar.dart';
 import 'package:speakup/design/speak_up_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
-import 'package:speakup/features/agent/handoff/agent_handoff.dart';
-import 'package:speakup/features/coaching/preparation/practice_plan_handoff_controller.dart';
+import 'package:speakup/features/agent/client_action/practice_plan_client_action_card.dart';
+import 'package:speakup/features/coaching/preparation/practice_plan_client_action.dart';
+import 'package:speakup/features/coaching/preparation/practice_plan_client_action_controller.dart';
 import 'package:speakup/features/agent/conversation/conversation.dart';
 import 'package:speakup/features/coaching/ielts/ielts_mock_practice.dart';
+import 'package:speakup/features/coaching/ielts/ielts_assignment.dart';
 import 'package:speakup/features/coaching/interview/job_preparation_controller.dart';
 import 'package:speakup/features/coaching/preparation/preparation.dart';
 import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
@@ -24,12 +29,12 @@ import 'package:speakup/identity/auth_controller.dart';
 import 'package:speakup/identity/model/identity_models.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
-import 'package:speakup/features/coaching/review/interview_report_controller.dart';
-import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
 import 'package:speakup/features/coaching/review/review_history_controller.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
 import 'package:speakup/features/coaching/evaluation/agent_conversation_feedback_presenter.dart';
-import 'package:speakup/resume/resume.dart';
+import 'package:speakup/features/coaching/profile/coaching_profile.dart';
+import 'package:speakup/features/profile/profile_page.dart';
+import 'package:speakup/features/profile/profile_avatar_view.dart';
 
 class SpeakUpShell extends StatefulWidget {
   const SpeakUpShell({
@@ -40,16 +45,15 @@ class SpeakUpShell extends StatefulWidget {
     this.preparationController,
     this.ieltsPreparationController,
     this.preparationLaunchController,
-    this.practicePlanHandoffController,
+    this.practicePlanClientActionController,
     this.jobPreparationController,
     this.reviewHistoryController,
-    this.interviewReportController,
-    this.ieltsSpeakingReportController,
     this.speechFeedbackController,
-    this.resumeController,
+    this.coachingProfileController,
     required this.conversationController,
     required this.composerController,
     this.messageAudioController,
+    this.messageTranslationClient,
     required this.practiceController,
     super.key,
   });
@@ -61,17 +65,16 @@ class SpeakUpShell extends StatefulWidget {
   final ConversationController conversationController;
   final ComposerController composerController;
   final AgentMessageAudioController? messageAudioController;
+  final AgentMessageTranslationClient? messageTranslationClient;
   final PracticeController practiceController;
   final PreparationController? preparationController;
   final IeltsPreparationController? ieltsPreparationController;
   final PreparationLaunchController? preparationLaunchController;
-  final PracticePlanHandoffController? practicePlanHandoffController;
+  final PracticePlanClientActionController? practicePlanClientActionController;
   final JobPreparationController? jobPreparationController;
   final ReviewHistoryController? reviewHistoryController;
-  final InterviewReportController? interviewReportController;
-  final IeltsSpeakingReportController? ieltsSpeakingReportController;
   final SpeechFeedbackController? speechFeedbackController;
-  final ResumeController? resumeController;
+  final CoachingProfileController? coachingProfileController;
 
   @override
   State<SpeakUpShell> createState() => _SpeakUpShellState();
@@ -79,24 +82,36 @@ class SpeakUpShell extends StatefulWidget {
 
 class _SpeakUpShellState extends State<SpeakUpShell> {
   static const _destinations = [
-    GlassNavigationDestination(
+    PlatformNavigationDestination(
       label: 'SpeakUp',
-      icon: Icons.chat_bubble_outline_rounded,
+      icon: Icons.mic_none_rounded,
+      selectedIcon: Icons.mic_rounded,
+      iosSystemImage: 'waveform.circle',
+      iosSelectedSystemImage: 'waveform.circle.fill',
       key: Key('primary-tab-agent'),
     ),
-    GlassNavigationDestination(
+    PlatformNavigationDestination(
       label: '训练',
       icon: Icons.grid_view_rounded,
+      selectedIcon: Icons.dashboard_rounded,
+      iosSystemImage: 'square.grid.2x2',
+      iosSelectedSystemImage: 'square.grid.2x2.fill',
       key: Key('primary-tab-scenes'),
     ),
-    GlassNavigationDestination(
+    PlatformNavigationDestination(
       label: '复盘',
-      icon: Icons.fact_check_outlined,
+      icon: Icons.insights_outlined,
+      selectedIcon: Icons.insights_rounded,
+      iosSystemImage: 'chart.bar',
+      iosSelectedSystemImage: 'chart.bar.fill',
       key: Key('primary-tab-review'),
     ),
-    GlassNavigationDestination(
+    PlatformNavigationDestination(
       label: '我的',
-      icon: Icons.person_rounded,
+      icon: Icons.person_outline_rounded,
+      selectedIcon: Icons.person_rounded,
+      iosSystemImage: 'person',
+      iosSelectedSystemImage: 'person.fill',
       key: Key('primary-tab-profile'),
     ),
   ];
@@ -105,11 +120,14 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   int _selectedIndex = 0;
   AgentConversationFeedbackPresenter? _feedbackPresenter;
   bool _practiceRouteInFlight = false;
+  bool _clientActionInFlight = false;
+  bool _conversationDrawerOpen = false;
   int _navigationGeneration = 0;
 
   @override
   void initState() {
     super.initState();
+    widget.authController?.addListener(_handleAuthState);
     widget.conversationController.addListener(_handleAgentInteractionState);
     widget.composerController.addListener(_handleAgentInteractionState);
     widget.practiceController.addListener(_handlePracticeState);
@@ -119,6 +137,10 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   @override
   void didUpdateWidget(covariant SpeakUpShell oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.authController != widget.authController) {
+      oldWidget.authController?.removeListener(_handleAuthState);
+      widget.authController?.addListener(_handleAuthState);
+    }
     final conversationControllerChanged =
         oldWidget.conversationController != widget.conversationController;
     if (conversationControllerChanged) {
@@ -143,6 +165,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
 
   @override
   void dispose() {
+    widget.authController?.removeListener(_handleAuthState);
     widget.conversationController.removeListener(_handleAgentInteractionState);
     widget.composerController.removeListener(_handleAgentInteractionState);
     widget.practiceController.removeListener(_handlePracticeState);
@@ -150,13 +173,24 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
     super.dispose();
   }
 
+  void _handleAuthState() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
   void _selectDestination(int index) {
     unawaited(_selectDestinationAfterParking(index));
   }
 
+  Future<int> _selectDestinationFromNavigation(int index) async {
+    await _selectDestinationAfterParking(index);
+    return _selectedIndex;
+  }
+
   Future<void> _selectDestinationAfterParking(int index) async {
     if (_selectedIndex == index) {
-      if (index == 2) {
+      if (index == 2 || index == 3) {
         _refreshReviewIndexes();
       }
       return;
@@ -184,7 +218,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         _showMockNotice('练习正在准备，请完成后再离开训练页');
         return;
       }
-      if (launch?.workspaceController?.currentLease != null) {
+      if (launch?.workspaceController.currentLease != null) {
         final parked = await launch!.parkCurrentPractice();
         if (!mounted || navigationGeneration != _navigationGeneration) {
           return;
@@ -199,7 +233,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       return;
     }
     unawaited(widget.practiceController.stopPracticeAudio());
-    if (index == 2) {
+    if (index == 2 || index == 3) {
       _refreshReviewIndexes();
     }
     setState(() => _selectedIndex = index);
@@ -208,6 +242,17 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   void _openJobPreparation() {
     if (widget.jobPreparationController == null) {
       _showMockNotice('岗位准备流程尚未连接');
+      return;
+    }
+    widget.jobPreparationController!.beginNewPreparation();
+    Navigator.of(context).pushNamed(AppRoutes.jobPreparation);
+  }
+
+  Future<void> _openInterviewPlan(String planId) async {
+    final controller = widget.jobPreparationController;
+    if (controller == null ||
+        !await controller.openSavedPlan(planId) ||
+        !mounted) {
       return;
     }
     Navigator.of(context).pushNamed(AppRoutes.jobPreparation);
@@ -223,27 +268,133 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       ..showSnackBar(SnackBar(content: Text(message)));
   }
 
-  void _openPractice() {
-    unawaited(_openPracticeRoute());
+  Future<void> _openPractice() => _openPracticeRoute();
+
+  Widget? _buildAgentClientAction(
+    BuildContext context,
+    AgentClientAction action,
+  ) {
+    final practiceAction = tryDecodeConfirmPracticePlanClientAction(action);
+    if (practiceAction == null) {
+      return null;
+    }
+    return PracticePlanClientActionCard(
+      action: practiceAction,
+      onConfirm: () => unawaited(_confirmAgentClientAction(practiceAction)),
+    );
   }
 
-  Future<void> _confirmAgentHandoff(AgentHandoff handoff) async {
-    final controller = widget.practicePlanHandoffController;
-    if (handoff is! ConfirmPracticePlanHandoff ||
-        controller == null ||
+  Future<void> _confirmAgentClientAction(
+    ConfirmPracticePlanClientAction action,
+  ) async {
+    final controller = widget.practicePlanClientActionController;
+    if (controller == null ||
+        _clientActionInFlight ||
         controller.isBusy ||
         widget.conversationController.isBusy) {
       return;
     }
-    final confirmed = await controller.confirm(handoff);
-    if (!mounted) {
-      return;
+    setState(() => _clientActionInFlight = true);
+    try {
+      final workspace = controller.workspaceController;
+      if (action.practiceExperience == 'IELTS_SPEAKING' &&
+          !workspace.hasResumableForPlan(action.practicePlanId)) {
+        try {
+          final assignment = await controller.loadIELTSPreview(action);
+          if (!mounted || !await _showIELTSPlanPreview(assignment)) {
+            return;
+          }
+        } on Object {
+          if (mounted) _showMockNotice('暂时无法预览这组雅思题目，请重试。');
+          return;
+        }
+      }
+      var replaceCurrentPractice = false;
+      if (workspace.hasResumable &&
+          !workspace.hasResumableForPlan(action.practicePlanId)) {
+        if (!workspace.resumableHasProgress) {
+          replaceCurrentPractice = true;
+        } else {
+          final choice = await _chooseClientActionPracticeAction(
+            controller,
+            action,
+          );
+          if (!mounted || choice == null) {
+            return;
+          }
+          if (choice == ExistingPracticeAction.continuePractice) {
+            await _openPracticeRoute();
+            return;
+          }
+          replaceCurrentPractice = true;
+        }
+      }
+      var confirmed = await controller.confirm(
+        action,
+        replaceCurrentPractice: replaceCurrentPractice,
+      );
+      if (!mounted) {
+        return;
+      }
+      if (!confirmed &&
+          !replaceCurrentPractice &&
+          controller.failure ==
+              PracticePlanClientActionFailure.localExistingPractice) {
+        final choice = await _chooseClientActionPracticeAction(
+          controller,
+          action,
+        );
+        if (!mounted || choice == null) {
+          return;
+        }
+        if (choice == ExistingPracticeAction.continuePractice) {
+          if (controller.workspaceController.hasResumable) {
+            await _openPracticeRoute();
+          }
+          return;
+        }
+        confirmed = await controller.confirm(
+          action,
+          replaceCurrentPractice: true,
+        );
+        if (!mounted) {
+          return;
+        }
+      }
+      if (!confirmed) {
+        _showMockNotice(controller.errorMessage ?? '练习暂时无法开始，请重试');
+        return;
+      }
+      await _openPracticeRoute();
+    } finally {
+      if (mounted) {
+        setState(() => _clientActionInFlight = false);
+      }
     }
-    if (!confirmed) {
-      _showMockNotice(controller.errorMessage ?? '练习暂时无法开始，请重试');
-      return;
-    }
-    await _openPracticeRoute();
+  }
+
+  Future<bool> _showIELTSPlanPreview(IeltsPracticeAssignment assignment) async {
+    final result = await showModalBottomSheet<bool>(
+      context: context,
+      useSafeArea: true,
+      isScrollControlled: true,
+      builder: (_) => _IeltsPlanPreviewSheet(assignment: assignment),
+    );
+    return result ?? false;
+  }
+
+  Future<ExistingPracticeAction?> _chooseClientActionPracticeAction(
+    PracticePlanClientActionController controller,
+    ConfirmPracticePlanClientAction action,
+  ) {
+    final scope = action.practiceScope.trim();
+    return showExistingPracticeActionSheet(
+      context,
+      currentTitle: controller.workspaceController.currentTitle,
+      nextTitle: scope.isEmpty
+          ? action.sceneName
+          : '${action.sceneName} · $scope',
+    );
   }
 
   Future<void> _openPracticeRoute() async {
@@ -293,7 +444,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
           ),
         );
       } else if (mounted &&
-          result == CompletedPracticeRouteResult.continueWithAgent) {
+          result == CompletedPracticeRouteResult.returnToConversation) {
         setState(() => _selectedIndex = 0);
       }
     } finally {
@@ -324,10 +475,10 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
     final practiceSelected = _selectedIndex == 1;
     final safeBottom = math.max(
       MediaQuery.viewPaddingOf(context).bottom,
-      GlassNavigationBar.minimumBottomInset,
+      PlatformNavigationBar.minimumBottomInset,
     );
     final composerBottomInset =
-        GlassNavigationBar.heightFor(context) + safeBottom + 10;
+        PlatformNavigationBar.heightFor(context) + safeBottom + 10;
     final pages = [
       ConversationPage(
         previewMode: widget.previewMode,
@@ -335,7 +486,12 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         restingComposerBottom: composerBottomInset,
         threadId: widget.conversationController.threadId,
         displayName: widget.authController?.profile?.displayName,
-        onOpenMenu: () => _scaffoldKey.currentState?.openDrawer(),
+        onOpenMenu: () {
+          _scaffoldKey.currentState?.openDrawer();
+          if (!widget.previewMode) {
+            unawaited(widget.conversationController.refreshThreadHistory());
+          }
+        },
         onNavigateBack: widget.showBackButton
             ? () => Navigator.of(context).maybePop()
             : null,
@@ -345,7 +501,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         onBrowseScenes: () => _selectDestination(1),
         onContinuePractice: canContinuePractice ? _openPractice : null,
         onOpenReview: () => _selectDestination(2),
-        onMessageHandoff: (handoff) => unawaited(_confirmAgentHandoff(handoff)),
+        clientActionBuilder: _buildAgentClientAction,
         onStartVoice: widget.composerController.supportsAgentVoice
             ? () async {
                 await widget.messageAudioController?.stopPlayback();
@@ -354,6 +510,13 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
             : null,
         voiceController: widget.composerController.voiceController,
         messageAudioController: widget.messageAudioController,
+        onTranslateMessage: widget.messageTranslationClient == null
+            ? null
+            : (message) async {
+                final translation = await widget.messageTranslationClient!
+                    .translateMessage(messageId: message.id);
+                return translation.content;
+              },
         pendingImages: widget.composerController.pendingImages,
         imageErrorMessage: widget.composerController.imageErrorMessage,
         imageSelectionInFlight:
@@ -397,64 +560,78 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         feedbackPresenter: _feedbackPresenter,
       ),
       PreparationPage(
-        showBackButton: widget.showBackButton,
+        showBackButton: false,
         previewMode: widget.previewMode,
         practiceController: widget.practiceController,
         preparationController: widget.preparationController,
         ieltsController: widget.ieltsPreparationController,
         launchController: widget.preparationLaunchController,
+        jobPreparationController: widget.jobPreparationController,
         onOpenJobPreparation: widget.jobPreparationController == null
             ? null
             : _openJobPreparation,
+        onOpenInterviewPlan: widget.jobPreparationController == null
+            ? null
+            : (planId) => unawaited(_openInterviewPlan(planId)),
         onSceneSelected: () => _selectDestination(0),
         onPracticeStarted: _openPractice,
       ),
       ReviewPage(
-        showBackButton: widget.showBackButton,
-        onExit: widget.showBackButton ? null : () => _selectDestination(0),
+        showBackButton: false,
         previewMode: widget.previewMode,
         practiceAvailable: practiceAvailable,
         historyController: widget.reviewHistoryController,
-        ieltsSpeakingReportController: widget.ieltsSpeakingReportController,
         autoload: false,
       ),
-      _ProfilePage(
-        showBackButton: widget.showBackButton,
+      ProfilePage(
+        showBackButton: false,
         user: widget.user,
         profile: widget.authController?.profile,
         profileErrorMessage: widget.authController?.profileErrorMessage,
         profileSaving: widget.authController?.profileSaving ?? false,
         onSaveDisplayName: widget.authController?.updateDisplayName,
+        avatarBytes: widget.authController?.avatarBytes,
+        avatarSaving: widget.authController?.avatarSaving ?? false,
+        onUploadAvatar: widget.authController?.updateAvatar,
+        onUseDefaultAvatar: widget.authController?.useDefaultAvatar,
         onLogout: widget.authController?.logout,
-        resumeController: widget.resumeController,
+        reviewHistoryController: widget.reviewHistoryController,
+        coachingProfileController: widget.coachingProfileController,
       ),
     ];
 
-    return Scaffold(
-      key: _scaffoldKey,
-      extendBody: !practiceSelected,
-      resizeToAvoidBottomInset: false,
-      backgroundColor: practiceSelected
-          ? SpeakUpDesign.canvas
-          : Colors.transparent,
-      drawer: _ConversationDrawer(
-        previewMode: widget.previewMode,
-        controller: widget.conversationController,
-        hiddenThreadIds: {
-          ?widget
-              .preparationLaunchController
-              ?.workspaceController
-              ?.currentPracticeThreadId,
-        },
-      ),
-      drawerScrimColor: const Color(0x52000000),
-      body: IndexedStack(index: _selectedIndex, children: pages),
-      bottomNavigationBar: GlassNavigationBar(
-        destinations: _destinations,
-        selectedIndex: _selectedIndex,
-        onDestinationSelected: _selectDestination,
-        solid: practiceSelected,
-      ),
+    return Stack(
+      children: [
+        Scaffold(
+          key: _scaffoldKey,
+          extendBody: !practiceSelected,
+          resizeToAvoidBottomInset: false,
+          backgroundColor: practiceSelected
+              ? SpeakUpDesign.canvas
+              : Colors.transparent,
+          drawer: _ConversationDrawer(
+            controller: widget.conversationController,
+            avatarBytes: widget.authController?.avatarBytes,
+            onOpenProfile: () => _selectDestination(3),
+          ),
+          onDrawerChanged: (open) {
+            if (_conversationDrawerOpen != open) {
+              setState(() => _conversationDrawerOpen = open);
+            }
+          },
+          drawerScrimColor: const Color(0x52000000),
+          body: IndexedStack(index: _selectedIndex, children: pages),
+          bottomNavigationBar: _conversationDrawerOpen
+              ? null
+              : PlatformNavigationBar(
+                  destinations: _destinations,
+                  selectedIndex: _selectedIndex,
+                  onDestinationSelected: _selectDestinationFromNavigation,
+                ),
+        ),
+        if (_clientActionInFlight)
+          const Positioned.fill(child: _PracticeTransitionOverlay()),
+      ],
     );
   }
 
@@ -466,16 +643,166 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   }
 }
 
+class _IeltsPlanPreviewSheet extends StatelessWidget {
+  const _IeltsPlanPreviewSheet({required this.assignment});
+
+  final IeltsPracticeAssignment assignment;
+
+  @override
+  Widget build(BuildContext context) => DraggableScrollableSheet(
+    expand: false,
+    initialChildSize: 0.82,
+    minChildSize: 0.55,
+    maxChildSize: 0.94,
+    builder: (context, scrollController) => Padding(
+      padding: const EdgeInsets.fromLTRB(20, 4, 20, 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text('开始前预览', style: SpeakUpDesign.sectionTitle),
+              ),
+              IconButton(
+                tooltip: '关闭',
+                onPressed: () => Navigator.of(context).pop(false),
+                icon: const Icon(Icons.close_rounded),
+              ),
+            ],
+          ),
+          Text(
+            'IELTS Speaking · ${assignment.mode.wireValue.replaceAll('_', ' ')}',
+            style: SpeakUpDesign.body.copyWith(color: SpeakUpDesign.secondary),
+          ),
+          const SizedBox(height: 14),
+          Expanded(
+            child: ListView.separated(
+              key: const Key('agent-ielts-plan-preview'),
+              controller: scrollController,
+              itemCount: assignment.parts.length,
+              separatorBuilder: (_, _) => const SizedBox(height: 18),
+              itemBuilder: (context, index) =>
+                  _IeltsPreviewPart(part: assignment.parts[index]),
+            ),
+          ),
+          const SizedBox(height: 14),
+          FilledButton.icon(
+            key: const Key('agent-ielts-preview-start'),
+            onPressed: () => Navigator.of(context).pop(true),
+            icon: const Icon(Icons.play_arrow_rounded),
+            label: const Text('开始练习'),
+            style: FilledButton.styleFrom(
+              minimumSize: const Size.fromHeight(52),
+              backgroundColor: SpeakUpDesign.ink,
+              foregroundColor: Colors.white,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class _IeltsPreviewPart extends StatelessWidget {
+  const _IeltsPreviewPart({required this.part});
+
+  final IeltsPracticePartAssignment part;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        part.part.wireValue.replaceAll('_', ' '),
+        style: SpeakUpDesign.cardTitle,
+      ),
+      if (part.topicTitle case final title?) ...[
+        const SizedBox(height: 4),
+        Text(title, style: SpeakUpDesign.body),
+      ],
+      if (part.cueCard case final cueCard?) ...[
+        const SizedBox(height: 10),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            color: SpeakUpDesign.surfaceMuted,
+            borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Text(cueCard, style: SpeakUpDesign.body),
+          ),
+        ),
+      ],
+      if (part.turnBlueprints.isNotEmpty) ...[
+        const SizedBox(height: 10),
+        for (var index = 0; index < part.turnBlueprints.length; index++)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 9),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: 26,
+                  child: Text(
+                    '${index + 1}.',
+                    style: SpeakUpDesign.meta.copyWith(
+                      color: SpeakUpDesign.secondary,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Text(
+                    part.turnBlueprints[index],
+                    style: SpeakUpDesign.body,
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    ],
+  );
+}
+
+class _PracticeTransitionOverlay extends StatelessWidget {
+  const _PracticeTransitionOverlay();
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      key: const Key('agent-practice-transition-overlay'),
+      color: SpeakUpDesign.canvas,
+      child: SafeArea(
+        child: Center(
+          child: Semantics(
+            label: '正在进入练习',
+            liveRegion: true,
+            child: const Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.play_circle_outline_rounded, size: 34),
+                SizedBox(height: 16),
+                Text('正在进入练习…', style: SpeakUpDesign.body),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ConversationDrawer extends StatelessWidget {
   const _ConversationDrawer({
-    required this.previewMode,
     required this.controller,
-    this.hiddenThreadIds = const <String>{},
+    required this.onOpenProfile,
+    this.avatarBytes,
   });
 
-  final bool previewMode;
   final ConversationController controller;
-  final Set<String> hiddenThreadIds;
+  final VoidCallback onOpenProfile;
+  final Uint8List? avatarBytes;
 
   @override
   Widget build(BuildContext context) {
@@ -483,132 +810,168 @@ class _ConversationDrawer extends StatelessWidget {
     final currentThreadId = controller.threadId;
     final recentThreads = <AgentThreadSummary>[
       for (final thread in controller.threads)
-        if (thread.id != currentThreadId &&
-            !hiddenThreadIds.contains(thread.id))
-          thread,
+        if (thread.id != currentThreadId) thread,
     ];
+    final busy = controller.isBusy;
+    final threadWidgets = <Widget>[
+      if (currentThreadId == null)
+        _ConversationThreadTile(
+          key: const Key('no-focused-conversation'),
+          title: '新对话 · 未发送',
+          selected: true,
+          enabled: !busy,
+          onTap: () => Navigator.of(context).pop(),
+        )
+      else
+        _ConversationThreadTile(
+          key: Key('conversation-thread-$currentThreadId'),
+          title: current?.title ?? '新对话',
+          selected: true,
+          enabled: !busy,
+          onTap: () => Navigator.of(context).pop(),
+          onDelete: () =>
+              _confirmDelete(context, currentThreadId, current?.title),
+        ),
+      for (final thread in recentThreads)
+        _ConversationThreadTile(
+          key: Key('conversation-thread-${thread.id}'),
+          title: thread.title ?? '新对话',
+          selected: false,
+          enabled: !busy,
+          onTap: () async {
+            final selected = await controller.selectThread(thread.id);
+            if (!context.mounted || !selected) {
+              return;
+            }
+            Navigator.of(context).pop();
+          },
+          onDelete: () => _confirmDelete(context, thread.id, thread.title),
+        ),
+    ];
+
     return Drawer(
       width: 300,
       backgroundColor: SpeakUpDesign.canvas,
       child: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+        child: Column(
           children: [
-            Row(
-              children: [
-                const Expanded(
-                  child: Text('SpeakUp', style: SpeakUpDesign.sectionTitle),
-                ),
-                IconButton(
-                  tooltip: '关闭对话菜单',
-                  onPressed: () => Navigator.of(context).pop(),
-                  icon: const Icon(Icons.close_rounded),
-                ),
-              ],
-            ),
-            Text(
-              previewMode ? '本地 Fake 预览，未连接正式账号' : '已连接当前账号',
-              style: SpeakUpDesign.meta,
-            ),
-            const SizedBox(height: 20),
-            FilledButton.tonalIcon(
-              key: const Key('new-conversation-button'),
-              onPressed: controller.isBusy
-                  ? null
-                  : () async {
-                      final created = await controller.createThread();
-                      if (!context.mounted || !created) {
-                        return;
-                      }
-                      Navigator.of(context).pop();
-                    },
-              icon: const Icon(Icons.add_rounded),
-              label: const Text('新对话'),
-              style: FilledButton.styleFrom(
-                alignment: Alignment.centerLeft,
-                minimumSize: const Size.fromHeight(48),
-                backgroundColor: SpeakUpDesign.primaryMuted,
-                foregroundColor: SpeakUpDesign.primary,
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: SpeakUpWordmark(height: 30),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: '关闭对话菜单',
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
               ),
             ),
-            if (controller.isBusy) ...[
-              const SizedBox(height: 12),
-              const LinearProgressIndicator(
-                key: Key('conversation-drawer-progress'),
-                minHeight: 2,
+            Expanded(
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: ListView(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 88),
+                      children: [
+                        if (controller.threadHistoryErrorMessage
+                            case final message?)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: Text(
+                              message,
+                              key: const Key('conversation-history-error'),
+                              style: SpeakUpDesign.meta.copyWith(
+                                color: SpeakUpDesign.error,
+                              ),
+                            ),
+                          ),
+                        if (threadWidgets.isEmpty)
+                          const Padding(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 10,
+                            ),
+                            child: Text('暂无聊天', style: SpeakUpDesign.body),
+                          )
+                        else
+                          ...threadWidgets,
+                        if (controller.hasMoreThreads) ...[
+                          const SizedBox(height: 8),
+                          TextButton(
+                            key: const Key('load-more-conversations'),
+                            onPressed: controller.isLoadingMoreThreads || busy
+                                ? null
+                                : controller.loadMoreThreads,
+                            child: Text(
+                              controller.isLoadingMoreThreads
+                                  ? '正在加载…'
+                                  : '加载更早',
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  Positioned(
+                    left: 16,
+                    right: 16,
+                    bottom: 16,
+                    child: Row(
+                      children: [
+                        FilledButton.icon(
+                          key: const Key('new-conversation-button'),
+                          onPressed: busy
+                              ? null
+                              : () async {
+                                  final created = await controller
+                                      .createThread();
+                                  if (!context.mounted || !created) {
+                                    return;
+                                  }
+                                  Navigator.of(context).pop();
+                                },
+                          icon: const Icon(Icons.edit_outlined, size: 22),
+                          label: const Text('聊天'),
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size(0, 48),
+                            padding: const EdgeInsets.symmetric(horizontal: 20),
+                            backgroundColor: SpeakUpDesign.primary,
+                            foregroundColor: SpeakUpDesign.canvas,
+                            shape: const StadiumBorder(),
+                            textStyle: SpeakUpDesign.cardTitle,
+                          ),
+                        ),
+                        const Spacer(),
+                        IconButton(
+                          key: const Key('drawer-profile-button'),
+                          tooltip: '打开我的页面',
+                          onPressed: () {
+                            Navigator.of(context).pop();
+                            onOpenProfile();
+                          },
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints.tightFor(
+                            width: 48,
+                            height: 48,
+                          ),
+                          icon: ProfileAvatarView(
+                            size: 48,
+                            avatarBytes: avatarBytes,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-            ],
-            const SizedBox(height: 28),
-            const Text('当前对话', style: SpeakUpDesign.label),
-            const SizedBox(height: 8),
-            if (currentThreadId == null)
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-                child: Text(
-                  '新对话 · 未发送',
-                  key: Key('no-focused-conversation'),
-                  style: SpeakUpDesign.body,
-                ),
-              )
-            else
-              _ConversationThreadTile(
-                threadId: currentThreadId,
-                title: current?.title,
-                updatedAt: current?.updatedAt,
-                selected: true,
-                enabled: !controller.isBusy,
-                onTap: () => Navigator.of(context).pop(),
-                onDelete: () =>
-                    _confirmDelete(context, currentThreadId, current?.title),
-              ),
-            const SizedBox(height: 24),
-            const Text('近期对话', style: SpeakUpDesign.label),
-            const SizedBox(height: 8),
-            if (recentThreads.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-                child: Text(
-                  '暂无其他对话',
-                  key: Key('no-recent-conversations'),
-                  style: SpeakUpDesign.body,
-                ),
-              )
-            else
-              for (final thread in recentThreads)
-                _ConversationThreadTile(
-                  threadId: thread.id,
-                  title: thread.title,
-                  updatedAt: thread.updatedAt,
-                  selected: false,
-                  enabled: !controller.isBusy,
-                  onTap: () async {
-                    final selected = await controller.selectThread(thread.id);
-                    if (!context.mounted || !selected) {
-                      return;
-                    }
-                    Navigator.of(context).pop();
-                  },
-                  onDelete: () =>
-                      _confirmDelete(context, thread.id, thread.title),
-                ),
-            if (controller.threadHistoryErrorMessage case final message?) ...[
-              const SizedBox(height: 10),
-              Text(
-                message,
-                key: const Key('conversation-history-error'),
-                style: SpeakUpDesign.meta.copyWith(color: SpeakUpDesign.error),
-              ),
-            ],
-            if (controller.hasMoreThreads) ...[
-              const SizedBox(height: 10),
-              TextButton(
-                key: const Key('load-more-conversations'),
-                onPressed: controller.isLoadingMoreThreads || controller.isBusy
-                    ? null
-                    : controller.loadMoreThreads,
-                child: Text(controller.isLoadingMoreThreads ? '正在加载…' : '加载更早'),
-              ),
-            ],
+            ),
           ],
         ),
       ),
@@ -648,18 +1011,15 @@ class _ConversationDrawer extends StatelessWidget {
 
 class _ConversationThreadTile extends StatelessWidget {
   const _ConversationThreadTile({
-    required this.threadId,
+    super.key,
     required this.title,
-    required this.updatedAt,
     required this.selected,
     required this.enabled,
     required this.onTap,
-    required this.onDelete,
+    this.onDelete,
   });
 
-  final String threadId;
-  final String? title;
-  final DateTime? updatedAt;
+  final String title;
   final bool selected;
   final bool enabled;
   final VoidCallback onTap;
@@ -667,253 +1027,39 @@ class _ConversationThreadTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final lastUpdatedAt = updatedAt;
-    final displayTitle = title ?? '新对话';
     return Semantics(
       selected: selected,
       button: true,
-      label: selected ? '当前对话：$displayTitle' : displayTitle,
-      child: ListTile(
-        key: Key('conversation-thread-$threadId'),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-        selected: selected,
-        selectedTileColor: SpeakUpDesign.primaryMuted,
-        shape: RoundedRectangleBorder(
+      label: selected ? '当前对话：$title' : title,
+      hint: onDelete == null ? null : '长按删除对话',
+      onTap: enabled ? onTap : null,
+      onLongPress: enabled ? onDelete : null,
+      excludeSemantics: true,
+      child: Material(
+        color: selected ? SpeakUpDesign.primaryMuted : Colors.transparent,
+        borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
+        child: InkWell(
           borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
-        ),
-        leading: const Icon(Icons.chat_bubble_outline_rounded),
-        title: Text(displayTitle, maxLines: 1, overflow: TextOverflow.ellipsis),
-        subtitle: lastUpdatedAt == null
-            ? null
-            : Text('更新于 ${_formatThreadUpdatedAt(lastUpdatedAt)}'),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (selected)
-              const Icon(
-                Icons.check_rounded,
-                key: Key('focused-conversation-indicator'),
-                size: 20,
-              ),
-            IconButton(
-              key: Key('delete-conversation-$threadId'),
-              tooltip: '删除对话',
-              onPressed: enabled ? onDelete : null,
-              icon: const Icon(Icons.delete_outline_rounded, size: 20),
+          onTap: enabled ? onTap : null,
+          onLongPress: enabled ? onDelete : null,
+          child: Container(
+            height: 44,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            alignment: Alignment.centerLeft,
+            child: Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: selected
+                  ? SpeakUpDesign.body.copyWith(
+                      color: SpeakUpDesign.ink,
+                      fontWeight: FontWeight.w600,
+                    )
+                  : SpeakUpDesign.body,
             ),
-          ],
-        ),
-        onTap: enabled ? onTap : null,
-      ),
-    );
-  }
-}
-
-String _formatThreadUpdatedAt(DateTime value) {
-  final local = value.toLocal();
-  String twoDigits(int part) => part.toString().padLeft(2, '0');
-  return '${twoDigits(local.month)}月${twoDigits(local.day)}日 '
-      '${twoDigits(local.hour)}:${twoDigits(local.minute)}';
-}
-
-class _ProfilePage extends StatelessWidget {
-  const _ProfilePage({
-    required this.showBackButton,
-    required this.user,
-    required this.profile,
-    required this.profileErrorMessage,
-    required this.profileSaving,
-    required this.onSaveDisplayName,
-    required this.onLogout,
-    required this.resumeController,
-  });
-
-  final bool showBackButton;
-  final User? user;
-  final UserProfile? profile;
-  final String? profileErrorMessage;
-  final bool profileSaving;
-  final Future<String?> Function(String)? onSaveDisplayName;
-  final VoidCallback? onLogout;
-  final ResumeController? resumeController;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      key: const Key('profile-page'),
-      appBar: showBackButton
-          ? AppBar(
-              leading: IconButton(
-                key: const Key('profile-route-back-button'),
-                tooltip: '返回',
-                onPressed: () => Navigator.of(context).maybePop(),
-                icon: const Icon(Icons.arrow_back_rounded),
-              ),
-            )
-          : null,
-      body: SafeArea(
-        bottom: false,
-        child: ListView(
-          padding: EdgeInsets.fromLTRB(
-            SpeakUpDesign.horizontalInset(context),
-            SpeakUpDesign.space24,
-            SpeakUpDesign.horizontalInset(context),
-            140,
           ),
-          children: [
-            const SpeakUpPageHeader(title: '我的', subtitle: '管理账号与练习身份。'),
-            const SizedBox(height: SpeakUpDesign.space24),
-            Card(
-              child: ListTile(
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: SpeakUpDesign.space16,
-                  vertical: SpeakUpDesign.space8,
-                ),
-                leading: CircleAvatar(
-                  backgroundColor: SpeakUpDesign.primaryMuted,
-                  foregroundColor: SpeakUpDesign.primary,
-                  child: Text(
-                    _profileInitial(profile?.displayName),
-                    style: const TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                ),
-                title: Text(
-                  profile?.displayName ?? (user == null ? '本地界面预览' : '尚未设置昵称'),
-                ),
-                subtitle: Text(user?.email ?? '尚未连接正式账号'),
-                trailing: user == null
-                    ? null
-                    : IconButton(
-                        key: const Key('profile-edit-display-name'),
-                        tooltip: '编辑昵称',
-                        onPressed: profileSaving || onSaveDisplayName == null
-                            ? null
-                            : () => _editDisplayName(context),
-                        icon: const Icon(Icons.edit_rounded),
-                      ),
-              ),
-            ),
-            if (profileErrorMessage != null) ...[
-              const SizedBox(height: SpeakUpDesign.space8),
-              Text(
-                profileErrorMessage!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
-              ),
-            ],
-            const SizedBox(height: SpeakUpDesign.space16),
-            if (resumeController != null) ...[
-              ResumeSummaryCard(controller: resumeController!),
-              const SizedBox(height: SpeakUpDesign.space16),
-            ],
-            OutlinedButton.icon(
-              key: const Key('profile-logout-button'),
-              onPressed: onLogout,
-              icon: const Icon(Icons.logout_rounded),
-              label: Text(user == null ? '预览模式不可退出' : '退出登录'),
-            ),
-          ],
         ),
       ),
     );
   }
-
-  Future<void> _editDisplayName(BuildContext context) async {
-    final saved = await showDialog<bool>(
-      context: context,
-      builder: (_) => _DisplayNameDialog(
-        initialName: profile?.displayName ?? '',
-        onSave: onSaveDisplayName!,
-      ),
-    );
-    if (saved == true && context.mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('昵称已更新')));
-    }
-  }
-}
-
-class _DisplayNameDialog extends StatefulWidget {
-  const _DisplayNameDialog({required this.initialName, required this.onSave});
-
-  final String initialName;
-  final Future<String?> Function(String) onSave;
-
-  @override
-  State<_DisplayNameDialog> createState() => _DisplayNameDialogState();
-}
-
-class _DisplayNameDialogState extends State<_DisplayNameDialog> {
-  late final TextEditingController _controller;
-  String? _errorMessage;
-  bool _saving = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = TextEditingController(text: widget.initialName);
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('编辑昵称'),
-      content: TextField(
-        key: const Key('profile-display-name-input'),
-        controller: _controller,
-        autofocus: true,
-        enabled: !_saving,
-        maxLength: 40,
-        decoration: InputDecoration(labelText: '昵称', errorText: _errorMessage),
-      ),
-      actions: [
-        TextButton(
-          onPressed: _saving ? null : () => Navigator.of(context).pop(false),
-          child: const Text('取消'),
-        ),
-        FilledButton(
-          key: const Key('profile-save-display-name'),
-          onPressed: _saving ? null : _save,
-          child: Text(_saving ? '正在保存…' : '保存'),
-        ),
-      ],
-    );
-  }
-
-  Future<void> _save() async {
-    final value = _controller.text.trim();
-    if (value.isEmpty) {
-      setState(() => _errorMessage = '请输入昵称');
-      return;
-    }
-    setState(() {
-      _saving = true;
-      _errorMessage = null;
-    });
-    final error = await widget.onSave(value);
-    if (!mounted) {
-      return;
-    }
-    if (error != null) {
-      setState(() {
-        _saving = false;
-        _errorMessage = error;
-      });
-      return;
-    }
-    Navigator.of(context).pop(true);
-  }
-}
-
-String _profileInitial(String? displayName) {
-  if (displayName == null || displayName.isEmpty) {
-    return '我';
-  }
-  return String.fromCharCode(displayName.runes.first).toUpperCase();
 }

@@ -102,6 +102,48 @@ void main() {
     expect(client.restoreCalls, 0);
   });
 
+  test(
+    'user-controlled Practice continues past three Turns and completes on request',
+    () async {
+      final scene = testScene(
+        id: 'daily-open-practice',
+        experience: PracticeExperience.lifeAndTravel,
+        category: SceneCategory.lifeDaily,
+        name: 'Daily open practice',
+      );
+      final client = FakePracticeClient(
+        practiceExperience: scene.experience,
+        sceneCategory: scene.category,
+        completionMode: PracticeCompletionMode.userControlled,
+        turnLimit: 0,
+      );
+      final controller = PracticeController(client: client);
+      addTearDown(controller.dispose);
+
+      await controller.activateCreatedPractice(
+        scene: scene,
+        sessionId: 'session-user-controlled',
+        planId: testPracticePlanId('session-user-controlled'),
+        practiceMode: scene.practiceOptions.first.mode,
+        turnLimit: 0,
+        clientOperationId: 'activate-user-controlled',
+      );
+
+      expect(controller.canCompleteActivePractice, isFalse);
+      for (var turn = 1; turn <= 4; turn++) {
+        expect(await controller.submitPracticeText('Answer $turn'), isTrue);
+        expect(controller.completedTurns, turn);
+        expect(controller.recordingState, PracticeRecordingState.idle);
+        expect(controller.currentQuestion, isNotNull);
+      }
+
+      expect(controller.canCompleteActivePractice, isTrue);
+      expect(await controller.completeActivePractice(), isTrue);
+      expect(controller.recordingState, PracticeRecordingState.completed);
+      expect(controller.currentQuestion, isNull);
+    },
+  );
+
   test('restores and continues from the authoritative 2 of 3', () async {
     final scene = testScenes.first;
     final practice = _CountingPracticeClient(

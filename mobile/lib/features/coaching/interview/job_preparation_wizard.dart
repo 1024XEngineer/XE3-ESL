@@ -2,47 +2,49 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:speakup/design/speak_up_design.dart';
+import 'package:speakup/features/coaching/interview/interview_resume_file.dart';
 import 'package:speakup/features/coaching/interview/job_preparation_controller.dart';
 import 'package:speakup/features/coaching/interview/job_preparation_models.dart';
 import 'package:speakup/features/coaching/preparation/preparation_controller.dart';
-import 'package:speakup/features/coaching/preparation/preparation_models.dart';
-import 'package:speakup/features/coaching/scene/scene.dart';
-import 'package:speakup/resume/resume_controller.dart';
-import 'package:speakup/resume/resume_models.dart';
 
-enum _JobExistingPracticeAction { cancel, continuePractice, replace }
+final _jobDescriptionMarkers = RegExp(
+  r"岗位职责|工作职责|任职要求|职位要求|responsibilities?|requirements?|qualifications?|what you(?:'|’)ll do|what we(?:'|’)re looking for",
+  caseSensitive: false,
+);
+
+InterviewPreparationSource _interviewPreparationSource(String value) {
+  if (value.contains('\n') ||
+      value.runes.length > 80 ||
+      _jobDescriptionMarkers.hasMatch(value)) {
+    return InterviewPreparationSource.jobDescription;
+  }
+  return InterviewPreparationSource.quickStart;
+}
 
 class JobPreparationWizard extends StatefulWidget {
   const JobPreparationWizard({
     required this.controller,
     this.catalogController,
-    this.resumeController,
+    this.resumeFilePicker,
     this.onPracticeStarted,
+    this.onExit,
     super.key,
   });
 
   final JobPreparationController controller;
   final PreparationController? catalogController;
-  final ResumeController? resumeController;
-  final VoidCallback? onPracticeStarted;
+  final InterviewResumeFilePicker? resumeFilePicker;
+  final FutureOr<void> Function()? onPracticeStarted;
+  final VoidCallback? onExit;
 
   @override
   State<JobPreparationWizard> createState() => _JobPreparationWizardState();
 }
 
 class _JobPreparationWizardState extends State<JobPreparationWizard> {
-  late final TextEditingController _jd;
-  late final TextEditingController _title;
-  late final TextEditingController _candidateTitle;
-  late final TextEditingController _candidateSeniority;
-  late final TextEditingController _responsibilities;
-  late final TextEditingController _skills;
-  late final TextEditingController _communication;
-  late final TextEditingController _goals;
-  JobTargetCandidate? _shownCandidate;
-  int? _shownPlanRevision;
-  int? _selectedTurnLimit;
+  late final TextEditingController _jobInput;
   bool _catalogSyncing = false;
+  bool _practiceStarted = false;
   bool _exitInFlight = false;
   bool _exitApproved = false;
 
@@ -50,22 +52,12 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
   void initState() {
     super.initState();
     final input = widget.controller.input;
-    _jd = TextEditingController(text: input.jobDescription);
-    _title = TextEditingController(text: input.jobTitle);
-    _candidateTitle = TextEditingController();
-    _candidateSeniority = TextEditingController();
-    _responsibilities = TextEditingController();
-    _skills = TextEditingController();
-    _communication = TextEditingController();
-    _goals = TextEditingController();
+    _jobInput = TextEditingController(
+      text: input.jobDescription ?? input.jobTitle,
+    );
     widget.controller.addListener(_rebuild);
     widget.catalogController?.addListener(_rebuild);
-    widget.resumeController?.addListener(_rebuild);
-    _syncCandidate();
     unawaited(_prepareCatalog());
-    if (widget.resumeController case final resumes?) {
-      unawaited(resumes.load());
-    }
   }
 
   @override
@@ -77,13 +69,6 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
         widget.catalogController?.addListener(_rebuild);
         unawaited(_prepareCatalog());
       }
-      if (oldWidget.resumeController != widget.resumeController) {
-        oldWidget.resumeController?.removeListener(_rebuild);
-        widget.resumeController?.addListener(_rebuild);
-        if (widget.resumeController case final resumes?) {
-          unawaited(resumes.load());
-        }
-      }
       return;
     }
     oldWidget.controller.removeListener(_rebuild);
@@ -92,15 +77,7 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
       oldWidget.catalogController?.removeListener(_rebuild);
       widget.catalogController?.addListener(_rebuild);
     }
-    if (oldWidget.resumeController != widget.resumeController) {
-      oldWidget.resumeController?.removeListener(_rebuild);
-      widget.resumeController?.addListener(_rebuild);
-      if (widget.resumeController case final resumes?) {
-        unawaited(resumes.load());
-      }
-    }
     _syncInput();
-    _syncCandidate();
     unawaited(_prepareCatalog());
   }
 
@@ -108,19 +85,7 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
   void dispose() {
     widget.controller.removeListener(_rebuild);
     widget.catalogController?.removeListener(_rebuild);
-    widget.resumeController?.removeListener(_rebuild);
-    for (final controller in <TextEditingController>[
-      _jd,
-      _title,
-      _candidateTitle,
-      _candidateSeniority,
-      _responsibilities,
-      _skills,
-      _communication,
-      _goals,
-    ]) {
-      controller.dispose();
-    }
+    _jobInput.dispose();
     super.dispose();
   }
 
@@ -128,46 +93,36 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
     if (!mounted) {
       return;
     }
-    _syncCandidate();
+    _syncInput();
     unawaited(_prepareCatalog());
     setState(() {});
   }
 
   void _syncInput() {
     final input = widget.controller.input;
-    _replaceText(_jd, input.jobDescription);
-    _replaceText(_title, input.jobTitle);
-  }
-
-  void _syncCandidate() {
-    final plan = widget.controller.plan;
-    if (plan != null && plan.revision != _shownPlanRevision) {
-      _shownPlanRevision = plan.revision;
-      _selectedTurnLimit = plan.sessionPolicy.maxEffectiveTurns;
-    }
-    final candidate = widget.controller.candidate;
-    if (candidate == null || identical(candidate, _shownCandidate)) {
-      return;
-    }
-    _shownCandidate = candidate;
-    _replaceText(_candidateTitle, candidate.jobTitle);
-    _replaceText(_candidateSeniority, candidate.seniority);
-    _replaceText(_responsibilities, candidate.responsibilities.join('\n'));
-    _replaceText(_skills, candidate.coreSkills.join('\n'));
-    _replaceText(_communication, candidate.communicationFocus.join('\n'));
-    _replaceText(_goals, candidate.practiceGoals.join('\n'));
+    _replaceText(_jobInput, input.jobDescription ?? input.jobTitle);
   }
 
   Future<void> _prepareCatalog() async {
     final catalog = widget.catalogController;
     final candidate = widget.controller.candidate;
-    if (!mounted || catalog == null || candidate == null || _catalogSyncing) {
+    if (!mounted ||
+        _practiceStarted ||
+        _exitInFlight ||
+        _exitApproved ||
+        catalog == null ||
+        candidate == null ||
+        _catalogSyncing) {
       return;
     }
     _catalogSyncing = true;
     try {
       await catalog.loadIfNeeded();
-      if (!mounted || widget.controller.candidate != candidate) {
+      if (!mounted ||
+          _practiceStarted ||
+          _exitInFlight ||
+          _exitApproved ||
+          widget.controller.candidate != candidate) {
         return;
       }
       final sceneId = candidate.catalogRecommendation.sceneId;
@@ -180,7 +135,14 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
       if (catalog.selectedScene?.id != scene.id || catalog.detail == null) {
         await catalog.selectScene(scene);
       }
-      if (!mounted || widget.controller.candidate != candidate) {
+      if (!mounted ||
+          _practiceStarted ||
+          _exitInFlight ||
+          _exitApproved ||
+          widget.controller.candidate != candidate) {
+        if (_practiceStarted && catalog.selectedScene != null) {
+          catalog.showSceneList();
+        }
         return;
       }
       final plan = widget.controller.plan;
@@ -201,6 +163,9 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
         catalog.selectOption(option);
       }
     } finally {
+      if (_practiceStarted && catalog.selectedScene != null) {
+        catalog.showSceneList();
+      }
       _catalogSyncing = false;
     }
   }
@@ -216,20 +181,22 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
     );
   }
 
-  JobTargetInput _currentInput({JobTargetSource? source}) {
+  InterviewPreparationInput _currentInput() {
     String? normalized(String value) {
       final result = value.trim();
       return result.isEmpty ? null : result;
     }
 
-    final resolvedSource = source ?? widget.controller.input.source;
-    return JobTargetInput(
+    final value = normalized(_jobInput.text);
+    final resolvedSource = _interviewPreparationSource(value ?? '');
+    return InterviewPreparationInput(
       source: resolvedSource,
-      jobTitle: resolvedSource == JobTargetSource.quickStart
-          ? normalized(_title.text)
+      jobTitle: resolvedSource == InterviewPreparationSource.quickStart
+          ? value
           : null,
-      jobDescription: resolvedSource == JobTargetSource.jobDescription
-          ? normalized(_jd.text)
+      jobDescription:
+          resolvedSource == InterviewPreparationSource.jobDescription
+          ? value
           : null,
     );
   }
@@ -238,262 +205,62 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
     widget.controller.updateInput(_currentInput());
   }
 
-  void _selectSavedResume(ResumeItem? resume) {
-    final revision = resume?.currentRevision;
-    if (resume == null || revision == null) {
-      widget.controller.selectResume(null);
-      return;
-    }
-    widget.controller.selectResume(
-      JobPreparationResumeSelection(
-        resumeId: resume.id,
-        revision: revision,
-        resourceVersion: resume.version,
-        temporary: false,
-        title: resume.title,
-      ),
-    );
-  }
-
-  Future<void> _pickTemporaryResume() async {
-    await widget.resumeController?.pickTemporary();
-    if (widget.resumeController?.temporaryItem != null) {
-      widget.controller.selectResume(null);
-    }
-    for (
-      var attempt = 0;
-      mounted &&
-          widget.controller.step == JobPreparationStep.confirmation &&
-          attempt < 75;
-      attempt++
-    ) {
-      await _refreshTemporaryResume();
-      final status = widget.resumeController?.temporaryItem?.parseStatus;
-      if (status == null ||
-          status == ResumeParseStatus.ready ||
-          status == ResumeParseStatus.failed) {
-        return;
-      }
-      await Future<void>.delayed(const Duration(seconds: 1));
-    }
-  }
-
-  Future<void> _refreshTemporaryResume() async {
-    final resumes = widget.resumeController;
-    if (resumes == null) return;
-    await resumes.refreshTemporary();
-    final resume = resumes.temporaryItem;
-    final revision = resume?.currentRevision;
-    if (resume?.parseStatus == ResumeParseStatus.ready && revision != null) {
-      widget.controller.selectResume(
-        JobPreparationResumeSelection(
-          resumeId: resume!.id,
-          revision: revision,
-          resourceVersion: resume.version,
-          temporary: true,
-          title: resume.title,
-        ),
-      );
+  Future<void> _pickResume() async {
+    final resume = await widget.resumeFilePicker?.pickPdf();
+    if (resume != null && mounted) {
+      widget.controller.selectResume(resume);
     }
   }
 
   Widget _buildResumeSource() {
-    final resumes = widget.resumeController;
-    if (resumes == null) return const SizedBox.shrink();
-    final ready = resumes.items
-        .where(
-          (item) =>
-              item.parseStatus == ResumeParseStatus.ready &&
-              item.currentRevision != null,
-        )
-        .toList(growable: false);
-    final selection = widget.controller.resumeSelection;
-    final temporary = resumes.temporaryItem;
-    final selectedSavedId =
-        selection?.temporary == false &&
-            ready.any((item) => item.id == selection?.resumeId)
-        ? selection?.resumeId
-        : null;
-    return Card(
+    if (widget.resumeFilePicker == null) return const SizedBox.shrink();
+    final resume = widget.controller.resumeSelection;
+    return _InputSectionCard(
       key: const Key('job-resume-source-card'),
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              '简历（可选）',
-              style: Theme.of(
-                context,
-              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+      icon: Icons.description_outlined,
+      title: '上传简历',
+      badge: '可选',
+      description: '上传本次面试使用的 PDF 简历，让问题更贴合你的经历。',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          OutlinedButton.icon(
+            key: const Key('temporary-resume-upload-button'),
+            onPressed: widget.controller.isBusy
+                ? null
+                : () => unawaited(_pickResume()),
+            icon: const Icon(Icons.upload_file_rounded),
+            label: Text(resume == null ? '上传 PDF 简历' : '更换 PDF 简历'),
+          ),
+          if (resume != null) ...[
+            const SizedBox(height: 10),
+            _Notice(
+              key: const Key('temporary-resume-status'),
+              icon: Icons.check_circle_outline,
+              text: '已选择 ${resume.name}，创建面试准备时会上传并解析。',
             ),
-            const SizedBox(height: 6),
-            const Text('用于生成更贴合个人经历的追问，不使用也可以继续。'),
-            const SizedBox(height: 14),
-            DropdownButtonFormField<String?>(
-              key: ValueKey<String>(
-                'saved-resume-selector-${selectedSavedId ?? 'none'}-'
-                '${ready.map((item) => item.id).join(',')}',
-              ),
-              initialValue: selectedSavedId,
-              decoration: const InputDecoration(labelText: '选择已上传的简历'),
-              items: <DropdownMenuItem<String?>>[
-                const DropdownMenuItem<String?>(
-                  value: null,
-                  child: Text('不使用简历'),
-                ),
-                for (final item in ready)
-                  DropdownMenuItem<String?>(
-                    value: item.id,
-                    child: Text(item.title, overflow: TextOverflow.ellipsis),
-                  ),
-              ],
-              onChanged: widget.controller.isBusy
-                  ? null
-                  : (id) => _selectSavedResume(
-                      ready.where((item) => item.id == id).firstOrNull,
-                    ),
-            ),
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              key: const Key('temporary-resume-upload-button'),
-              onPressed: widget.controller.isBusy
-                  ? null
-                  : () => unawaited(_pickTemporaryResume()),
-              icon: const Icon(Icons.upload_file_outlined),
-              label: Text(temporary == null ? '临时上传简历' : '更换临时简历'),
-            ),
-            if (temporary != null) ...[
-              const SizedBox(height: 10),
-              _Notice(
-                key: const Key('temporary-resume-status'),
-                icon: switch (temporary.parseStatus) {
-                  ResumeParseStatus.ready => Icons.check_circle_outline,
-                  ResumeParseStatus.failed => Icons.error_outline,
-                  _ => Icons.hourglass_top_rounded,
-                },
-                text: switch (temporary.parseStatus) {
-                  ResumeParseStatus.ready => '临时简历已解析，可用于本次面试。',
-                  ResumeParseStatus.failed => '临时简历解析失败，可以重试或重新上传。',
-                  _ => '临时简历正在解析，完成后即可继续。',
-                },
-              ),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                children: [
-                  TextButton(
-                    onPressed: () => unawaited(_refreshTemporaryResume()),
-                    child: const Text('刷新状态'),
-                  ),
-                  if (temporary.parseStatus == ResumeParseStatus.failed)
-                    TextButton(
-                      onPressed: () => unawaited(
-                        resumes.retryTemporaryParse().then(
-                          (_) => _refreshTemporaryResume(),
-                        ),
-                      ),
-                      child: const Text('重试解析'),
-                    ),
-                ],
-              ),
-            ],
           ],
-        ),
+        ],
       ),
-    );
-  }
-
-  JobTargetCandidate _editedCandidate(JobTargetCandidate original) {
-    List<String> lines(TextEditingController controller) => controller.text
-        .split('\n')
-        .map((item) => item.trim())
-        .where((item) => item.isNotEmpty)
-        .toList(growable: false);
-
-    return JobTargetCandidate(
-      source: original.source,
-      generalAdviceOnly: original.generalAdviceOnly,
-      jobTitle: _candidateTitle.text.trim(),
-      seniority: _candidateSeniority.text.trim(),
-      responsibilities: lines(_responsibilities),
-      coreSkills: lines(_skills),
-      communicationFocus: lines(_communication),
-      practiceGoals: lines(_goals),
-      scopeNotice: original.scopeNotice,
-      catalogRecommendation: original.catalogRecommendation,
     );
   }
 
   Future<void> _startPractice() async {
     final started = await widget.controller.startPractice();
     if (started && mounted) {
-      widget.onPracticeStarted?.call();
+      _practiceStarted = true;
+      widget.catalogController?.showSceneList();
+      await widget.onPracticeStarted?.call();
     }
   }
 
-  Future<void> _createPreview() async {
-    var replaceCurrentPractice = false;
-    if (widget.controller.hasResumablePractice) {
-      final action =
-          await showDialog<_JobExistingPracticeAction>(
-            context: context,
-            builder: (context) => AlertDialog(
-              title: const Text('你还有一项练习未完成'),
-              content: Text(
-                '当前练习：${widget.controller.resumablePracticeTitle ?? '上次练习'}\n'
-                '如果继续生成本轮面试，当前练习会提前结束。',
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(
-                    context,
-                  ).pop(_JobExistingPracticeAction.cancel),
-                  child: const Text('取消'),
-                ),
-                TextButton(
-                  key: const Key('continue-existing-job-practice'),
-                  onPressed: () => Navigator.of(
-                    context,
-                  ).pop(_JobExistingPracticeAction.continuePractice),
-                  child: const Text('继续上次练习'),
-                ),
-                FilledButton(
-                  key: const Key('replace-existing-job-practice'),
-                  onPressed: () => Navigator.of(
-                    context,
-                  ).pop(_JobExistingPracticeAction.replace),
-                  child: const Text('结束并生成新的'),
-                ),
-              ],
-            ),
-          ) ??
-          _JobExistingPracticeAction.cancel;
-      if (!mounted || action == _JobExistingPracticeAction.cancel) {
-        return;
-      }
-      if (action == _JobExistingPracticeAction.continuePractice) {
-        final resumed = await widget.controller.resumeCurrentPractice();
-        if (resumed && mounted) {
-          widget.onPracticeStarted?.call();
-        }
-        return;
-      }
-      replaceCurrentPractice = true;
-    }
-    final temporarySelected =
-        widget.controller.resumeSelection?.temporary == true;
-    final created = await widget.controller.createPreview(
-      replaceCurrentPractice: replaceCurrentPractice,
-    );
-    final snapshotCaptured =
-        created ||
-        widget.controller.plan != null ||
-        widget.controller.operationStage == JobPreparationOperationStage.plan;
-    if (temporarySelected && snapshotCaptured) {
-      await widget.resumeController?.refreshTemporary();
-      await widget.resumeController?.deleteTemporary();
+  Future<void> _createAndStartPractice() async {
+    _commitInput();
+    final started = await widget.controller.createAndStartPractice();
+    if (started && mounted) {
+      _practiceStarted = true;
+      widget.catalogController?.showSceneList();
+      await widget.onPracticeStarted?.call();
     }
   }
 
@@ -518,10 +285,16 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
       return;
     }
     _exitApproved = true;
+    widget.catalogController?.showSceneList();
     setState(() {});
     await WidgetsBinding.instance.endOfFrame;
     if (mounted) {
-      await Navigator.of(context).maybePop();
+      final onExit = widget.onExit;
+      if (onExit != null) {
+        onExit();
+      } else {
+        await Navigator.of(context).maybePop();
+      }
     }
   }
 
@@ -538,7 +311,7 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
       child: Scaffold(
         key: const Key('job-preparation-wizard'),
         appBar: AppBar(
-          title: const Text('准备英文面试'),
+          title: Text(controller.openedSavedPlan ? '模拟面试' : '准备英文面试'),
           leading: IconButton(
             key: const Key('job-wizard-close'),
             tooltip: '关闭准备流程',
@@ -552,7 +325,6 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
           top: false,
           child: Column(
             children: [
-              _StepProgress(step: controller.step),
               if (controller.isBusy)
                 LinearProgressIndicator(
                   key: const Key('job-wizard-progress'),
@@ -572,14 +344,9 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
                   ),
                 ),
               Expanded(
-                child: switch (controller.step) {
-                  JobPreparationStep.input => _buildInput(controller),
-                  JobPreparationStep.confirmation => _buildConfirmation(
-                    controller,
-                  ),
-                  JobPreparationStep.setup => _buildSetup(controller),
-                  JobPreparationStep.preview => _buildPreview(controller),
-                },
+                child: controller.openedSavedPlan
+                    ? _buildPreview(controller)
+                    : _buildInput(controller),
               ),
             ],
           ),
@@ -589,279 +356,85 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
   }
 
   Widget _buildInput(JobPreparationController controller) {
-    final source = controller.input.source;
-    return ListView(
-      key: const Key('job-wizard-input-step'),
-      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+    return Column(
       children: [
-        Text(
-          '先告诉我你要准备什么岗位',
-          style: Theme.of(
-            context,
-          ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
-        ),
-        const SizedBox(height: 8),
-        const Text('只需输入职位名称，或粘贴一份职位 JD。', style: SpeakUpDesign.body),
-        const SizedBox(height: 20),
-        SegmentedButton<JobTargetSource>(
-          key: const Key('job-source-selector'),
-          segments: const [
-            ButtonSegment(
-              value: JobTargetSource.jobDescription,
-              label: Text('职位 JD'),
-              icon: Icon(Icons.description_outlined),
+        Expanded(
+          child: ListView(
+            key: const Key('job-wizard-input-step'),
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            padding: EdgeInsets.fromLTRB(
+              SpeakUpDesign.horizontalInset(context),
+              SpeakUpDesign.space16,
+              SpeakUpDesign.horizontalInset(context),
+              SpeakUpDesign.space24,
             ),
-            ButtonSegment(
-              value: JobTargetSource.quickStart,
-              label: Text('职位名称'),
-              icon: Icon(Icons.bolt_outlined),
-            ),
-          ],
-          selected: {source},
-          onSelectionChanged: controller.isBusy
-              ? null
-              : (selection) {
-                  FocusManager.instance.primaryFocus?.unfocus();
-                  widget.controller.updateInput(
-                    _currentInput(source: selection.single),
-                  );
-                },
-        ),
-        const SizedBox(height: 18),
-        if (source == JobTargetSource.jobDescription)
-          _Field(
-            key: const Key('job-description-field'),
-            controller: _jd,
-            label: '职位描述（JD）',
-            hint: '粘贴岗位职责、要求和英语使用场景',
-            maxLines: 8,
-            onChanged: (_) => _commitInput(),
-          )
-        else ...[
-          _Field(
-            key: const Key('job-title-field'),
-            controller: _title,
-            label: '目标岗位',
-            hint: '例如：后端工程师',
-            onChanged: (_) => _commitInput(),
-          ),
-        ],
-        if (controller.agentIntentPrefill case final prefill?) ...[
-          const SizedBox(height: 14),
-          _AgentIntentCard(
-            text: prefill,
-            onApply: controller.applyAgentIntentPrefill,
-            onDismiss: controller.dismissAgentIntentPrefill,
-          ),
-        ],
-        if (controller.target != null && controller.candidate == null) ...[
-          const SizedBox(height: 14),
-          const _Notice(
-            icon: Icons.refresh_rounded,
-            text: '岗位信息已修改，之前的分析、确认和计划预览已失效，需要重新分析。',
-          ),
-        ],
-        if (controller.hasRestorableDraft) ...[
-          const SizedBox(height: 14),
-          _DraftCard(
-            onResume: controller.isBusy ? null : controller.resumeDraft,
-            onDiscard: controller.isBusy ? null : controller.discardDraft,
-          ),
-        ],
-        if (controller.errorMessage case final message?)
-          _ErrorCard(
-            message: message,
-            onRetry: controller.canRetry ? controller.retry : null,
-          ),
-        const SizedBox(height: 24),
-        FilledButton.icon(
-          key: const Key('analyze-job-button'),
-          onPressed: controller.isBusy
-              ? null
-              : () {
-                  _commitInput();
-                  unawaited(controller.analyze());
-                },
-          icon: const Icon(Icons.auto_awesome_outlined),
-          label: Text('生成面试信息'),
-          style: _primaryButtonStyle,
-        ),
-      ],
-    );
-  }
-
-  Widget _buildConfirmation(JobPreparationController controller) {
-    final candidate = controller.candidate;
-    if (candidate == null) {
-      return const Center(child: Text('分析结果已失效，请返回重试。'));
-    }
-    return ListView(
-      key: const Key('job-wizard-confirmation-step'),
-      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
-      children: [
-        Text(
-          '面试信息已准备好',
-          style: Theme.of(
-            context,
-          ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
-        ),
-        const SizedBox(height: 8),
-        const Text('确认岗位重点并选择是否使用简历，然后生成面试方案。'),
-        const SizedBox(height: 18),
-        _SummaryCard(
-          title: candidate.jobTitle,
-          subtitle: candidate.seniority,
-          rows: [
-            ('核心职责', candidate.responsibilities.join('、')),
-            ('核心能力', candidate.coreSkills.join('、')),
-            ('建议重点', candidate.practiceGoals.join('、')),
-          ],
-        ),
-        const SizedBox(height: 14),
-        _buildResumeSource(),
-        const SizedBox(height: 14),
-        ExpansionTile(
-          key: const Key('job-analysis-editor'),
-          tilePadding: const EdgeInsets.symmetric(horizontal: 4),
-          title: const Text('查看并编辑岗位分析'),
-          subtitle: Text(candidate.scopeNotice),
-          children: [
-            _Field(
-              key: const Key('candidate-title-field'),
-              controller: _candidateTitle,
-              label: '岗位',
-              onChanged: (_) =>
-                  controller.updateCandidate(_editedCandidate(candidate)),
-            ),
-            const SizedBox(height: 12),
-            _Field(
-              key: const Key('candidate-seniority-field'),
-              controller: _candidateSeniority,
-              label: '职级',
-              onChanged: (_) =>
-                  controller.updateCandidate(_editedCandidate(candidate)),
-            ),
-            const SizedBox(height: 12),
-            _Field(
-              key: const Key('candidate-responsibilities-field'),
-              controller: _responsibilities,
-              label: '核心职责（每行一项）',
-              maxLines: 4,
-              onChanged: (_) =>
-                  controller.updateCandidate(_editedCandidate(candidate)),
-            ),
-            const SizedBox(height: 12),
-            _Field(
-              key: const Key('candidate-skills-field'),
-              controller: _skills,
-              label: '核心能力（每行一项）',
-              maxLines: 4,
-              onChanged: (_) =>
-                  controller.updateCandidate(_editedCandidate(candidate)),
-            ),
-            const SizedBox(height: 12),
-            _Field(
-              key: const Key('candidate-communication-field'),
-              controller: _communication,
-              label: '英语沟通重点（每行一项）',
-              maxLines: 4,
-              onChanged: (_) =>
-                  controller.updateCandidate(_editedCandidate(candidate)),
-            ),
-            const SizedBox(height: 12),
-            _Field(
-              key: const Key('candidate-goals-field'),
-              controller: _goals,
-              label: '建议训练重点（每行一项）',
-              maxLines: 4,
-              onChanged: (_) =>
-                  controller.updateCandidate(_editedCandidate(candidate)),
-            ),
-            const SizedBox(height: 12),
-          ],
-        ),
-        if (controller.errorMessage case final message?)
-          _ErrorCard(
-            message: message,
-            onRetry: controller.canRetry ? controller.retry : null,
-          ),
-        const SizedBox(height: 24),
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton(
-                key: const Key('edit-job-input-button'),
-                onPressed: controller.isBusy ? null : controller.returnToInput,
-                style: _secondaryButtonStyle,
-                child: const Text('修改原始信息'),
+            children: [
+              const Text('准备你的下一场面试', style: SpeakUpDesign.pageTitle),
+              const SizedBox(height: SpeakUpDesign.space8),
+              const Text(
+                '提供岗位信息和简历，AI 会自动分析并生成专属面试问题。',
+                style: SpeakUpDesign.body,
               ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: FilledButton(
-                key: const Key('confirm-job-analysis-button'),
-                onPressed: controller.isBusy
-                    ? null
-                    : () => unawaited(controller.confirm()),
-                style: _primaryButtonStyle,
-                child: const Text('确认分析'),
+              const SizedBox(height: SpeakUpDesign.space24),
+              _InputSectionCard(
+                icon: Icons.work_outline_rounded,
+                title: '岗位信息',
+                description: '输入职位名称，或直接粘贴完整的职位 JD。',
+                child: _Field(
+                  key: const Key('job-input-field'),
+                  controller: _jobInput,
+                  label: '职位名称或 JD',
+                  hint: '例如：后端工程师\n或粘贴岗位职责、任职要求等信息',
+                  maxLines: 6,
+                  onChanged: (_) => _commitInput(),
+                ),
               ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSetup(JobPreparationController controller) {
-    final candidate = controller.candidate;
-    return ListView(
-      key: const Key('job-wizard-setup-step'),
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
-      children: [
-        Text(
-          '生成练习计划',
-          style: Theme.of(
-            context,
-          ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
-        ),
-        const SizedBox(height: 8),
-        const Text(
-          '系统会根据已确认的岗位信息、服务端训练目录和练习策略生成不可变预览，不会立即创建练习。',
-          style: SpeakUpDesign.body,
-        ),
-        const SizedBox(height: 18),
-        _SummaryCard(
-          title: candidate?.jobTitle ?? '目标岗位',
-          subtitle: candidate?.seniority ?? '',
-          rows: [
-            ('训练重点', candidate?.practiceGoals.join('、') ?? '由服务端推荐'),
-            ('简历', controller.resumeSelection?.title ?? '不使用简历'),
-          ],
-        ),
-        if (controller.errorMessage case final message?)
-          _ErrorCard(
-            message: message,
-            onRetry: controller.canRetry ? controller.retry : null,
+              const SizedBox(height: SpeakUpDesign.space16),
+              _buildResumeSource(),
+              if (controller.agentIntentPrefill case final prefill?) ...[
+                const SizedBox(height: 14),
+                _AgentIntentCard(
+                  text: prefill,
+                  onApply: controller.applyAgentIntentPrefill,
+                  onDismiss: controller.dismissAgentIntentPrefill,
+                ),
+              ],
+              if (controller.interviewPreparation != null &&
+                  controller.candidate == null) ...[
+                const SizedBox(height: 14),
+                const _Notice(
+                  icon: Icons.refresh_rounded,
+                  text: '岗位信息已修改，之前的分析、确认和计划预览已失效，需要重新分析。',
+                ),
+              ],
+              if (controller.errorMessage case final message?)
+                _ErrorCard(
+                  message: message,
+                  onRetry: controller.canRetry ? controller.retry : null,
+                ),
+            ],
           ),
-        const SizedBox(height: 24),
-        OutlinedButton(
-          key: const Key('back-to-confirmation-button'),
-          onPressed: controller.isBusy ? null : controller.returnToInput,
-          style: _secondaryButtonStyle,
-          child: const Text('重新填写岗位信息'),
         ),
-        const SizedBox(height: 12),
-        FilledButton.icon(
-          key: const Key('create-plan-preview-button'),
-          onPressed: controller.isBusy
-              ? null
-              : () => unawaited(_createPreview()),
-          icon: const Icon(Icons.event_note_outlined),
-          label: const Text('生成计划预览'),
-          style: _primaryButtonStyle,
+        Container(
+          padding: EdgeInsets.fromLTRB(
+            SpeakUpDesign.horizontalInset(context),
+            SpeakUpDesign.space12,
+            SpeakUpDesign.horizontalInset(context),
+            SpeakUpDesign.space16,
+          ),
+          decoration: const BoxDecoration(
+            color: SpeakUpDesign.surface,
+            border: Border(top: BorderSide(color: SpeakUpDesign.border)),
+          ),
+          child: FilledButton.icon(
+            key: const Key('create-and-start-interview-button'),
+            onPressed: controller.isBusy
+                ? null
+                : () => unawaited(_createAndStartPractice()),
+            icon: const Icon(Icons.auto_awesome_rounded),
+            label: const Text('开始面试'),
+            style: _primaryButtonStyle,
+          ),
         ),
       ],
     );
@@ -872,247 +445,132 @@ class _JobPreparationWizardState extends State<JobPreparationWizard> {
     if (plan == null) {
       return const Center(child: Text('计划预览已失效，请重新生成。'));
     }
-    final jobCandidate = plan.preparationSnapshot.jobTargetCandidate;
-    if (jobCandidate == null) {
-      return const Center(child: Text('岗位准备快照无效，请重新生成。'));
-    }
+    final jobCandidate = plan.preparationSnapshot.interview?.candidate;
     final minutes = (plan.sessionPolicy.suggestedDurationSeconds / 60).ceil();
     return ListView(
       key: const Key('job-wizard-preview-step'),
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
       children: [
         Text(
-          '确认本次练习',
-          style: Theme.of(
-            context,
-          ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+          jobCandidate?.jobTitle ?? plan.sceneSelection.scene.name,
+          style: SpeakUpDesign.pageTitle,
         ),
-        const SizedBox(height: 8),
-        const Text(
-          '计划已冻结。只有点击“开始练习”才会创建正式 Session。',
+        const SizedBox(height: SpeakUpDesign.space8),
+        Text(
+          '${plan.sceneSelection.scene.name} · ${plan.practiceOption.displayName}',
           style: SpeakUpDesign.body,
         ),
-        const SizedBox(height: 18),
-        _SummaryCard(
+        const SizedBox(height: SpeakUpDesign.space24),
+        _PlanSummary(
           key: const Key('job-plan-summary'),
-          title: plan.sceneSelection.scene.name,
-          subtitle: plan.practiceOption.displayName,
-          rows: [
-            ('岗位', jobCandidate.jobTitle),
-            ('预计时长', '约 $minutes 分钟'),
-            (
-              '有效轮次',
-              '${plan.sessionPolicy.minEffectiveTurns}–'
-                  '${plan.sessionPolicy.maxEffectiveTurns} 轮',
-            ),
-            ('训练视角', plan.selectedRoles.single.displayName),
-            (
-              '重点',
-              plan.practiceObjectives.map((item) => item.description).join('、'),
-            ),
-          ],
+          duration: '约 $minutes 分钟',
+          turns: plan.sessionPolicy.maxEffectiveTurns == 0
+              ? '开放轮次'
+              : '${plan.sessionPolicy.minEffectiveTurns}–'
+                    '${plan.sessionPolicy.maxEffectiveTurns} 轮',
+          role: plan.selectedRoles.single.displayName,
+          objective: plan.practiceObjectives
+              .map((item) => item.description)
+              .join('、'),
         ),
-        const SizedBox(height: 14),
-        ExpansionTile(
-          key: const Key('job-plan-advanced-settings'),
-          tilePadding: const EdgeInsets.symmetric(horizontal: 4),
-          title: const Text('高级设置'),
-          subtitle: const Text('面试官视角由服务端按岗位推荐'),
-          children: [_buildAdvancedSettings(controller, plan)],
-        ),
+        const SizedBox(height: SpeakUpDesign.space20),
+        const Divider(height: 1),
         if (controller.errorMessage case final message?)
           _ErrorCard(
             key: const Key('job-preview-error'),
             message: message,
             onRetry: controller.canRetry ? controller.retry : null,
           ),
-        const SizedBox(height: 24),
-        OutlinedButton(
-          key: const Key('revise-job-plan-button'),
-          onPressed: controller.isBusy ? null : controller.returnToSetup,
-          style: _secondaryButtonStyle,
-          child: const Text('返回调整'),
+        const SizedBox(height: SpeakUpDesign.space24),
+        const Text(
+          '准备好后开始，届时才会创建练习记录。',
+          textAlign: TextAlign.center,
+          style: SpeakUpDesign.meta,
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: SpeakUpDesign.space8),
         FilledButton.icon(
           key: const Key('start-job-practice-button'),
           onPressed: controller.isBusy ? null : _startPractice,
           icon: const Icon(Icons.mic_none_rounded),
-          label: Text(controller.bootstrap == null ? '开始练习' : '重新连接语音练习'),
+          label: Text(controller.bootstrap == null ? '开始模拟面试' : '重新连接语音练习'),
           style: _primaryButtonStyle,
         ),
       ],
     );
   }
-
-  Widget _buildAdvancedSettings(
-    JobPreparationController controller,
-    PracticePlan plan,
-  ) {
-    final catalog = widget.catalogController;
-    final roles = catalog?.roles ?? const <RoleDefinition>[];
-    final options = catalog?.availableOptions ?? const <PracticeOption>[];
-    final selectedRole = catalog?.selectedRole;
-    final selectedOption = catalog?.selectedOption;
-    final minTurns = plan.sessionPolicy.minEffectiveTurns;
-    final maxTurns = plan.sessionPolicy.maxEffectiveTurns < 6
-        ? 6
-        : plan.sessionPolicy.maxEffectiveTurns;
-    final selectedTurns = (_selectedTurnLimit ?? maxTurns)
-        .clamp(minTurns, maxTurns)
-        .toInt();
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 0, 4, 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (roles.isEmpty)
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('当前视角'),
-              subtitle: Text(plan.selectedRoles.single.displayName),
-            )
-          else
-            DropdownButtonFormField<String>(
-              key: const Key('job-plan-role-selector'),
-              initialValue: selectedRole?.id,
-              decoration: const InputDecoration(labelText: '面试官视角'),
-              items: [
-                for (final role in roles)
-                  DropdownMenuItem(
-                    value: role.id,
-                    child: Text(role.displayName),
-                  ),
-              ],
-              onChanged: controller.isBusy
-                  ? null
-                  : (id) {
-                      final role = roles
-                          .where((item) => item.id == id)
-                          .firstOrNull;
-                      if (role != null) {
-                        catalog?.selectRole(role);
-                      }
-                    },
-            ),
-          const SizedBox(height: 12),
-          if (options.isEmpty)
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('练习方式'),
-              subtitle: Text(plan.practiceOption.displayName),
-            )
-          else
-            DropdownButtonFormField<String>(
-              key: const Key('job-plan-option-selector'),
-              initialValue: selectedOption?.id,
-              decoration: const InputDecoration(labelText: '训练重点'),
-              items: [
-                for (final option in options)
-                  DropdownMenuItem(
-                    value: option.id,
-                    child: Text(option.displayName),
-                  ),
-              ],
-              onChanged: controller.isBusy
-                  ? null
-                  : (id) {
-                      final option = options
-                          .where((item) => item.id == id)
-                          .firstOrNull;
-                      if (option != null) {
-                        catalog?.selectOption(option);
-                      }
-                    },
-            ),
-          const SizedBox(height: 12),
-          Text('最多 $selectedTurns 个有效轮次'),
-          Slider(
-            key: const Key('job-plan-turn-limit'),
-            value: selectedTurns.toDouble(),
-            min: minTurns.toDouble(),
-            max: maxTurns.toDouble(),
-            divisions: maxTurns - minTurns,
-            label: '$selectedTurns 轮',
-            onChanged: controller.isBusy
-                ? null
-                : (value) => setState(() => _selectedTurnLimit = value.round()),
-          ),
-          FilledButton.tonal(
-            key: const Key('save-job-plan-revision'),
-            onPressed:
-                controller.isBusy ||
-                    selectedRole == null ||
-                    selectedOption == null
-                ? null
-                : () => unawaited(
-                    controller.revisePreview(
-                      roleDefinitionId: selectedRole.id,
-                      practiceOptionId: selectedOption.id,
-                      maxEffectiveTurns: selectedTurns,
-                    ),
-                  ),
-            child: const Text('保存高级设置'),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
-class _StepProgress extends StatelessWidget {
-  const _StepProgress({required this.step});
+class _InputSectionCard extends StatelessWidget {
+  const _InputSectionCard({
+    required this.icon,
+    required this.title,
+    required this.description,
+    required this.child,
+    this.badge,
+    super.key,
+  });
 
-  final JobPreparationStep step;
+  final IconData icon;
+  final String title;
+  final String description;
+  final String? badge;
+  final Widget child;
 
   @override
   Widget build(BuildContext context) {
-    final index = switch (step) {
-      JobPreparationStep.input => 0,
-      JobPreparationStep.confirmation => 1,
-      JobPreparationStep.setup => 2,
-      JobPreparationStep.preview => 3,
-    };
-    final title = switch (step) {
-      JobPreparationStep.input => '岗位信息',
-      JobPreparationStep.confirmation => '确认分析',
-      JobPreparationStep.setup => '练习设置',
-      JobPreparationStep.preview => '开始前确认',
-    };
-    return Semantics(
-      label: '准备进度，第 ${index + 1} 步，共 4 步',
+    return Card(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+        padding: const EdgeInsets.all(SpeakUpDesign.space16),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(
-              '第 ${index + 1}/4 步 · $title',
-              key: const Key('job-wizard-step-label'),
-              style: SpeakUpDesign.meta.copyWith(
-                color: SpeakUpDesign.primary,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 8),
             Row(
-              children: List.generate(
-                4,
-                (item) => Expanded(
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 180),
-                    height: 4,
-                    margin: EdgeInsets.only(right: item == 3 ? 0 : 6),
-                    decoration: BoxDecoration(
-                      color: item <= index
-                          ? SpeakUpDesign.primary
-                          : SpeakUpDesign.border,
-                      borderRadius: BorderRadius.circular(99),
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: SpeakUpDesign.primaryMuted,
+                    borderRadius: BorderRadius.circular(
+                      SpeakUpDesign.radiusControl,
                     ),
                   ),
+                  child: Icon(icon, size: 21),
                 ),
-              ),
+                const SizedBox(width: SpeakUpDesign.space12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(title, style: SpeakUpDesign.cardTitle),
+                          ),
+                          if (badge case final value?)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: SpeakUpDesign.space8,
+                                vertical: SpeakUpDesign.space4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: SpeakUpDesign.surfaceMuted,
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Text(value, style: SpeakUpDesign.meta),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: SpeakUpDesign.space4),
+                      Text(description, style: SpeakUpDesign.body),
+                    ],
+                  ),
+                ),
+              ],
             ),
+            const SizedBox(height: SpeakUpDesign.space16),
+            child,
           ],
         ),
       ),
@@ -1262,104 +720,81 @@ class _AgentIntentCard extends StatelessWidget {
   }
 }
 
-class _DraftCard extends StatelessWidget {
-  const _DraftCard({required this.onResume, required this.onDiscard});
+class _PlanSummary extends StatelessWidget {
+  const _PlanSummary({
+    required this.duration,
+    required this.turns,
+    required this.role,
+    required this.objective,
+    super.key,
+  });
 
-  final Future<bool> Function()? onResume;
-  final Future<bool> Function()? onDiscard;
+  final String duration;
+  final String turns;
+  final String role;
+  final String objective;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      key: const Key('job-draft-card'),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Text(
-              '发现未完成的准备草稿',
-              style: TextStyle(fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 8),
-            const Text('草稿只属于当前账号。你可以继续，或安全丢弃后重新开始。'),
-            const SizedBox(height: 10),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                TextButton(
-                  key: const Key('discard-job-draft-button'),
-                  onPressed: onDiscard == null
-                      ? null
-                      : () => unawaited(onDiscard!()),
-                  child: const Text('丢弃'),
-                ),
-                FilledButton.tonal(
-                  key: const Key('resume-job-draft-button'),
-                  onPressed: onResume == null
-                      ? null
-                      : () => unawaited(onResume!()),
-                  style: FilledButton.styleFrom(
-                    minimumSize: const Size(0, SpeakUpDesign.minTapTarget),
-                  ),
-                  child: const Text('继续'),
-                ),
-              ],
-            ),
-          ],
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(
+            horizontal: SpeakUpDesign.space16,
+            vertical: SpeakUpDesign.space12,
+          ),
+          decoration: BoxDecoration(
+            color: SpeakUpDesign.surfaceMuted,
+            borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: _PlanStat(label: '时长', value: duration),
+              ),
+              Expanded(
+                child: _PlanStat(label: '轮次', value: turns),
+              ),
+              Expanded(
+                child: _PlanStat(label: '面试官', value: role),
+              ),
+            ],
+          ),
         ),
-      ),
+        const SizedBox(height: SpeakUpDesign.space24),
+        const Text('本次练习重点', style: SpeakUpDesign.sectionTitle),
+        const SizedBox(height: SpeakUpDesign.space8),
+        Text(objective.isEmpty ? '—' : objective, style: SpeakUpDesign.body),
+      ],
     );
   }
 }
 
-class _SummaryCard extends StatelessWidget {
-  const _SummaryCard({
-    required this.title,
-    required this.subtitle,
-    required this.rows,
-    super.key,
-  });
+class _PlanStat extends StatelessWidget {
+  const _PlanStat({required this.label, required this.value});
 
-  final String title;
-  final String subtitle;
-  final List<(String, String)> rows;
+  final String label;
+  final String value;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(SpeakUpDesign.space16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(title, style: SpeakUpDesign.sectionTitle),
-            if (subtitle.isNotEmpty) ...[
-              const SizedBox(height: 4),
-              Text(subtitle, style: SpeakUpDesign.body),
-            ],
-            const SizedBox(height: 14),
-            for (final row in rows) ...[
-              Text(row.$1, style: SpeakUpDesign.meta),
-              const SizedBox(height: 3),
-              Text(row.$2.isEmpty ? '—' : row.$2),
-              const SizedBox(height: 12),
-            ],
-          ],
-        ),
-      ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: SpeakUpDesign.meta),
+        const SizedBox(height: SpeakUpDesign.space4),
+        Text(value, style: SpeakUpDesign.label),
+      ],
     );
   }
 }
 
 String _busyLabel(JobPreparationOperationStage? stage) {
   return switch (stage) {
-    JobPreparationOperationStage.target => '正在保存岗位信息',
-    JobPreparationOperationStage.analysis => '正在分析岗位信息',
+    JobPreparationOperationStage.interviewPreparation => '正在分析岗位信息',
     JobPreparationOperationStage.confirmation => '正在确认岗位分析',
-    JobPreparationOperationStage.goal => '正在准备练习事项',
-    JobPreparationOperationStage.profile => '正在保存个人背景',
-    JobPreparationOperationStage.snapshot => '正在冻结练习资料',
     JobPreparationOperationStage.plan => '正在生成练习计划',
     JobPreparationOperationStage.session => '正在创建练习',
     JobPreparationOperationStage.voice => '正在连接语音练习',
@@ -1368,9 +803,5 @@ String _busyLabel(JobPreparationOperationStage? stage) {
 }
 
 final ButtonStyle _primaryButtonStyle = FilledButton.styleFrom(
-  minimumSize: const Size.fromHeight(52),
-);
-
-final ButtonStyle _secondaryButtonStyle = OutlinedButton.styleFrom(
   minimumSize: const Size.fromHeight(52),
 );

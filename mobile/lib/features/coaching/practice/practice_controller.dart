@@ -11,6 +11,7 @@ import 'package:speakup/features/coaching/practice/practice_client_error.dart';
 import 'package:speakup/features/coaching/practice/practice_audio_player.dart';
 import 'package:speakup/features/coaching/practice/practice_media.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
+import 'package:speakup/features/coaching/practice/practice_prompt_speaker.dart';
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 
@@ -18,14 +19,12 @@ typedef PracticeClientIdFactory = String Function(String scope);
 
 final class PracticeController extends ChangeNotifier
     with WidgetsBindingObserver {
-  static const _speechFeedbackRetryPollInterval = Duration(seconds: 2);
-  static const _speechFeedbackRetryMaximumPollAttempts = 8;
-
   PracticeController({
     required this.client,
     PracticeRecorder? recorder,
     this.mediaClient,
     this.audioPlayer,
+    this.questionSpeechPlayer,
     PracticeClientIdFactory? clientIdFactory,
     Duration recordingLimit = const Duration(seconds: 58),
   }) : recorder = recorder ?? FakePracticeRecorder(),
@@ -34,6 +33,12 @@ final class PracticeController extends ChangeNotifier
     if ((mediaClient == null) != (audioPlayer == null)) {
       throw ArgumentError(
         'Practice media client and audio player must be injected together.',
+      );
+    }
+    if (questionSpeechPlayer != null &&
+        mediaClient is! PracticeQuestionSpeechClient) {
+      throw ArgumentError(
+        'The realtime question speech player requires a streaming media client.',
       );
     }
     if (recordingLimit <= Duration.zero ||
@@ -47,18 +52,26 @@ final class PracticeController extends ChangeNotifier
     _mediaCompletionSubscription = audioPlayer?.onComplete.listen((_) {
       _handleMediaCompletion();
     });
-    if (mediaClient != null) {
+    if (mediaClient != null || questionSpeechPlayer != null) {
       WidgetsBinding.instance.addObserver(this);
     }
+    promptSpeaker = ModelFirstPracticePromptSpeaker(
+      speakTextWithModel: _speakPromptTextWithModel,
+      speakQuestionWithModel: _speakPromptQuestionWithModel,
+      stopModelSpeech: () => stopPracticeAudio(notify: false),
+    );
   }
 
   final PracticeClient client;
   final PracticeRecorder recorder;
   final PracticeMediaClient? mediaClient;
   final PracticeAudioPlayer? audioPlayer;
+  final PracticePCMStreamPlayer? questionSpeechPlayer;
+  late final CoachingSpeechPlayer promptSpeaker;
   final PracticeClientIdFactory _clientIdFactory;
   final Duration _recordingLimit;
   String? _practiceSessionId;
+  String? _practicePlanId;
   PracticeExperience? _practiceExperience;
   SceneCategory? _practiceSceneCategory;
   PracticeMode? _practiceMode;
@@ -66,6 +79,7 @@ final class PracticeController extends ChangeNotifier
   PracticeCapabilities? _practiceCapabilities;
   int? _practiceSessionVersion;
   String? _endPracticeClientId;
+  String? _completePracticeClientId;
   PracticeQuestion? _currentQuestion;
   PracticeQuestionTip? _questionTip;
   String? _questionTipRequestId;
@@ -73,6 +87,8 @@ final class PracticeController extends ChangeNotifier
   bool _questionTipLoading = false;
   int _questionTipGeneration = 0;
   TranscriptionCandidate? _candidate;
+  String _liveTranscript = '';
+  Future<_RealtimePracticeCandidateResult>? _realtimeCandidate;
   _PendingPracticeAudio? _pendingPracticeAudio;
   String? _activeConfirmationId;
   String? _activeTextAnswer;
@@ -85,6 +101,7 @@ final class PracticeController extends ChangeNotifier
   String? _errorMessage;
   int _completedTurns = 0;
   int _turnLimit = 0;
+  PracticeCompletionMode _completionMode = PracticeCompletionMode.turnLimited;
   bool _sessionCompleted = false;
   int _epoch = 0;
   int _practiceGeneration = 0;
@@ -102,9 +119,14 @@ final class PracticeController extends ChangeNotifier
   String? _loadingMediaKey;
   String? _deletingAudioAssetId;
   String? _mediaErrorMessage;
+  String? _recordingNoticeMessage;
   int _mediaGeneration = 0;
   Future<void>? _mediaOperation;
+  Future<void>? _questionSpeechOperation;
+  StreamIterator<Uint8List>? _questionSpeechIterator;
+  String? _autoPlayedQuestionId;
   String? get practiceSessionId => _practiceSessionId;
+  String? get practicePlanId => _practicePlanId;
   PracticeExperience? get practiceExperience => _practiceExperience;
   SceneCategory? get practiceSceneCategory => _practiceSceneCategory;
   PracticeMode? get practiceMode => _practiceMode;
@@ -112,7 +134,6 @@ final class PracticeController extends ChangeNotifier
   PracticeCapabilities? get practiceCapabilities => _practiceCapabilities;
   bool get canTranslateQuestion =>
       _practiceCapabilities?.questionTranslationAllowed ?? false;
-  bool get canUseAvatar => _practiceCapabilities?.avatarAllowed ?? false;
   bool get canReceiveSpeechFeedback =>
       _practiceCapabilities?.speechFeedbackAllowed ?? false;
   int? get practiceSessionVersion => _practiceSessionVersion;
@@ -176,6 +197,8 @@ final class PracticeController extends ChangeNotifier
       clientTurnId: _newClientId('turn'),
     );
     _candidate = null;
+    _liveTranscript = '';
+    _realtimeCandidate = null;
     _activeConfirmationId = null;
     _activeTextAnswer = null;
     _errorMessage = null;
@@ -209,15 +232,30 @@ final class PracticeController extends ChangeNotifier
   List<PracticeMessage> get practiceMessages =>
       List.unmodifiable(_practiceMessages);
   PracticeRecordingState get recordingState => _recordingState;
-  String? get transcript =>
-      _speechFeedbackRetryCandidate?.text ?? _candidate?.text;
+  String? get transcript {
+    final value =
+        _speechFeedbackRetryCandidate?.text ??
+        _candidate?.text ??
+        _liveTranscript;
+    return value.trim().isEmpty ? null : value;
+  }
+
   String? get errorMessage => _errorMessage;
   int get completedTurns => _completedTurns;
   int get turnLimit => _turnLimit;
+  PracticeCompletionMode get completionMode => _completionMode;
+  bool get canCompleteActivePractice =>
+      _completionMode == PracticeCompletionMode.userControlled &&
+      _completedTurns > 0 &&
+      hasActivePractice &&
+      !isBusy &&
+      !_disposed &&
+      _recordingState == PracticeRecordingState.idle;
   bool get isFinalSubmission =>
       _recordingState == PracticeRecordingState.submitting &&
       _speechFeedbackRetry == null &&
       !_sessionCompleted &&
+      _completionMode == PracticeCompletionMode.turnLimited &&
       _turnLimit > 0 &&
       _completedTurns + 1 == _turnLimit;
   bool get isBusy =>
@@ -244,9 +282,13 @@ final class PracticeController extends ChangeNotifier
         PracticeRecordingState.submitting => false,
       };
   bool get supportsPracticeMedia => mediaClient != null && audioPlayer != null;
+  bool get supportsRealtimeQuestionSpeech =>
+      mediaClient is PracticeQuestionSpeechClient &&
+      questionSpeechPlayer != null;
   List<PracticeRecordingReference> get recordings =>
       List<PracticeRecordingReference>.unmodifiable(_recordings);
   String? get mediaErrorMessage => _mediaErrorMessage;
+  String? get recordingNoticeMessage => _recordingNoticeMessage;
   bool get isQuestionAudioLoading =>
       _currentQuestion != null &&
       _loadingMediaKey == _questionMediaKey(_currentQuestion!.id);
@@ -254,9 +296,10 @@ final class PracticeController extends ChangeNotifier
       _currentQuestion != null &&
       _playingMediaKey == _questionMediaKey(_currentQuestion!.id);
   bool get canPlayQuestionAudio =>
-      supportsPracticeMedia && _currentQuestion?.speechPath != null;
+      (supportsRealtimeQuestionSpeech || supportsPracticeMedia) &&
+      _currentQuestion != null;
   bool get canUsePracticeAudio =>
-      supportsPracticeMedia &&
+      (supportsPracticeMedia || supportsRealtimeQuestionSpeech) &&
       !_disposed &&
       !_busy &&
       switch (_recordingState) {
@@ -300,7 +343,7 @@ final class PracticeController extends ChangeNotifier
         planId.trim().isEmpty ||
         scene.id.trim().isEmpty ||
         scene.name.trim().isEmpty ||
-        turnLimit < 1 ||
+        turnLimit < 0 ||
         turnLimit > practiceTurnSafetyLimit ||
         clientOperationId.trim().isEmpty ||
         isBusy ||
@@ -385,8 +428,20 @@ final class PracticeController extends ChangeNotifier
 
   Future<void> toggleQuestionAudio() async {
     final question = _currentQuestion;
-    final speechPath = question?.speechPath;
-    if (question == null || speechPath == null) {
+    if (question == null) {
+      return;
+    }
+    if (supportsRealtimeQuestionSpeech) {
+      final key = _questionMediaKey(question.id)!;
+      if (_playingMediaKey == key || _loadingMediaKey == key) {
+        await stopPracticeAudio();
+        return;
+      }
+      await _playRealtimeQuestionSpeech(question);
+      return;
+    }
+    final speechPath = question.speechPath;
+    if (speechPath == null) {
       return;
     }
     await _togglePracticeMedia(
@@ -462,6 +517,7 @@ final class PracticeController extends ChangeNotifier
     final epoch = fence.epoch;
     _deletingAudioAssetId = audioAssetId;
     _mediaErrorMessage = null;
+    _recordingNoticeMessage = null;
     notifyListeners();
     try {
       await client.deleteRecording(audioAssetId);
@@ -473,6 +529,7 @@ final class PracticeController extends ChangeNotifier
           if (recording.audioAssetId != audioAssetId) recording,
       ];
       _mediaErrorMessage = null;
+      _recordingNoticeMessage = '录音已删除，文字保留';
     } on PracticeClientOperationCancelled {
       // Account cleanup already removed the private presentation.
     } catch (error) {
@@ -499,15 +556,225 @@ final class PracticeController extends ChangeNotifier
       notifyListeners();
     }
     try {
+      final iterator = _questionSpeechIterator;
+      _questionSpeechIterator = null;
+      await iterator?.cancel();
+      await questionSpeechPlayer?.stopPCMStream();
       await audioPlayer?.stop();
     } catch (_) {
       // The private UI is already cleared; native cleanup remains best effort.
     }
   }
 
-  /// Safely detaches the locally presented Session before the App leaves its
-  /// dedicated Practice Thread. Durable Session progress remains on the
-  /// server and can only be restored through [restoreCreatedPractice].
+  Future<void> _playRealtimeQuestionSpeech(PracticeQuestion question) async {
+    final speechClient = mediaClient;
+    final player = questionSpeechPlayer;
+    if (speechClient is! PracticeQuestionSpeechClient ||
+        player == null ||
+        _disposed ||
+        !canUsePracticeAudio ||
+        _mediaOperation != null) {
+      return;
+    }
+    final realtimeClient = speechClient as PracticeQuestionSpeechClient;
+    final previousOperation = _questionSpeechOperation;
+    await stopPracticeAudio();
+    await previousOperation;
+    if (_disposed ||
+        !canUsePracticeAudio ||
+        _currentQuestion?.id != question.id) {
+      return;
+    }
+    final generation = ++_mediaGeneration;
+    final key = _questionMediaKey(question.id)!;
+    _loadingMediaKey = key;
+    _mediaErrorMessage = null;
+    notifyListeners();
+    late final Future<void> operation;
+    operation = _streamAndPlayQuestionSpeech(
+      generation: generation,
+      key: key,
+      question: question,
+      client: realtimeClient,
+      player: player,
+    );
+    _questionSpeechOperation = operation;
+    try {
+      await operation;
+    } finally {
+      if (identical(_questionSpeechOperation, operation)) {
+        _questionSpeechOperation = null;
+      }
+    }
+  }
+
+  Future<void> _speakPromptTextWithModel(String text) {
+    final speechClient = mediaClient;
+    if (speechClient is! PracticeTextSpeechClient) {
+      throw const ModelSpeechPlaybackException(audioStarted: false);
+    }
+    return _playStandaloneModelSpeech(
+      (speechClient as PracticeTextSpeechClient).streamTextSpeech(text),
+    );
+  }
+
+  Future<void> _speakPromptQuestionWithModel(
+    String questionId,
+    String fallbackText,
+  ) {
+    final speechClient = mediaClient;
+    if (speechClient is! PracticeQuestionSpeechClient || questionId.isEmpty) {
+      throw const ModelSpeechPlaybackException(audioStarted: false);
+    }
+    return _playStandaloneModelSpeech(
+      (speechClient as PracticeQuestionSpeechClient).streamQuestionSpeech(
+        questionId,
+      ),
+    );
+  }
+
+  Future<void> _playStandaloneModelSpeech(Stream<Uint8List> stream) async {
+    final player = questionSpeechPlayer;
+    if (player == null || _disposed || !canUsePracticeAudio) {
+      throw const ModelSpeechPlaybackException(audioStarted: false);
+    }
+    await stopPracticeAudio();
+    final generation = ++_mediaGeneration;
+    var started = false;
+    final iterator = StreamIterator<Uint8List>(stream);
+    _questionSpeechIterator = iterator;
+    try {
+      while (await iterator.moveNext()) {
+        final bytes = iterator.current;
+        if (!_isCurrentMedia(generation)) {
+          throw ModelSpeechPlaybackException(audioStarted: started);
+        }
+        if (!started) {
+          await player.startPCMStream();
+          if (!_isCurrentMedia(generation)) {
+            await player.stopPCMStream();
+            throw const ModelSpeechPlaybackException(audioStarted: false);
+          }
+          started = true;
+        }
+        try {
+          await player.appendPCM(bytes);
+        } finally {
+          bytes.fillRange(0, bytes.length, 0);
+        }
+      }
+      if (!started) {
+        throw const ModelSpeechPlaybackException(audioStarted: false);
+      }
+      if (!_isCurrentMedia(generation)) {
+        throw const ModelSpeechPlaybackException(audioStarted: true);
+      }
+      await player.finishPCMStream();
+    } on ModelSpeechPlaybackException {
+      await player.stopPCMStream();
+      rethrow;
+    } catch (_) {
+      await player.stopPCMStream();
+      throw ModelSpeechPlaybackException(audioStarted: started);
+    } finally {
+      if (identical(_questionSpeechIterator, iterator)) {
+        _questionSpeechIterator = null;
+      }
+      await iterator.cancel();
+    }
+  }
+
+  Future<void> _streamAndPlayQuestionSpeech({
+    required int generation,
+    required String key,
+    required PracticeQuestion question,
+    required PracticeQuestionSpeechClient client,
+    required PracticePCMStreamPlayer player,
+  }) async {
+    var started = false;
+    final iterator = StreamIterator<Uint8List>(
+      client.streamQuestionSpeech(question.id),
+    );
+    _questionSpeechIterator = iterator;
+    try {
+      while (await iterator.moveNext()) {
+        final bytes = iterator.current;
+        if (!_isCurrentMedia(generation) ||
+            _currentQuestion?.id != question.id) {
+          return;
+        }
+        if (!started) {
+          await player.startPCMStream();
+          if (!_isCurrentMedia(generation) ||
+              _currentQuestion?.id != question.id) {
+            await player.stopPCMStream();
+            return;
+          }
+          started = true;
+          _loadingMediaKey = null;
+          _playingMediaKey = key;
+          notifyListeners();
+        }
+        try {
+          await player.appendPCM(bytes);
+        } finally {
+          bytes.fillRange(0, bytes.length, 0);
+        }
+      }
+      if (started && _isCurrentMedia(generation)) {
+        await player.finishPCMStream();
+      }
+      if (_isCurrentMedia(generation)) {
+        _loadingMediaKey = null;
+        _playingMediaKey = null;
+        _mediaErrorMessage = null;
+      }
+    } on PracticeClientOperationCancelled {
+      // A newer question or account cleanup owns the presentation now.
+    } catch (error) {
+      if (_isCurrentMedia(generation)) {
+        _loadingMediaKey = null;
+        _playingMediaKey = null;
+        _mediaErrorMessage = _mediaFailureMessage(error, action: '播放音频');
+        await player.stopPCMStream();
+      }
+    } finally {
+      if (identical(_questionSpeechIterator, iterator)) {
+        _questionSpeechIterator = null;
+      }
+      await iterator.cancel();
+      if (_isCurrentMedia(generation)) {
+        notifyListeners();
+      }
+    }
+  }
+
+  void _scheduleAutomaticQuestionSpeech() {
+    final question = _currentQuestion;
+    final experience = _practiceExperience;
+    if (!supportsRealtimeQuestionSpeech ||
+        question == null ||
+        _sessionCompleted ||
+        _autoPlayedQuestionId == question.id ||
+        experience == null ||
+        experience == PracticeExperience.ieltsSpeaking) {
+      return;
+    }
+    _autoPlayedQuestionId = question.id;
+    scheduleMicrotask(() async {
+      if (_disposed ||
+          _currentQuestion?.id != question.id ||
+          _sessionCompleted ||
+          !canUsePracticeAudio) {
+        return;
+      }
+      await _playRealtimeQuestionSpeech(question);
+    });
+  }
+
+  /// Safely detaches the locally presented Session when leaving practice.
+  /// Durable Session progress remains on the server and can be restored through
+  /// [restoreCreatedPractice].
   Future<bool> parkPractice() async {
     if (_disposed || _practiceRequestInFlight) {
       return false;
@@ -528,6 +795,8 @@ final class PracticeController extends ChangeNotifier
       }
       await recorder.discardCurrent();
       _candidate = null;
+      _liveTranscript = '';
+      _realtimeCandidate = null;
       _activeConfirmationId = null;
       _activeTextAnswer = null;
       if (speechFeedbackRetry != null &&
@@ -594,6 +863,65 @@ final class PracticeController extends ChangeNotifier
                 error.kind == PracticeClientFailureKind.authenticationRequired
             ? '登录状态已失效，请重新登录后继续。'
             : '暂时无法结束当前练习，进度仍已保留，可以重试。';
+      }
+      return false;
+    } finally {
+      if (_isCurrent(fence.epoch)) {
+        _setBusy(false);
+      }
+    }
+  }
+
+  Future<bool> completeActivePractice() async {
+    final practice = client;
+    final lifecycle = practice is PracticeCompletionClient
+        ? practice as PracticeCompletionClient
+        : null;
+    final sessionId = _practiceSessionId;
+    final sessionVersion = _practiceSessionVersion;
+    if (lifecycle == null ||
+        sessionId == null ||
+        sessionVersion == null ||
+        !canCompleteActivePractice) {
+      return false;
+    }
+    final fence = _captureOperationFence(practiceSessionId: sessionId);
+    final operationId = _completePracticeClientId ??= _newClientId(
+      'practice-complete',
+    );
+    _setBusy(true);
+    _errorMessage = null;
+    try {
+      await stopPracticeAudio();
+      if (!_isOperationCurrent(fence)) {
+        return false;
+      }
+      final result = await lifecycle.complete(
+        sessionId: sessionId,
+        expectedSessionVersion: sessionVersion,
+        idempotencyKey: operationId,
+      );
+      if (!_isOperationCurrent(fence) ||
+          result.sessionId != sessionId ||
+          result.status != PracticeSessionLifecycleStatus.completed ||
+          result.version <= sessionVersion) {
+        throw StateError(
+          'Practice completion response did not match the session.',
+        );
+      }
+      _practiceSessionVersion = result.version;
+      _sessionCompleted = true;
+      _currentQuestion = null;
+      _recordingState = PracticeRecordingState.completed;
+      _completePracticeClientId = null;
+      return true;
+    } catch (error) {
+      if (_isOperationCurrent(fence)) {
+        _errorMessage =
+            error is PracticeClientException &&
+                error.kind == PracticeClientFailureKind.authenticationRequired
+            ? '登录状态已失效，请重新登录后继续。'
+            : '暂时无法完成当前练习，进度仍已保留，可以重试。';
       }
       return false;
     } finally {
@@ -728,15 +1056,13 @@ final class PracticeController extends ChangeNotifier
     if (practice == null ||
         sessionId == null ||
         item.repracticeMode != SpeechFeedbackRepracticeMode.sameQuestion ||
-        item.anchor is! ConversationTranscriptFeedbackAnchor ||
         !canStartSpeechFeedbackRetry) {
       return false;
     }
     final generation = ++_practiceGeneration;
     final context = _SpeechFeedbackRetryContext(
       feedbackItemId: item.feedbackItemId,
-      originalTurnId:
-          (item.anchor as ConversationTranscriptFeedbackAnchor).turnId,
+      originalTurnId: item.anchor.evidenceRefId,
       returnState: _recordingState,
       returnErrorMessage: _errorMessage,
       requestIdempotencyKey: _newClientId('feedback-retry'),
@@ -744,6 +1070,8 @@ final class PracticeController extends ChangeNotifier
     _speechFeedbackRetry = context;
     _speechFeedbackRetryCandidate = null;
     _candidate = null;
+    _liveTranscript = '';
+    _realtimeCandidate = null;
     _activeConfirmationId = null;
     _activeTextAnswer = null;
     _errorMessage = null;
@@ -755,37 +1083,23 @@ final class PracticeController extends ChangeNotifier
       practiceSessionId: sessionId,
     );
     try {
-      var request = await practice.requestSameQuestionRetry(
+      final turn = await practice.requestSameQuestionRetry(
         feedbackItemId: item.feedbackItemId,
         idempotencyKey: context.requestIdempotencyKey,
-      );
-      request = await _awaitSpeechFeedbackRetryTurn(
-        practice: practice,
-        request: request,
-        fence: fence,
-        context: context,
       );
       if (!_isOperationCurrent(fence) ||
           !identical(_speechFeedbackRetry, context)) {
         return false;
       }
-      _validateSpeechFeedbackRetryRequest(
-        request,
+      _validateSpeechFeedbackRetryTurn(
+        turn,
         context: context,
         sessionId: sessionId,
       );
-      if (request.retryStatus == PracticeRetryRequestStatus.failed) {
-        throw _SpeechFeedbackRetryCreationException(request.stableFailure);
-      }
-      if (request.retryStatus != PracticeRetryRequestStatus.turnCreated ||
-          request.newTurnId == null ||
-          request.answerPath == null) {
-        throw const _SpeechFeedbackRetryCreationException(null);
-      }
-      context.request = request;
+      context.turn = turn;
       _recordingState = PracticeRecordingState.starting;
       notifyListeners();
-      final operation = _startRecorder(fence, _recordingLimit);
+      final operation = _startRecorder(fence, _recordingLimit, true);
       _recorderStartFuture = operation;
       await operation.whenComplete(() {
         if (identical(_recorderStartFuture, operation)) {
@@ -806,42 +1120,10 @@ final class PracticeController extends ChangeNotifier
     }
   }
 
-  Future<PracticeRetryRequest> _awaitSpeechFeedbackRetryTurn({
-    required PracticeSpeechFeedbackRetryClient practice,
-    required PracticeRetryRequest request,
-    required _PracticeOperationFence fence,
-    required _SpeechFeedbackRetryContext context,
-  }) async {
-    var current = request;
-    for (
-      var attempt = 0;
-      attempt < _speechFeedbackRetryMaximumPollAttempts;
-      attempt++
-    ) {
-      _validateSpeechFeedbackRetryRequest(
-        current,
-        context: context,
-        sessionId: fence.practiceSessionId!,
-      );
-      if (current.retryStatus != PracticeRetryRequestStatus.pending) {
-        return current;
-      }
-      if (attempt + 1 == _speechFeedbackRetryMaximumPollAttempts) {
-        return current;
-      }
-      await Future<void>.delayed(_speechFeedbackRetryPollInterval);
-      if (!_isOperationCurrent(fence) ||
-          !identical(_speechFeedbackRetry, context)) {
-        throw const PracticeClientOperationCancelled();
-      }
-      current = await practice.getSameQuestionRetryRequest(
-        retryRequestId: current.retryRequestId,
-      );
-    }
-    return current;
-  }
-
-  Future<void> startRecording({Duration? limit}) {
+  Future<void> startRecording({
+    Duration? limit,
+    bool useRealtimeTranscription = true,
+  }) {
     if (!hasActivePractice ||
         isBusy ||
         _pendingPracticeAudio != null ||
@@ -860,6 +1142,8 @@ final class PracticeController extends ChangeNotifier
     }
     final generation = ++_practiceGeneration;
     _candidate = null;
+    _liveTranscript = '';
+    _realtimeCandidate = null;
     _activeConfirmationId = null;
     _activeTextAnswer = null;
     _errorMessage = null;
@@ -873,6 +1157,7 @@ final class PracticeController extends ChangeNotifier
         questionId: _currentQuestion?.id,
       ),
       recordingLimit,
+      useRealtimeTranscription,
     );
     _recorderStartFuture = operation;
     return operation.whenComplete(() {
@@ -885,6 +1170,7 @@ final class PracticeController extends ChangeNotifier
   Future<void> _startRecorder(
     _PracticeOperationFence fence,
     Duration recordingLimit,
+    bool useRealtimeTranscription,
   ) async {
     try {
       await stopPracticeAudio();
@@ -892,9 +1178,39 @@ final class PracticeController extends ChangeNotifier
           _recordingState != PracticeRecordingState.starting) {
         return;
       }
-      await recorder.start();
+      final realtimePractice =
+          useRealtimeTranscription &&
+              client is PracticeRealtimeTranscriptionClient
+          ? client as PracticeRealtimeTranscriptionClient
+          : null;
+      final streamingRecorder = recorder is PracticeStreamingRecorder
+          ? recorder as PracticeStreamingRecorder
+          : null;
+      final sessionId = fence.practiceSessionId;
+      final questionId = fence.questionId;
+      if (_speechFeedbackRetry == null &&
+          realtimePractice != null &&
+          streamingRecorder != null &&
+          sessionId != null &&
+          questionId != null) {
+        final chunks = await streamingRecorder.startAudioStream();
+        final realtime = _collectRealtimeCandidate(
+          fence,
+          realtimePractice.transcribeRealtime(
+            sessionId: sessionId,
+            questionId: questionId,
+            idempotencyKey: _newClientId('turn'),
+            audioChunks: chunks,
+          ),
+        );
+        _realtimeCandidate = realtime;
+        unawaited(_observeRealtimeFailure(fence, realtime));
+      } else {
+        await recorder.start();
+      }
       if (!_isOperationCurrent(fence)) {
         await recorder.discardCurrent();
+        _realtimeCandidate = null;
         return;
       }
       _recordingState = PracticeRecordingState.recording;
@@ -907,6 +1223,7 @@ final class PracticeController extends ChangeNotifier
       });
     } on PracticeRecordingException catch (error) {
       if (_isOperationCurrent(fence)) {
+        _realtimeCandidate = null;
         final retry = _speechFeedbackRetry;
         if (retry == null) {
           _recordingState = PracticeRecordingState.idle;
@@ -920,6 +1237,7 @@ final class PracticeController extends ChangeNotifier
       }
     } catch (_) {
       if (_isOperationCurrent(fence)) {
+        _realtimeCandidate = null;
         final retry = _speechFeedbackRetry;
         if (retry == null) {
           _recordingState = PracticeRecordingState.idle;
@@ -974,13 +1292,12 @@ final class PracticeController extends ChangeNotifier
       practiceSessionId: sessionId,
       questionId: question.id,
     );
-    final clientTurnId = _newClientId('turn');
     final operation = _stopRecording(
       practice: practice,
       sessionId: sessionId,
       question: question,
       fence: fence,
-      clientTurnId: clientTurnId,
+      clientTurnId: _newClientId('turn'),
     );
     _stopRecordingFuture = operation;
     return operation.whenComplete(() {
@@ -1005,6 +1322,8 @@ final class PracticeController extends ChangeNotifier
       return;
     }
     _practiceGeneration++;
+    _realtimeCandidate = null;
+    _liveTranscript = '';
     final speechFeedbackRetry = _speechFeedbackRetry;
     _cancelRecordingLimit();
     await _recorderStartFuture;
@@ -1033,10 +1352,15 @@ final class PracticeController extends ChangeNotifier
     required String clientTurnId,
   }) async {
     RecordedPracticeAudio? audio;
+    final realtime = _realtimeCandidate;
+    final usedRealtime =
+        realtime != null && recorder is PracticeStreamingRecorder;
     _recordingState = PracticeRecordingState.transcribing;
     notifyListeners();
     try {
-      final stopOperation = recorder.stop();
+      final stopOperation = usedRealtime
+          ? (recorder as PracticeStreamingRecorder).stopAudioStream()
+          : recorder.stop();
       _recorderStopFuture = stopOperation;
       try {
         audio = await stopOperation;
@@ -1048,26 +1372,56 @@ final class PracticeController extends ChangeNotifier
       if (!_isOperationCurrent(fence)) {
         return;
       }
-      final pending = _PendingPracticeAudio(
-        audio: audio,
-        sessionId: sessionId,
-        questionId: question.id,
-        clientTurnId: clientTurnId,
-      );
-      _pendingPracticeAudio = pending;
-      audio = null;
-      await _transcribePendingPracticeAudio(
-        practice: practice,
-        pending: pending,
-        fence: fence,
-      );
+      if (realtime != null) {
+        final result = await realtime;
+        if (identical(_realtimeCandidate, realtime)) {
+          _realtimeCandidate = null;
+        }
+        if (result.error case final error?) {
+          throw error;
+        }
+        final candidate = result.candidate;
+        if (candidate == null) {
+          throw StateError(
+            'Realtime Practice stream ended without a Candidate.',
+          );
+        }
+        if (!_isOperationCurrent(fence)) {
+          return;
+        }
+        _validateCandidate(candidate, sessionId, question.id);
+        _candidate = candidate;
+        _activeConfirmationId = null;
+        _activeTextAnswer = null;
+        _recordingState = PracticeRecordingState.awaitingConfirmation;
+        _errorMessage = null;
+      } else {
+        final pending = _PendingPracticeAudio(
+          audio: audio,
+          sessionId: sessionId,
+          questionId: question.id,
+          clientTurnId: clientTurnId,
+        );
+        _pendingPracticeAudio = pending;
+        audio = null;
+        await _transcribePendingPracticeAudio(
+          practice: practice,
+          pending: pending,
+          fence: fence,
+        );
+      }
     } catch (error) {
       if (_isOperationCurrent(fence)) {
         _candidate = null;
         _recordingState = PracticeRecordingState.idle;
-        _errorMessage = _transcriptionFailureMessage(error);
+        _errorMessage = usedRealtime
+            ? _realtimeTranscriptionFailureMessage(error)
+            : _transcriptionFailureMessage(error);
       }
     } finally {
+      if (identical(_realtimeCandidate, realtime)) {
+        _realtimeCandidate = null;
+      }
       if (audio != null) {
         try {
           await recorder.discard(audio);
@@ -1079,6 +1433,88 @@ final class PracticeController extends ChangeNotifier
     if (_isOperationCurrent(fence)) {
       notifyListeners();
     }
+  }
+
+  Future<_RealtimePracticeCandidateResult> _collectRealtimeCandidate(
+    _PracticeOperationFence fence,
+    Stream<PracticeTranscriptionEvent> events,
+  ) async {
+    TranscriptionCandidate? completed;
+    try {
+      await for (final event in events) {
+        if (!_isOperationCurrent(fence)) {
+          continue;
+        }
+        switch (event) {
+          case PracticeTranscriptUpdated(:final text):
+            _liveTranscript = text;
+            notifyListeners();
+          case PracticeCandidateCompleted(:final candidate):
+            completed = candidate;
+        }
+      }
+      return _RealtimePracticeCandidateResult(candidate: completed);
+    } catch (error) {
+      return _RealtimePracticeCandidateResult(error: error);
+    }
+  }
+
+  Future<void> _observeRealtimeFailure(
+    _PracticeOperationFence fence,
+    Future<_RealtimePracticeCandidateResult> realtime,
+  ) async {
+    final result = await realtime;
+    final error = result.error;
+    if (error == null ||
+        !_isOperationCurrent(fence) ||
+        !identical(_realtimeCandidate, realtime) ||
+        (_recordingState != PracticeRecordingState.starting &&
+            _recordingState != PracticeRecordingState.recording)) {
+      return;
+    }
+    final recovery = _recoverFromRealtimeFailure(
+      fence: fence,
+      realtime: realtime,
+      error: error,
+    );
+    _stopRecordingFuture = recovery;
+    await recovery.whenComplete(() {
+      if (identical(_stopRecordingFuture, recovery)) {
+        _stopRecordingFuture = null;
+      }
+    });
+  }
+
+  Future<void> _recoverFromRealtimeFailure({
+    required _PracticeOperationFence fence,
+    required Future<_RealtimePracticeCandidateResult> realtime,
+    required Object error,
+  }) async {
+    if (!_isOperationCurrent(fence) ||
+        !identical(_realtimeCandidate, realtime) ||
+        (_recordingState != PracticeRecordingState.starting &&
+            _recordingState != PracticeRecordingState.recording)) {
+      return;
+    }
+    _cancelRecordingLimit();
+    _realtimeCandidate = null;
+    _candidate = null;
+    _activeConfirmationId = null;
+    _activeTextAnswer = null;
+    _recordingState = PracticeRecordingState.transcribing;
+    notifyListeners();
+    try {
+      await recorder.discardCurrent();
+    } on Object {
+      // The recorder is already unusable; state recovery must still complete.
+    }
+    if (!_isOperationCurrent(fence)) {
+      return;
+    }
+    _liveTranscript = '';
+    _recordingState = PracticeRecordingState.idle;
+    _errorMessage = _realtimeTranscriptionFailureMessage(error);
+    notifyListeners();
   }
 
   Future<void> _transcribePendingPracticeAudio({
@@ -1139,15 +1575,15 @@ final class PracticeController extends ChangeNotifier
     required _SpeechFeedbackRetryContext context,
     required _PracticeOperationFence fence,
   }) async {
-    final request = context.request;
-    final answerPath = request?.answerPath;
-    final retryTurnId = request?.newTurnId;
-    if (request == null || answerPath == null || retryTurnId == null) {
+    final turn = context.turn;
+    if (turn == null) {
       _restoreSpeechFeedbackRetryState(context);
       _errorMessage = '同题复练草稿已失效，请重新发起。';
       notifyListeners();
       return;
     }
+    final answerPath = turn.answerPath;
+    final retryTurnId = turn.turnId;
     RecordedPracticeAudio? audio;
     _recordingState = PracticeRecordingState.transcribing;
     notifyListeners();
@@ -1170,7 +1606,7 @@ final class PracticeController extends ChangeNotifier
       }
       _validateSpeechFeedbackRetryCandidate(
         candidate,
-        request: request,
+        turn: turn,
         retryTurnId: retryTurnId,
       );
       _speechFeedbackRetryCandidate = candidate;
@@ -1234,6 +1670,30 @@ final class PracticeController extends ChangeNotifier
     });
   }
 
+  /// Abandons an unsubmitted local recording so an explicit user exit never
+  /// waits for a slow or unavailable transcription provider.
+  Future<void> abandonPendingTranscriptionForExit() async {
+    final pending = _pendingPracticeAudio;
+    if (pending == null || _disposed) {
+      return;
+    }
+    _practiceGeneration++;
+    _pendingPracticeAudio = null;
+    _stopRecordingFuture = null;
+    _candidate = null;
+    _activeConfirmationId = null;
+    _activeTextAnswer = null;
+    _recordingState = PracticeRecordingState.idle;
+    _errorMessage = null;
+    notifyListeners();
+    try {
+      await recorder.discard(pending.audio);
+    } catch (_) {
+      // The stale transcription also owns best-effort cleanup. Exiting must
+      // remain available if the temporary file was already removed.
+    }
+  }
+
   Future<void> discardPendingPracticeAudio() {
     final pending = _pendingPracticeAudio;
     final inFlight = _stopRecordingFuture;
@@ -1288,6 +1748,8 @@ final class PracticeController extends ChangeNotifier
     _practiceGeneration++;
     final speechFeedbackRetry = _speechFeedbackRetry;
     _candidate = null;
+    _liveTranscript = '';
+    _realtimeCandidate = null;
     _activeConfirmationId = null;
     _activeTextAnswer = null;
     if (speechFeedbackRetry != null) {
@@ -1386,17 +1848,17 @@ final class PracticeController extends ChangeNotifier
     required _SpeechFeedbackRetryContext context,
     required RetryTranscriptionCandidate candidate,
   }) async {
-    final request = context.request;
-    final retryTurnId = request?.newTurnId;
-    if (request == null || retryTurnId == null) {
+    final turn = context.turn;
+    if (turn == null) {
       _restoreSpeechFeedbackRetryState(context);
       _errorMessage = '同题复练草稿已失效，请重新发起。';
       notifyListeners();
       return;
     }
+    final retryTurnId = turn.turnId;
     final fence = _captureOperationFence(
       practiceGeneration: _practiceGeneration,
-      practiceSessionId: request.sessionId,
+      practiceSessionId: turn.sessionId,
     );
     _recordingState = PracticeRecordingState.submitting;
     _errorMessage = null;
@@ -1422,7 +1884,7 @@ final class PracticeController extends ChangeNotifier
       }
       _validateSpeechFeedbackRetryConfirmation(
         confirmation,
-        request: request,
+        turn: turn,
         candidate: candidate,
       );
       _restoreSpeechFeedbackRetryState(context);
@@ -1529,9 +1991,11 @@ final class PracticeController extends ChangeNotifier
     _practiceCapabilities = confirmation.capabilities;
     _completedTurns = confirmation.completedTurns;
     _turnLimit = confirmation.turnLimit;
+    _completionMode = confirmation.completionMode;
     _sessionCompleted = confirmation.sessionCompleted;
     _practiceSessionVersion = confirmation.sessionVersion;
     _endPracticeClientId = null;
+    _completePracticeClientId = null;
     _currentQuestion = confirmation.nextQuestion;
     _clearQuestionTip();
     final audioAssetId = confirmation.audioAssetId;
@@ -1546,8 +2010,11 @@ final class PracticeController extends ChangeNotifier
           effectiveTurn: confirmation.completedTurns,
         ),
       ];
+      _recordingNoticeMessage = null;
     }
     _candidate = null;
+    _liveTranscript = '';
+    _realtimeCandidate = null;
     _activeConfirmationId = null;
     _activeTextAnswer = null;
     _appendPracticeMessages([
@@ -1560,6 +2027,7 @@ final class PracticeController extends ChangeNotifier
     } else {
       _recordingState = PracticeRecordingState.idle;
     }
+    _scheduleAutomaticQuestionSpeech();
   }
 
   Future<PracticeQuestionTip?> requestQuestionTip() async {
@@ -1691,9 +2159,12 @@ final class PracticeController extends ChangeNotifier
     _practiceCapabilities = null;
     _practiceSessionVersion = null;
     _endPracticeClientId = null;
+    _completePracticeClientId = null;
     _currentQuestion = null;
     _clearQuestionTip();
     _candidate = null;
+    _liveTranscript = '';
+    _realtimeCandidate = null;
     _activeConfirmationId = null;
     _activeTextAnswer = null;
     _speechFeedbackRetry = null;
@@ -1704,13 +2175,16 @@ final class PracticeController extends ChangeNotifier
     _errorMessage = null;
     _completedTurns = 0;
     _turnLimit = 0;
+    _completionMode = PracticeCompletionMode.turnLimited;
     _sessionCompleted = false;
     _recordings = const <PracticeRecordingReference>[];
     _playingMediaKey = null;
     _loadingMediaKey = null;
     _deletingAudioAssetId = null;
     _mediaErrorMessage = null;
+    _recordingNoticeMessage = null;
     _mediaGeneration++;
+    _autoPlayedQuestionId = null;
     _busy = false;
     if (!_disposed) {
       notifyListeners();
@@ -1727,6 +2201,13 @@ final class PracticeController extends ChangeNotifier
         Future<void>.sync(media.clearAccountState),
       if (audioPlayer case final player?)
         Future<void>.sync(player.clearAccountState),
+      if (questionSpeechPlayer case final player?)
+        Future<void>.sync(() async {
+          final iterator = _questionSpeechIterator;
+          _questionSpeechIterator = null;
+          await iterator?.cancel();
+          await player.stopPCMStream();
+        }),
     ]);
     _accountCleanupFuture = cleanup;
     try {
@@ -1748,7 +2229,7 @@ final class PracticeController extends ChangeNotifier
     final practiceAudioOperation = _stopRecordingFuture;
     _pendingPracticeAudio = null;
     _disposed = true;
-    if (mediaClient != null) {
+    if (mediaClient != null || questionSpeechPlayer != null) {
       WidgetsBinding.instance.removeObserver(this);
     }
     _cancelRecordingLimit();
@@ -1757,6 +2238,7 @@ final class PracticeController extends ChangeNotifier
     _mediaGeneration++;
     _speechFeedbackRetry = null;
     _speechFeedbackRetryCandidate = null;
+    unawaited(promptSpeaker.dispose());
     unawaited(
       Future<void>.sync(() async {
         await _recorderStartFuture;
@@ -1774,6 +2256,12 @@ final class PracticeController extends ChangeNotifier
     unawaited(_mediaCompletionSubscription?.cancel());
     unawaited(mediaClient?.dispose());
     unawaited(audioPlayer?.dispose());
+    unawaited(
+      Future<void>.sync(() async {
+        await _questionSpeechIterator?.cancel();
+        await questionSpeechPlayer?.disposePCMStream();
+      }),
+    );
     super.dispose();
   }
 
@@ -1803,6 +2291,8 @@ final class PracticeController extends ChangeNotifier
     _cancelRecordingLimit();
     _practiceGeneration++;
     _candidate = null;
+    _liveTranscript = '';
+    _realtimeCandidate = null;
     _activeConfirmationId = null;
     _activeTextAnswer = null;
     _speechFeedbackRetry = null;
@@ -1812,9 +2302,12 @@ final class PracticeController extends ChangeNotifier
     _deletingAudioAssetId = null;
     _mediaErrorMessage = null;
     _mediaGeneration++;
+    _autoPlayedQuestionId = null;
     unawaited(audioPlayer?.stop());
+    unawaited(questionSpeechPlayer?.stopPCMStream());
     if (snapshot == null) {
       _practiceSessionId = null;
+      _practicePlanId = null;
       _practiceExperience = null;
       _practiceSceneCategory = null;
       _practiceMode = null;
@@ -1822,13 +2315,16 @@ final class PracticeController extends ChangeNotifier
       _practiceCapabilities = null;
       _practiceSessionVersion = null;
       _endPracticeClientId = null;
+      _completePracticeClientId = null;
       _currentQuestion = null;
       _clearQuestionTip();
       _activeScene = null;
       _completedTurns = 0;
       _turnLimit = 0;
+      _completionMode = PracticeCompletionMode.turnLimited;
       _sessionCompleted = false;
       _recordings = const <PracticeRecordingReference>[];
+      _recordingNoticeMessage = null;
       _practiceMessages = const <PracticeMessage>[];
       _recordingState = PracticeRecordingState.idle;
       return;
@@ -1840,6 +2336,7 @@ final class PracticeController extends ChangeNotifier
     final mayPreserveKnownRecordings =
         preserveKnownRecordings && snapshot.sessionId == _practiceSessionId;
     _practiceSessionId = snapshot.sessionId;
+    _practicePlanId = snapshot.planId;
     _practiceExperience = snapshot.practiceExperience;
     _practiceSceneCategory = snapshot.sceneCategory;
     _practiceMode = snapshot.practiceMode;
@@ -1851,6 +2348,7 @@ final class PracticeController extends ChangeNotifier
     _clearQuestionTip();
     _completedTurns = snapshot.completedTurns;
     _turnLimit = snapshot.turnLimit;
+    _completionMode = snapshot.completionMode;
     _sessionCompleted = snapshot.sessionCompleted;
     final currentTurn = snapshot.currentTurn;
     final audioAssetId = currentTurn?.audioAssetId;
@@ -1889,6 +2387,7 @@ final class PracticeController extends ChangeNotifier
     _recordingState = snapshot.sessionCompleted
         ? PracticeRecordingState.completed
         : PracticeRecordingState.idle;
+    _scheduleAutomaticQuestionSpeech();
   }
 
   void _appendPracticeMessages(Iterable<PracticeMessage> values) {
@@ -2006,6 +2505,14 @@ final class PracticeController extends ChangeNotifier
     return '没有识别出这一轮，录音已保留；可重试转写或删除。';
   }
 
+  String _realtimeTranscriptionFailureMessage(Object error) {
+    if (error is PracticeClientException &&
+        error.kind == PracticeClientFailureKind.authenticationRequired) {
+      return '登录状态已失效，请重新登录。';
+    }
+    return '实时识别已中断，本轮没有提交，请重新录音。';
+  }
+
   String _confirmationFailureMessage(Object error) {
     if (error is PracticeClientException) {
       if (_isFreeQuotaExhausted(error)) {
@@ -2027,13 +2534,6 @@ final class PracticeController extends ChangeNotifier
   }
 
   String _speechFeedbackRetryFailureMessage(Object error) {
-    if (error case _SpeechFeedbackRetryCreationException(:final failure)) {
-      if (failure?.reason ==
-          PracticeRetryFailureReason.sourceNoLongerAvailable) {
-        return '原题已经不可复练，请选择其他反馈继续练习。';
-      }
-      return '同题复练暂时无法准备，请重试。';
-    }
     if (error is PracticeClientException) {
       if (error.kind == PracticeClientFailureKind.authenticationRequired) {
         return '登录状态已失效，请重新登录。';
@@ -2089,9 +2589,12 @@ final class PracticeController extends ChangeNotifier
     if (snapshot.sessionId.trim().isEmpty ||
         snapshot.planId.trim().isEmpty ||
         snapshot.completedTurns < 0 ||
-        snapshot.turnLimit < 1 ||
-        snapshot.turnLimit > practiceTurnSafetyLimit ||
-        snapshot.completedTurns > snapshot.turnLimit ||
+        (snapshot.completionMode == PracticeCompletionMode.turnLimited &&
+            (snapshot.turnLimit < 1 ||
+                snapshot.turnLimit > practiceTurnSafetyLimit ||
+                snapshot.completedTurns > snapshot.turnLimit)) ||
+        (snapshot.completionMode == PracticeCompletionMode.userControlled &&
+            snapshot.turnLimit != 0) ||
         snapshot.sessionVersion < 1 ||
         (snapshot.practiceExperience == PracticeExperience.ieltsSpeaking) !=
             (snapshot.ieltsAssignment != null) ||
@@ -2124,58 +2627,30 @@ final class PracticeController extends ChangeNotifier
     }
   }
 
-  void _validateSpeechFeedbackRetryRequest(
-    PracticeRetryRequest request, {
+  void _validateSpeechFeedbackRetryTurn(
+    PracticeRetryTurn turn, {
     required _SpeechFeedbackRetryContext context,
     required String sessionId,
   }) {
-    context.retryRequestId ??= request.retryRequestId;
-    final expectedStatusUrl = '/v1/retry-requests/${request.retryRequestId}';
-    final expectedAnswerPath = request.newTurnId == null
-        ? null
-        : '/v1/retry-turns/${request.newTurnId}/transcription-candidates';
-    final validStatusShape = switch (request.retryStatus) {
-      PracticeRetryRequestStatus.pending =>
-        request.newTurnId == null &&
-            request.answerPath == null &&
-            request.stableFailure == null &&
-            request.completedAt == null,
-      PracticeRetryRequestStatus.turnCreated =>
-        request.newTurnId != null &&
-            request.answerPath == expectedAnswerPath &&
-            request.stableFailure == null &&
-            request.completedAt != null,
-      PracticeRetryRequestStatus.failed =>
-        request.newTurnId == null &&
-            request.answerPath == null &&
-            request.stableFailure != null &&
-            request.completedAt != null,
-    };
-    if (request.retryRequestId.trim().isEmpty ||
-        request.retryRequestId != context.retryRequestId ||
-        request.feedbackItemId != context.feedbackItemId ||
-        request.sessionId != sessionId ||
-        request.originalTurnId != context.originalTurnId ||
-        request.questionId.trim().isEmpty ||
-        request.statusUrl != expectedStatusUrl ||
-        request.updatedAt.isBefore(request.createdAt) ||
-        (request.completedAt != null &&
-            request.completedAt!.isBefore(request.createdAt)) ||
-        !validStatusShape) {
+    if (turn.turnId.trim().isEmpty ||
+        turn.sessionId != sessionId ||
+        turn.originalTurnId != context.originalTurnId ||
+        turn.questionId.trim().isEmpty ||
+        turn.sequence < 1 ||
+        turn.status != PracticeRetryTurnStatus.answering) {
       throw StateError('Invalid same-question retry request.');
     }
   }
 
   void _validateSpeechFeedbackRetryCandidate(
     RetryTranscriptionCandidate candidate, {
-    required PracticeRetryRequest request,
+    required PracticeRetryTurn turn,
     required String retryTurnId,
   }) {
     if (candidate.id.trim().isEmpty ||
         candidate.retryTurnId != retryTurnId ||
-        candidate.retryRequestId != request.retryRequestId ||
-        candidate.sessionId != request.sessionId ||
-        candidate.questionId != request.questionId ||
+        candidate.sessionId != turn.sessionId ||
+        candidate.questionId != turn.questionId ||
         candidate.respondentParticipantId.trim().isEmpty ||
         candidate.transcriptId.trim().isEmpty ||
         candidate.evidenceVersion < 1 ||
@@ -2186,14 +2661,13 @@ final class PracticeController extends ChangeNotifier
 
   void _validateSpeechFeedbackRetryConfirmation(
     ConfirmedRetryTurn confirmation, {
-    required PracticeRetryRequest request,
+    required PracticeRetryTurn turn,
     required RetryTranscriptionCandidate candidate,
   }) {
-    if (confirmation.turnId != request.newTurnId ||
-        confirmation.retryRequestId != request.retryRequestId ||
-        confirmation.originalTurnId != request.originalTurnId ||
-        confirmation.sessionId != request.sessionId ||
-        confirmation.questionId != request.questionId ||
+    if (confirmation.turnId != turn.turnId ||
+        confirmation.originalTurnId != turn.originalTurnId ||
+        confirmation.sessionId != turn.sessionId ||
+        confirmation.questionId != turn.questionId ||
         confirmation.respondentParticipantId !=
             candidate.respondentParticipantId ||
         confirmation.candidateId != candidate.id ||
@@ -2250,9 +2724,13 @@ final class PracticeController extends ChangeNotifier
             confirmation.candidateId != expectedCandidateId) ||
         confirmation.answer.text != expectedAnswer ||
         confirmation.completedTurns < 1 ||
-        confirmation.turnLimit < 1 ||
-        confirmation.turnLimit > practiceTurnSafetyLimit ||
-        confirmation.completedTurns > confirmation.turnLimit ||
+        confirmation.completionMode != _completionMode ||
+        (confirmation.completionMode == PracticeCompletionMode.turnLimited &&
+            (confirmation.turnLimit < 1 ||
+                confirmation.turnLimit > practiceTurnSafetyLimit ||
+                confirmation.completedTurns > confirmation.turnLimit)) ||
+        (confirmation.completionMode == PracticeCompletionMode.userControlled &&
+            confirmation.turnLimit != 0) ||
         confirmation.sessionVersion < 1 ||
         (!confirmation.sessionCompleted && confirmation.nextQuestion == null) ||
         (confirmation.nextQuestion != null &&
@@ -2277,6 +2755,13 @@ final class PracticeController extends ChangeNotifier
   bool _canRetry(Object error) {
     return error is! PracticeClientException || error.retryable;
   }
+}
+
+final class _RealtimePracticeCandidateResult {
+  const _RealtimePracticeCandidateResult({this.candidate, this.error});
+
+  final TranscriptionCandidate? candidate;
+  final Object? error;
 }
 
 final class _PracticeOperationFence {
@@ -2327,15 +2812,8 @@ final class _SpeechFeedbackRetryContext {
   final PracticeRecordingState returnState;
   final String? returnErrorMessage;
   final String requestIdempotencyKey;
-  PracticeRetryRequest? request;
-  String? retryRequestId;
+  PracticeRetryTurn? turn;
   String? transcriptionIdempotencyKey;
-}
-
-final class _SpeechFeedbackRetryCreationException implements Exception {
-  const _SpeechFeedbackRetryCreationException(this.failure);
-
-  final PracticeRetryFailure? failure;
 }
 
 final Random _clientIdRandom = Random.secure();

@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/interviewresume/document"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore/ossstore"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/resume/document"
 )
 
 func TestLiveRecognizePDF(t *testing.T) {

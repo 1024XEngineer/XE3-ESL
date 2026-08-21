@@ -2,19 +2,23 @@ package conversation
 
 import (
 	"strings"
-	"unicode/utf8"
+	"unicode"
 )
 
-const ThreadTitleContentLimit = 24
+const MaxThreadTitleRunes = 32
 
-func DeriveThreadTitle(firstUserMessage string) string {
-	normalized := strings.Join(strings.Fields(firstUserMessage), " ")
-	if normalized == "" {
+// DeriveThreadTitle is a deterministic projection of the first user message.
+// It avoids a second model call and does not create another durable job.
+func DeriveThreadTitle(content string) string {
+	words := strings.FieldsFunc(content, func(character rune) bool {
+		return unicode.IsSpace(character) || unicode.IsControl(character)
+	})
+	if len(words) == 0 {
 		return ""
 	}
-	if utf8.RuneCountInString(normalized) <= ThreadTitleContentLimit {
-		return normalized
+	runes := []rune(strings.Join(words, " "))
+	if len(runes) > MaxThreadTitleRunes {
+		runes = runes[:MaxThreadTitleRunes]
 	}
-	runes := []rune(normalized)
-	return string(runes[:ThreadTitleContentLimit]) + "…"
+	return strings.TrimSpace(string(runes))
 }

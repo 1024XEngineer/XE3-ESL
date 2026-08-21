@@ -23,19 +23,160 @@ void main() {
     final client = _client(api: api, signed: _Transport([]), clock: () => now);
 
     final bytes = await client.loadQuestionSpeech(
-      '/v1/voice-questions/question-1/speech',
+      '/v1/practice-questions/question-1/speech',
     );
 
     expect(bytes, _wave());
     expect(api.requests.single.method, 'GET');
     expect(
       api.requests.single.uri.path,
-      '/v1/voice-questions/question-1/speech',
+      '/v1/practice-questions/question-1/speech',
     );
     expect(
       api.requests.single.headers[HttpHeaders.authorizationHeader],
       'Bearer sess_practice-media',
     );
+  });
+
+  test(
+    'question realtime TTS yields the first PCM chunk before completion',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+      final releaseCompletion = Completer<void>();
+      final handled = Completer<void>();
+      server.listen((request) async {
+        expect(
+          request.uri.path,
+          '/v1/practice-questions/question-1/speech/realtime',
+        );
+        expect(
+          request.headers.value(HttpHeaders.authorizationHeader),
+          'Bearer sess_practice-media',
+        );
+        final socket = await WebSocketTransformer.upgrade(
+          request,
+          protocolSelector: (protocols) {
+            expect(protocols, contains('speakup.practice-question-speech.v1'));
+            return 'speakup.practice-question-speech.v1';
+          },
+        );
+        socket.add(
+          jsonEncode(const <String, Object>{
+            'type': 'stream.ready',
+            'data': <String, Object>{
+              'content_type': 'audio/pcm',
+              'sample_rate': 24000,
+              'channel_count': 1,
+              'bits_per_sample': 16,
+            },
+          }),
+        );
+        socket.add(Uint8List.fromList(<int>[1, 2, 3, 4]));
+        await releaseCompletion.future;
+        socket.add(
+          jsonEncode(const <String, Object>{
+            'type': 'stream.completed',
+            'data': <String, Object>{},
+          }),
+        );
+        await socket.close();
+        handled.complete();
+      });
+      final client = WirePracticeMediaClient(
+        baseUri: Uri.parse('http://${server.address.address}:${server.port}'),
+        credentialProvider: () => const AuthSessionCredential(
+          sessionToken: 'sess_practice-media',
+          generation: 1,
+        ),
+        invalidateSession:
+            ({
+              required expectedSessionToken,
+              required expectedGeneration,
+            }) async {},
+        apiTransport: _Transport(const <_Response>[]),
+        signedAudioTransport: _Transport(const <_Response>[]),
+      );
+      addTearDown(client.dispose);
+      final stream = StreamIterator<Uint8List>(
+        client.streamQuestionSpeech('question-1'),
+      );
+      addTearDown(stream.cancel);
+
+      expect(
+        await stream.moveNext().timeout(const Duration(seconds: 2)),
+        isTrue,
+      );
+      expect(stream.current, <int>[1, 2, 3, 4]);
+      expect(releaseCompletion.isCompleted, isFalse);
+      releaseCompletion.complete();
+      expect(await stream.moveNext(), isFalse);
+      await handled.future;
+    },
+  );
+
+  test('question realtime TTS preserves retryable synthesis failure', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(server.close);
+    final handled = Completer<void>();
+    server.listen((request) async {
+      final socket = await WebSocketTransformer.upgrade(
+        request,
+        protocolSelector: (_) => 'speakup.practice-question-speech.v1',
+      );
+      socket.add(
+        jsonEncode(const <String, Object>{
+          'type': 'stream.ready',
+          'data': <String, Object>{
+            'content_type': 'audio/pcm',
+            'sample_rate': 24000,
+            'channel_count': 1,
+            'bits_per_sample': 16,
+          },
+        }),
+      );
+      socket.add(
+        jsonEncode(const <String, Object>{
+          'type': 'stream.failed',
+          'data': <String, Object>{
+            'kind': 'synthesis_failed',
+            'retryable': true,
+          },
+        }),
+      );
+      await socket.close();
+      handled.complete();
+    });
+    final client = WirePracticeMediaClient(
+      baseUri: Uri.parse('http://${server.address.address}:${server.port}'),
+      credentialProvider: () => const AuthSessionCredential(
+        sessionToken: 'sess_practice-media',
+        generation: 1,
+      ),
+      invalidateSession:
+          ({
+            required expectedSessionToken,
+            required expectedGeneration,
+          }) async {},
+      apiTransport: _Transport(const <_Response>[]),
+      signedAudioTransport: _Transport(const <_Response>[]),
+    );
+    addTearDown(client.dispose);
+
+    await expectLater(
+      client.streamQuestionSpeech('question-1'),
+      emitsError(
+        isA<PracticeClientException>()
+            .having(
+              (error) => error.kind,
+              'kind',
+              PracticeClientFailureKind.network,
+            )
+            .having((error) => error.errorCode, 'errorCode', 'synthesis_failed')
+            .having((error) => error.retryable, 'retryable', isTrue),
+      ),
+    );
+    await handled.future;
   });
 
   test(
@@ -67,12 +208,14 @@ void main() {
       ]);
       final client = _client(api: api, signed: signed, clock: () => now);
 
-      final bytes = await client.loadRecording('audio-asset-1');
+      final bytes = await client.loadRecording(
+        '00000000-0000-4000-8000-000000000001',
+      );
 
       expect(bytes, _wave());
       expect(
         api.requests.single.uri.path,
-        '/v1/audio-assets/audio-asset-1/playback',
+        '/v1/audio-assets/00000000-0000-4000-8000-000000000001/playback',
       );
       expect(
         api.requests.single.headers[HttpHeaders.authorizationHeader],
@@ -118,7 +261,7 @@ void main() {
         final client = _client(api: api, signed: signed, clock: () => now);
 
         await expectLater(
-          client.loadRecording('audio-asset-1'),
+          client.loadRecording('00000000-0000-4000-8000-000000000001'),
           throwsA(
             isA<PracticeClientException>().having(
               (error) => error.kind,
@@ -181,7 +324,7 @@ void main() {
           clock: () => now,
         );
         await expectLater(
-          client.loadRecording('audio-asset-1'),
+          client.loadRecording('00000000-0000-4000-8000-000000000001'),
           throwsA(
             isA<PracticeClientException>().having(
               (error) => error.kind,
@@ -225,10 +368,13 @@ void main() {
       final client = _client(api: api, signed: signed, clock: () => now);
 
       if (testCase.accepted) {
-        expect(await client.loadRecording('audio-1'), _wave());
+        expect(
+          await client.loadRecording('00000000-0000-4000-8000-000000000001'),
+          _wave(),
+        );
       } else {
         await expectLater(
-          client.loadRecording('audio-1'),
+          client.loadRecording('00000000-0000-4000-8000-000000000001'),
           throwsA(
             isA<PracticeClientException>().having(
               (error) => error.kind,
@@ -269,7 +415,7 @@ void main() {
       final client = _client(api: api, signed: signed, clock: () => now);
 
       await expectLater(
-        client.loadRecording('audio-asset-1'),
+        client.loadRecording('00000000-0000-4000-8000-000000000001'),
         throwsA(isA<PracticeClientException>()),
       );
 
@@ -295,7 +441,7 @@ void main() {
     final client = _client(api: api, signed: _Transport([]), clock: () => now);
 
     await expectLater(
-      client.loadQuestionSpeech('/v1/voice-questions/question-1/speech'),
+      client.loadQuestionSpeech('/v1/practice-questions/question-1/speech'),
       throwsA(
         isA<PracticeClientException>().having(
           (error) => error.kind,
@@ -336,7 +482,7 @@ void main() {
     );
 
     await expectLater(
-      client.loadQuestionSpeech('/v1/voice-questions/question-1/speech'),
+      client.loadQuestionSpeech('/v1/practice-questions/question-1/speech'),
       throwsA(
         isA<PracticeClientException>().having(
           (error) => error.kind,
@@ -381,7 +527,7 @@ void main() {
       );
 
       await expectLater(
-        client.loadRecording('audio-1'),
+        client.loadRecording('00000000-0000-4000-8000-000000000001'),
         throwsA(
           isA<PracticeClientException>()
               .having(
@@ -419,7 +565,7 @@ void main() {
 
       expect(
         await questionClient.loadQuestionSpeech(
-          '/v1/voice-questions/question-1/speech',
+          '/v1/practice-questions/question-1/speech',
         ),
         _wave(),
       );
@@ -452,7 +598,12 @@ void main() {
         clock: () => now,
       );
 
-      expect(await recordingClient.loadRecording('audio-1'), _wave());
+      expect(
+        await recordingClient.loadRecording(
+          '00000000-0000-4000-8000-000000000001',
+        ),
+        _wave(),
+      );
       expect(metadataBuffer, everyElement(0));
       expect(recordingBuffer, everyElement(0));
     },
@@ -470,7 +621,7 @@ void main() {
       final source = _wave();
 
       final load = client.loadQuestionSpeech(
-        '/v1/voice-questions/question-1/speech',
+        '/v1/practice-questions/question-1/speech',
       );
       await api.requestStarted.future;
       final cleanup = client.clearAccountState();
@@ -509,7 +660,7 @@ void main() {
       final client = _client(api: api, signed: signed, clock: () => now);
       final source = _wave();
 
-      final load = client.loadRecording('audio-1');
+      final load = client.loadRecording('00000000-0000-4000-8000-000000000001');
       await signed.requestStarted.future;
       final cleanup = client.clearAccountState();
       signed.response.complete(
@@ -547,7 +698,7 @@ void main() {
     );
 
     final load = client.loadQuestionSpeech(
-      '/v1/voice-questions/question-1/speech',
+      '/v1/practice-questions/question-1/speech',
     );
     await api.requestStarted.future;
     await expectLater(
@@ -646,13 +797,16 @@ void main() {
     ]);
     final client = _client(api: api, signed: _Transport([]), clock: () => now);
 
-    await client.deleteRecording('audio-asset-1');
-    await client.deleteRecording('audio-asset-1');
+    await client.deleteRecording('00000000-0000-4000-8000-000000000001');
+    await client.deleteRecording('00000000-0000-4000-8000-000000000001');
 
     expect(api.requests, hasLength(2));
     for (final request in api.requests) {
       expect(request.method, 'DELETE');
-      expect(request.uri.path, '/v1/audio-assets/audio-asset-1');
+      expect(
+        request.uri.path,
+        '/v1/audio-assets/00000000-0000-4000-8000-000000000001',
+      );
       expect(
         request.headers[HttpHeaders.authorizationHeader],
         'Bearer sess_practice-media',

@@ -133,40 +133,13 @@ void main() {
   });
 
   test(
-    'applying an active Goal leaves Thread message history authoritative',
-    () async {
-      final client = _SnapshotAgentClient(
-        AgentThreadSnapshot(
-          threadId: 'thread_history',
-          messages: const <AgentMessage>[
-            AgentMessage(
-              id: 'existing',
-              role: AgentMessageRole.user,
-              text: 'Existing Thread message',
-            ),
-          ],
-        ),
-      );
-      final controller = ConversationController(client: client);
-      await controller.initialize();
-
-      controller.applyActiveGoal(
-        threadId: 'thread_history',
-        goalId: 'goal_history',
-      );
-
-      expect(controller.threadId, 'thread_history');
-      expect(controller.activeGoalId, 'goal_history');
-      expect(controller.messages, hasLength(1));
-      expect(controller.messages.single.id, 'existing');
-    },
-  );
-
-  test(
     'Fake client cancels old account work and reuses stable write IDs',
     () async {
       final client = FakeAgentClient(delay: const Duration(milliseconds: 20));
-      final staleRestore = client.getFocusedThread();
+      final initialPage = await client.listThreads();
+      final staleRestore = client.getThread(
+        threadId: initialPage.threads.first.id,
+      );
       final staleCancellation = expectLater(
         staleRestore,
         throwsA(isA<AgentClientOperationCancelled>()),
@@ -182,7 +155,10 @@ void main() {
       await cleanup;
       expect(cleanupCompleted, isTrue);
 
-      final snapshot = (await client.getFocusedThread())!;
+      final nextPage = await client.listThreads();
+      final snapshot = await client.getThread(
+        threadId: nextPage.threads.first.id,
+      );
       final first = await client.sendText(
         threadId: snapshot.threadId,
         text: 'same logical message',
@@ -196,13 +172,16 @@ void main() {
 
       expect(retried, same(first));
       await client.clearAccountState();
-      final nextAccount = (await client.getFocusedThread())!;
+      final nextAccountPage = await client.listThreads();
+      final nextAccount = await client.getThread(
+        threadId: nextAccountPage.threads.first.id,
+      );
       expect(nextAccount.threadId, isNot(snapshot.threadId));
     },
   );
 
   test(
-    'restores focused Thread and continues bounded Thread and Message pages',
+    'restores newest Thread and continues bounded Thread and Message pages',
     () async {
       final client = _HistoryAgentClient();
       final controller = ConversationController(client: client);
@@ -232,16 +211,15 @@ void main() {
 
       expect(await controller.createThread(), isTrue);
       expect(controller.threadId, _historyThreadThree);
-      expect(client.focusRequests.last, _historyThreadThree);
       expect(controller.currentThreadSummary?.id, _historyThreadThree);
     },
   );
 
   test(
-    'first text materializes an absent focused Thread exactly once',
+    'first text materializes a Thread when history is empty exactly once',
     () async {
       final client = _HistoryAgentClient(
-        startsWithoutFocus: true,
+        startsWithoutHistory: true,
         textExchange: const AgentExchange(
           userMessage: AgentMessage(
             id: 'message_first_user',
@@ -262,12 +240,11 @@ void main() {
 
       expect(controller.threadId, isNull);
       expect(controller.messages, isEmpty);
-      expect(controller.threads.single.id, _historyThreadOne);
+      expect(controller.threads, isEmpty);
 
       expect(await controller.sendText('first message'), isTrue);
       expect(controller.threadId, _historyThreadThree);
       expect(client.createCalls, 1);
-      expect(client.focusRequests, <String>[_historyThreadThree]);
       expect(
         controller.messages.map((message) => message.id),
         containsAllInOrder(<String>[
@@ -275,81 +252,6 @@ void main() {
           'message_first_assistant',
         ]),
       );
-    },
-  );
-
-  test(
-    'lazy text retries the created Thread focus without another POST',
-    () async {
-      final client = _HistoryAgentClient(
-        startsWithoutFocus: true,
-        focusFailuresRemaining: 1,
-        textExchange: const AgentExchange(
-          userMessage: AgentMessage(
-            id: 'message_recovered_user',
-            role: AgentMessageRole.user,
-            text: 'recover this message',
-          ),
-          assistantMessage: AgentMessage(
-            id: 'message_recovered_assistant',
-            role: AgentMessageRole.assistant,
-            text: 'recovered reply',
-          ),
-        ),
-      );
-      final controller = ConversationController(client: client);
-      addTearDown(controller.dispose);
-      await controller.initialize();
-
-      expect(await controller.sendText('recover this message'), isFalse);
-      expect(controller.threadId, isNull);
-      expect(controller.canRetryThreadHistory, isTrue);
-      expect(controller.threadHistoryErrorMessage, contains('不会重复创建'));
-      expect(client.createCalls, 1);
-      expect(client.focusRequests, <String>[_historyThreadThree]);
-
-      expect(await controller.sendText('recover this message'), isTrue);
-
-      expect(controller.threadId, _historyThreadThree);
-      expect(controller.draftThreadRecoveryGeneration, 1);
-      expect(client.createCalls, 1);
-      expect(client.focusRequests, <String>[
-        _historyThreadThree,
-        _historyThreadThree,
-      ]);
-      expect(
-        controller.messages.map((message) => message.id),
-        containsAllInOrder(<String>[
-          'message_recovered_user',
-          'message_recovered_assistant',
-        ]),
-      );
-    },
-  );
-
-  test(
-    'inline Thread recovery focuses the created draft without another POST',
-    () async {
-      final client = _HistoryAgentClient(
-        startsWithoutFocus: true,
-        focusFailuresRemaining: 1,
-      );
-      final controller = ConversationController(client: client);
-      addTearDown(controller.dispose);
-      await controller.initialize();
-
-      expect(await controller.sendText('keep this draft'), isFalse);
-      expect(controller.draftThreadRecoveryGeneration, 0);
-
-      await controller.retryThreadHistory();
-
-      expect(controller.threadId, _historyThreadThree);
-      expect(controller.draftThreadRecoveryGeneration, 1);
-      expect(client.createCalls, 1);
-      expect(client.focusRequests, <String>[
-        _historyThreadThree,
-        _historyThreadThree,
-      ]);
     },
   );
 
@@ -366,7 +268,7 @@ void main() {
         final pending = switch (operation) {
           'create' => controller.createThread(),
           'select' => controller.selectThread(_historyThreadTwo),
-          'clear' => controller.clearFocusedThread().then<Object?>((_) => null),
+          'clear' => controller.clearCurrentThread().then<Object?>((_) => null),
           _ => throw StateError('Unknown test operation.'),
         };
         await client.initialListStarted.future;
@@ -379,8 +281,7 @@ void main() {
           expect(result, isFalse, reason: operation);
         }
         expect(client.createCalls, 0, reason: operation);
-        expect(client.focusRequests, isEmpty, reason: operation);
-        expect(client.clearFocusedCalls, 0, reason: operation);
+        expect(client.getRequests, isEmpty, reason: operation);
         expect(controller.threadId, isNull, reason: operation);
         controller.dispose();
       }
@@ -404,9 +305,25 @@ void main() {
     createGate.complete();
     expect(await firstCreate, isTrue);
     expect(client.createCalls, 1);
-    expect(client.focusRequests, <String>[_historyThreadThree]);
     expect(controller.isThreadTransitionInFlight, isFalse);
   });
+
+  test(
+    'reuses a selected blank ordinary Thread without another POST',
+    () async {
+      final client = _HistoryAgentClient(currentThreadEmpty: true);
+      final controller = ConversationController(client: client);
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      final originalThreadId = controller.threadId;
+
+      expect(controller.messages, isEmpty);
+      expect(await controller.createThread(), isTrue);
+
+      expect(client.createCalls, 0);
+      expect(controller.threadId, originalThreadId);
+    },
+  );
 
   test(
     'exposes ambiguous Thread creation as an explicit recovery operation',
@@ -428,7 +345,6 @@ void main() {
       expect(controller.threadHistoryErrorMessage, isNull);
       expect(controller.threadId, _historyThreadThree);
       expect(client.createCalls, 2);
-      expect(client.focusRequests, <String>[_historyThreadThree]);
     },
   );
 
@@ -436,7 +352,7 @@ void main() {
     'opening history does not treat an ambiguous creation as draft recovery',
     () async {
       final client = _HistoryAgentClient(
-        startsWithoutFocus: true,
+        startsWithoutHistory: true,
         ambiguousCreateFailuresRemaining: 1,
       );
       final controller = ConversationController(client: client);
@@ -456,7 +372,7 @@ void main() {
 
   test('surfaces a definite lazy Thread creation failure', () async {
     final client = _HistoryAgentClient(
-      startsWithoutFocus: true,
+      startsWithoutHistory: true,
       createFailuresRemaining: 1,
     );
     final controller = ConversationController(client: client);
@@ -471,25 +387,22 @@ void main() {
   });
 
   test(
-    'retains a created Thread when focus fails and retries PUT without POST',
+    'retains the current Thread when selecting another Thread fails',
     () async {
-      final client = _HistoryAgentClient(focusFailuresRemaining: 1);
+      final client = _HistoryAgentClient();
       final controller = ConversationController(client: client);
       addTearDown(controller.dispose);
       await controller.initialize();
 
-      expect(await controller.createThread(), isFalse);
+      client.getFailuresRemaining = 1;
+      expect(await controller.selectThread(_historyThreadTwo), isFalse);
 
-      expect(client.createCalls, 1);
       expect(controller.threadId, _historyThreadOne);
-      expect(controller.threads.first.id, _historyThreadThree);
       expect(controller.threadHistoryErrorMessage, isNotNull);
 
-      expect(await controller.selectThread(_historyThreadThree), isTrue);
+      expect(await controller.selectThread(_historyThreadTwo), isTrue);
 
-      expect(client.createCalls, 1);
-      expect(client.focusRequests, [_historyThreadThree, _historyThreadThree]);
-      expect(controller.threadId, _historyThreadThree);
+      expect(controller.threadId, _historyThreadTwo);
     },
   );
 
@@ -507,14 +420,12 @@ void main() {
             _historySummaryThree,
             _historySummaryOne,
           ],
-          focusedThreadId: _historyThreadOne,
         ),
         refreshedThreadPage: AgentThreadPage(
           threads: <AgentThreadSummary>[
             updatedSummaryOne,
             _historySummaryThree,
           ],
-          focusedThreadId: _historyThreadOne,
         ),
         threadRefreshFailuresRemaining: 1,
         textExchange: const AgentExchange(
@@ -555,11 +466,94 @@ void main() {
       ]);
       expect(
         controller.currentThreadSummary?.updatedAt,
-        updatedSummaryOne.updatedAt,
+        _historySummaryThree.updatedAt,
       );
       expect(client.firstPageCalls, 3);
     },
   );
+
+  test(
+    'refreshes a generated Thread title from the authoritative page',
+    () async {
+      final generatedTitle = AgentThreadSummary(
+        id: _historyThreadOne,
+        title: '产品经理面试准备',
+        createdAt: _historySummaryOne.createdAt,
+        updatedAt: _historySummaryOne.updatedAt,
+      );
+      final client = _HistoryAgentClient(
+        initialThreadPage: AgentThreadPage(
+          threads: <AgentThreadSummary>[_historySummaryOne],
+        ),
+        refreshedThreadPage: AgentThreadPage(
+          threads: <AgentThreadSummary>[generatedTitle],
+        ),
+      );
+      final controller = ConversationController(client: client);
+      addTearDown(controller.dispose);
+      await controller.initialize();
+
+      expect(controller.threads.single.title, isNull);
+
+      await controller.refreshThreadHistory();
+
+      expect(controller.threads.single.title, '产品经理面试准备');
+      expect(controller.currentThreadSummary?.title, '产品经理面试准备');
+    },
+  );
+
+  test(
+    'refresh keeps a selected older Thread that is absent from the first page',
+    () async {
+      final client = _HistoryAgentClient(
+        refreshedThreadPage: AgentThreadPage(
+          threads: <AgentThreadSummary>[_historySummaryOne],
+          nextCursor: 'older_threads',
+        ),
+      );
+      final controller = ConversationController(client: client);
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      await controller.loadMoreThreads();
+      expect(await controller.selectThread(_historyThreadTwo), isTrue);
+
+      await controller.refreshThreadHistory();
+
+      expect(controller.threadId, _historyThreadTwo);
+      expect(controller.currentThreadSummary?.id, _historyThreadTwo);
+      expect(controller.threadHistoryErrorMessage, isNull);
+    },
+  );
+
+  test('refresh preserves loaded older pages and their cursor', () async {
+    final generatedTitle = AgentThreadSummary(
+      id: _historyThreadOne,
+      title: '产品经理面试准备',
+      createdAt: _historySummaryOne.createdAt,
+      updatedAt: _historySummaryOne.updatedAt,
+    );
+    final client = _HistoryAgentClient(
+      refreshedThreadPage: AgentThreadPage(
+        threads: <AgentThreadSummary>[generatedTitle],
+        nextCursor: 'older_threads',
+      ),
+    );
+    final controller = ConversationController(client: client);
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await controller.loadMoreThreads();
+
+    expect(controller.hasMoreThreads, isFalse);
+    await controller.refreshThreadHistory();
+
+    expect(controller.threads.map((thread) => thread.id), [
+      _historyThreadOne,
+      _historyThreadTwo,
+    ]);
+    expect(controller.threads.first.title, '产品经理面试准备');
+    expect(controller.hasMoreThreads, isFalse);
+    expect(controller.threadHistoryErrorMessage, isNull);
+  });
 
   test('rejects overlapping and out-of-bound Thread pages', () async {
     final invalidPages = <AgentThreadPage>[
@@ -698,10 +692,6 @@ void main() {
   test('rejects inconsistent or unsafe restored snapshots', () async {
     final invalidSnapshots = <AgentThreadSnapshot>[
       const AgentThreadSnapshot(
-        threadId: 'thread_empty_goal',
-        activeGoalId: ' ',
-      ),
-      const AgentThreadSnapshot(
         threadId: 'thread_empty_message',
         messages: <AgentMessage>[
           AgentMessage(id: ' ', role: AgentMessageRole.user, text: 'Message'),
@@ -753,18 +743,11 @@ class _DelegatingAgentClient implements AgentClient {
       _delegate.listThreads(pageSize: pageSize, cursor: cursor);
 
   @override
-  Future<AgentThreadSnapshot?> getFocusedThread() =>
-      _delegate.getFocusedThread();
+  Future<AgentThreadSnapshot> getThread({required String threadId}) =>
+      _delegate.getThread(threadId: threadId);
 
   @override
   Future<AgentThreadSummary> createThread() => _delegate.createThread();
-
-  @override
-  Future<AgentThreadSnapshot> setFocusedThread({required String threadId}) =>
-      _delegate.setFocusedThread(threadId: threadId);
-
-  @override
-  Future<void> clearFocusedThread() => _delegate.clearFocusedThread();
 
   @override
   Future<void> deleteThread({required String threadId}) =>
@@ -800,8 +783,7 @@ class _DelegatingAgentClient implements AgentClient {
 final class _HistoryAgentClient extends _DelegatingAgentClient {
   _HistoryAgentClient({
     this.controlOldSend = false,
-    this.startsWithoutFocus = false,
-    this.focusFailuresRemaining = 0,
+    this.startsWithoutHistory = false,
     this.createFailuresRemaining = 0,
     this.ambiguousCreateFailuresRemaining = 0,
     this.initializationGate,
@@ -812,11 +794,12 @@ final class _HistoryAgentClient extends _DelegatingAgentClient {
     this.textExchange,
     this.laterThreadPage,
     this.olderMessagePage,
+    this.currentThreadEmpty = false,
   });
 
   final bool controlOldSend;
-  final bool startsWithoutFocus;
-  int focusFailuresRemaining;
+  final bool startsWithoutHistory;
+  int getFailuresRemaining = 0;
   int createFailuresRemaining;
   int ambiguousCreateFailuresRemaining;
   final Completer<void>? initializationGate;
@@ -827,14 +810,14 @@ final class _HistoryAgentClient extends _DelegatingAgentClient {
   final AgentExchange? textExchange;
   final AgentThreadPage? laterThreadPage;
   final AgentMessagePage? olderMessagePage;
+  final bool currentThreadEmpty;
   final initialListStarted = Completer<void>();
   final createStarted = Completer<void>();
   final sendStarted = Completer<void>();
   final sendResult = Completer<AgentExchange>();
-  final List<String> focusRequests = <String>[];
+  final List<String> getRequests = <String>[];
   int createCalls = 0;
   int firstPageCalls = 0;
-  int clearFocusedCalls = 0;
 
   @override
   Future<AgentThreadPage> listThreads({
@@ -863,9 +846,10 @@ final class _HistoryAgentClient extends _DelegatingAgentClient {
         }
       }
       return AgentThreadPage(
-        threads: <AgentThreadSummary>[_historySummaryOne],
-        focusedThreadId: startsWithoutFocus ? null : _historyThreadOne,
-        nextCursor: 'older_threads',
+        threads: startsWithoutHistory
+            ? const <AgentThreadSummary>[]
+            : <AgentThreadSummary>[_historySummaryOne],
+        nextCursor: startsWithoutHistory ? null : 'older_threads',
       );
     }
     if (cursor == 'older_threads') {
@@ -873,20 +857,29 @@ final class _HistoryAgentClient extends _DelegatingAgentClient {
       if (override != null) {
         return override;
       }
-      return AgentThreadPage(
-        threads: <AgentThreadSummary>[_historySummaryTwo],
-        focusedThreadId: startsWithoutFocus ? null : _historyThreadOne,
-      );
+      return AgentThreadPage(threads: <AgentThreadSummary>[_historySummaryTwo]);
     }
     throw StateError('Unexpected Thread cursor.');
   }
 
   @override
-  Future<AgentThreadSnapshot?> getFocusedThread() async {
-    if (startsWithoutFocus) {
-      return null;
+  Future<AgentThreadSnapshot> getThread({required String threadId}) async {
+    getRequests.add(threadId);
+    if (getFailuresRemaining > 0) {
+      getFailuresRemaining--;
+      throw StateError('Temporary Thread load failure.');
     }
-    return _historySnapshot(_historySummaryOne, hasOlderMessages: true);
+    final summary = switch (threadId) {
+      _historyThreadOne => _historySummaryOne,
+      _historyThreadTwo => _historySummaryTwo,
+      _historyThreadThree => _historySummaryThree,
+      _ => throw StateError('Unknown Thread.'),
+    };
+    return _historySnapshot(
+      summary,
+      hasOlderMessages: threadId == _historyThreadOne,
+      empty: currentThreadEmpty && threadId == _historyThreadOne,
+    );
   }
 
   @override
@@ -909,29 +902,6 @@ final class _HistoryAgentClient extends _DelegatingAgentClient {
       );
     }
     return _historySummaryThree;
-  }
-
-  @override
-  Future<AgentThreadSnapshot> setFocusedThread({
-    required String threadId,
-  }) async {
-    focusRequests.add(threadId);
-    if (focusFailuresRemaining > 0) {
-      focusFailuresRemaining--;
-      throw StateError('Temporary focus failure.');
-    }
-    final summary = switch (threadId) {
-      _historyThreadOne => _historySummaryOne,
-      _historyThreadTwo => _historySummaryTwo,
-      _historyThreadThree => _historySummaryThree,
-      _ => throw StateError('Unknown Thread.'),
-    };
-    return _historySnapshot(summary);
-  }
-
-  @override
-  Future<void> clearFocusedThread() async {
-    clearFocusedCalls++;
   }
 
   @override
@@ -988,17 +958,20 @@ final class _HistoryAgentClient extends _DelegatingAgentClient {
 AgentThreadSnapshot _historySnapshot(
   AgentThreadSummary summary, {
   bool hasOlderMessages = false,
+  bool empty = false,
 }) {
   return AgentThreadSnapshot(
     threadId: summary.id,
-    messages: <AgentMessage>[
-      AgentMessage(
-        id: 'message_current_${summary.id}',
-        role: AgentMessageRole.assistant,
-        text: 'current ${summary.id}',
-        sequence: 2,
-      ),
-    ],
+    messages: empty
+        ? const <AgentMessage>[]
+        : <AgentMessage>[
+            AgentMessage(
+              id: 'message_current_${summary.id}',
+              role: AgentMessageRole.assistant,
+              text: 'current ${summary.id}',
+              sequence: 2,
+            ),
+          ],
     createdAt: summary.createdAt,
     updatedAt: summary.updatedAt,
     nextMessageCursor: hasOlderMessages ? 'older_messages' : null,
@@ -1087,13 +1060,24 @@ final class _SnapshotAgentClient extends _DelegatingAgentClient {
     String? cursor,
   }) async {
     return AgentThreadPage(
-      threads: const <AgentThreadSummary>[],
-      focusedThreadId: snapshot.threadId,
+      threads: <AgentThreadSummary>[
+        AgentThreadSummary(
+          id: snapshot.threadId,
+          title: snapshot.title,
+          createdAt: snapshot.createdAt ?? DateTime.utc(2026, 7, 25, 8),
+          updatedAt: snapshot.updatedAt ?? DateTime.utc(2026, 7, 25, 9),
+        ),
+      ],
     );
   }
 
   @override
-  Future<AgentThreadSnapshot?> getFocusedThread() async => snapshot;
+  Future<AgentThreadSnapshot> getThread({required String threadId}) async {
+    if (threadId != snapshot.threadId) {
+      throw StateError('Unknown Thread.');
+    }
+    return snapshot;
+  }
 
   @override
   Future<AgentExchange> sendText({

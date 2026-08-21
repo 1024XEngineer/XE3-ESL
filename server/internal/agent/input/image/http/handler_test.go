@@ -22,15 +22,13 @@ import (
 func TestImageAssetHTTPUploadContentAndDelete(t *testing.T) {
 	now := time.Date(2026, 7, 30, 8, 0, 0, 0, time.UTC)
 	images := &imageHTTPApplication{
-		asset: agentimage.Asset{
+		asset: agentimage.Image{
 			ID:          "30000000-0000-4000-8000-000000000001",
-			OwnerID:     "user-a",
-			ThreadID:    "thread-1",
 			ContentType: "image/png",
 			Size:        4,
 			Width:       2,
 			Height:      2,
-			Status:      agentimage.StatusStaged,
+			Status:      "ready",
 			CreatedAt:   now,
 		},
 		content: objectstore.SignedGetResult{
@@ -72,7 +70,7 @@ func TestImageAssetHTTPUploadContentAndDelete(t *testing.T) {
 		t.Fatalf("decode upload response: %v", err)
 	}
 	if uploaded["image_asset_id"] != images.asset.ID ||
-		uploaded["thread_id"] != "thread-1" {
+		uploaded["thread_id"] != nil {
 		t.Fatalf("upload response = %#v", uploaded)
 	}
 
@@ -133,6 +131,40 @@ func TestImageAssetHTTPRejectsInvalidEnvelopeBeforeApplication(t *testing.T) {
 	}
 	if images.uploadCalls != 0 {
 		t.Fatalf("upload calls = %d", images.uploadCalls)
+	}
+}
+
+func TestImageAssetHTTPReturnsAcceptedForConcurrentStagedUpload(t *testing.T) {
+	images := &imageHTTPApplication{asset: agentimage.Image{
+		ID:          "30000000-0000-4000-8000-000000000002",
+		ContentType: "image/png",
+		Size:        4,
+		Width:       2,
+		Height:      2,
+		Status:      "staged",
+		CreatedAt:   time.Date(2026, 7, 30, 8, 0, 0, 0, time.UTC),
+	}}
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/agent-threads/thread-1/image-assets",
+		bytes.NewReader([]byte{0x89, 'P', 'N', 'G'}),
+	)
+	request.Header.Set("Authorization", "Bearer image-token-a")
+	request.Header.Set("Idempotency-Key", "image-request-staged-1")
+	request.Header.Set("Content-Type", "image/png")
+	response := httptest.NewRecorder()
+
+	newImageHTTPRouter(t, images).ServeHTTP(response, request)
+
+	if response.Code != http.StatusAccepted ||
+		response.Header().Get("Retry-After") != "1" ||
+		!strings.Contains(response.Body.String(), `"status":"staged"`) {
+		t.Fatalf(
+			"staged upload status = %d, headers = %#v, body = %s",
+			response.Code,
+			response.Header(),
+			response.Body.String(),
+		)
 	}
 }
 
@@ -233,7 +265,7 @@ func newImageHTTPRouter(
 }
 
 type imageHTTPApplication struct {
-	asset          agentimage.Asset
+	asset          agentimage.Image
 	content        objectstore.SignedGetResult
 	upload         agentimage.UploadRequest
 	uploadBody     []byte
@@ -247,16 +279,16 @@ func (application *imageHTTPApplication) Upload(
 	_ context.Context,
 	_ requestcontext.Actor,
 	request agentimage.UploadRequest,
-) (agentimage.Asset, error) {
+) (agentimage.Image, error) {
 	application.uploadCalls++
 	application.upload = request
 	body, err := io.ReadAll(request.Body)
 	if err != nil {
-		return agentimage.Asset{}, err
+		return agentimage.Image{}, err
 	}
 	application.uploadBody = body
 	if application.uploadErr != nil {
-		return agentimage.Asset{}, application.uploadErr
+		return agentimage.Image{}, application.uploadErr
 	}
 	return application.asset, nil
 }
@@ -265,7 +297,7 @@ func (application *imageHTTPApplication) Get(
 	context.Context,
 	requestcontext.Actor,
 	string,
-) (agentimage.Asset, error) {
+) (agentimage.Image, error) {
 	return application.asset, nil
 }
 
@@ -292,25 +324,8 @@ func (application *imageHTTPApplication) MessageAssets(
 	requestcontext.Actor,
 	string,
 	string,
-) ([]agentimage.Asset, error) {
-	return []agentimage.Asset{application.asset}, nil
-}
-
-func (application *imageHTTPApplication) Attach(
-	context.Context,
-	requestcontext.Actor,
-	string,
-	string,
-	[]string,
-) ([]agentimage.Asset, error) {
-	return nil, nil
-}
-
-func (application *imageHTTPApplication) Reclaim(
-	context.Context,
-	int,
-) (agentimage.CleanupResult, error) {
-	return agentimage.CleanupResult{}, nil
+) ([]agentimage.Image, error) {
+	return []agentimage.Image{application.asset}, nil
 }
 
 type imageHTTPThreads struct {

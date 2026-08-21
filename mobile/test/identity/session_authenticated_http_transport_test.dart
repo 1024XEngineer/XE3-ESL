@@ -356,6 +356,7 @@ final class _RecordingTransport implements IdentityHttpTransport {
     required Uri uri,
     required Map<String, String> headers,
     String? body,
+    List<int>? bodyBytes,
   }) async {
     calls += 1;
     this.headers = headers;
@@ -375,6 +376,7 @@ final class _ControlledTransport implements IdentityHttpTransport {
     required Uri uri,
     required Map<String, String> headers,
     String? body,
+    List<int>? bodyBytes,
   }) {
     started.complete();
     return response;

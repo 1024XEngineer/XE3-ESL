@@ -84,3 +84,12 @@ func (processor *blockingRunProcessor) ProcessPending(
 	close(processor.completed)
 	return pendingRun, nil
 }
+
+func (processor *blockingRunProcessor) ProcessPendingStream(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	pendingRun run.Run,
+	_ run.StreamObserver,
+) (run.Run, error) {
+	return processor.ProcessPending(ctx, actor, pendingRun)
+}

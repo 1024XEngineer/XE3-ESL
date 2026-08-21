@@ -4,12 +4,12 @@ library;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
+import 'package:speakup/design/speak_up_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/coaching/evaluation/evaluation_report.dart';
-import 'package:speakup/features/coaching/review/ielts_speaking_report.dart';
-import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
-import 'package:speakup/features/coaching/review/ielts_speaking_report_view.dart';
+import 'package:speakup/features/coaching/review/evaluation_report_presentation.dart';
+import 'package:speakup/features/coaching/review/ielts_evaluation_overview.dart';
+import 'package:speakup/features/coaching/review/ielts_report_detail.dart';
 import 'package:speakup/features/coaching/review/review_history_client.dart';
 import 'package:speakup/features/coaching/review/review_history_controller.dart';
 
@@ -20,7 +20,6 @@ class ReviewPage extends StatefulWidget {
     this.previewMode = false,
     this.practiceAvailable = true,
     this.historyController,
-    this.ieltsSpeakingReportController,
     this.autoload = true,
     super.key,
   });
@@ -30,7 +29,6 @@ class ReviewPage extends StatefulWidget {
   final bool previewMode;
   final bool practiceAvailable;
   final ReviewHistoryController? historyController;
-  final IeltsSpeakingReportController? ieltsSpeakingReportController;
   final bool autoload;
 
   @override
@@ -38,265 +36,126 @@ class ReviewPage extends StatefulWidget {
 }
 
 class _ReviewPageState extends State<ReviewPage> {
-  String? _abilitySessionId;
-
   @override
   void initState() {
     super.initState();
-    widget.historyController?.addListener(_handleHistoryChanged);
-    widget.ieltsSpeakingReportController?.addListener(_rebuild);
-    if (widget.autoload) {
-      unawaited(_refresh());
-    } else {
-      _syncAbilityReport();
-    }
+    if (widget.autoload) unawaited(_refresh());
   }
 
   @override
   void didUpdateWidget(covariant ReviewPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.historyController != widget.historyController) {
-      oldWidget.historyController?.removeListener(_handleHistoryChanged);
-      widget.historyController?.addListener(_handleHistoryChanged);
-      if (widget.autoload) {
-        unawaited(widget.historyController?.refresh());
-      }
-    }
-    if (oldWidget.ieltsSpeakingReportController !=
-        widget.ieltsSpeakingReportController) {
-      if (_abilitySessionId case final sessionId?) {
-        oldWidget.ieltsSpeakingReportController?.cancel(sessionId);
-      }
-      oldWidget.ieltsSpeakingReportController?.removeListener(_rebuild);
-      widget.ieltsSpeakingReportController?.addListener(_rebuild);
-      _abilitySessionId = null;
-      _syncAbilityReport(force: true);
+    if (oldWidget.historyController != widget.historyController &&
+        widget.autoload) {
+      unawaited(widget.historyController?.refresh());
     }
   }
 
-  @override
-  void dispose() {
-    widget.historyController?.removeListener(_handleHistoryChanged);
-    widget.ieltsSpeakingReportController?.removeListener(_rebuild);
-    if (_abilitySessionId case final sessionId?) {
-      widget.ieltsSpeakingReportController?.cancel(sessionId);
-    }
-    super.dispose();
-  }
-
-  void _rebuild() {
-    if (!mounted) return;
-    if (SchedulerBinding.instance.schedulerPhase == SchedulerPhase.idle) {
-      setState(() {});
-      return;
-    }
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) setState(() {});
-    });
-  }
-
-  void _handleHistoryChanged() {
-    _syncAbilityReport();
-    _rebuild();
-  }
-
-  void _syncAbilityReport({bool force = false}) {
-    final reportController = widget.ieltsSpeakingReportController;
-    final historyController = widget.historyController;
-    if (reportController == null || historyController == null) return;
-    final readyReports = historyController.items.where(
-      (item) =>
-          item.report.sceneType == EvaluationReportSceneType.ieltsSpeaking,
-    );
-    if (readyReports.isEmpty) {
-      final previousSessionId = _abilitySessionId;
-      _abilitySessionId = null;
-      if (previousSessionId != null &&
-          reportController.practiceSessionId == previousSessionId) {
-        reportController.cancel(previousSessionId);
-      }
-      return;
-    }
-    final latest = readyReports.reduce(
-      (current, candidate) => candidate.completedAt.isAfter(current.completedAt)
-          ? candidate
-          : current,
-    );
-    final alreadyLoaded =
-        reportController.practiceSessionId == latest.practiceSessionId &&
-        (reportController.isLoading || reportController.envelope != null);
-    if (!force &&
-        _abilitySessionId == latest.practiceSessionId &&
-        alreadyLoaded) {
-      return;
-    }
-    _abilitySessionId = latest.practiceSessionId;
-    unawaited(reportController.load(latest.practiceSessionId));
-  }
-
-  Future<void> _refresh() async {
-    await widget.historyController?.refresh();
-    _syncAbilityReport();
-  }
+  Future<void> _refresh() async => widget.historyController?.refresh();
 
   void _openDetail(ReviewHistoryItem item) {
-    if (item.report.sceneType == EvaluationReportSceneType.ieltsSpeaking &&
-        widget.ieltsSpeakingReportController != null) {
-      _openIeltsReport(item);
-      return;
-    }
-    unawaited(
-      Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(builder: (_) => _ReviewDetailPage(item: item)),
-      ),
-    );
-  }
-
-  void _openIeltsReport(ReviewHistoryItem item) {
-    final controller = widget.ieltsSpeakingReportController;
-    if (controller == null) {
-      return;
-    }
-    unawaited(() async {
-      controller.removeListener(_rebuild);
-      try {
-        await Navigator.of(context).push<void>(
-          MaterialPageRoute<void>(
-            builder: (_) => _IeltsReportDetailPage(
-              practiceSessionId: item.practiceSessionId,
-              controller: controller,
-              cancelOnDispose: false,
-            ),
-          ),
-        );
-      } finally {
-        await Future<void>.delayed(Duration.zero);
-        if (mounted &&
-            identical(controller, widget.ieltsSpeakingReportController)) {
-          controller.addListener(_rebuild);
-          _syncAbilityReport(force: true);
-        }
-      }
-    }());
-  }
-
-  void _openHistory() {
     unawaited(
       Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
-          builder: (_) => _ReviewHistoryPage(
-            historyController: widget.historyController,
-            practiceAvailable: widget.practiceAvailable,
-            previewMode: widget.previewMode,
-            onRefresh: _refresh,
-            onOpenDetail: _openDetail,
-          ),
+          builder: (_) => ReviewReportDetailPage(item: item),
         ),
       ),
     );
   }
 
   @override
-  Widget build(BuildContext context) {
-    final abilityReport = _abilityReport();
-    return Scaffold(
-      key: const Key('review-page'),
-      appBar: widget.showBackButton || widget.onExit != null
-          ? AppBar(
-              leading: IconButton(
-                key: widget.showBackButton
-                    ? const Key('review-route-back-button')
-                    : const Key('review-exit-button'),
-                tooltip: '返回',
-                onPressed:
-                    widget.onExit ?? () => Navigator.of(context).maybePop(),
-                icon: const Icon(Icons.arrow_back_rounded),
-              ),
-            )
-          : null,
-      body: SafeArea(
-        bottom: false,
-        child: RefreshIndicator(
-          onRefresh: _refresh,
-          child: CustomScrollView(
-            key: const Key('review-overview-scroll'),
-            physics: const AlwaysScrollableScrollPhysics(),
-            slivers: [
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(8, 28, 8, 0),
-                sliver: SliverToBoxAdapter(
-                  child: _ReviewHeader(previewMode: widget.previewMode),
-                ),
-              ),
-              SliverPadding(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                sliver: SliverToBoxAdapter(
-                  child: _AbilityOverview(
-                    report: abilityReport,
-                    loading:
-                        abilityReport == null &&
-                        ((widget.historyController?.isLoading ?? false) ||
-                            (widget.ieltsSpeakingReportController?.isLoading ??
-                                false)),
-                  ),
-                ),
-              ),
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(8, 16, 8, 20),
-                sliver: SliverToBoxAdapter(
-                  child: Semantics(
-                    button: true,
-                    label: '进入历史报告',
-                    child: OutlinedButton(
-                      key: const Key('review-history-entry'),
-                      onPressed: _openHistory,
-                      child: const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text('历史报告'),
-                          SizedBox(width: 8),
-                          Icon(Icons.chevron_right_rounded),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              const SliverToBoxAdapter(child: SizedBox(height: 140)),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => _ReviewHistoryPage(
+    showBackButton: widget.showBackButton,
+    onExit: widget.onExit,
+    historyController: widget.historyController,
+    practiceAvailable: widget.practiceAvailable,
+    previewMode: widget.previewMode,
+    onRefresh: _refresh,
+    onOpenDetail: _openDetail,
+  );
+}
 
-  IeltsSpeakingReport? _abilityReport() {
-    final envelope = widget.ieltsSpeakingReportController?.envelope;
-    if (envelope == null ||
-        envelope.practiceSessionId != _abilitySessionId ||
-        envelope.evaluationStatus !=
-            IeltsSpeakingReportEvaluationStatus.ready) {
-      return null;
+bool _isFullMockIeltsReport(EvaluationReport report) =>
+    report.sceneType == EvaluationReportSceneType.ieltsSpeaking &&
+    report.practiceMode == 'FULL_MOCK';
+
+class CurrentIeltsAbilityProfile extends StatelessWidget {
+  const CurrentIeltsAbilityProfile({
+    required this.historyController,
+    super.key,
+  });
+
+  final ReviewHistoryController? historyController;
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = historyController;
+    if (controller == null) {
+      return const _CurrentIeltsAbility(report: null, loading: false);
     }
-    final report = envelope.report;
-    if (report == null) return null;
-    final byId = {
-      for (final criterion in report.criteria) criterion.id: criterion,
-    };
-    const required = <IeltsSpeakingCriterionId>{
-      IeltsSpeakingCriterionId.fluencyAndCoherence,
-      IeltsSpeakingCriterionId.lexicalResource,
-      IeltsSpeakingCriterionId.grammaticalRangeAndAccuracy,
-      IeltsSpeakingCriterionId.pronunciation,
-    };
-    if (required.any((id) => byId[id]?.estimatedBand == null)) return null;
-    return report;
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, _) {
+        final item = _latestFullMock(controller.items);
+        return _CurrentIeltsAbility(
+          report: item?.report,
+          loading: item == null && controller.isLoading,
+        );
+      },
+    );
   }
 }
 
-class _ReviewHistoryPage extends StatelessWidget {
+class _CurrentIeltsAbility extends StatelessWidget {
+  const _CurrentIeltsAbility({required this.report, required this.loading});
+
+  final EvaluationReport? report;
+  final bool loading;
+
+  @override
+  Widget build(BuildContext context) {
+    final current = report;
+    if (current != null) {
+      return IeltsEvaluationOverview(
+        report: current,
+        title: '当前 IELTS 能力',
+        scoreTitle: '当前估分',
+      );
+    }
+    return Card(
+      key: const Key('review-ability-empty'),
+      child: Padding(
+        padding: const EdgeInsets.all(SpeakUpDesign.space20),
+        child: loading
+            ? const Center(child: CircularProgressIndicator())
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('当前 IELTS 能力', style: SpeakUpDesign.cardTitle),
+                  const SizedBox(height: SpeakUpDesign.space12),
+                  Text('完成一次全真模考后，这里会显示四维能力与当前估分。', style: SpeakUpDesign.meta),
+                ],
+              ),
+      ),
+    );
+  }
+}
+
+ReviewHistoryItem? _latestFullMock(List<ReviewHistoryItem> items) {
+  ReviewHistoryItem? latest;
+  for (final item in items) {
+    if (!_isFullMockIeltsReport(item.report)) continue;
+    if (latest == null || item.completedAt.isAfter(latest.completedAt)) {
+      latest = item;
+    }
+  }
+  return latest;
+}
+
+class _ReviewHistoryPage extends StatefulWidget {
   const _ReviewHistoryPage({
+    required this.showBackButton,
+    required this.onExit,
     required this.historyController,
     required this.practiceAvailable,
     required this.previewMode,
@@ -304,6 +163,8 @@ class _ReviewHistoryPage extends StatelessWidget {
     required this.onOpenDetail,
   });
 
+  final bool showBackButton;
+  final VoidCallback? onExit;
   final ReviewHistoryController? historyController;
   final bool practiceAvailable;
   final bool previewMode;
@@ -311,35 +172,124 @@ class _ReviewHistoryPage extends StatelessWidget {
   final ValueChanged<ReviewHistoryItem> onOpenDetail;
 
   @override
+  State<_ReviewHistoryPage> createState() => _ReviewHistoryPageState();
+}
+
+class _ReviewHistoryPageState extends State<_ReviewHistoryPage> {
+  EvaluationReportSceneType? _sceneType;
+  bool _showInsufficient = false;
+
+  @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: Listenable.merge(<Listenable>[?historyController]),
+      animation: Listenable.merge(<Listenable>[?widget.historyController]),
       builder: (context, _) {
-        final items = historyController?.items ?? const <ReviewHistoryItem>[];
+        final allItems =
+            widget.historyController?.items ?? const <ReviewHistoryItem>[];
+        final sceneItems = allItems
+            .where(
+              (item) =>
+                  _sceneType == null || item.report.sceneType == _sceneType,
+            )
+            .toList(growable: false);
+        final insufficientCount = sceneItems
+            .where(
+              (item) =>
+                  item.report.scoreability ==
+                  EvaluationReportScoreability.insufficient,
+            )
+            .length;
+        final items = sceneItems
+            .where(
+              (item) =>
+                  _showInsufficient ||
+                  item.report.scoreability !=
+                      EvaluationReportScoreability.insufficient,
+            )
+            .toList(growable: false);
+        final hasAllItems = allItems.isNotEmpty;
         final hasItems = items.isNotEmpty;
         final initialLoading =
-            !hasItems && (historyController?.isLoading ?? false);
-        final initialError = !hasItems ? historyController?.errorMessage : null;
+            !hasAllItems && (widget.historyController?.isLoading ?? false);
+        final initialError = !hasAllItems
+            ? widget.historyController?.errorMessage
+            : null;
         return Scaffold(
-          key: const Key('review-history-page'),
-          appBar: AppBar(
-            leading: IconButton(
-              key: const Key('review-history-back'),
-              tooltip: '返回',
-              onPressed: () => Navigator.of(context).maybePop(),
-              icon: const Icon(Icons.arrow_back_rounded),
-            ),
-            title: const Text('历史报告'),
-          ),
+          key: const Key('review-page'),
+          appBar: widget.showBackButton || widget.onExit != null
+              ? AppBar(
+                  leading: IconButton(
+                    key: widget.showBackButton
+                        ? const Key('review-route-back-button')
+                        : const Key('review-exit-button'),
+                    tooltip: '返回',
+                    onPressed:
+                        widget.onExit ?? () => Navigator.of(context).maybePop(),
+                    icon: const Icon(Icons.arrow_back_rounded),
+                  ),
+                )
+              : null,
           body: SafeArea(
             bottom: false,
             child: RefreshIndicator(
-              onRefresh: onRefresh,
+              onRefresh: widget.onRefresh,
               child: CustomScrollView(
                 key: const Key('review-history-list'),
                 physics: const AlwaysScrollableScrollPhysics(),
                 slivers: [
-                  const SliverToBoxAdapter(child: SizedBox(height: 20)),
+                  SliverPadding(
+                    padding: EdgeInsets.fromLTRB(
+                      SpeakUpDesign.horizontalInset(context),
+                      SpeakUpDesign.space24,
+                      SpeakUpDesign.horizontalInset(context),
+                      0,
+                    ),
+                    sliver: SliverToBoxAdapter(
+                      child: _ReviewHeader(previewMode: widget.previewMode),
+                    ),
+                  ),
+                  if (hasAllItems)
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                      sliver: SliverToBoxAdapter(
+                        child: _ReviewFilters(
+                          selected: _sceneType,
+                          onSelected: (value) =>
+                              setState(() => _sceneType = value),
+                        ),
+                      ),
+                    ),
+                  if (hasAllItems)
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                      sliver: SliverToBoxAdapter(
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                '${items.length} 份报告',
+                                style: SpeakUpDesign.sectionTitle.copyWith(
+                                  fontSize: 18,
+                                ),
+                              ),
+                            ),
+                            if (insufficientCount > 0)
+                              TextButton(
+                                key: const Key('review-toggle-insufficient'),
+                                onPressed: () => setState(
+                                  () => _showInsufficient = !_showInsufficient,
+                                ),
+                                child: Text(
+                                  _showInsufficient
+                                      ? '隐藏未评分记录'
+                                      : '显示未评分记录（$insufficientCount）',
+                                  style: SpeakUpDesign.meta,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
                   if (initialLoading)
                     const SliverPadding(
                       padding: EdgeInsets.symmetric(horizontal: 20),
@@ -351,47 +301,58 @@ class _ReviewHistoryPage extends StatelessWidget {
                       sliver: SliverToBoxAdapter(
                         child: _HistoryFailure(
                           message: initialError,
-                          onRetry: onRefresh,
+                          onRetry: widget.onRefresh,
                         ),
                       ),
                     )
-                  else if (!hasItems)
+                  else if (!hasAllItems)
                     SliverPadding(
                       padding: const EdgeInsets.symmetric(horizontal: 20),
                       sliver: SliverToBoxAdapter(
                         child: _EmptyReview(
-                          practiceAvailable: practiceAvailable,
-                          previewMode: previewMode,
+                          practiceAvailable: widget.practiceAvailable,
+                          previewMode: widget.previewMode,
                         ),
                       ),
+                    )
+                  else if (!hasItems)
+                    const SliverPadding(
+                      padding: EdgeInsets.symmetric(horizontal: 20),
+                      sliver: SliverToBoxAdapter(child: _FilteredReviewEmpty()),
                     )
                   else ...[
                     if (items.isNotEmpty)
                       SliverPadding(
                         padding: const EdgeInsets.symmetric(horizontal: 20),
-                        sliver: SliverList(
+                        sliver: SliverGrid(
+                          gridDelegate:
+                              const SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: 2,
+                                crossAxisSpacing: 12,
+                                mainAxisSpacing: 12,
+                                mainAxisExtent: 128,
+                              ),
                           delegate: SliverChildBuilderDelegate((
                             context,
                             index,
                           ) {
-                            if (index.isOdd) {
-                              return const SizedBox(height: 10);
-                            }
-                            final item = items[index ~/ 2];
+                            final item = items[index];
                             return _ReviewListCard(
                               item: item,
                               primary: index == 0,
-                              onTap: () => onOpenDetail(item),
+                              onTap: () => widget.onOpenDetail(item),
                             );
-                          }, childCount: items.length * 2 - 1),
+                          }, childCount: items.length),
                         ),
                       ),
                   ],
-                  if (items.isNotEmpty && historyController != null)
+                  if (allItems.isNotEmpty && widget.historyController != null)
                     SliverPadding(
                       padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
                       sliver: SliverToBoxAdapter(
-                        child: _HistoryFooter(controller: historyController!),
+                        child: _HistoryFooter(
+                          controller: widget.historyController!,
+                        ),
                       ),
                     ),
                   const SliverToBoxAdapter(child: SizedBox(height: 48)),
@@ -405,29 +366,6 @@ class _ReviewHistoryPage extends StatelessWidget {
   }
 }
 
-class _AbilityOverview extends StatelessWidget {
-  const _AbilityOverview({required this.report, required this.loading});
-
-  final IeltsSpeakingReport? report;
-  final bool loading;
-
-  @override
-  Widget build(BuildContext context) {
-    if (report case final value?) {
-      return IeltsSpeakingAbilityProfile(
-        key: const Key('review-ability-card'),
-        report: value,
-        loading: false,
-      );
-    }
-    return IeltsSpeakingAbilityProfile(
-      key: const Key('review-ability-card'),
-      report: null,
-      loading: loading,
-    );
-  }
-}
-
 class _ReviewHeader extends StatelessWidget {
   const _ReviewHeader({required this.previewMode});
 
@@ -436,14 +374,61 @@ class _ReviewHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 24),
+      padding: const EdgeInsets.only(bottom: SpeakUpDesign.space16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('复盘', style: SpeakUpDesign.pageTitle),
+          const SpeakUpDisplayTitle(
+            key: Key('review-page-title'),
+            title: 'Review',
+            semanticLabel: '复盘',
+          ),
           if (previewMode) ...[
             const SizedBox(height: 8),
             Text('本地预览；结果不会写入正式服务。', style: SpeakUpDesign.body),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ReviewFilters extends StatelessWidget {
+  const _ReviewFilters({required this.selected, required this.onSelected});
+
+  final EvaluationReportSceneType? selected;
+  final ValueChanged<EvaluationReportSceneType?> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    const options = <(String, EvaluationReportSceneType?)>[
+      ('全部', null),
+      ('面试', EvaluationReportSceneType.interview),
+      ('雅思', EvaluationReportSceneType.ieltsSpeaking),
+      ('日常英语', EvaluationReportSceneType.overseasDailyLife),
+      ('职场英语', EvaluationReportSceneType.overseasWorkplace),
+    ];
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          for (var index = 0; index < options.length; index++) ...[
+            if (index > 0) const SizedBox(width: 6),
+            ChoiceChip(
+              label: Text(options[index].$1),
+              selected: selected == options[index].$2,
+              showCheckmark: false,
+              backgroundColor: SpeakUpDesign.primaryMuted,
+              selectedColor: SpeakUpDesign.ink,
+              side: BorderSide.none,
+              shape: const StadiumBorder(),
+              labelStyle: SpeakUpDesign.label.copyWith(
+                color: selected == options[index].$2
+                    ? Colors.white
+                    : SpeakUpDesign.ink,
+              ),
+              onSelected: (_) => onSelected(options[index].$2),
+            ),
           ],
         ],
       ),
@@ -467,11 +452,14 @@ class _ReviewListCard extends StatelessWidget {
     final review = item.review;
     final date = _compactDateLabel(item.completedAt);
     final status = _statusLabel(item.report);
+    final content = _reviewCardContent(item);
+    final imagePath = _reviewImage(item);
     return Semantics(
       key: primary ? const Key('review-content') : null,
       button: true,
       excludeSemantics: true,
-      label: '${review.title}，摘要：${review.summary}，$date，$status，查看复盘详情',
+      label:
+          '${content.title}，${content.detail ?? ''}，摘要：${review.summary}，$date，$status，查看复盘详情',
       onTap: onTap,
       child: Card(
         key: Key('review-history-${review.id}'),
@@ -479,48 +467,53 @@ class _ReviewListCard extends StatelessWidget {
         child: InkWell(
           key: Key('review-history-select-${review.id}'),
           onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 15, 12, 15),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        review.title,
-                        key: primary ? const Key('review-title') : null,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: SpeakUpDesign.cardTitle,
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        review.summary,
-                        key: Key('review-list-summary-${review.id}'),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: SpeakUpDesign.body,
-                      ),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 6,
-                        children: [
-                          Text(date, style: SpeakUpDesign.meta),
-                          _StatusLabel(label: status),
-                        ],
-                      ),
-                    ],
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Image.asset(
+                imagePath,
+                fit: BoxFit.cover,
+                excludeFromSemantics: true,
+              ),
+              const DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Colors.transparent, Color(0xB8000000)],
+                    stops: [0.38, 1],
                   ),
                 ),
-                const SizedBox(width: 10),
-                const Icon(
-                  Icons.chevron_right_rounded,
-                  color: SpeakUpDesign.secondary,
+              ),
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Spacer(),
+                    Text(
+                      content.title,
+                      key: primary ? const Key('review-title') : null,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: SpeakUpDesign.cardTitle.copyWith(
+                        color: Colors.white,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: SpeakUpDesign.space4),
+                    Text(
+                      [content.detail, date].nonNulls.join(' · '),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: SpeakUpDesign.meta.copyWith(
+                        color: Colors.white.withValues(alpha: 0.82),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
@@ -528,24 +521,71 @@ class _ReviewListCard extends StatelessWidget {
   }
 }
 
-class _StatusLabel extends StatelessWidget {
-  const _StatusLabel({required this.label});
+({String title, String? detail}) _reviewCardContent(ReviewHistoryItem item) {
+  final report = item.report;
+  if (report.sceneType == EvaluationReportSceneType.ieltsSpeaking) {
+    if (report.practiceMode == 'FULL_MOCK') {
+      return (title: 'IELTS 模考', detail: null);
+    }
+    final part = switch (report.practiceMode) {
+      'PART_1' => 'Part 1',
+      'PART_2' => 'Part 2',
+      'PART_3' => 'Part 3',
+      _ => 'IELTS',
+    };
+    return (title: 'IELTS 专项', detail: part);
+  }
+  if (report.sceneType == EvaluationReportSceneType.interview) {
+    return (title: '模拟面试', detail: 'Interview');
+  }
+  final title = item.review.title.replaceFirst(RegExp(r'\s*·\s*证据不足$'), '');
+  return (title: title, detail: 'Review');
+}
 
-  final String label;
+class _FilteredReviewEmpty extends StatelessWidget {
+  const _FilteredReviewEmpty();
 
   @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: SpeakUpDesign.primaryMuted,
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-        child: Text(label, style: SpeakUpDesign.meta),
-      ),
-    );
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 48),
+    child: Center(child: Text('暂无该类型的复盘报告', style: SpeakUpDesign.body)),
+  );
+}
+
+String _reviewImage(ReviewHistoryItem item) {
+  final report = item.report;
+  if (report.sceneType == EvaluationReportSceneType.ieltsSpeaking) {
+    return switch (report.practiceMode) {
+      'FULL_MOCK' => 'assets/images/scenes/review-ielts-full-mock.webp',
+      'PART_1' => 'assets/images/scenes/review-ielts-part-1.webp',
+      'PART_2' => 'assets/images/scenes/review-ielts-part-2.webp',
+      'PART_3' => 'assets/images/scenes/review-ielts-part-3.webp',
+      _ => 'assets/images/scenes/review-ielts-full-mock.webp',
+    };
   }
+  final candidates = switch (report.sceneType) {
+    EvaluationReportSceneType.interview => const [
+      'assets/images/scenes/review-interview-room.webp',
+      'assets/images/scenes/review-interview-remote.webp',
+      'assets/images/scenes/review-interview-ready.webp',
+    ],
+    EvaluationReportSceneType.ieltsSpeaking => const <String>[],
+    EvaluationReportSceneType.overseasWorkplace => const [
+      'assets/images/scenes/workplace-scene.jpg',
+      'assets/images/scenes/practice-workplace.webp',
+      'assets/images/scenes/ielts-topic-technology-media.webp',
+    ],
+    EvaluationReportSceneType.overseasDailyLife => const [
+      'assets/images/scenes/travel-scene.jpg',
+      'assets/images/scenes/small-talk.jpg',
+      'assets/images/scenes/practice-travel.webp',
+    ],
+  };
+  final hash = item.review.id.codeUnits.fold<int>(
+    0,
+    (sum, value) => sum + value,
+  );
+  return candidates[hash % candidates.length];
 }
 
 class _HistoryLoading extends StatelessWidget {
@@ -660,66 +700,27 @@ class _EmptyReview extends StatelessWidget {
   }
 }
 
-class _IeltsReportDetailPage extends StatefulWidget {
-  const _IeltsReportDetailPage({
-    required this.practiceSessionId,
-    required this.controller,
-    this.cancelOnDispose = true,
-  });
-
-  final String practiceSessionId;
-  final IeltsSpeakingReportController controller;
-  final bool cancelOnDispose;
-
-  @override
-  State<_IeltsReportDetailPage> createState() => _IeltsReportDetailPageState();
-}
-
-class _IeltsReportDetailPageState extends State<_IeltsReportDetailPage> {
-  @override
-  void initState() {
-    super.initState();
-    unawaited(widget.controller.load(widget.practiceSessionId));
-  }
-
-  @override
-  void dispose() {
-    if (widget.cancelOnDispose) {
-      widget.controller.cancel(widget.practiceSessionId);
-    }
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      key: const Key('ielts-speaking-report-detail-page'),
-      appBar: AppBar(title: const Text('IELTS 口语模考报告')),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 20, 20, 40),
-          child: IeltsSpeakingReportPanel(controller: widget.controller),
-        ),
-      ),
-    );
-  }
-}
-
-class _ReviewDetailPage extends StatelessWidget {
-  const _ReviewDetailPage({required this.item});
+class ReviewReportDetailPage extends StatelessWidget {
+  const ReviewReportDetailPage({required this.item, super.key});
 
   final ReviewHistoryItem item;
 
   @override
   Widget build(BuildContext context) {
     final report = item.report;
+    final isIeltsReport =
+        report.sceneType == EvaluationReportSceneType.ieltsSpeaking;
+    final isPart1Report = isIeltsReport && report.practiceMode == 'PART_1';
     final findings = report.dimensions
         .expand((dimension) => dimension.improvements)
         .toList(growable: false);
     return Scaffold(
       key: const Key('review-detail-page'),
       appBar: AppBar(
-        title: const Text('复盘详情'),
+        title: Text(
+          isIeltsReport ? evaluationReportTitle(report) : '复盘详情',
+          key: isIeltsReport ? const Key('review-detail-title') : null,
+        ),
         leading: IconButton(
           key: const Key('review-detail-back'),
           tooltip: '返回复盘历史',
@@ -731,23 +732,28 @@ class _ReviewDetailPage extends StatelessWidget {
         top: false,
         child: ListView(
           key: const Key('review-detail-content'),
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 48),
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 48),
           children: [
-            _ReviewDetailHeader(item: item),
-            const SizedBox(height: 12),
-            _ReviewDetailSection(
-              key: const Key('review-detail-summary'),
-              title: '整体表现',
-              body: report.summary,
-            ),
+            if (!isPart1Report)
+              _ReviewDetailHeader(
+                item: item,
+                showTitle: !isIeltsReport,
+                showSummary: !isPart1Report,
+              ),
             if (report.scoreability ==
                 EvaluationReportScoreability.insufficient) ...[
               const SizedBox(height: 12),
               const _ReviewStatusNotice(),
             ],
-            const SizedBox(height: 12),
-            _ReviewDimensions(dimensions: report.dimensions),
-            if (findings.isNotEmpty) ...[
+            if (isIeltsReport) ...[
+              if (!isPart1Report) const SizedBox(height: 12),
+              IeltsReportDetailContent(report: report),
+            ],
+            if (!isIeltsReport && report.dimensions.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              _ReviewDimensions(dimensions: report.dimensions),
+            ],
+            if (!isIeltsReport && findings.isNotEmpty) ...[
               const SizedBox(height: 12),
               _ReviewFindings(report: report, findings: findings),
             ],
@@ -759,69 +765,62 @@ class _ReviewDetailPage extends StatelessWidget {
 }
 
 class _ReviewDetailHeader extends StatelessWidget {
-  const _ReviewDetailHeader({required this.item});
+  const _ReviewDetailHeader({
+    required this.item,
+    required this.showTitle,
+    this.showSummary = true,
+  });
 
   final ReviewHistoryItem item;
+  final bool showTitle;
+  final bool showSummary;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      color: SpeakUpDesign.primaryMuted,
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Wrap(
-              spacing: 8,
-              children: [
-                _StatusLabel(label: _statusLabel(item.report)),
-                Text(
-                  _detailDateLabel(item.completedAt),
-                  style: SpeakUpDesign.meta,
-                ),
-              ],
-            ),
-            const SizedBox(height: 14),
+    final summary = _visibleReviewSummary(item.report.summary);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: SpeakUpDesign.space8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (showTitle) ...[
             Text(
               item.review.title,
               key: const Key('review-detail-title'),
               style: SpeakUpDesign.sectionTitle.copyWith(fontSize: 24),
             ),
+            const SizedBox(height: SpeakUpDesign.space4),
           ],
-        ),
+          Text(
+            '${_detailDateLabel(item.completedAt)} · ${_statusLabel(item.report)}',
+            style: SpeakUpDesign.meta,
+          ),
+          if (showSummary && summary != null) ...[
+            const SizedBox(height: SpeakUpDesign.space12),
+            Text(
+              summary,
+              key: const Key('review-detail-summary'),
+              style: SpeakUpDesign.body,
+            ),
+          ],
+        ],
       ),
     );
   }
 }
 
-class _ReviewDetailSection extends StatelessWidget {
-  const _ReviewDetailSection({
-    required this.title,
-    required this.body,
-    super.key,
-  });
-
-  final String title;
-  final String body;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(title, style: SpeakUpDesign.cardTitle),
-            const SizedBox(height: 8),
-            Text(body, style: SpeakUpDesign.body),
-          ],
-        ),
-      ),
-    );
-  }
-}
+String? _visibleReviewSummary(String summary) =>
+    const <String>{
+      '本次练习已形成场景沟通评估，可按优先行动继续复练。',
+      '本次练习已形成面试表达评估，可按优先行动继续复练。',
+      '本次练习已形成 IELTS 口语评估，可按优先行动继续复练。',
+      '本次练习已形成面试表达评估。',
+      '本次回答已经形成可复盘的文本反馈。',
+      '当前回答不足以形成可靠结论。',
+      '本次练习的有效证据不足，暂不形成能力结论。',
+    }.contains(summary)
+    ? null
+    : summary;
 
 class _ReviewStatusNotice extends StatelessWidget {
   const _ReviewStatusNotice();
@@ -884,7 +883,7 @@ class _ReviewDimensionRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final score = dimension.score;
-    final strengths = dimension.strengths.map((item) => item.message).join('；');
+    final strength = dimension.strengths.firstOrNull?.message;
     return Column(
       key: Key('review-dimension-${dimension.key}'),
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -901,12 +900,23 @@ class _ReviewDimensionRow extends StatelessWidget {
               Text(
                 _scoreLabel(score, dimension.scale),
                 style: SpeakUpDesign.label,
-              ),
+              )
+            else
+              Text('未评分', style: SpeakUpDesign.meta),
           ],
         ),
-        if (strengths.isNotEmpty) ...[
-          const SizedBox(height: 6),
-          Text(strengths, style: SpeakUpDesign.body),
+        if (dimension.coverage < 1) ...[
+          const SizedBox(height: 4),
+          Text(
+            '证据覆盖 ${(dimension.coverage * 100).round()}%',
+            style: SpeakUpDesign.meta,
+          ),
+        ],
+        if (strength != null) ...[
+          const SizedBox(height: 8),
+          Text('表现', style: SpeakUpDesign.meta),
+          const SizedBox(height: 2),
+          Text(strength, style: SpeakUpDesign.body),
         ],
       ],
     );
@@ -924,6 +934,12 @@ class _ReviewFindings extends StatelessWidget {
     final priorityIds = report.priorityActions
         .map((item) => item.findingId)
         .toSet();
+    final ordered = <EvaluationReportFinding>[
+      ...findings.where((finding) => priorityIds.contains(finding.id)),
+      ...findings.where((finding) => !priorityIds.contains(finding.id)),
+    ];
+    final primary = ordered.first;
+    final remaining = ordered.skip(1).toList(growable: false);
     return Card(
       key: const Key('review-detail-feedback'),
       child: Padding(
@@ -931,26 +947,64 @@ class _ReviewFindings extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('改进建议', style: SpeakUpDesign.cardTitle),
+            Text('下一步先练', style: SpeakUpDesign.cardTitle),
             const SizedBox(height: 14),
-            for (var index = 0; index < findings.length; index++) ...[
-              if (index > 0) const Divider(height: 24),
-              Column(
-                key: Key('review-feedback-${findings[index].id}'),
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (priorityIds.contains(findings[index].id))
-                    const _StatusLabel(label: '优先练习'),
-                  if (priorityIds.contains(findings[index].id))
-                    const SizedBox(height: 8),
-                  Text(findings[index].message, style: SpeakUpDesign.body),
-                  if (findings[index].suggestion case final suggestion?) ...[
-                    if (suggestion != findings[index].message) ...[
-                      const SizedBox(height: 6),
-                      Text('建议：$suggestion', style: SpeakUpDesign.body),
-                    ],
+            Column(
+              key: Key('review-feedback-${primary.id}'),
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  primary.message,
+                  style: SpeakUpDesign.body.copyWith(color: SpeakUpDesign.ink),
+                ),
+                if (primary.suggestion case final suggestion?) ...[
+                  if (suggestion != primary.message) ...[
+                    const SizedBox(height: 6),
+                    Text('建议：$suggestion', style: SpeakUpDesign.body),
                   ],
                 ],
+              ],
+            ),
+            if (remaining.isNotEmpty) ...[
+              const SizedBox(height: SpeakUpDesign.space8),
+              Theme(
+                data: Theme.of(
+                  context,
+                ).copyWith(dividerColor: Colors.transparent),
+                child: ExpansionTile(
+                  key: const Key('review-feedback-more'),
+                  tilePadding: EdgeInsets.zero,
+                  childrenPadding: EdgeInsets.zero,
+                  dense: true,
+                  title: Text(
+                    '查看其余 ${remaining.length} 条建议',
+                    style: SpeakUpDesign.label,
+                  ),
+                  children: [
+                    for (final finding in remaining)
+                      Padding(
+                        key: Key('review-feedback-${finding.id}'),
+                        padding: const EdgeInsets.only(
+                          bottom: SpeakUpDesign.space12,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(finding.message, style: SpeakUpDesign.body),
+                            if (finding.suggestion case final suggestion?) ...[
+                              if (suggestion != finding.message) ...[
+                                const SizedBox(height: 6),
+                                Text(
+                                  '建议：$suggestion',
+                                  style: SpeakUpDesign.body,
+                                ),
+                              ],
+                            ],
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
               ),
             ],
           ],
@@ -966,13 +1020,15 @@ String _statusLabel(EvaluationReport report) =>
     : '已完成';
 
 String _scoreLabel(double value, EvaluationReportScoreScale scale) {
-  final formatted = value == value.roundToDouble()
-      ? value.toInt().toString()
-      : value.toStringAsFixed(1);
+  final formatted = _scoreValueLabel(value);
   return scale == EvaluationReportScoreScale.ieltsBand
       ? '$formatted / 9'
       : '$formatted / 100';
 }
+
+String _scoreValueLabel(double value) => value == value.roundToDouble()
+    ? value.toInt().toString()
+    : value.toStringAsFixed(1);
 
 String _dimensionLabel(String key) {
   return const <String, String>{
@@ -985,14 +1041,21 @@ String _dimensionLabel(String key) {
         'LEXICAL_RESOURCE': '词汇资源',
         'GRAMMATICAL_RANGE_ACCURACY': '语法范围与准确性',
         'PRONUNCIATION': '发音',
+        'TASK_ACHIEVEMENT': '任务达成',
+        'CLARITY_COHERENCE': '清晰度与连贯性',
+        'LANGUAGE_CONTROL': '语言运用',
+        'INTERACTION': '互动表现',
+        'IELTS_FC': '流利与连贯',
+        'IELTS_LR': '词汇资源',
+        'IELTS_GRA': '语法范围与准确性',
+        'IELTS_PR': '发音',
       }[key] ??
-      key.toLowerCase().replaceAll('_', ' ');
+      '未识别评分维度';
 }
 
 String _compactDateLabel(DateTime value) {
   final local = value.toLocal();
-  String twoDigits(int number) => number.toString().padLeft(2, '0');
-  return '${local.year}-${twoDigits(local.month)}-${twoDigits(local.day)}';
+  return '${local.month}月${local.day}日';
 }
 
 String _detailDateLabel(DateTime value) {

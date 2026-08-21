@@ -29,7 +29,7 @@ func (r repositoryStub) CreateUserWithCredential(
 	ctx context.Context,
 	email string,
 	hash string,
-	_ ...*string,
+	_ *string,
 ) (User, error) {
 	return r.createUser(ctx, email, hash)
 }
@@ -155,6 +155,7 @@ func TestRegisterNormalizesEmailAndMapsConcurrentConflict(t *testing.T) {
 		context.Background(),
 		" Learner@Example.COM ",
 		"correct horse battery staple",
+		nil,
 	)
 	if !errors.Is(err, ErrRegistrationUnavailable) {
 		t.Fatalf("unexpected error: %v", err)
@@ -189,11 +190,7 @@ func TestLoginUsesDummyHashForUnknownAccount(t *testing.T) {
 }
 
 func TestLoginHidesUnavailableAccountState(t *testing.T) {
-	for _, status := range []AccountStatus{
-		AccountDisabled,
-		AccountDeleting,
-		AccountDeleted,
-	} {
+	for _, status := range []AccountStatus{AccountDeleting} {
 		t.Run(string(status), func(t *testing.T) {
 			repository := completeRepositoryStub()
 			repository.findCredential = func(
@@ -323,6 +320,7 @@ func TestServicePropagatesPasswordContext(t *testing.T) {
 		ctx,
 		"learner@example.com",
 		"correct horse battery staple",
+		nil,
 	); !errors.Is(err, context.Canceled) {
 		t.Fatalf("register cancellation = %v", err)
 	}
@@ -403,6 +401,7 @@ func TestConcurrentRegistrationHasOneWinner(t *testing.T) {
 				context.Background(),
 				"learner@example.com",
 				"correct horse battery staple",
+				nil,
 			)
 			switch {
 			case err == nil:

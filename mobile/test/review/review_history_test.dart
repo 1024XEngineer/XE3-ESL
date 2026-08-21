@@ -26,7 +26,7 @@ import '../support/practice_fixtures.dart';
 
 void main() {
   test('wire client sends Bearer and decodes a bounded stable page', () async {
-    const cursor = 'cursor.token';
+    const cursor = 'cursor_token';
     final transport = _Transport(
       IdentityHttpResponse(
         statusCode: HttpStatus.ok,
@@ -351,6 +351,41 @@ void main() {
     expect(client.requests, hasLength(1));
   });
 
+  testWidgets('Shell refreshes cached history when the Profile tab is opened', (
+    tester,
+  ) async {
+    final client = _SequencedControlledClient();
+    final historyController = ReviewHistoryController(client: client);
+    final harness = await _completedShellHarness(_newerId);
+    addTearDown(historyController.dispose);
+    addTearDown(harness.dispose);
+
+    final initialRefresh = historyController.refresh();
+    client.complete(0, ReviewHistoryPage(items: [_item(_olderId, score: 78)]));
+    await initialRefresh;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SpeakUpShell(
+          conversationController: harness.conversation,
+          composerController: harness.composer,
+          practiceController: harness.practice,
+          reviewHistoryController: historyController,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(historyController.items, hasLength(1));
+    expect(client.requests, hasLength(1));
+
+    await tester.tap(find.byKey(const Key('primary-tab-profile')));
+    await tester.pump();
+
+    expect(client.requests, hasLength(2));
+    expect(client.requests.last.cursor, isNull);
+  });
+
   testWidgets('Practice restore does not trigger Review history loading', (
     tester,
   ) async {
@@ -467,17 +502,15 @@ void main() {
       await tester.pump();
       expect(
         find.byKey(const Key('review-history-initial-loading')),
-        findsNothing,
+        findsOneWidget,
       );
-      await tester.tap(find.byKey(const Key('review-history-entry')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
-      expect(find.byKey(const Key('review-history-page')), findsOneWidget);
+      expect(find.byKey(const Key('review-page')), findsOneWidget);
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('review-content')), findsOneWidget);
       expect(find.byKey(const Key('review-title')), findsOneWidget);
-      expect(find.text('summary-91'), findsOneWidget);
       await _ensureHistoryVisible(
         tester,
         find.byKey(const Key('review-history-load-more')),
@@ -538,7 +571,7 @@ void main() {
     await tester.pump();
     expect(
       find.byKey(const Key('review-history-initial-loading')),
-      findsNothing,
+      findsOneWidget,
     );
     await _expandHistory(tester);
     expect(find.byKey(const Key('review-history-error')), findsOneWidget);
@@ -596,8 +629,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(client.cursors, <String?>[null, null, null]);
-      expect(find.text('本次练习 · 92 分'), findsOneWidget);
-      expect(find.text('summary-92'), findsOneWidget);
+      expect(find.byKey(const Key('review-history-$_newerId')), findsOneWidget);
       expect(controller.hasMore, isFalse);
     },
   );
@@ -650,9 +682,8 @@ void main() {
     expect(find.byKey(const Key('review-content')), findsNothing);
     expect(
       find.byKey(const Key('review-history-initial-loading')),
-      findsNothing,
+      findsOneWidget,
     );
-    await tester.tap(find.byKey(const Key('review-history-entry')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     expect(
@@ -719,8 +750,8 @@ void main() {
     expect(find.byKey(const Key('review-history-$_newerId')), findsOneWidget);
     expect(find.byKey(const Key('review-history-$_olderId')), findsOneWidget);
     expect(find.byKey(const Key('review-content')), findsOneWidget);
-    expect(find.text('summary-91'), findsOneWidget);
-    expect(find.text('summary-78'), findsOneWidget);
+    expect(find.text('summary-91'), findsNothing);
+    expect(find.text('summary-78'), findsNothing);
 
     await _ensureHistoryVisible(
       tester,
@@ -762,7 +793,7 @@ void main() {
 
     expect(find.byKey(Key('review-history-${item.review.id}')), findsOneWidget);
     expect(find.byKey(const Key('review-detail-page')), findsNothing);
-    expect(find.text(item.review.summary), findsOneWidget);
+    expect(find.text(item.review.summary), findsNothing);
     expect(
       tester
           .getSize(find.byKey(Key('review-history-${item.review.id}')))
@@ -828,7 +859,14 @@ void main() {
           reasonCodes: <String>['ASR_CONFIDENCE_UNAVAILABLE'],
           evidenceRefIds: <String>['evidence_2'],
           strengths: <EvaluationReportFinding>[],
-          improvements: <EvaluationReportFinding>[],
+          improvements: <EvaluationReportFinding>[
+            EvaluationReportFinding(
+              id: 'correction_2',
+              message: 'Add one measurable outcome.',
+              suggestion: 'Name the time saved after the migration.',
+              evidence: <EvaluationReportEvidence>[],
+            ),
+          ],
           recommendedExamples: <EvaluationReportFinding>[],
         ),
       ],
@@ -859,9 +897,19 @@ void main() {
     expect(find.text('回答结构'), findsOneWidget);
     expect(find.text('82 / 100'), findsOneWidget);
     expect(find.byKey(const Key('review-detail-feedback')), findsOneWidget);
-    expect(find.text('优先练习'), findsOneWidget);
+    expect(find.text('下一步先练'), findsOneWidget);
+    expect(find.text('I responsible for the migration.'), findsOneWidget);
     expect(
-      find.textContaining('I was responsible for the migration.'),
+      find.text('建议：I was responsible for the migration.'),
+      findsOneWidget,
+    );
+    expect(find.text('查看其余 1 条建议'), findsOneWidget);
+    expect(find.text('Name the time saved after the migration.'), findsNothing);
+    await tester.tap(find.text('查看其余 1 条建议'));
+    await tester.pumpAndSettle();
+    expect(find.text('Add one measurable outcome.'), findsOneWidget);
+    expect(
+      find.text('建议：Name the time saved after the migration.'),
       findsOneWidget,
     );
     expect(find.textContaining('面试复盘 ·'), findsNothing);
@@ -887,6 +935,42 @@ void main() {
           improvements: <EvaluationReportFinding>[],
           recommendedExamples: <EvaluationReportFinding>[],
         ),
+        EvaluationReportDimension(
+          key: 'LEXICAL_RESOURCE',
+          score: 6,
+          scale: EvaluationReportScoreScale.ieltsBand,
+          coverage: 1,
+          confidence: 0.8,
+          reasonCodes: <String>[],
+          evidenceRefIds: <String>[],
+          strengths: <EvaluationReportFinding>[],
+          improvements: <EvaluationReportFinding>[],
+          recommendedExamples: <EvaluationReportFinding>[],
+        ),
+        EvaluationReportDimension(
+          key: 'GRAMMATICAL_RANGE_ACCURACY',
+          score: 6.5,
+          scale: EvaluationReportScoreScale.ieltsBand,
+          coverage: 1,
+          confidence: 0.8,
+          reasonCodes: <String>[],
+          evidenceRefIds: <String>[],
+          strengths: <EvaluationReportFinding>[],
+          improvements: <EvaluationReportFinding>[],
+          recommendedExamples: <EvaluationReportFinding>[],
+        ),
+        EvaluationReportDimension(
+          key: 'PRONUNCIATION',
+          score: 4.5,
+          scale: EvaluationReportScoreScale.ieltsBand,
+          coverage: 0.87,
+          confidence: 0.8,
+          reasonCodes: <String>['PARTIAL_ACOUSTIC_COVERAGE'],
+          evidenceRefIds: <String>[],
+          strengths: <EvaluationReportFinding>[],
+          improvements: <EvaluationReportFinding>[],
+          recommendedExamples: <EvaluationReportFinding>[],
+        ),
       ],
     );
     final controller = ReviewHistoryController(
@@ -899,14 +983,454 @@ void main() {
     );
     await tester.pumpAndSettle();
     await _expandHistory(tester);
-    expect(find.text('IELTS 口语复盘'), findsOneWidget);
+    expect(find.text('IELTS 模考'), findsOneWidget);
     await tester.tap(
       find.byKey(Key('review-history-select-${item.review.id}')),
     );
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('review-detail-status-notice')), findsNothing);
+    expect(find.text('题目与作答'), findsOneWidget);
+    expect(
+      find.textContaining('Tell me about your experience.'),
+      findsOneWidget,
+    );
     expect(find.text('7.5 / 9'), findsOneWidget);
+    expect(find.byKey(const Key('ielts-evaluation-radar')), findsOneWidget);
+    expect(find.text('每一项的依据与建议'), findsOneWidget);
+    for (final key in const <String>[
+      'FLUENCY_COHERENCE',
+      'LEXICAL_RESOURCE',
+      'GRAMMATICAL_RANGE_ACCURACY',
+      'PRONUNCIATION',
+    ]) {
+      expect(find.byKey(Key('ielts-criterion-$key')), findsOneWidget);
+    }
+    expect(
+      tester
+          .widget<Text>(find.byKey(const Key('ielts-evaluation-overall-score')))
+          .data,
+      '6',
+    );
+    expect(find.text('证据覆盖 87%'), findsOneWidget);
+  });
+
+  testWidgets(
+    'Part 1 report shows score and priority actions before collapsed details',
+    (tester) async {
+      const grammarFinding = EvaluationReportFinding(
+        id: 'grammar-priority',
+        message: '第三人称单数和句子结构需要更准确。',
+        suggestion: '使用 it gives，并把断开的句子合并完整。',
+        evidence: <EvaluationReportEvidence>[
+          EvaluationReportEvidence(
+            evidenceRefId: 'grammar-evidence',
+            turnId: 'turn-grammar',
+            startUtf8Byte: 0,
+            endUtf8Byte: 12,
+            originalExcerpt: 'it give me energy',
+          ),
+        ],
+      );
+      const secondaryGrammarFinding = EvaluationReportFinding(
+        id: 'grammar-secondary',
+        message: '这条普通语法建议不应盖过后端指定的优先项。',
+        suggestion: '先处理优先项后再看这条建议。',
+        evidence: <EvaluationReportEvidence>[],
+      );
+      const pronunciationFinding = EvaluationReportFinding(
+        id: 'pronunciation-priority',
+        message: '部分音素影响了表达清晰度。',
+        suggestion: '先慢速重读目标词，再恢复正常语速。',
+        evidence: <EvaluationReportEvidence>[
+          EvaluationReportEvidence(
+            evidenceRefId: 'pronunciation-evidence',
+            turnId: 'turn-pronunciation',
+            startUtf8Byte: 0,
+            endUtf8Byte: 10,
+            originalExcerpt: 'music theory',
+          ),
+        ],
+      );
+      final item = _sceneItem(
+        id: 'review-v2-ielts-part1',
+        sceneType: EvaluationReportSceneType.ieltsSpeaking,
+        scoreability: EvaluationReportScoreability.provisional,
+        practiceMode: 'PART_1',
+        summary: '这段较长的总结不应抢在估分前展示。',
+        dimensions: <EvaluationReportDimension>[
+          _part1Dimension(
+            key: 'FLUENCY_COHERENCE',
+            score: 7.5,
+            improvementMessage: '完整流利性详情',
+          ),
+          _part1Dimension(
+            key: 'LEXICAL_RESOURCE',
+            score: 7,
+            improvementMessage: '完整词汇详情',
+          ),
+          _part1Dimension(
+            key: 'GRAMMATICAL_RANGE_ACCURACY',
+            score: 6.5,
+            improvements: const <EvaluationReportFinding>[
+              secondaryGrammarFinding,
+              grammarFinding,
+            ],
+          ),
+          _part1Dimension(
+            key: 'PRONUNCIATION',
+            score: 6,
+            improvement: pronunciationFinding,
+          ),
+        ],
+        priorityActions: const <EvaluationReportPriorityAction>[
+          EvaluationReportPriorityAction(
+            dimensionKey: 'GRAMMATICAL_RANGE_ACCURACY',
+            findingId: 'grammar-priority',
+          ),
+          EvaluationReportPriorityAction(
+            dimensionKey: 'PRONUNCIATION',
+            findingId: 'pronunciation-priority',
+          ),
+        ],
+      );
+      final controller = ReviewHistoryController(
+        client: _FixedItemsClient(<ReviewHistoryItem>[item]),
+      );
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(home: ReviewPage(historyController: controller)),
+      );
+      await tester.pumpAndSettle();
+      await _expandHistory(tester);
+      await tester.tap(
+        find.byKey(Key('review-history-select-${item.review.id}')),
+      );
+      await tester.pumpAndSettle();
+
+      final darkOverview = find.byKey(const Key('ielts-part1-dark-overview'));
+      expect(darkOverview, findsOneWidget);
+      expect(find.text('基于本次 1 道已记录回答的阶段性估分，不等同于官方考试成绩。'), findsOneWidget);
+      expect(find.byKey(const Key('ielts-evaluation-radar')), findsOneWidget);
+      // Summary is not shown for Part 1 reports (score speaks first).
+      expect(find.text('这段较长的总结不应抢在估分前展示。'), findsNothing);
+      expect(find.text('优先项在前'), findsOneWidget);
+
+      // The server-selected grammar action stays ahead of the lower-scored
+      // pronunciation card, and its exact finding is the visible first item.
+      final grammar = find.byKey(
+        const Key('ielts-part1-dimension-GRAMMATICAL_RANGE_ACCURACY'),
+      );
+      final pronunciation = find.byKey(
+        const Key('ielts-part1-dimension-PRONUNCIATION'),
+      );
+      await tester.ensureVisible(pronunciation);
+      await tester.pumpAndSettle();
+      expect(grammar, findsOneWidget);
+      expect(pronunciation, findsOneWidget);
+      expect(
+        tester.getTopLeft(grammar).dy,
+        lessThan(tester.getTopLeft(pronunciation).dy),
+      );
+      expect(find.text('第三人称单数和句子结构需要更准确。'), findsOneWidget);
+      expect(find.text('使用 it gives，并把断开的句子合并完整。'), findsOneWidget);
+      expect(find.text('这条普通语法建议不应盖过后端指定的优先项。'), findsNothing);
+
+      // Questions disclosure exists and works.
+      final questions = find.byKey(
+        const Key('ielts-report-questions-disclosure'),
+      );
+      await tester.ensureVisible(questions);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('ielts-report-questions-toggle')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(
+        find.text('1. Tell me about your experience.', skipOffstage: false),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('1. Tell me about your experience.'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'Part 1 report renders dimensions with missing findings gracefully',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(800, 2000));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final item = _sceneItem(
+        id: 'review-v2-ielts-part1-no-action',
+        sceneType: EvaluationReportSceneType.ieltsSpeaking,
+        scoreability: EvaluationReportScoreability.provisional,
+        practiceMode: 'PART_1',
+        dimensions: <EvaluationReportDimension>[
+          _part1Dimension(key: 'FLUENCY_COHERENCE', score: 7),
+        ],
+      );
+      final controller = ReviewHistoryController(
+        client: _FixedItemsClient(<ReviewHistoryItem>[item]),
+      );
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(home: ReviewPage(historyController: controller)),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(Key('review-history-select-${item.review.id}')),
+      );
+      await tester.pumpAndSettle();
+
+      final scored = find.byKey(
+        const Key('ielts-part1-dimension-FLUENCY_COHERENCE'),
+      );
+      final unscored = find.byKey(
+        const Key('ielts-part1-dimension-LEXICAL_RESOURCE'),
+      );
+      expect(find.text('从薄弱项开始'), findsOneWidget);
+      expect(
+        tester.getTopLeft(scored).dy,
+        lessThan(tester.getTopLeft(unscored).dy),
+      );
+      expect(find.text('7 / 9'), findsWidgets);
+    },
+  );
+
+  testWidgets('profile shows IELTS ability instead of the report narrative', (
+    tester,
+  ) async {
+    final item = _sceneItem(
+      id: 'profile-ielts-ability',
+      sceneType: EvaluationReportSceneType.ieltsSpeaking,
+      scoreability: EvaluationReportScoreability.provisional,
+      dimensions: [
+        for (final entry in const <String, double>{
+          'FLUENCY_COHERENCE': 4,
+          'PRONUNCIATION': 4.5,
+          'GRAMMATICAL_RANGE_ACCURACY': 3,
+          'LEXICAL_RESOURCE': 3.5,
+        }.entries)
+          EvaluationReportDimension(
+            key: entry.key,
+            score: entry.value,
+            scale: EvaluationReportScoreScale.ieltsBand,
+            coverage: 1,
+            confidence: 0.8,
+            reasonCodes: const <String>[],
+            evidenceRefIds: const <String>[],
+            strengths: const <EvaluationReportFinding>[],
+            improvements: const <EvaluationReportFinding>[],
+            recommendedExamples: const <EvaluationReportFinding>[],
+          ),
+      ],
+    );
+    final controller = ReviewHistoryController(
+      client: _FixedItemsClient(<ReviewHistoryItem>[item]),
+    );
+    addTearDown(controller.dispose);
+    await controller.refresh();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CurrentIeltsAbilityProfile(historyController: controller),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('当前 IELTS 能力'), findsOneWidget);
+    expect(find.byKey(const Key('ielts-evaluation-radar')), findsOneWidget);
+    expect(find.text('本次回答已经形成可复盘的文本反馈。'), findsNothing);
+    expect(
+      tester
+          .widget<Text>(find.byKey(const Key('ielts-evaluation-overall-score')))
+          .data,
+      '4',
+    );
+  });
+
+  testWidgets('generic four-dimension report renders each dimension', (
+    tester,
+  ) async {
+    final dimensions = <EvaluationReportDimension>[
+      for (final entry in const <String, double>{
+        'TASK_ACHIEVEMENT': 5,
+        'CLARITY_COHERENCE': 10,
+        'LANGUAGE_CONTROL': 15,
+        'INTERACTION': 5,
+      }.entries)
+        EvaluationReportDimension(
+          key: entry.key,
+          score: entry.value,
+          scale: EvaluationReportScoreScale.percentage100,
+          coverage: 1,
+          confidence: 0.8,
+          reasonCodes: const <String>[],
+          evidenceRefIds: const <String>[],
+          strengths: entry.key == 'TASK_ACHIEVEMENT'
+              ? const <EvaluationReportFinding>[
+                  EvaluationReportFinding(
+                    id: 'strength-task',
+                    message: 'The response advances the communication goal.',
+                    evidence: <EvaluationReportEvidence>[],
+                  ),
+                ]
+              : const <EvaluationReportFinding>[],
+          improvements: const <EvaluationReportFinding>[],
+          recommendedExamples: const <EvaluationReportFinding>[],
+        ),
+    ];
+    final item = _sceneItem(
+      id: 'review-v2-workplace-radar',
+      sceneType: EvaluationReportSceneType.overseasWorkplace,
+      scoreability: EvaluationReportScoreability.provisional,
+      dimensions: dimensions,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(home: ReviewReportDetailPage(item: item)),
+    );
+
+    expect(find.byKey(const Key('review-detail-summary')), findsNothing);
+    expect(find.textContaining('/ 100'), findsNWidgets(4));
+    expect(
+      find.text('The response advances the communication goal.'),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('review-dimension-TASK_ACHIEVEMENT')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('review-dimension-CLARITY_COHERENCE')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('four scene families keep their history card and report route', (
+    tester,
+  ) async {
+    const cases = [
+      (
+        id: 'interview',
+        sceneType: EvaluationReportSceneType.interview,
+        cardTitle: '模拟面试',
+        reportTitle: '面试复盘',
+      ),
+      (
+        id: 'ielts-part-1',
+        sceneType: EvaluationReportSceneType.ieltsSpeaking,
+        cardTitle: 'IELTS 专项',
+        reportTitle: 'Part 1 专项复盘',
+      ),
+      (
+        id: 'workplace',
+        sceneType: EvaluationReportSceneType.overseasWorkplace,
+        cardTitle: '职场英语复盘',
+        reportTitle: '职场英语复盘',
+      ),
+      (
+        id: 'daily-life',
+        sceneType: EvaluationReportSceneType.overseasDailyLife,
+        cardTitle: '日常英语复盘',
+        reportTitle: '日常英语复盘',
+      ),
+    ];
+
+    for (final testCase in cases) {
+      final item = _sceneItem(
+        id: 'review-v2-${testCase.id}',
+        sceneType: testCase.sceneType,
+        practiceMode:
+            testCase.sceneType == EvaluationReportSceneType.ieltsSpeaking
+            ? 'PART_1'
+            : 'FULL_SIMULATION',
+        scoreability: EvaluationReportScoreability.provisional,
+        dimensions: const <EvaluationReportDimension>[],
+      );
+      final controller = ReviewHistoryController(
+        client: _FixedItemsClient(<ReviewHistoryItem>[item]),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(home: ReviewPage(historyController: controller)),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text(testCase.cardTitle), findsOneWidget);
+      await tester.tap(
+        find.byKey(Key('review-history-select-${item.review.id}')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('review-detail-page')), findsOneWidget);
+      expect(find.text(testCase.reportTitle), findsWidgets);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      controller.dispose();
+    }
+  });
+
+  testWidgets('history filters keep all four scene families available', (
+    tester,
+  ) async {
+    const cases = [
+      (
+        id: 'filter-interview',
+        sceneType: EvaluationReportSceneType.interview,
+        label: '面试',
+      ),
+      (
+        id: 'filter-ielts',
+        sceneType: EvaluationReportSceneType.ieltsSpeaking,
+        label: '雅思',
+      ),
+      (
+        id: 'filter-daily-life',
+        sceneType: EvaluationReportSceneType.overseasDailyLife,
+        label: '日常英语',
+      ),
+      (
+        id: 'filter-workplace',
+        sceneType: EvaluationReportSceneType.overseasWorkplace,
+        label: '职场英语',
+      ),
+    ];
+    final items = [
+      for (final testCase in cases)
+        _sceneItem(
+          id: testCase.id,
+          sceneType: testCase.sceneType,
+          scoreability: EvaluationReportScoreability.provisional,
+          dimensions: const <EvaluationReportDimension>[],
+        ),
+    ];
+    final controller = ReviewHistoryController(
+      client: _FixedItemsClient(items),
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(home: ReviewPage(historyController: controller)),
+    );
+    await tester.pumpAndSettle();
+
+    for (final testCase in cases) {
+      expect(find.text(testCase.label), findsOneWidget);
+    }
+
+    for (final selectedCase in cases) {
+      await tester.tap(find.text(selectedCase.label));
+      await tester.pumpAndSettle();
+
+      for (final testCase in cases) {
+        expect(
+          find.byKey(Key('review-history-${testCase.id}')),
+          testCase == selectedCase ? findsOneWidget : findsNothing,
+        );
+      }
+    }
   });
 
   testWidgets('insufficient evidence never renders a zero score', (
@@ -940,6 +1464,8 @@ void main() {
     );
     await tester.pumpAndSettle();
     await _expandHistory(tester);
+    await tester.tap(find.byKey(const Key('review-toggle-insufficient')));
+    await tester.pumpAndSettle();
     await tester.tap(
       find.byKey(Key('review-history-select-${item.review.id}')),
     );
@@ -969,8 +1495,8 @@ void main() {
     await _expandHistory(tester);
 
     final expectedLabel =
-        '${item.review.title}，摘要：${item.review.summary}，'
-        '2026-07-26，已完成，查看复盘详情';
+        '模拟面试，Interview，摘要：${item.review.summary}，'
+        '7月26日，已完成，查看复盘详情';
     expect(
       tester.getSemantics(find.byKey(const Key('review-content'))),
       matchesSemantics(
@@ -979,10 +1505,7 @@ void main() {
         hasTapAction: true,
       ),
     );
-    expect(
-      find.bySemanticsLabel(RegExp(RegExp.escape(item.review.title))),
-      findsOneWidget,
-    );
+    expect(find.bySemanticsLabel(RegExp('模拟面试')), findsOneWidget);
     semanticsHandle.dispose();
   });
 
@@ -1015,10 +1538,10 @@ void main() {
         findsOneWidget,
       );
     }
-    expect(find.text('2026-07-26'), findsOneWidget);
-    expect(find.text('2026-07-17'), findsOneWidget);
+    expect(find.textContaining('7月26日'), findsOneWidget);
+    expect(find.textContaining('7月17日'), findsOneWidget);
     expect(find.byKey(const Key('review-detail-page')), findsNothing);
-    expect(find.text(items.first.review.summary), findsOneWidget);
+    expect(find.text(items.first.review.summary), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -1063,10 +1586,12 @@ void main() {
     await tester.pumpAndSettle();
     await _expandHistory(tester);
 
-    final historyScrollable = find.descendant(
-      of: find.byKey(const Key('review-history-list')),
-      matching: find.byType(Scrollable),
-    );
+    final historyScrollable = find
+        .descendant(
+          of: find.byKey(const Key('review-history-list')),
+          matching: find.byType(Scrollable),
+        )
+        .first;
     await tester.scrollUntilVisible(
       find.byKey(const Key('review-history-load-more')),
       500,
@@ -1111,19 +1636,8 @@ void main() {
 }
 
 Future<void> _expandHistory(WidgetTester tester) async {
-  final entry = find.byKey(const Key('review-history-entry'));
-  final scrollable = find
-      .descendant(
-        of: find.byKey(const Key('review-overview-scroll')),
-        matching: find.byType(Scrollable),
-      )
-      .first;
-  await tester.scrollUntilVisible(entry, 200, scrollable: scrollable);
-  await tester.drag(scrollable, const Offset(0, -120));
   await tester.pumpAndSettle();
-  await tester.tap(entry);
-  await tester.pumpAndSettle();
-  expect(find.byKey(const Key('review-history-page')), findsOneWidget);
+  expect(find.byKey(const Key('review-page')), findsOneWidget);
 }
 
 Future<void> _ensureHistoryVisible(WidgetTester tester, Finder target) async {
@@ -1200,6 +1714,7 @@ final class _Transport implements IdentityHttpTransport {
     required Uri uri,
     required Map<String, String> headers,
     String? body,
+    List<int>? bodyBytes,
   }) async {
     expect(method, 'GET');
     this.uri = uri;
@@ -1482,6 +1997,8 @@ ReviewHistoryItem _sceneItem({
   required EvaluationReportSceneType sceneType,
   required EvaluationReportScoreability scoreability,
   required List<EvaluationReportDimension> dimensions,
+  String? practiceMode,
+  String? summary,
   List<EvaluationReportPriorityAction> priorityActions =
       const <EvaluationReportPriorityAction>[],
 }) {
@@ -1490,19 +2007,44 @@ ReviewHistoryItem _sceneItem({
   final report = EvaluationReport(
     id: id,
     evaluationId: '7b000001-0000-4000-8000-000000000001',
-    evaluationRevisionId: 'a1000001-0000-4000-8000-000000000001',
     practiceSessionId: 'session-$id',
-    revision: 1,
     sceneType: sceneType,
-    sceneCategory: 'INTERVIEW_PROFESSIONAL',
+    practiceExperience: switch (sceneType) {
+      EvaluationReportSceneType.ieltsSpeaking => 'IELTS_SPEAKING',
+      EvaluationReportSceneType.interview => 'INTERVIEW',
+      EvaluationReportSceneType.overseasDailyLife => 'LIFE_AND_TRAVEL',
+      EvaluationReportSceneType.overseasWorkplace => 'WORKPLACE',
+    },
+    sceneCategory: switch (sceneType) {
+      EvaluationReportSceneType.ieltsSpeaking => 'IELTS_SPEAKING',
+      EvaluationReportSceneType.interview => 'INTERVIEW_PROFESSIONAL',
+      EvaluationReportSceneType.overseasDailyLife => 'LIFE_TRAVEL',
+      EvaluationReportSceneType.overseasWorkplace => 'WORKPLACE_GENERAL',
+    },
+    practiceMode:
+        practiceMode ??
+        (sceneType == EvaluationReportSceneType.ieltsSpeaking
+            ? 'FULL_MOCK'
+            : 'FULL_SIMULATION'),
     scoreability: scoreability,
-    summary: scoreability == EvaluationReportScoreability.insufficient
-        ? '当前回答不足以形成可靠结论。'
-        : '本次回答已经形成可复盘的文本反馈。',
+    summary:
+        summary ??
+        (scoreability == EvaluationReportScoreability.insufficient
+            ? '当前回答不足以形成可靠结论。'
+            : '本次回答已经形成可复盘的文本反馈。'),
+    questions: const <EvaluationReportQuestion>[
+      EvaluationReportQuestion(
+        id: '40000000-0000-4000-8000-000000000001',
+        position: 1,
+        text: 'Tell me about your experience.',
+        answer: EvaluationReportAnswer(
+          turnId: '50000000-0000-4000-8000-000000000005',
+          transcript: 'I led a project and improved delivery.',
+        ),
+      ),
+    ],
     dimensions: dimensions,
     priorityActions: priorityActions,
-    detailSchema: 'interview-report/v1',
-    detail: const <String, Object?>{'schema_version': 'interview-report/v1'},
     createdAt: completedAt,
   );
   return ReviewHistoryItem(
@@ -1511,6 +2053,35 @@ ReviewHistoryItem _sceneItem({
     practiceSessionId: report.practiceSessionId,
     createdAt: createdAt,
     completedAt: completedAt,
+  );
+}
+
+EvaluationReportDimension _part1Dimension({
+  required String key,
+  required double score,
+  EvaluationReportFinding? improvement,
+  List<EvaluationReportFinding>? improvements,
+  String? improvementMessage,
+}) {
+  final finding =
+      improvement ??
+      EvaluationReportFinding(
+        id: '$key-improvement',
+        message: improvementMessage ?? '$key improvement',
+        suggestion: '$key suggestion',
+        evidence: const <EvaluationReportEvidence>[],
+      );
+  return EvaluationReportDimension(
+    key: key,
+    score: score,
+    scale: EvaluationReportScoreScale.ieltsBand,
+    coverage: 1,
+    confidence: 0.8,
+    reasonCodes: const <String>[],
+    evidenceRefIds: const <String>[],
+    strengths: const <EvaluationReportFinding>[],
+    improvements: improvements ?? <EvaluationReportFinding>[finding],
+    recommendedExamples: const <EvaluationReportFinding>[],
   );
 }
 
@@ -1552,7 +2123,8 @@ Map<String, Object?> _wireItem({
 }) {
   return evaluationReportWireFixture(
     reportId: id,
-    practiceSessionId: 'session-$score',
+    practiceSessionId:
+        '30000000-0000-4000-8000-${score.toString().padLeft(12, '0')}',
     createdAt: createdAt,
     score: score.toDouble(),
   );

@@ -1,451 +1,319 @@
 import 'package:flutter/material.dart';
-import 'package:speakup/features/coaching/preparation/preparation_catalog_components.dart';
 import 'package:speakup/features/coaching/preparation/preparation_design.dart';
-import 'package:speakup/features/coaching/scene/scene.dart';
+import 'package:speakup/features/coaching/preparation/preparation_models.dart';
 
 class InterviewCatalog extends StatelessWidget {
   const InterviewCatalog({
-    required this.scenes,
-    required this.onScenePressed,
-    required this.onOpenJobPreparation,
+    required this.plans,
+    required this.loading,
+    required this.onCreatePressed,
+    required this.onPlanPressed,
+    required this.onPlanDeleted,
+    required this.onRetry,
+    this.errorMessage,
     super.key,
   });
 
-  final List<SceneDefinition> scenes;
-  final ValueChanged<SceneDefinition> onScenePressed;
-  final VoidCallback? onOpenJobPreparation;
+  final List<PracticePlanSummary> plans;
+  final bool loading;
+  final String? errorMessage;
+  final VoidCallback? onCreatePressed;
+  final ValueChanged<PracticePlanSummary> onPlanPressed;
+  final ValueChanged<PracticePlanSummary> onPlanDeleted;
+  final VoidCallback onRetry;
 
   @override
   Widget build(BuildContext context) {
-    final fullScene =
-        scenes
-            .where(
-              (scene) => scene.category == SceneCategory.interviewProfessional,
-            )
-            .firstOrNull ??
-        scenes.firstOrNull;
-    final modes =
-        <
-              ({
-                String id,
-                String title,
-                String caption,
-                IconData icon,
-                List<SceneDefinition> scenes,
-              })
-            >[
-              (
-                id: 'hr',
-                title: '招聘初筛',
-                caption: '自我介绍与求职动机',
-                icon: Icons.badge_outlined,
-                scenes: _scenesByCategory(
-                  scenes,
-                  SceneCategory.interviewRecruiter,
-                ),
-              ),
-              (
-                id: 'behavioral',
-                title: '行为面试',
-                caption: '经历、行动与结果',
-                icon: Icons.forum_outlined,
-                scenes: _scenesByCategory(
-                  scenes,
-                  SceneCategory.interviewBehavioral,
-                ),
-              ),
-              (
-                id: 'professional',
-                title: '岗位专业面试',
-                caption: '项目与专业表达',
-                icon: Icons.laptop_mac_outlined,
-                scenes: _scenesByCategory(
-                  scenes,
-                  SceneCategory.interviewProfessional,
-                ),
-              ),
-              (
-                id: 'manager',
-                title: 'Hiring Manager',
-                caption: '岗位匹配与业务影响',
-                icon: Icons.supervisor_account_outlined,
-                scenes: _scenesByCategory(
-                  scenes,
-                  SceneCategory.interviewHiringManager,
-                ),
-              ),
-              (
-                id: 'custom',
-                title: '自定义面试',
-                caption: '按你的目标配置',
-                icon: Icons.tune_rounded,
-                scenes: _scenesByCategory(
-                  scenes,
-                  SceneCategory.interviewCustom,
-                ),
-              ),
-            ]
-            .where((mode) => mode.scenes.isNotEmpty)
-            .toList(growable: false);
-    if (fullScene == null && modes.isEmpty) {
-      return const PreparationCatalogEmpty(message: '当前没有可用的英文面试练习。');
-    }
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const PreparationCatalogHeader(
-          title: '英文面试',
-          description: '准备一整轮，或只练最需要的一关。',
-          titleKey: Key('practice-hub-title-interview'),
-        ),
-        const SizedBox(height: 20),
-        if (onOpenJobPreparation != null || fullScene != null) ...[
-          PreparationFeaturedScene(
-            key: const Key('interview-mode-full'),
-            eyebrow: '推荐',
-            title: onOpenJobPreparation == null ? '开始岗位专业面试' : '开始模拟面试',
-            description: onOpenJobPreparation == null
-                ? fullScene?.prompt.publicSceneBrief ?? '围绕项目与专业表达进入一轮练习。'
-                : '带上岗位信息，问题会更贴近真实面试。',
-            actionLabel: onOpenJobPreparation == null ? '直接开始' : '使用 JD 开始',
-            actionKey: onOpenJobPreparation == null
-                ? fullScene == null
-                      ? null
-                      : Key('catalog-scene-${fullScene.id}')
-                : const Key('open-job-preparation'),
-            icon: Icons.play_arrow_rounded,
-            color: const Color(0xFF20252A),
-            foregroundColor: Colors.white,
-            assetPath: 'assets/images/scenes/interview-hero.jpg',
-            onPressed:
-                onOpenJobPreparation ??
-                (fullScene == null ? null : () => onScenePressed(fullScene)),
-          ),
-          const SizedBox(height: 24),
+        if (loading && plans.isEmpty)
+          const Center(child: CircularProgressIndicator())
+        else if (errorMessage != null && plans.isEmpty)
+          _LoadError(message: errorMessage!, onRetry: onRetry)
+        else if (plans.isEmpty)
+          _EmptyState(onCreatePressed: onCreatePressed)
+        else ...[
+          for (var index = 0; index < plans.length; index++) ...[
+            _PlanCard(
+              plan: plans[index],
+              onPressed: () => onPlanPressed(plans[index]),
+              onDelete: () => _confirmDelete(context, plans[index]),
+            ),
+            if (index != plans.length - 1) const SizedBox(height: 12),
+          ],
+          if (errorMessage != null) ...[
+            const SizedBox(height: 16),
+            _LoadError(message: errorMessage!, onRetry: onRetry),
+          ],
         ],
-        const Text('专项练习', style: PreparationDesign.sectionTitle),
-        const SizedBox(height: 12),
-        _AdaptiveCardGrid(
-          children: [
-            for (final mode in modes)
-              _InterviewModeCard(
-                key: Key('interview-mode-${mode.id}'),
-                title: mode.title,
-                caption: mode.caption,
-                icon: mode.icon,
-                sceneCount: mode.scenes.length,
-                onPressed: () => _openScenePicker(
-                  context,
-                  title: mode.title,
-                  scenes: mode.scenes,
-                  onScenePressed: onScenePressed,
+      ],
+    );
+  }
+
+  Future<void> _confirmDelete(
+    BuildContext context,
+    PracticePlanSummary plan,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('删除模拟面试？'),
+        content: const Text('该面试将从列表移除，已产生的练习和复盘会保留。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            key: const Key('confirm-delete-interview-plan'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && context.mounted) {
+      onPlanDeleted(plan);
+    }
+  }
+}
+
+class InterviewCatalogCreateButton extends StatelessWidget {
+  const InterviewCatalogCreateButton({required this.onPressed, super.key});
+
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton.filled(
+      key: const Key('create-interview-plan'),
+      tooltip: '创建模拟面试',
+      onPressed: onPressed,
+      icon: const Icon(Icons.add_rounded),
+      style: IconButton.styleFrom(
+        minimumSize: const Size(44, 44),
+        backgroundColor: PreparationDesign.ink,
+        foregroundColor: Colors.white,
+      ),
+    );
+  }
+}
+
+class _PlanCard extends StatelessWidget {
+  const _PlanCard({
+    required this.plan,
+    required this.onPressed,
+    required this.onDelete,
+  });
+
+  final PracticePlanSummary plan;
+  final VoidCallback onPressed;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final minutes = (plan.suggestedDurationSeconds / 60).ceil();
+    final title = plan.jobTitle.isEmpty ? plan.sceneName : plan.jobTitle;
+    return Semantics(
+      button: true,
+      label: '模拟面试：$title',
+      hint: '长按删除模拟面试',
+      onTap: onPressed,
+      onLongPress: onDelete,
+      excludeSemantics: true,
+      child: Card(
+        key: Key('interview-plan-${plan.id}'),
+        margin: EdgeInsets.zero,
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onPressed,
+          onLongPress: onDelete,
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: Image.asset(
+                  'assets/images/scenes/interview-plan-card-v2.webp',
+                  key: Key('interview-plan-cover-${plan.id}'),
+                  fit: BoxFit.cover,
+                  excludeFromSemantics: true,
                 ),
               ),
-          ],
+              const Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        Color(0x18000000),
+                        Color(0x66000000),
+                        Color(0xD6000000),
+                      ],
+                      stops: [0, 0.46, 1],
+                    ),
+                  ),
+                ),
+              ),
+              ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 164),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 14, 10, 14),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Expanded(flex: 4, child: SizedBox.shrink()),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        flex: 6,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 9,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withValues(alpha: 0.16),
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                                child: Text(
+                                  '模拟面试',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: PreparationDesign.meta.copyWith(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              title,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.titleMedium
+                                  ?.copyWith(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w800,
+                                    height: 1.1,
+                                  ),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              plan.practiceScope,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: PreparationDesign.body.copyWith(
+                                color: Colors.white70,
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            Wrap(
+                              spacing: 14,
+                              runSpacing: 8,
+                              children: [
+                                _PlanMeta(
+                                  icon: Icons.schedule_rounded,
+                                  label: '约 $minutes 分钟',
+                                ),
+                                _PlanMeta(
+                                  icon: Icons.repeat_rounded,
+                                  label: plan.maxEffectiveTurns == 0
+                                      ? '开放轮次'
+                                      : '${plan.minEffectiveTurns}–${plan.maxEffectiveTurns} 轮',
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PlanMeta extends StatelessWidget {
+  const _PlanMeta({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 16, color: Colors.white70),
+        const SizedBox(width: 4),
+        Flexible(
+          child: Text(
+            label,
+            style: PreparationDesign.meta.copyWith(color: Colors.white70),
+          ),
         ),
       ],
     );
   }
 }
 
-class _AdaptiveCardGrid extends StatelessWidget {
-  const _AdaptiveCardGrid({required this.children});
+class _EmptyState extends StatelessWidget {
+  const _EmptyState({required this.onCreatePressed});
 
-  final List<Widget> children;
-
-  @override
-  Widget build(BuildContext context) {
-    final textScale = MediaQuery.textScalerOf(context).scale(1);
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        if (constraints.maxWidth < 310 || textScale > 1.2) {
-          final cardHeight = 158 + (textScale - 1).clamp(0, 2).toDouble() * 80;
-          return Column(
-            children: [
-              for (var index = 0; index < children.length; index++) ...[
-                SizedBox(height: cardHeight, child: children[index]),
-                if (index != children.length - 1) const SizedBox(height: 10),
-              ],
-            ],
-          );
-        }
-        return GridView.count(
-          shrinkWrap: true,
-          primary: false,
-          physics: const NeverScrollableScrollPhysics(),
-          crossAxisCount: 2,
-          mainAxisSpacing: 12,
-          crossAxisSpacing: 12,
-          mainAxisExtent: 158 + (textScale - 1).clamp(0, 0.2).toDouble() * 100,
-          children: children,
-        );
-      },
-    );
-  }
-}
-
-class _InterviewModeCard extends StatelessWidget {
-  const _InterviewModeCard({
-    required this.title,
-    required this.caption,
-    required this.icon,
-    required this.sceneCount,
-    required this.onPressed,
-    super.key,
-  });
-
-  final String title;
-  final String caption;
-  final IconData icon;
-  final int sceneCount;
-  final VoidCallback onPressed;
+  final VoidCallback? onCreatePressed;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: PreparationDesign.surface,
-      clipBehavior: Clip.antiAlias,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(PreparationDesign.radiusMedia),
-        side: const BorderSide(color: PreparationDesign.border),
+    return Container(
+      key: const Key('interview-plan-empty'),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+      decoration: BoxDecoration(
+        color: PreparationDesign.surface,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: PreparationDesign.border),
       ),
-      child: Semantics(
-        button: true,
-        label: '$title。$caption。$sceneCount 个练习',
-        onTap: onPressed,
-        excludeSemantics: true,
-        child: InkWell(
-          onTap: onPressed,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: double.infinity,
-                height: 64,
-                color: PreparationDesign.interviewTint,
-                child: Icon(icon, size: 25, color: PreparationDesign.interview),
-              ),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 12, 12, 14),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: PreparationDesign.cardTitle,
-                      ),
-                      const Spacer(),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              caption,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: PreparationDesign.meta,
-                            ),
-                          ),
-                          const SizedBox(width: 4),
-                          const Icon(
-                            Icons.arrow_forward_rounded,
-                            size: 16,
-                            color: PreparationDesign.secondary,
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
+      child: Column(
+        children: [
+          const Icon(Icons.event_note_outlined, size: 40),
+          const SizedBox(height: 14),
+          Text(
+            '还没有模拟面试',
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
           ),
-        ),
+          const SizedBox(height: 6),
+          const Text('点击右上角 +，从目标岗位开始创建。'),
+          const SizedBox(height: 18),
+          FilledButton(onPressed: onCreatePressed, child: const Text('创建第一场')),
+        ],
       ),
     );
   }
 }
 
-void _openScenePicker(
-  BuildContext context, {
-  required String title,
-  required List<SceneDefinition> scenes,
-  required ValueChanged<SceneDefinition> onScenePressed,
-}) {
-  if (scenes.isEmpty) {
-    return;
-  }
-  showModalBottomSheet<void>(
-    context: context,
-    useSafeArea: true,
-    isScrollControlled: true,
-    showDragHandle: true,
-    backgroundColor: Colors.white,
-    builder: (sheetContext) => _ScenePickerSheet(
-      title: title,
-      scenes: scenes,
-      onScenePressed: (scene) {
-        Navigator.of(sheetContext).pop();
-        onScenePressed(scene);
-      },
-    ),
-  );
-}
+class _LoadError extends StatelessWidget {
+  const _LoadError({required this.message, required this.onRetry});
 
-class _ScenePickerSheet extends StatelessWidget {
-  const _ScenePickerSheet({
-    required this.title,
-    required this.scenes,
-    required this.onScenePressed,
-  });
-
-  final String title;
-  final List<SceneDefinition> scenes;
-  final ValueChanged<SceneDefinition> onScenePressed;
+  final String message;
+  final VoidCallback onRetry;
 
   @override
   Widget build(BuildContext context) {
-    final screenHeight = MediaQuery.sizeOf(context).height;
-    final textScale = MediaQuery.textScalerOf(context).scale(1);
-    final estimatedHeight =
-        132 + scenes.length * (98 + (textScale - 1).clamp(0, 1) * 120);
-    final maximumSheetHeight = screenHeight * 0.82;
-    final minimumSheetHeight = maximumSheetHeight < 280
-        ? maximumSheetHeight
-        : 280.0;
-    final sheetHeight = estimatedHeight
-        .clamp(minimumSheetHeight, maximumSheetHeight)
-        .toDouble();
-    return SizedBox(
-      height: sheetHeight,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 5),
-            const Text(
-              '选择一个练习',
-              style: TextStyle(
-                color: PreparationDesign.inkSecondary,
-                fontSize: 14,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Expanded(
-              child: ListView.separated(
-                itemCount: scenes.length,
-                separatorBuilder: (_, _) =>
-                    const Divider(height: 1, color: PreparationDesign.border),
-                itemBuilder: (context, index) {
-                  final scene = scenes[index];
-                  return _CatalogSceneCard(
-                    scene: scene,
-                    onPressed: () => onScenePressed(scene),
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
+    return Row(
+      children: [
+        Expanded(child: Text(message)),
+        TextButton(onPressed: onRetry, child: const Text('重试')),
+      ],
     );
   }
-}
-
-class _CatalogSceneCard extends StatelessWidget {
-  const _CatalogSceneCard({required this.scene, required this.onPressed});
-
-  final SceneDefinition scene;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      button: true,
-      label: '${scene.name}。${scene.prompt.publicSceneBrief}',
-      onTap: onPressed,
-      excludeSemantics: true,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          key: Key('catalog-scene-${scene.id}'),
-          borderRadius: BorderRadius.circular(14),
-          onTap: onPressed,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 13),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Icon(
-                    _practiceExperienceIcon(scene.experience),
-                    size: 20,
-                    color: PreparationDesign.inkSecondary,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        scene.name,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        scene.prompt.publicSceneBrief,
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: PreparationDesign.inkSecondary,
-                          fontSize: 13,
-                          height: 1.4,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 10),
-                const Padding(
-                  padding: EdgeInsets.only(top: 3),
-                  child: Icon(
-                    Icons.arrow_forward_ios_rounded,
-                    size: 15,
-                    color: PreparationDesign.inkTertiary,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-List<SceneDefinition> _scenesByCategory(
-  List<SceneDefinition> scenes,
-  SceneCategory category,
-) =>
-    scenes.where((scene) => scene.category == category).toList(growable: false);
-
-IconData _practiceExperienceIcon(PracticeExperience experience) {
-  return switch (experience) {
-    PracticeExperience.interview => Icons.work_outline_rounded,
-    PracticeExperience.ieltsSpeaking => Icons.school_outlined,
-    PracticeExperience.workplace => Icons.business_center_outlined,
-    PracticeExperience.lifeAndTravel => Icons.travel_explore_outlined,
-  };
 }

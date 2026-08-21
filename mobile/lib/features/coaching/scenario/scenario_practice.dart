@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:speakup/features/coaching/scene/scene.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/design/practice_conversation_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
@@ -11,31 +10,29 @@ import 'package:speakup/features/coaching/practice/practice_prompt_speaker.dart'
 import 'package:speakup/features/coaching/practice/question_tip_sheet.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_message_bubble.dart';
+import 'package:speakup/features/coaching/practice/practice_stage.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
+import 'package:speakup/features/coaching/scenario/scenario_assets.dart';
 
-/// A vendor-neutral surface used by the scenario scenario shell.
-///
-/// The injected builder may render any avatar implementation. Keeping the
-/// dependency in the composition root lets the product UI survive a vendor
-/// change without importing a provider SDK.
-typedef ScenarioAvatarSurfaceBuilder = Widget Function(BuildContext context);
 typedef ScenarioAsyncAction = Future<void> Function();
+typedef ScenarioAvatarSurfaceBuilder = Widget Function(BuildContext context);
 
 class ScenarioPracticePage extends StatefulWidget {
   const ScenarioPracticePage({
     required this.practiceController,
     this.avatarSurfaceBuilder,
-    this.avatarStatusLabel = '正在准备画面',
+    this.avatarStatusLabel,
     this.onBeforeStartRecording,
     this.onBeforeSubmitText,
     this.onReplayQuestion,
+    this.questionSpeaker,
     this.onPracticeCompleted,
     this.speechFeedbackController,
-    this.replayLoading = false,
-    this.replayPlaying = false,
     this.onExitRequested,
     this.previewMode = false,
+    this.replayLoading = false,
+    this.replayPlaying = false,
     super.key,
   });
 
@@ -45,12 +42,13 @@ class ScenarioPracticePage extends StatefulWidget {
   final ScenarioAsyncAction? onBeforeStartRecording;
   final ScenarioAsyncAction? onBeforeSubmitText;
   final ScenarioAsyncAction? onReplayQuestion;
+  final PracticePromptSpeaker? questionSpeaker;
   final Future<bool> Function()? onPracticeCompleted;
   final SpeechFeedbackController? speechFeedbackController;
-  final bool replayLoading;
-  final bool replayPlaying;
   final Future<bool> Function()? onExitRequested;
   final bool previewMode;
+  final bool replayLoading;
+  final bool replayPlaying;
 
   @override
   State<ScenarioPracticePage> createState() => _ScenarioPracticePageState();
@@ -71,8 +69,12 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
   final Map<String, String> _questionTranslations = <String, String>{};
   bool _feedbackRebuildScheduled = false;
   bool _completionInFlight = false;
+  PracticePromptSpeaker? _ownedQuestionSpeaker;
   PracticePromptSpeaker? _ownedTipSpeaker;
   String? _visibleTipQuestionId;
+  String? _playingQuestionId;
+  String? _questionNarrationErrorId;
+  int _questionNarrationGeneration = 0;
 
   @override
   void initState() {
@@ -109,6 +111,16 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
       oldWidget.practiceController.removeListener(_handleControllerState);
       _observedMessageCount = widget.practiceController.practiceMessages.length;
       _visibleTipQuestionId = null;
+      _questionTranslations.clear();
+      _questionNarrationGeneration++;
+      _playingQuestionId = null;
+      _questionNarrationErrorId = null;
+      unawaited(oldWidget.practiceController.stopPracticeAudio(notify: false));
+      final previousSpeaker =
+          oldWidget.questionSpeaker ?? _ownedQuestionSpeaker;
+      if (previousSpeaker != null) {
+        unawaited(_stopSpeakerSafely(previousSpeaker));
+      }
       widget.practiceController.addListener(_handleControllerState);
       _syncRecordingTimer();
     }
@@ -125,6 +137,11 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
     _textController.dispose();
     _textFocusNode.dispose();
     unawaited(widget.practiceController.stopPracticeAudio(notify: false));
+    if (widget.questionSpeaker case final speaker?) {
+      unawaited(_stopSpeakerSafely(speaker));
+    } else if (_ownedQuestionSpeaker case final speaker?) {
+      unawaited(speaker.dispose());
+    }
     if (_ownedTipSpeaker case final speaker?) {
       unawaited(speaker.dispose());
     }
@@ -147,7 +164,10 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
     if (tip == null || _visibleTipQuestionId != tip.questionId) {
       return;
     }
-    final speaker = _ownedTipSpeaker ??= SystemPracticePromptSpeaker();
+    await _stopQuestionNarration();
+    final speaker =
+        widget.questionSpeaker ??
+        (_ownedTipSpeaker ??= SystemPracticePromptSpeaker());
     await speaker.speak(tip.content);
   }
 
@@ -161,7 +181,7 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
 
   Future<void> _stopQuestionTipSpeech() async {
     try {
-      await _ownedTipSpeaker?.stop();
+      await (widget.questionSpeaker ?? _ownedTipSpeaker)?.stop();
     } on Object {
       // Recording and dismissal must not be blocked by a platform TTS error.
     }
@@ -169,8 +189,107 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
 
   Future<void> _beforeStartRecording() async {
     await _stopQuestionTipSpeech();
+    await _stopQuestionNarration();
     await _runBoundedUserTurnAction(widget.onBeforeStartRecording);
   }
+
+  Future<void> _playQuestion(PracticeMessage message) async {
+    final controller = widget.practiceController;
+    final currentQuestion = controller.currentQuestion;
+    final current = currentQuestion?.id == message.id;
+
+    if (_playingQuestionId == message.id) {
+      await _stopQuestionNarration();
+      return;
+    }
+
+    await _stopQuestionTipSpeech();
+
+    if (current && widget.onReplayQuestion != null) {
+      _questionNarrationGeneration++;
+      await _stopQuestionSpeakerSafely();
+      if (!mounted) {
+        return;
+      }
+      setState(() => _questionNarrationErrorId = null);
+      try {
+        await widget.onReplayQuestion!();
+      } on Object {
+        if (mounted) {
+          setState(() => _questionNarrationErrorId = message.id);
+        }
+      }
+      return;
+    }
+
+    if (current && controller.canPlayQuestionAudio) {
+      _questionNarrationGeneration++;
+      await _stopQuestionSpeakerSafely();
+      if (mounted) {
+        setState(() => _questionNarrationErrorId = null);
+      }
+      await controller.toggleQuestionAudio();
+      return;
+    }
+
+    await _stopQuestionNarration();
+    final generation = ++_questionNarrationGeneration;
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _playingQuestionId = message.id;
+      _questionNarrationErrorId = null;
+    });
+    try {
+      final speaker = _questionSpeaker;
+      if (speaker is CoachingSpeechPlayer) {
+        await speaker.speakQuestion(
+          questionId: message.id,
+          fallbackText: message.text,
+        );
+      } else {
+        await speaker.speak(message.text);
+      }
+    } on Object {
+      if (mounted && generation == _questionNarrationGeneration) {
+        setState(() => _questionNarrationErrorId = message.id);
+      }
+    } finally {
+      if (mounted && generation == _questionNarrationGeneration) {
+        setState(() => _playingQuestionId = null);
+      }
+    }
+  }
+
+  Future<void> _stopQuestionNarration() async {
+    _questionNarrationGeneration++;
+    await widget.practiceController.stopPracticeAudio();
+    await _stopQuestionSpeakerSafely();
+    if (mounted && _playingQuestionId != null) {
+      setState(() => _playingQuestionId = null);
+    }
+  }
+
+  Future<void> _stopQuestionSpeakerSafely() async {
+    final speaker = widget.questionSpeaker ?? _ownedQuestionSpeaker;
+    if (speaker == null) {
+      return;
+    }
+    await _stopSpeakerSafely(speaker);
+  }
+
+  Future<void> _stopSpeakerSafely(PracticePromptSpeaker speaker) async {
+    try {
+      await speaker.stop();
+    } on Object {
+      // Recording and navigation remain usable when platform TTS degrades.
+    }
+  }
+
+  PracticePromptSpeaker get _questionSpeaker =>
+      widget.questionSpeaker ??
+      (_ownedQuestionSpeaker ??= SystemPracticePromptSpeaker());
 
   void _handleControllerState() {
     if (!mounted) {
@@ -295,6 +414,11 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
     if (!mounted || _completionInFlight) {
       return;
     }
+    await _stopQuestionTipSpeech();
+    await _stopQuestionNarration();
+    if (!mounted) {
+      return;
+    }
     final callback = widget.onPracticeCompleted;
     if (callback == null) {
       await Navigator.of(context).maybePop();
@@ -312,7 +436,9 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
     }
     setState(() => _completionInFlight = false);
     if (completed) {
-      Navigator.of(context).pop(CompletedPracticeRouteResult.continueWithAgent);
+      Navigator.of(
+        context,
+      ).pop(CompletedPracticeRouteResult.returnToConversation);
       return;
     }
     ScaffoldMessenger.of(context)
@@ -320,7 +446,48 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
       ..showSnackBar(const SnackBar(content: Text('练习正在完成，请稍后重试。')));
   }
 
+  Future<void> _requestUserControlledCompletion() async {
+    final controller = widget.practiceController;
+    if (!mounted || !controller.canCompleteActivePractice) {
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('结束练习？'),
+        content: const Text('结束后将保存本次对话并生成练习报告，稍后可在“复盘”中查看。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('继续练习'),
+          ),
+          FilledButton(
+            key: const Key('scenario-confirm-completion'),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('结束练习'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) {
+      return;
+    }
+    final completed = await controller.completeActivePractice();
+    if (!mounted) {
+      return;
+    }
+    if (completed) {
+      await _completePractice();
+      return;
+    }
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(const SnackBar(content: Text('练习暂时无法结束，请稍后重试。')));
+  }
+
   Future<void> _submitText() async {
+    await _stopQuestionTipSpeech();
+    await _stopQuestionNarration();
     await _runBoundedUserTurnAction(widget.onBeforeSubmitText);
     if (!mounted) {
       return;
@@ -369,6 +536,11 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
 
   Future<void> _requestExit() async {
     if (!mounted || _exitInFlight || _exitApproved) {
+      return;
+    }
+    await _stopQuestionTipSpeech();
+    await _stopQuestionNarration();
+    if (!mounted) {
       return;
     }
     final route = ModalRoute.of(context);
@@ -422,247 +594,50 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
         body: SafeArea(
           child: scene == null
               ? const Center(child: Text('请先选择一个情景开始对话。'))
-              : LayoutBuilder(
-                  builder: (context, constraints) {
-                    final landscape =
-                        constraints.maxWidth > constraints.maxHeight;
-                    final avatar = _AvatarStage(
-                      scene: scene,
-                      surfaceBuilder:
-                          _exitApproved ||
-                              !widget.practiceController.canUseAvatar
-                          ? null
-                          : widget.avatarSurfaceBuilder,
-                      statusLabel: widget.avatarStatusLabel,
-                      latestAssistantMessage:
-                          widget.practiceController.practiceExperience ==
-                              PracticeExperience.interview
-                          ? null
-                          : _latestAssistantMessage(
-                              widget.practiceController.practiceMessages,
-                            ),
-                      exitInFlight: _exitInFlight,
-                      onExit: _requestExit,
-                    );
-                    final conversation = _ConversationPanel(
-                      controller: widget.practiceController,
-                      scrollController: _conversationScrollController,
-                      textController: _textController,
-                      textFocusNode: _textFocusNode,
-                      textMode: _textMode,
-                      recordingSeconds: _recordingSeconds,
-                      previewMode: widget.previewMode,
-                      onBeforeStartRecording: _beforeStartRecording,
-                      onReplayQuestion: widget.onReplayQuestion,
-                      speechFeedbackController: widget.speechFeedbackController,
-                      replayLoading: widget.replayLoading,
-                      replayPlaying: widget.replayPlaying,
-                      onToggleTextMode: _toggleTextMode,
-                      onSubmitText: _submitText,
-                      onTranslateQuestion:
-                          widget.practiceController.canTranslateQuestion &&
-                              widget.practiceController.client
-                                  is PracticeQuestionTranslationClient
-                          ? _translateQuestion
-                          : null,
-                      onShowTip: _showQuestionTip,
-                      onHideTip: _hideQuestionTip,
-                      onSpeakTip: _speakQuestionTip,
-                      visibleTipQuestionId: _visibleTipQuestionId,
-                      onPracticeCompleted: _completePractice,
-                    );
-                    if (landscape) {
-                      return Row(
-                        children: [
-                          SizedBox(
-                            key: const Key('scenario-avatar-region'),
-                            width: constraints.maxWidth * 0.44,
-                            child: avatar,
-                          ),
-                          Expanded(child: conversation),
-                        ],
-                      );
-                    }
-                    return Column(
-                      children: [
-                        SizedBox(
-                          key: const Key('scenario-avatar-region'),
-                          height: constraints.maxHeight * 0.44,
-                          child: avatar,
-                        ),
-                        Expanded(child: conversation),
-                      ],
-                    );
-                  },
-                ),
-        ),
-      ),
-    );
-  }
-}
-
-class _AvatarStage extends StatelessWidget {
-  const _AvatarStage({
-    required this.scene,
-    required this.surfaceBuilder,
-    required this.statusLabel,
-    required this.latestAssistantMessage,
-    required this.exitInFlight,
-    required this.onExit,
-  });
-
-  final SceneDefinition scene;
-  final ScenarioAvatarSurfaceBuilder? surfaceBuilder;
-  final String? statusLabel;
-  final PracticeMessage? latestAssistantMessage;
-  final bool exitInFlight;
-  final VoidCallback onExit;
-
-  @override
-  Widget build(BuildContext context) {
-    return ColoredBox(
-      color: const Color(0xFFE5E9E5),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          if (surfaceBuilder case final builder?)
-            builder(context)
-          else
-            const _AvatarPlaceholder(),
-          const Positioned.fill(
-            child: IgnorePointer(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      Color(0x33000000),
-                      Colors.transparent,
-                      Color(0x4D000000),
-                    ],
-                    stops: [0, 0.45, 1],
-                  ),
-                ),
-              ),
-            ),
-          ),
-          Positioned(
-            left: 12,
-            right: 12,
-            top: 10,
-            child: Row(
-              children: [
-                IconButton.filledTonal(
-                  key: const Key('scenario-exit'),
-                  tooltip: '返回',
-                  onPressed: exitInFlight ? null : onExit,
-                  icon: exitInFlight
-                      ? const SizedBox.square(
-                          dimension: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.arrow_back_rounded),
-                  style: IconButton.styleFrom(
-                    backgroundColor: Colors.white.withValues(alpha: 0.9),
-                    foregroundColor: SpeakUpDesign.ink,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    scene.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      shadows: [
-                        Shadow(color: Color(0x66000000), blurRadius: 8),
-                      ],
+              : PracticeStageLayout(
+                  stageRegionKey: const Key('scenario-role-region'),
+                  stage: PracticeRoleStage(
+                    title: scene.name,
+                    fallback: PracticeRoleFallback(
+                      assetName: scenarioStageAssetPath(scene),
+                      semanticLabel: '${scene.name}角色画面',
+                      imageKey: const Key('scenario-role-placeholder'),
                     ),
+                    surfaceBuilder: widget.avatarSurfaceBuilder,
+                    statusLabel: widget.avatarStatusLabel,
+                    exitInFlight: _exitInFlight,
+                    exitButtonKey: const Key('scenario-exit'),
+                    onExit: _requestExit,
+                  ),
+                  content: _ConversationPanel(
+                    controller: widget.practiceController,
+                    scrollController: _conversationScrollController,
+                    textController: _textController,
+                    textFocusNode: _textFocusNode,
+                    textMode: _textMode,
+                    recordingSeconds: _recordingSeconds,
+                    previewMode: widget.previewMode,
+                    onBeforeStartRecording: _beforeStartRecording,
+                    speechFeedbackController: widget.speechFeedbackController,
+                    playingQuestionId: _playingQuestionId,
+                    narrationErrorQuestionId: _questionNarrationErrorId,
+                    onPlayQuestion: _playQuestion,
+                    onToggleTextMode: _toggleTextMode,
+                    onSubmitText: _submitText,
+                    onTranslateQuestion:
+                        widget.practiceController.canTranslateQuestion &&
+                            widget.practiceController.client
+                                is PracticeQuestionTranslationClient
+                        ? _translateQuestion
+                        : null,
+                    onShowTip: _showQuestionTip,
+                    onHideTip: _hideQuestionTip,
+                    onSpeakTip: _speakQuestionTip,
+                    visibleTipQuestionId: _visibleTipQuestionId,
+                    onPracticeCompleted: _completePractice,
+                    onCompleteRequested: _requestUserControlledCompletion,
                   ),
                 ),
-                if (statusLabel case final label?)
-                  Flexible(
-                    child: Semantics(
-                      liveRegion: true,
-                      child: Container(
-                        key: const Key('scenario-avatar-status'),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 7,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.46),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Text(
-                          label,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          if (latestAssistantMessage case final message?)
-            Positioned(
-              left: 16,
-              right: 16,
-              bottom: 14,
-              child: Container(
-                key: const Key('scenario-live-subtitle'),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 15,
-                  vertical: 11,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.58),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Text(
-                  message.text,
-                  key: const Key('scenario-live-subtitle-text'),
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 15,
-                    height: 1.35,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _AvatarPlaceholder extends StatelessWidget {
-  const _AvatarPlaceholder();
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      label: '情景对话画面',
-      child: const Center(
-        child: Icon(
-          Icons.person_outline_rounded,
-          key: Key('scenario-avatar-placeholder'),
-          size: 84,
-          color: Color(0xFF819087),
         ),
       ),
     );
@@ -679,10 +654,10 @@ class _ConversationPanel extends StatelessWidget {
     required this.recordingSeconds,
     required this.previewMode,
     required this.onBeforeStartRecording,
-    required this.onReplayQuestion,
     required this.speechFeedbackController,
-    required this.replayLoading,
-    required this.replayPlaying,
+    required this.playingQuestionId,
+    required this.narrationErrorQuestionId,
+    required this.onPlayQuestion,
     required this.onToggleTextMode,
     required this.onSubmitText,
     required this.onTranslateQuestion,
@@ -691,6 +666,7 @@ class _ConversationPanel extends StatelessWidget {
     required this.onSpeakTip,
     required this.visibleTipQuestionId,
     required this.onPracticeCompleted,
+    required this.onCompleteRequested,
   });
 
   final PracticeController controller;
@@ -701,10 +677,10 @@ class _ConversationPanel extends StatelessWidget {
   final int recordingSeconds;
   final bool previewMode;
   final ScenarioAsyncAction? onBeforeStartRecording;
-  final ScenarioAsyncAction? onReplayQuestion;
   final SpeechFeedbackController? speechFeedbackController;
-  final bool replayLoading;
-  final bool replayPlaying;
+  final String? playingQuestionId;
+  final String? narrationErrorQuestionId;
+  final Future<void> Function(PracticeMessage message) onPlayQuestion;
   final VoidCallback onToggleTextMode;
   final VoidCallback onSubmitText;
   final Future<String> Function(PracticeMessage message)? onTranslateQuestion;
@@ -713,6 +689,7 @@ class _ConversationPanel extends StatelessWidget {
   final Future<void> Function() onSpeakTip;
   final String? visibleTipQuestionId;
   final VoidCallback onPracticeCompleted;
+  final VoidCallback onCompleteRequested;
 
   @override
   Widget build(BuildContext context) {
@@ -723,10 +700,7 @@ class _ConversationPanel extends StatelessWidget {
         children: [
           _ConversationHeader(
             controller: controller,
-            onShowTip: onShowTip,
-            onReplayQuestion: onReplayQuestion,
-            replayLoading: replayLoading,
-            replayPlaying: replayPlaying,
+            onCompleteRequested: onCompleteRequested,
           ),
           Expanded(
             child: messages.isEmpty
@@ -744,6 +718,32 @@ class _ConversationPanel extends StatelessWidget {
                     itemBuilder: (context, index) {
                       if (index < messages.length) {
                         final message = messages[index];
+                        final assistant =
+                            message.role == PracticeMessageRole.assistant;
+                        final currentQuestion =
+                            assistant && message.id == controller.questionId;
+                        final playing =
+                            playingQuestionId == message.id ||
+                            (currentQuestion &&
+                                controller.isQuestionAudioPlaying);
+                        final playbackLoading =
+                            currentQuestion &&
+                            controller.isQuestionAudioLoading;
+                        final tipsAvailable =
+                            currentQuestion &&
+                            (controller
+                                    .practiceCapabilities
+                                    ?.questionTipsAllowed ??
+                                false);
+                        final tip = controller.questionTip;
+                        final showTip =
+                            assistant &&
+                            tip != null &&
+                            tip.questionId == message.id &&
+                            tip.questionId == visibleTipQuestionId;
+                        final tipError = currentQuestion
+                            ? controller.questionTipErrorMessage
+                            : null;
                         final projection = _feedbackProjection(message);
                         return Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -752,11 +752,60 @@ class _ConversationPanel extends StatelessWidget {
                               message: message,
                               feedbackProjection: projection,
                               messageTextVisible: true,
-                              onTranslate:
-                                  message.role == PracticeMessageRole.assistant
+                              onTranslate: assistant
                                   ? onTranslateQuestion
                                   : null,
+                              actions: assistant
+                                  ? _ScenarioQuestionActions(
+                                      messageId: message.id,
+                                      playing: playing,
+                                      playbackLoading: playbackLoading,
+                                      playbackFailed:
+                                          narrationErrorQuestionId ==
+                                          message.id,
+                                      playbackEnabled:
+                                          !playbackLoading &&
+                                          _canTriggerScenarioReplay(controller),
+                                      tipsAvailable: tipsAvailable,
+                                      tipLoading:
+                                          currentQuestion &&
+                                          controller.isQuestionTipLoading,
+                                      tipEnabled:
+                                          currentQuestion &&
+                                          controller.canRequestQuestionTip,
+                                      onPlay: () =>
+                                          unawaited(onPlayQuestion(message)),
+                                      onShowTip: onShowTip,
+                                    )
+                                  : null,
                             ),
+                            if (showTip)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: QuestionTipCard(
+                                  content: tip.content,
+                                  translation: tip.translation,
+                                  onClose: onHideTip,
+                                  onSpeak: onSpeakTip,
+                                ),
+                              ),
+                            if (assistant && tipError != null)
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  12,
+                                  4,
+                                  12,
+                                  0,
+                                ),
+                                child: Text(
+                                  tipError,
+                                  key: const Key('scenario-question-tip-error'),
+                                  style: const TextStyle(
+                                    color: SpeakUpDesign.error,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
                           ],
                         );
                       }
@@ -781,26 +830,6 @@ class _ConversationPanel extends StatelessWidget {
                     },
                   ),
           ),
-          if (controller.questionTip case final tip?
-              when tip.questionId == visibleTipQuestionId)
-            QuestionTipCard(
-              content: tip.content,
-              onClose: onHideTip,
-              onSpeak: onSpeakTip,
-            ),
-          if (controller.questionTipErrorMessage case final message?)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: Text(
-                message,
-                key: const Key('scenario-question-tip-error'),
-                textAlign: TextAlign.right,
-                style: const TextStyle(
-                  color: SpeakUpDesign.error,
-                  fontSize: 12,
-                ),
-              ),
-            ),
           _ScenarioComposer(
             controller: controller,
             textController: textController,
@@ -836,24 +865,18 @@ class _ConversationPanel extends StatelessWidget {
 class _ConversationHeader extends StatelessWidget {
   const _ConversationHeader({
     required this.controller,
-    required this.onShowTip,
-    required this.onReplayQuestion,
-    required this.replayLoading,
-    required this.replayPlaying,
+    required this.onCompleteRequested,
   });
 
   final PracticeController controller;
-  final VoidCallback onShowTip;
-  final ScenarioAsyncAction? onReplayQuestion;
-  final bool replayLoading;
-  final bool replayPlaying;
+  final VoidCallback onCompleteRequested;
 
   @override
   Widget build(BuildContext context) {
     final current =
         (controller.completedTurns +
                 (controller.currentQuestion?.isFollowUp == true ? 0 : 1))
-            .clamp(1, controller.turnLimit);
+            .clamp(1, controller.turnLimit == 0 ? 1 : controller.turnLimit);
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
       decoration: const BoxDecoration(
@@ -862,76 +885,119 @@ class _ConversationHeader extends StatelessWidget {
       child: Row(
         children: [
           const Expanded(child: Text('对话', style: SpeakUpDesign.cardTitle)),
-          Flexible(
-            child: Text(
-              '第 $current 轮 · 共 ${controller.turnLimit} 轮',
-              key: const Key('scenario-turn-progress'),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.end,
-              style: SpeakUpDesign.meta,
-            ),
-          ),
-          if (controller.practiceCapabilities?.questionTipsAllowed ??
-              false) ...[
-            const SizedBox(width: 8),
+          if (controller.completionMode ==
+              PracticeCompletionMode.userControlled)
             TextButton.icon(
-              key: const Key('scenario-question-tip'),
-              onPressed: controller.canRequestQuestionTip ? onShowTip : null,
-              style: TextButton.styleFrom(
-                foregroundColor: SpeakUpDesign.primary,
-                backgroundColor: SpeakUpDesign.primaryMuted,
-                minimumSize: const Size(0, 34),
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                visualDensity: VisualDensity.compact,
-              ),
-              icon: controller.isQuestionTipLoading
-                  ? const SizedBox.square(
-                      dimension: 15,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.lightbulb_outline_rounded, size: 18),
-              label: Text(controller.isQuestionTipLoading ? '生成中' : 'Tips'),
-            ),
-          ],
-          if (onReplayQuestion != null || controller.canPlayQuestionAudio) ...[
-            const SizedBox(width: 6),
-            IconButton(
-              key: const Key('scenario-replay-question'),
-              tooltip:
-                  (onReplayQuestion != null
-                      ? replayPlaying
-                      : controller.isQuestionAudioPlaying)
-                  ? '停止播放'
-                  : '重听对方',
-              onPressed: onReplayQuestion != null
-                  ? replayLoading || !_canTriggerScenarioReplay(controller)
-                        ? null
-                        : () => unawaited(onReplayQuestion!())
-                  : controller.canUsePracticeAudio
-                  ? controller.toggleQuestionAudio
+              key: const Key('scenario-complete-practice'),
+              onPressed: controller.canCompleteActivePractice
+                  ? onCompleteRequested
                   : null,
-              visualDensity: VisualDensity.compact,
-              icon:
-                  (onReplayQuestion != null
-                      ? replayLoading
-                      : controller.isQuestionAudioLoading)
-                  ? const SizedBox.square(
-                      dimension: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : Icon(
-                      (onReplayQuestion != null
-                              ? replayPlaying
-                              : controller.isQuestionAudioPlaying)
-                          ? Icons.stop_circle_outlined
-                          : Icons.volume_up_outlined,
-                    ),
+              icon: const Icon(Icons.stop_circle_outlined, size: 18),
+              label: const Text('结束练习'),
+            )
+          else
+            Flexible(
+              child: Text(
+                '第 $current 轮 · 共 ${controller.turnLimit} 轮',
+                key: const Key('scenario-turn-progress'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.end,
+                style: SpeakUpDesign.meta,
+              ),
             ),
-          ],
         ],
       ),
+    );
+  }
+}
+
+class _ScenarioQuestionActions extends StatelessWidget {
+  const _ScenarioQuestionActions({
+    required this.messageId,
+    required this.playing,
+    required this.playbackLoading,
+    required this.playbackFailed,
+    required this.playbackEnabled,
+    required this.tipsAvailable,
+    required this.tipLoading,
+    required this.tipEnabled,
+    required this.onPlay,
+    required this.onShowTip,
+  });
+
+  final String messageId;
+  final bool playing;
+  final bool playbackLoading;
+  final bool playbackFailed;
+  final bool playbackEnabled;
+  final bool tipsAvailable;
+  final bool tipLoading;
+  final bool tipEnabled;
+  final VoidCallback onPlay;
+  final VoidCallback onShowTip;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 0,
+      runSpacing: 4,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        TextButton.icon(
+          key: ValueKey('scenario-question-voice-$messageId'),
+          onPressed: playbackEnabled ? onPlay : null,
+          style: TextButton.styleFrom(
+            foregroundColor: SpeakUpDesign.primary,
+            backgroundColor: SpeakUpDesign.surfaceMuted,
+            minimumSize: const Size(0, 32),
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            visualDensity: VisualDensity.compact,
+            textStyle: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          icon: playbackLoading
+              ? const SizedBox.square(
+                  dimension: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Icon(
+                  playing ? Icons.stop_rounded : Icons.volume_up_outlined,
+                  size: 17,
+                ),
+          label: Text(
+            playing
+                ? '停止朗读'
+                : playbackFailed
+                ? '重试朗读'
+                : '朗读',
+          ),
+        ),
+        if (tipsAvailable)
+          TextButton.icon(
+            key: ValueKey('scenario-question-tip-$messageId'),
+            onPressed: tipEnabled ? onShowTip : null,
+            style: TextButton.styleFrom(
+              foregroundColor: SpeakUpDesign.primary,
+              minimumSize: const Size(0, 32),
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              visualDensity: VisualDensity.compact,
+              textStyle: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            icon: tipLoading
+                ? const SizedBox.square(
+                    dimension: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.lightbulb_outline_rounded, size: 17),
+            label: Text(tipLoading ? '生成中' : 'Tips'),
+          ),
+      ],
     );
   }
 }
@@ -1077,8 +1143,9 @@ class _ScenarioComposerState extends State<_ScenarioComposer> {
             phase: capturePhase,
             seconds: widget.recordingSeconds,
             capture: capture,
+            transcript: widget.controller.transcript ?? '',
           ),
-          PracticeRecordingState.transcribing => const PracticeLoadingComposer(
+          PracticeRecordingState.transcribing => PracticeLoadingComposer(
             label: '正在识别你的回答…',
           ),
           PracticeRecordingState.awaitingConfirmation =>
@@ -1094,8 +1161,8 @@ class _ScenarioComposerState extends State<_ScenarioComposer> {
                 : '回答已发送，Agent 正在回复…',
           ),
           PracticeRecordingState.completed => PracticeComposerAction(
-            label: '练习已完成，可以返回继续对话。',
-            actionLabel: '完成并返回',
+            label: '练习已结束，报告生成后可在“复盘”中查看。',
+            actionLabel: '返回主聊天',
             onPressed: widget.onPracticeCompleted,
           ),
         },
@@ -1140,11 +1207,13 @@ class _RecordingComposer extends StatelessWidget {
     required this.phase,
     required this.seconds,
     required this.capture,
+    required this.transcript,
   });
 
   final VoiceCapturePhase phase;
   final int seconds;
   final VoiceCaptureView capture;
+  final String transcript;
 
   @override
   Widget build(BuildContext context) {
@@ -1153,6 +1222,7 @@ class _RecordingComposer extends StatelessWidget {
       phase: phase,
       keyPrefix: 'scenario',
       elapsed: Duration(seconds: seconds),
+      transcript: transcript,
       upwardCancelOnly: true,
     );
   }
@@ -1162,15 +1232,6 @@ String _scenarioFeedbackSourceKey(
   PracticeController controller,
   PracticeMessage message,
 ) => 'practice:${controller.practiceSessionId}:${message.id}';
-
-PracticeMessage? _latestAssistantMessage(List<PracticeMessage> messages) {
-  for (final message in messages.reversed) {
-    if (message.role == PracticeMessageRole.assistant) {
-      return message;
-    }
-  }
-  return null;
-}
 
 bool _canTriggerScenarioReplay(PracticeController controller) {
   if (controller.isBusy) {

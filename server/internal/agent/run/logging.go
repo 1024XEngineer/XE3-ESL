@@ -1,6 +1,7 @@
 package run
 
 import (
+	"log/slog"
 	"strings"
 	"time"
 	"unicode"
@@ -56,8 +57,8 @@ func reasonSummary(reasonCode string, decision string) string {
 		return "本轮已达到 Agent Loop 工具迭代预算。"
 	case FailureToolCallBudgetExhausted:
 		return "本轮已达到 Agent Loop 工具调用预算。"
-	case FailureWriteToolCallBudgetExhausted:
-		return "本轮已达到 Agent Loop 写工具调用预算。"
+	case reasonDomainTurnCompleted:
+		return "领域工具已完成本轮目标，直接提交规范回复与客户端动作。"
 	case FailureDuplicateToolCall:
 		return "模型重复提交了同一 ToolCall ID，本轮已停止执行。"
 	default:
@@ -70,4 +71,22 @@ func durationSince(startedAt time.Time) time.Duration {
 		return 0
 	}
 	return time.Since(startedAt)
+}
+
+func (service *Service) logAdvisoryStreamFailure(
+	run Run,
+	step ToolStep,
+	event string,
+) {
+	if service == nil || service.logger == nil {
+		return
+	}
+	service.logger.Warn(
+		"agent.stream.advisory_delivery_failed",
+		slog.String("run_id", run.ID),
+		slog.String("thread_id", run.ThreadID),
+		slog.String("tool_call_id", step.ID),
+		slog.String("tool_name", step.Name),
+		slog.String("event", event),
+	)
 }

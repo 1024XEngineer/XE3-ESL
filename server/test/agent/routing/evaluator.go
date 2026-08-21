@@ -9,15 +9,13 @@ import (
 	"strings"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
-	evaluationcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/agentcapability"
-	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
 	preparationcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
 	reviewcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agentcapability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/1024XEngineer/XE3-ESL/server/test/agent/capabilityfixture"
 )
 
-const DatasetVersion = "agent-routing-eval-v3"
+const DatasetVersion = "agent-routing-eval-v8"
 
 type EvaluationResult struct {
 	DatasetVersion      string
@@ -35,6 +33,7 @@ type CaseResult struct {
 	Decision      string
 	ToolNames     []string
 	ToolInputs    map[string]map[string]any
+	PreviewInputs []PreviewInputRecord
 	AllowedTools  []string
 	ErrorCategory string
 	Failures      []string
@@ -44,10 +43,11 @@ type Evaluator struct {
 	registry *capability.Registry
 	executor *capability.Executor
 	router   DeterministicRouter
+	preview  *routingPorts
 }
 
 func NewEvaluator() (*Evaluator, error) {
-	registry, err := newEvaluationRegistry()
+	registry, preview, err := newEvaluationRegistry()
 	if err != nil {
 		return nil, err
 	}
@@ -55,6 +55,7 @@ func NewEvaluator() (*Evaluator, error) {
 		registry: registry,
 		executor: capability.NewExecutor(registry),
 		router:   DeterministicRouter{},
+		preview:  preview,
 	}, nil
 }
 
@@ -123,15 +124,19 @@ func (e *Evaluator) evaluateCase(
 		AllowedTools: append([]string{}, allowedTools...),
 	}
 	for callIndex, call := range route.ToolCalls {
+		callContext := capability.CallContext{
+			Actor:      actor,
+			ThreadID:   "eval-thread",
+			RunID:      runID,
+			ToolCallID: fmt.Sprintf("eval-call-%d", callIndex+1),
+			RequestID:  fmt.Sprintf("%s-%d", runID, callIndex+1),
+		}
+		if call.Name == preparationcapability.PracticePreviewToolName {
+			callContext.Authorization = json.RawMessage(`{"intent":"REQUEST_CREATE"}`)
+		}
 		_, err := e.executor.Execute(
 			ctx,
-			capability.CallContext{
-				Actor:      actor,
-				ThreadID:   "eval-thread",
-				RunID:      runID,
-				ToolCallID: fmt.Sprintf("eval-call-%d", callIndex+1),
-				RequestID:  fmt.Sprintf("%s-%d", runID, callIndex+1),
-			},
+			callContext,
 			capability.Invocation{Name: call.Name, Input: call.Input},
 		)
 		if err != nil {
@@ -145,6 +150,7 @@ func (e *Evaluator) evaluateCase(
 			break
 		}
 	}
+	caseResult.PreviewInputs = e.preview.takeInputsForRun(runID)
 	caseResult.Failures = append(
 		caseResult.Failures,
 		validateCase(item, caseResult)...,
@@ -198,8 +204,6 @@ func (DeterministicRouter) Route(
 		return Route{Decision: DecisionRefuse}
 	case hasAny(input, "刚才这句话", "current utterance"):
 		return Route{Decision: DecisionDirect}
-	case item.ActiveGoalID != "" && hasAny(input, "继续", "continue"):
-		return Route{Decision: DecisionDirect}
 	case hasAny(input, "委婉", "polish", "翻译", "有什么问题", "grammar"):
 		if !hasBusinessSignal(input) {
 			return Route{Decision: DecisionDirect}
@@ -216,12 +220,16 @@ func (DeterministicRouter) Route(
 				}},
 			}
 		}
+	case followsIELTSWarmUp(item.Messages):
+		return routeIELTSPractice(item.Messages, allowed, true)
+	case isIELTSPracticeCreationRequest(input):
+		return routeIELTSPractice(item.Messages, allowed, false)
 	case hasAny(input, "刚完成", "刚练完", "最新报告", "latest report"):
-		if containsString(allowed, evaluationcapability.LatestPracticeReportToolName) {
+		if containsString(allowed, reviewcapability.ReviewSearchToolName) {
 			return Route{
 				Decision: DecisionToolCall,
 				ToolCalls: []ToolCall{{
-					Name:  evaluationcapability.LatestPracticeReportToolName,
+					Name:  reviewcapability.ReviewSearchToolName,
 					Input: mustRaw(map[string]any{}),
 				}},
 			}
@@ -237,7 +245,10 @@ func (DeterministicRouter) Route(
 				ToolCalls: []ToolCall{{
 					Name: preparationcapability.PracticePreviewToolName,
 					Input: mustRaw(map[string]any{
-						"scene_query": "英文产品经理面试",
+						"resolution_kind":        preparationcapability.SceneResolutionKindCatalog,
+						"catalog_scene_ids":      []string{"scn_interview_self_introduction"},
+						"custom_scenario":        "",
+						"custom_experience_hint": "NONE",
 					}),
 				}},
 			}
@@ -282,48 +293,173 @@ func (DeterministicRouter) Route(
 				}},
 			}
 		}
-	case hasAny(input, "确认创建"):
-		if containsString(allowed, goalcapability.GoalCreateCapabilityName) {
-			return Route{
-				Decision: DecisionToolCall,
-				ToolCalls: []ToolCall{{
-					Name: goalcapability.GoalCreateCapabilityName,
-					Input: mustRaw(map[string]any{
-						"title": "英文 PM 面试",
-					}),
-				}},
-			}
-		}
-	case hasAny(input, "上次", "那个", "继续"):
-		if containsString(allowed, goalcapability.GoalSearchCapabilityName) {
-			return Route{
-				Decision: DecisionToolCall,
-				ToolCalls: []ToolCall{{
-					Name: goalcapability.GoalSearchCapabilityName,
-					Input: mustRaw(map[string]any{
-						"query": "interview",
-						"limit": 2,
-					}),
-				}},
-			}
-		}
-	case hasAny(input, "面试", "会议", "客户", "演讲", "interview"):
-		if containsString(allowed, goalcapability.GoalCreateCapabilityName) {
-			return Route{
-				Decision: DecisionToolCall,
-				ToolCalls: []ToolCall{{
-					Name: goalcapability.GoalCreateCapabilityName,
-					Input: mustRaw(map[string]any{
-						"title": "English PM interview",
-					}),
-				}},
-			}
-		}
-		if containsString(allowed, goalcapability.GoalSearchCapabilityName) {
-			return Route{Decision: DecisionClarify}
-		}
 	}
 	return Route{Decision: DecisionDirect}
+}
+
+func routeIELTSPractice(
+	messages []EvalMessage,
+	allowed []string,
+	afterWarmUp bool,
+) Route {
+	selection := findIELTSPracticeSelection(messages)
+	if selection.mode == "" {
+		return Route{Decision: DecisionDirect}
+	}
+	arguments := map[string]any{"ielts_practice_mode": selection.mode}
+	if selection.mode != "FULL_MOCK" {
+		if selection.topicChoice == "" {
+			return Route{Decision: DecisionDirect}
+		}
+		arguments["ielts_topic_choice"] = selection.topicChoice
+	}
+
+	toolName := preparationcapability.IELTSWarmUpToolName
+	if selection.mode == "FULL_MOCK" || afterWarmUp ||
+		asksToStartDirectly(normalize(lastUserContent(messages))) {
+		toolName = preparationcapability.PracticePreviewToolName
+		arguments["resolution_kind"] = preparationcapability.SceneResolutionKindCatalog
+		arguments["catalog_scene_ids"] = []string{"scn_ielts_speaking"}
+		arguments["custom_scenario"] = ""
+		arguments["custom_experience_hint"] = "NONE"
+	}
+	if !containsString(allowed, toolName) {
+		return Route{Decision: DecisionDirect}
+	}
+	return Route{
+		Decision: DecisionToolCall,
+		ToolCalls: []ToolCall{{
+			Name:  toolName,
+			Input: mustRaw(arguments),
+		}},
+	}
+}
+
+type ieltsPracticeSelection struct {
+	mode        string
+	topicChoice string
+}
+
+func findIELTSPracticeSelection(messages []EvalMessage) ieltsPracticeSelection {
+	start := -1
+	for index := len(messages) - 1; index >= 0; index-- {
+		if messages[index].Role == "user" &&
+			hasAny(normalize(messages[index].Content), "雅思", "ielts") {
+			start = index
+			break
+		}
+	}
+	if start < 0 {
+		return ieltsPracticeSelection{}
+	}
+
+	selection := ieltsPracticeSelection{}
+	for _, message := range messages[start:] {
+		if message.Role != "user" {
+			continue
+		}
+		input := normalize(message.Content)
+		if mode := parseIELTSPracticeMode(input); mode != "" {
+			selection.mode = mode
+		}
+		if choice := parseIELTSTopicChoice(input); choice != "" {
+			selection.topicChoice = choice
+		}
+	}
+	return selection
+}
+
+func parseIELTSPracticeMode(input string) string {
+	switch {
+	case hasAny(input, "完整模考", "full mock"):
+		return "FULL_MOCK"
+	case hasAny(input, "part 1", "part one"):
+		return "PART_1"
+	case hasAny(input, "part 2", "part two"):
+		return "PART_2"
+	case hasAny(input, "part 3", "part three"):
+		return "PART_3"
+	default:
+		return ""
+	}
+}
+
+func parseIELTSTopicChoice(input string) string {
+	switch {
+	case hasAny(input, "随机", "random"):
+		return "random"
+	case hasAny(input, "人物", "person"):
+		return "person"
+	case hasAny(input, "地点", "place"):
+		return "place"
+	case hasAny(input, "事物", "thing"):
+		return "thing"
+	case hasAny(input, "经历", "experience"):
+		return "experience"
+	default:
+		return ""
+	}
+}
+
+func followsIELTSWarmUp(messages []EvalMessage) bool {
+	input := normalize(lastUserContent(messages))
+	if hasAny(
+		input,
+		"报告",
+		"评价",
+		"复盘",
+		"feedback",
+		"review",
+		"取消",
+		"cancel",
+	) {
+		return false
+	}
+	latestUserIndex := -1
+	for index := len(messages) - 1; index >= 0; index-- {
+		if messages[index].Role == "user" {
+			latestUserIndex = index
+			break
+		}
+	}
+	for index := latestUserIndex - 1; index >= 0; index-- {
+		switch messages[index].Role {
+		case "assistant":
+			content := normalize(messages[index].Content)
+			return hasAny(content, "用一两句英语说说", "直接回答", "问我要提示")
+		case "user":
+			return false
+		}
+	}
+	return false
+}
+
+func asksToStartDirectly(input string) bool {
+	return hasAny(
+		input,
+		"跳过",
+		"直接开始",
+		"马上开始",
+		"skip",
+		"start directly",
+		"start now",
+	)
+}
+
+func isIELTSPracticeCreationRequest(input string) bool {
+	return hasAny(input, "雅思", "ielts") &&
+		!hasAny(input, "报告", "评价", "复盘", "feedback", "review") &&
+		hasAny(
+			input,
+			"创建",
+			"安排",
+			"想练",
+			"练习",
+			"模考",
+			"给我",
+			"practice",
+			"mock",
+		)
 }
 
 func registeredToolNames(registry *capability.Registry) []string {
@@ -391,13 +527,66 @@ func validateCase(item RoutingCase, result CaseResult) []string {
 			}
 		}
 	}
+	for toolName, forbidden := range item.ForbiddenArgs {
+		actual, ok := result.ToolInputs[toolName]
+		if !ok {
+			continue
+		}
+		for _, field := range forbidden {
+			if _, found := actual[field]; found {
+				failures = append(
+					failures,
+					fmt.Sprintf("%s includes forbidden arg %s", toolName, field),
+				)
+			}
+		}
+	}
+	if item.ExpectedPreviewInput != nil {
+		if len(result.PreviewInputs) != 1 {
+			failures = append(
+				failures,
+				fmt.Sprintf("preview inputs = %d, want 1", len(result.PreviewInputs)),
+			)
+		} else if !samePreviewInput(
+			result.PreviewInputs[0],
+			*item.ExpectedPreviewInput,
+		) {
+			failures = append(
+				failures,
+				fmt.Sprintf(
+					"preview input = %#v, want %#v",
+					result.PreviewInputs[0],
+					*item.ExpectedPreviewInput,
+				),
+			)
+		}
+	}
 	return failures
+}
+
+func samePreviewInput(left, right PreviewInputRecord) bool {
+	return left.Kind == right.Kind &&
+		left.CatalogSceneID == right.CatalogSceneID &&
+		sameStrings(left.CandidateSceneIDs, right.CandidateSceneIDs)
 }
 
 func lastUserContent(messages []EvalMessage) string {
 	for index := len(messages) - 1; index >= 0; index-- {
 		if messages[index].Role == "user" {
 			return messages[index].Content
+		}
+	}
+	return ""
+}
+
+func latestIELTSRequest(messages []EvalMessage) string {
+	for index := len(messages) - 1; index >= 0; index-- {
+		if messages[index].Role != "user" {
+			continue
+		}
+		content := messages[index].Content
+		if hasAny(normalize(content), "雅思", "ielts") {
+			return content
 		}
 	}
 	return ""

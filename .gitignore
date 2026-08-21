@@ -34,8 +34,12 @@ yarn-error.log*
 
 # Go
 server/bin/
+server/coverage.txt
 *.test
 *.out
 
 #docs
 server/internal/agent/docs
+server/internal/coaching/preparation/docs
+server/internal/resume/docs
+docs

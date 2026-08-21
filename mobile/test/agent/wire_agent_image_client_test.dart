@@ -76,7 +76,7 @@ void main() {
       await client.deleteImage(imageAssetId: _imageId);
 
       expect(asset.id, _imageId);
-      expect(asset.status, AgentImageAssetStatus.staged);
+      expect(asset.status, AgentImageAssetStatus.ready);
       expect(content.url.scheme, 'https');
       transport.expectDone();
     },
@@ -116,6 +116,41 @@ void main() {
         ),
       ),
     );
+    transport.expectDone();
+  });
+
+  test('decodes an explicit staged 202 response for caller retry', () async {
+    final transport = _ImageTransport(<_ImageStep>[
+      _ImageStep(
+        statusCode: HttpStatus.accepted,
+        body: _jsonBytes(_assetJson(status: 'staged')),
+      ),
+    ]);
+    final client = WireAgentImageClient(
+      baseUri: Uri.parse('https://api.example.test'),
+      credentialProvider: () => const AuthSessionCredential(
+        sessionToken: 'sess_account-a',
+        generation: 1,
+      ),
+      invalidateSession:
+          ({
+            required expectedSessionToken,
+            required expectedGeneration,
+          }) async {},
+      transport: transport,
+    );
+
+    final asset = await client.uploadImage(
+      threadId: _threadId,
+      image: AgentLocalImage(
+        name: 'fixture.png',
+        contentType: 'image/png',
+        bytes: Uint8List.fromList(<int>[137, 80, 78, 71]),
+      ),
+      idempotencyKey: 'image-upload-staged',
+    );
+
+    expect(asset.status, AgentImageAssetStatus.staged);
     transport.expectDone();
   });
 
@@ -204,14 +239,13 @@ final class _ImageTransport implements AgentImageWireTransport {
   void expectDone() => expect(_steps, isEmpty);
 }
 
-Map<String, Object?> _assetJson() => <String, Object?>{
+Map<String, Object?> _assetJson({String status = 'ready'}) => <String, Object?>{
   'image_asset_id': _imageId,
-  'thread_id': _threadId,
   'content_type': 'image/png',
   'size_bytes': 4,
   'width': 1,
   'height': 1,
-  'status': 'staged',
+  'status': status,
   'created_at': '2026-07-30T00:00:00Z',
 };
 

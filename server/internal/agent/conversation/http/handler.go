@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"time"
 
+	agentclientaction "github.com/1024XEngineer/XE3-ESL/server/internal/agent/clientaction"
 	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
-	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
 	agentimage "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/image"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/apperror"
@@ -24,12 +24,12 @@ const (
 	defaultMessagePageSize = 50
 )
 
-type ToolCallReader interface {
-	GetToolCalls(
+type ClientActionReader interface {
+	GetClientActions(
 		context.Context,
 		requestcontext.Actor,
 		string,
-	) ([]agentrun.ToolCall, error)
+	) ([]agentclientaction.Action, error)
 }
 
 type MessageImageReader interface {
@@ -38,7 +38,7 @@ type MessageImageReader interface {
 		requestcontext.Actor,
 		string,
 		string,
-	) ([]agentimage.Asset, error)
+	) ([]agentimage.Image, error)
 }
 
 type SpeechFeedbackProjectionReader interface {
@@ -50,21 +50,34 @@ type SpeechFeedbackProjectionReader interface {
 }
 
 type Handler struct {
-	application    agentconversation.Application
-	toolCalls      ToolCallReader
-	images         MessageImageReader
-	speechFeedback SpeechFeedbackProjectionReader
-	errors         *httpresponse.Renderer
+	application     agentconversation.Application
+	clientActions   ClientActionReader
+	images          MessageImageReader
+	speechFeedback  SpeechFeedbackProjectionReader
+	assistantSpeech agentconversation.AssistantSpeechSynthesizer
+	errors          *httpresponse.Renderer
+}
+
+func WithAssistantSpeech(
+	synthesizer agentconversation.AssistantSpeechSynthesizer,
+) Option {
+	return func(handler *Handler) error {
+		if synthesizer == nil {
+			return errors.New("agent conversation: assistant speech synthesizer is required")
+		}
+		handler.assistantSpeech = synthesizer
+		return nil
+	}
 }
 
 type Option func(*Handler) error
 
-func WithToolCalls(reader ToolCallReader) Option {
+func WithClientActions(reader ClientActionReader) Option {
 	return func(handler *Handler) error {
 		if reader == nil {
-			return errors.New("agent conversation: tool-call reader is required")
+			return errors.New("agent conversation: client-action reader is required")
 		}
-		handler.toolCalls = reader
+		handler.clientActions = reader
 		return nil
 	}
 }
@@ -115,49 +128,27 @@ func NewHandler(
 func (handler *Handler) RegisterRoutes(routes gin.IRoutes) {
 	routes.POST("/v1/agent-threads", handler.createThread)
 	routes.GET("/v1/agent-threads", handler.listThreads)
-	routes.GET("/v1/agent-threads/focused", handler.getFocusedThread)
-	routes.PUT("/v1/agent-threads/focused", handler.setFocusedThread)
-	routes.DELETE("/v1/agent-threads/focused", handler.clearFocusedThread)
 	routes.GET("/v1/agent-threads/:thread_id", handler.getThread)
 	routes.DELETE("/v1/agent-threads/:thread_id", handler.deleteThread)
-	routes.PUT(
-		"/v1/agent-threads/:thread_id/active-goal",
-		handler.setActiveGoal,
-	)
 	routes.GET(
 		"/v1/agent-threads/:thread_id/messages",
 		handler.listMessages,
 	)
+	if handler.assistantSpeech != nil {
+		routes.GET(
+			"/v1/agent-threads/:thread_id/assistant-speech/realtime",
+			handler.streamAssistantSpeech,
+		)
+	}
 }
 
 func (handler *Handler) createThread(c *gin.Context) {
-	values, ok := httpinput.DecodeObject(
-		c,
-		[]string{"active_goal_id"},
-		nil,
-		httpinput.DefaultJSONBodyLimit,
-		httpinput.DefaultReadTimeout,
-	)
-	if !ok {
-		handler.write(c, invalidRequest(nil))
-		return
-	}
-	activeGoalID := ""
-	if raw, exists := values["active_goal_id"]; exists {
-		activeGoalID, ok = httpinput.String(raw)
-		if !ok || activeGoalID == "" {
-			handler.write(c, invalidRequest(nil))
-			return
-		}
-	}
 	actor, ok := actor(c)
 	if !ok {
 		handler.write(c, authenticationRequired())
 		return
 	}
-	thread, err := handler.application.CreateThread(
-		c.Request.Context(), actor, activeGoalID,
-	)
+	thread, err := handler.application.CreateThread(c.Request.Context(), actor)
 	if err != nil {
 		handler.write(c, mapError(err))
 		return
@@ -191,80 +182,10 @@ func (handler *Handler) listThreads(c *gin.Context) {
 		threads = append(threads, ThreadResponse(thread))
 	}
 	result := gin.H{"threads": threads}
-	if page.FocusedThreadID != "" {
-		result["focused_thread_id"] = page.FocusedThreadID
-	}
 	if page.NextCursor != "" {
 		result["next_cursor"] = page.NextCursor
 	}
 	c.JSON(http.StatusOK, result)
-}
-
-func (handler *Handler) getFocusedThread(c *gin.Context) {
-	trusted, ok := actor(c)
-	if !ok {
-		handler.write(c, authenticationRequired())
-		return
-	}
-	thread, found, err := handler.application.GetFocusedThread(
-		c.Request.Context(), trusted,
-	)
-	if err != nil {
-		handler.write(c, mapError(err))
-		return
-	}
-	if !found {
-		c.Status(http.StatusNoContent)
-		return
-	}
-	c.JSON(http.StatusOK, ThreadResponse(thread))
-}
-
-func (handler *Handler) setFocusedThread(c *gin.Context) {
-	values, ok := httpinput.DecodeObject(
-		c,
-		[]string{"thread_id"},
-		[]string{"thread_id"},
-		httpinput.DefaultJSONBodyLimit,
-		httpinput.DefaultReadTimeout,
-	)
-	if !ok {
-		handler.write(c, invalidRequest(nil))
-		return
-	}
-	threadID, ok := httpinput.String(values["thread_id"])
-	if !ok {
-		handler.write(c, invalidRequest(nil))
-		return
-	}
-	trusted, ok := actor(c)
-	if !ok {
-		handler.write(c, authenticationRequired())
-		return
-	}
-	thread, err := handler.application.SetFocusedThread(
-		c.Request.Context(), trusted, threadID,
-	)
-	if err != nil {
-		handler.write(c, mapError(err))
-		return
-	}
-	c.JSON(http.StatusOK, ThreadResponse(thread))
-}
-
-func (handler *Handler) clearFocusedThread(c *gin.Context) {
-	trusted, ok := actor(c)
-	if !ok {
-		handler.write(c, authenticationRequired())
-		return
-	}
-	if err := handler.application.ClearFocusedThread(
-		c.Request.Context(), trusted,
-	); err != nil {
-		handler.write(c, mapError(err))
-		return
-	}
-	c.Status(http.StatusNoContent)
 }
 
 func (handler *Handler) getThread(c *gin.Context) {
@@ -298,38 +219,6 @@ func (handler *Handler) deleteThread(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-func (handler *Handler) setActiveGoal(c *gin.Context) {
-	values, ok := httpinput.DecodeObject(
-		c,
-		[]string{"goal_id"},
-		[]string{"goal_id"},
-		httpinput.DefaultJSONBodyLimit,
-		httpinput.DefaultReadTimeout,
-	)
-	if !ok {
-		handler.write(c, invalidRequest(nil))
-		return
-	}
-	goalID, ok := httpinput.String(values["goal_id"])
-	if !ok {
-		handler.write(c, invalidRequest(nil))
-		return
-	}
-	trusted, ok := actor(c)
-	if !ok {
-		handler.write(c, authenticationRequired())
-		return
-	}
-	link, err := handler.application.SetActiveGoal(
-		c.Request.Context(), trusted, c.Param("thread_id"), goalID,
-	)
-	if err != nil {
-		handler.write(c, mapError(err))
-		return
-	}
-	c.JSON(http.StatusOK, LinkResponse(link))
-}
-
 func (handler *Handler) listMessages(c *gin.Context) {
 	pageSize, cursor, ok := decodePageQuery(
 		c.Request.URL.RawQuery,
@@ -353,7 +242,7 @@ func (handler *Handler) listMessages(c *gin.Context) {
 	}
 	messages := make([]gin.H, 0, len(page.Messages))
 	for _, message := range page.Messages {
-		response, err := handler.messageResponseWithHandoffs(
+		response, err := handler.messageResponseWithClientActions(
 			c.Request.Context(), trusted, message,
 		)
 		if err != nil {
@@ -409,20 +298,7 @@ func ThreadResponse(thread agentconversation.Thread) gin.H {
 	if thread.Title != "" {
 		result["title"] = thread.Title
 	}
-	if thread.ActiveGoalID != "" {
-		result["active_goal_id"] = thread.ActiveGoalID
-	}
 	return result
-}
-
-func LinkResponse(link agentconversation.ThreadGoalLink) gin.H {
-	return gin.H{
-		"thread_id":  link.ThreadID,
-		"goal_id":    link.GoalID,
-		"active":     link.Active,
-		"linked_at":  link.LinkedAt.UTC().Format(time.RFC3339Nano),
-		"updated_at": link.UpdatedAt.UTC().Format(time.RFC3339Nano),
-	}
 }
 
 func MessageResponse(message agentconversation.Message) gin.H {
@@ -442,7 +318,7 @@ func MessageResponse(message agentconversation.Message) gin.H {
 	}
 	if message.Audio != nil {
 		result["modality"] = agentconversation.MessageModalityVoice
-		result["audio"] = MessageAudioResponse(*message.Audio)
+		result["audio"] = AudioAttachmentResponse(*message.Audio)
 	} else if message.Modality == agentconversation.MessageModalityMultimodal {
 		result["modality"] = agentconversation.MessageModalityMultimodal
 	}
@@ -452,21 +328,16 @@ func MessageResponse(message agentconversation.Message) gin.H {
 	return result
 }
 
-func MessageAudioResponse(audio agentconversation.MessageAudio) gin.H {
+func AudioAttachmentResponse(audio agentconversation.AudioAttachment) gin.H {
 	result := gin.H{
 		"audio_id":     audio.ID,
-		"status":       audio.Status,
+		"status":       "readable",
 		"content_type": audio.ContentType,
 		"size_bytes":   audio.Size,
 		"duration_ms":  durationMilliseconds(audio.Duration),
 	}
-	if audio.Status == agentconversation.MessageAudioReadable {
-		result["playback_path"] =
-			"/v1/agent-message-audios/" + audio.ID + "/playback"
-	}
-	if !audio.DeletedAt.IsZero() {
-		result["deleted_at"] = audio.DeletedAt.UTC().Format(time.RFC3339Nano)
-	}
+	result["playback_path"] =
+		"/v1/agent-message-audios/" + audio.ID + "/playback"
 	return result
 }
 
@@ -477,7 +348,7 @@ func durationMilliseconds(duration time.Duration) int64 {
 	return int64((duration + time.Millisecond - 1) / time.Millisecond)
 }
 
-func (handler *Handler) messageResponseWithHandoffs(
+func (handler *Handler) messageResponseWithClientActions(
 	ctx context.Context,
 	trusted requestcontext.Actor,
 	message agentconversation.Message,
@@ -512,31 +383,26 @@ func (handler *Handler) messageResponseWithHandoffs(
 		}
 		response["images"] = images
 	}
-	if handler.toolCalls == nil ||
+	if handler.clientActions == nil ||
 		message.Role != agentconversation.MessageRoleAssistant ||
 		message.ProducedByRunID == "" {
 		return response, nil
 	}
-	records, err := handler.toolCalls.GetToolCalls(
+	clientActions, err := handler.clientActions.GetClientActions(
 		ctx, trusted, message.ProducedByRunID,
 	)
 	if err != nil {
 		return nil, err
 	}
-	handoffs, err := messageHandoffs(records)
-	if err != nil {
-		return nil, err
-	}
-	if len(handoffs) > 0 {
-		response["handoffs"] = handoffs
+	if len(clientActions) > 0 {
+		response["client_actions"] = clientActions
 	}
 	return response, nil
 }
 
-func ImageAssetResponse(asset agentimage.Asset) gin.H {
+func ImageAssetResponse(asset agentimage.Image) gin.H {
 	response := gin.H{
 		"image_asset_id": asset.ID,
-		"thread_id":      asset.ThreadID,
 		"content_type":   asset.ContentType,
 		"size_bytes":     asset.Size,
 		"width":          asset.Width,
@@ -548,26 +414,6 @@ func ImageAssetResponse(asset agentimage.Asset) gin.H {
 		response["attached_at"] = asset.AttachedAt.UTC().Format(time.RFC3339Nano)
 	}
 	return response
-}
-
-func messageHandoffs(
-	records []agentrun.ToolCall,
-) ([]agenthandoff.Item, error) {
-	handoffs := make([]agenthandoff.Item, 0, 1)
-	for _, record := range records {
-		if record.Status != agentrun.ToolCallSucceeded ||
-			len(record.Handoffs) == 0 {
-			continue
-		}
-		if err := agenthandoff.ValidateItems(record.Handoffs); err != nil {
-			return nil, agentrun.ErrRepository
-		}
-		handoffs = append(handoffs, agenthandoff.CloneItems(record.Handoffs)...)
-	}
-	if err := agenthandoff.ValidateItems(handoffs); err != nil {
-		return nil, agentrun.ErrRepository
-	}
-	return handoffs, nil
 }
 
 func actor(c *gin.Context) (requestcontext.Actor, bool) {

@@ -37,10 +37,77 @@ void main() {
       expect(await File(recording.path).exists(), isFalse);
     },
   );
+
+  test('ephemeral streaming stop clears PCM without creating a WAV', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'agent-voice-ephemeral-recorder-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final native = _StreamingNativeRecorder();
+    final recorder = IosAgentVoiceRecorder(
+      recorder: native,
+      temporaryDirectory: () async => directory,
+    );
+
+    final stream = await recorder.startAudioStream();
+    final forwarded = stream.expand((chunk) => chunk).toList();
+    final pcm = Uint8List.fromList(<int>[0, 0, 1, 0]);
+    native.add(pcm);
+    await recorder.stopAudioStreamAndDiscard();
+
+    expect(await forwarded, <int>[0, 0, 1, 0]);
+    expect(pcm, <int>[0, 0, 0, 0]);
+    expect(
+      await directory
+          .list(recursive: true, followLinks: false)
+          .where((entity) => entity is File)
+          .toList(),
+      isEmpty,
+    );
+  });
+
+  test('streaming stop failure cancels the native capture', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'agent-voice-stream-recorder-failure-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final native = _StreamingNativeRecorder()
+      ..stopError = StateError('stop failed');
+    final recorder = IosAgentVoiceRecorder(
+      recorder: native,
+      temporaryDirectory: () async => directory,
+    );
+
+    final stream = await recorder.startAudioStream();
+    final subscription = stream.listen((_) {}, onError: (_) {});
+    final pcm = Uint8List.fromList(<int>[1, 0, 2, 0]);
+    native.add(pcm);
+
+    await expectLater(
+      recorder.stopAudioStream(),
+      throwsA(
+        isA<AgentVoiceRecordingException>().having(
+          (error) => error.kind,
+          'kind',
+          AgentVoiceRecordingFailureKind.unavailable,
+        ),
+      ),
+    );
+
+    expect(native.cancelCount, 1);
+    expect(pcm, <int>[0, 0, 0, 0]);
+    await subscription.cancel();
+  });
 }
 
 final class _StreamingNativeRecorder implements NativeAgentVoiceRecorder {
-  final StreamController<Uint8List> _chunks = StreamController<Uint8List>();
+  _StreamingNativeRecorder() {
+    _chunks = StreamController<Uint8List>(onCancel: () => cancelCount++);
+  }
+
+  late final StreamController<Uint8List> _chunks;
+  Object? stopError;
+  int cancelCount = 0;
 
   void add(Uint8List chunk) => _chunks.add(chunk);
 
@@ -55,6 +122,9 @@ final class _StreamingNativeRecorder implements NativeAgentVoiceRecorder {
 
   @override
   Future<String?> stop() async {
+    if (stopError case final error?) {
+      throw error;
+    }
     await _chunks.close();
     return null;
   }

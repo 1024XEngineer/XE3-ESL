@@ -10,12 +10,52 @@ import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.da
 
 typedef AvatarControllerFactory = AvatarController Function();
 
+typedef PracticeAvatarSessionBuilder =
+    Widget Function(BuildContext context, PracticeAvatarSessionView avatar);
+
+final class PracticeAvatarSessionView {
+  const PracticeAvatarSessionView({
+    required this.surfaceBuilder,
+    required this.statusLabel,
+    required this.interruptForUserTurn,
+    required this.onReplayQuestion,
+    required this.replayLoading,
+    required this.replayPlaying,
+  });
+
+  final WidgetBuilder surfaceBuilder;
+  final String? statusLabel;
+  final Future<void> Function() interruptForUserTurn;
+  final Future<void> Function()? onReplayQuestion;
+  final bool replayLoading;
+  final bool replayPlaying;
+}
+
+/// Owns one avatar connection while the supplied practice page owns its UI.
+class PracticeAvatarSession extends StatefulWidget {
+  const PracticeAvatarSession({
+    required this.practiceController,
+    required this.avatarControllerFactory,
+    required this.builder,
+    required this.surfaceKey,
+    super.key,
+  });
+
+  final PracticeController practiceController;
+  final AvatarControllerFactory avatarControllerFactory;
+  final PracticeAvatarSessionBuilder builder;
+  final Key surfaceKey;
+
+  @override
+  State<PracticeAvatarSession> createState() => _PracticeAvatarSessionState();
+}
+
 /// Owns one avatar connection for one scenario practice route.
 ///
 /// The product shell remains vendor-neutral: this coordinator only knows the
 /// AvatarController boundary, while the composition root chooses Spatius (or a
 /// future provider).
-class ScenarioPracticeSession extends StatefulWidget {
+class ScenarioPracticeSession extends StatelessWidget {
   const ScenarioPracticeSession({
     required this.practiceController,
     required this.avatarControllerFactory,
@@ -32,11 +72,30 @@ class ScenarioPracticeSession extends StatefulWidget {
   final Future<bool> Function()? onExitRequested;
 
   @override
-  State<ScenarioPracticeSession> createState() =>
-      _ScenarioPracticeSessionState();
+  Widget build(BuildContext context) {
+    return PracticeAvatarSession(
+      practiceController: practiceController,
+      avatarControllerFactory: avatarControllerFactory,
+      surfaceKey: const Key('scenario-avatar-surface'),
+      builder: (context, avatar) => ScenarioPracticePage(
+        practiceController: practiceController,
+        questionSpeaker: practiceController.promptSpeaker,
+        avatarSurfaceBuilder: avatar.surfaceBuilder,
+        avatarStatusLabel: avatar.statusLabel,
+        onBeforeStartRecording: avatar.interruptForUserTurn,
+        onBeforeSubmitText: avatar.interruptForUserTurn,
+        onReplayQuestion: avatar.onReplayQuestion,
+        onPracticeCompleted: onPracticeCompleted,
+        speechFeedbackController: speechFeedbackController,
+        replayLoading: avatar.replayLoading,
+        replayPlaying: avatar.replayPlaying,
+        onExitRequested: onExitRequested,
+      ),
+    );
+  }
 }
 
-class _ScenarioPracticeSessionState extends State<ScenarioPracticeSession>
+class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
     with WidgetsBindingObserver {
   static const _avatarReadinessTimeout = Duration(seconds: 15);
   static const _userTurnInterruptBudget = Duration(milliseconds: 500);
@@ -83,7 +142,7 @@ class _ScenarioPracticeSessionState extends State<ScenarioPracticeSession>
   }
 
   @override
-  void didUpdateWidget(covariant ScenarioPracticeSession oldWidget) {
+  void didUpdateWidget(covariant PracticeAvatarSession oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.practiceController == widget.practiceController) {
       return;
@@ -284,6 +343,12 @@ class _ScenarioPracticeSessionState extends State<ScenarioPracticeSession>
       return;
     }
     _autoHandledQuestionId = question.id;
+    if (widget.practiceController.supportsRealtimeQuestionSpeech) {
+      // The shared Practice controller starts cloud PCM as soon as the new
+      // question is presented. Do not replace it with the avatar's slower
+      // complete-WAV path or the two players would race each other.
+      return;
+    }
     await _speakQuestion(question);
   }
 
@@ -505,6 +570,10 @@ class _ScenarioPracticeSessionState extends State<ScenarioPracticeSession>
       await _interruptForUserTurn();
       return;
     }
+    if (widget.practiceController.supportsRealtimeQuestionSpeech) {
+      await widget.practiceController.toggleQuestionAudio();
+      return;
+    }
     final question = widget.practiceController.currentQuestion;
     if (question != null) {
       await _speakQuestion(question, replay: true);
@@ -553,25 +622,23 @@ class _ScenarioPracticeSessionState extends State<ScenarioPracticeSession>
 
   @override
   Widget build(BuildContext context) {
-    return ScenarioPracticePage(
-      practiceController: widget.practiceController,
-      avatarSurfaceBuilder: (_) => _hasLiveAvatarController
-          ? _avatarController.buildSurface(
-              key: const Key('scenario-avatar-surface'),
-            )
-          : const SizedBox.expand(key: Key('scenario-avatar-surface')),
-      avatarStatusLabel: _avatarStatusLabel,
-      onBeforeStartRecording: _interruptForUserTurn,
-      onBeforeSubmitText: _interruptForUserTurn,
-      onReplayQuestion:
-          widget.practiceController.currentQuestion?.speechPath == null
-          ? null
-          : _replayQuestion,
-      onPracticeCompleted: widget.onPracticeCompleted,
-      speechFeedbackController: widget.speechFeedbackController,
-      replayLoading: _replayLoading,
-      replayPlaying: _isAvatarSpeaking,
-      onExitRequested: widget.onExitRequested,
+    return widget.builder(
+      context,
+      PracticeAvatarSessionView(
+        surfaceBuilder: (_) => _hasLiveAvatarController
+            ? _avatarController.buildSurface(key: widget.surfaceKey)
+            : SizedBox.expand(key: widget.surfaceKey),
+        statusLabel: _avatarStatusLabel,
+        interruptForUserTurn: _interruptForUserTurn,
+        onReplayQuestion: !widget.practiceController.canPlayQuestionAudio
+            ? null
+            : _replayQuestion,
+        replayLoading:
+            _replayLoading || widget.practiceController.isQuestionAudioLoading,
+        replayPlaying:
+            _isAvatarSpeaking ||
+            widget.practiceController.isQuestionAudioPlaying,
+      ),
     );
   }
 

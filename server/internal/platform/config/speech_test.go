@@ -7,7 +7,7 @@ import (
 
 func TestLoadSpeechRecognition(t *testing.T) {
 	setSpeechEnvironment(t)
-	t.Setenv("QIANWEN_ASR_TIMEOUT", "75s")
+	t.Setenv("QIANWEN_ASR_RECORDED_TIMEOUT", "75s")
 
 	cfg, err := LoadSpeechRecognition()
 	if err != nil {
@@ -15,8 +15,10 @@ func TestLoadSpeechRecognition(t *testing.T) {
 	}
 	if cfg.Provider != SpeechProviderQianwen ||
 		cfg.BaseURL != "https://dashscope.aliyuncs.com/api/v1" ||
-		cfg.Model != "fun-asr-flash-2026-06-15" ||
-		cfg.Timeout != 75*time.Second ||
+		cfg.Model != qianwenRealtimeASRModel ||
+		cfg.Timeout != 150*time.Second ||
+		cfg.RecordedModel != qianwenRecordedASRModel ||
+		cfg.RecordedTimeout != 75*time.Second ||
 		cfg.APIKey.Reveal() != "test-secret-value" {
 		t.Fatalf("unexpected speech recognition config: %#v", cfg)
 	}
@@ -46,6 +48,7 @@ func TestLoadSpeechSynthesis(t *testing.T) {
 func TestSpeechConfigurationUsesIndependentTimeoutDefaults(t *testing.T) {
 	setSpeechEnvironment(t)
 	t.Setenv("QIANWEN_ASR_TIMEOUT", "")
+	t.Setenv("QIANWEN_ASR_RECORDED_TIMEOUT", "")
 	t.Setenv("QIANWEN_TTS_TIMEOUT", "")
 
 	asr, err := LoadSpeechRecognition()
@@ -58,6 +61,16 @@ func TestSpeechConfigurationUsesIndependentTimeoutDefaults(t *testing.T) {
 	}
 	if asr.Timeout != defaultASRTimeout {
 		t.Fatalf("ASR timeout = %s, want %s", asr.Timeout, defaultASRTimeout)
+	}
+	if asr.Timeout != 150*time.Second {
+		t.Fatalf("ASR timeout = %s, want enough time for a 120s IELTS response and finalization", asr.Timeout)
+	}
+	if asr.RecordedTimeout != defaultASRTimeout {
+		t.Fatalf(
+			"recorded ASR timeout = %s, want %s",
+			asr.RecordedTimeout,
+			defaultASRTimeout,
+		)
 	}
 	if tts.Timeout != defaultTTSTimeout {
 		t.Fatalf("TTS timeout = %s, want %s", tts.Timeout, defaultTTSTimeout)
@@ -74,8 +87,14 @@ func TestLoadSpeechRecognitionRejectsUnsafeOrIncompleteConfiguration(t *testing.
 		{name: "unsupported provider", key: "SPEECH_RECOGNITION_PROVIDER", value: "fake"},
 		{name: "missing base URL", key: "QIANWEN_ASR_BASE_URL", value: ""},
 		{name: "missing model", key: "QIANWEN_ASR_MODEL", value: ""},
+		{name: "non-realtime live model", key: "QIANWEN_ASR_MODEL", value: qianwenRecordedASRModel},
+		{name: "stale realtime timeout", key: "QIANWEN_ASR_TIMEOUT", value: "90s"},
 		{name: "invalid timeout", key: "QIANWEN_ASR_TIMEOUT", value: "soon"},
 		{name: "excessive timeout", key: "QIANWEN_ASR_TIMEOUT", value: "301s"},
+		{name: "missing recorded model", key: "QIANWEN_ASR_RECORDED_MODEL", value: ""},
+		{name: "realtime recorded model", key: "QIANWEN_ASR_RECORDED_MODEL", value: qianwenRealtimeASRModel},
+		{name: "invalid recorded timeout", key: "QIANWEN_ASR_RECORDED_TIMEOUT", value: "soon"},
+		{name: "excessive recorded timeout", key: "QIANWEN_ASR_RECORDED_TIMEOUT", value: "301s"},
 		{name: "missing API key", key: "DASHSCOPE_API_KEY", value: ""},
 		{name: "API key whitespace", key: "DASHSCOPE_API_KEY", value: "secret value"},
 	}
@@ -121,8 +140,10 @@ func setSpeechEnvironment(t *testing.T) {
 	t.Helper()
 	t.Setenv("SPEECH_RECOGNITION_PROVIDER", SpeechProviderQianwen)
 	t.Setenv("QIANWEN_ASR_BASE_URL", "https://dashscope.aliyuncs.com/api/v1")
-	t.Setenv("QIANWEN_ASR_MODEL", "fun-asr-flash-2026-06-15")
+	t.Setenv("QIANWEN_ASR_MODEL", qianwenRealtimeASRModel)
 	t.Setenv("QIANWEN_ASR_TIMEOUT", "")
+	t.Setenv("QIANWEN_ASR_RECORDED_MODEL", qianwenRecordedASRModel)
+	t.Setenv("QIANWEN_ASR_RECORDED_TIMEOUT", "")
 	t.Setenv("SPEECH_SYNTHESIS_PROVIDER", SpeechProviderQianwen)
 	t.Setenv("QIANWEN_TTS_BASE_URL", "https://dashscope.aliyuncs.com/api/v1")
 	t.Setenv("QIANWEN_TTS_MODEL", "qwen-audio-3.0-tts-flash")

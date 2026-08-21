@@ -22,12 +22,86 @@ import 'package:speakup/features/coaching/practice/practice_client.dart';
 import 'package:speakup/features/coaching/practice/practice_media.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
-import 'package:speakup/features/coaching/review/ielts_speaking_report.dart';
-import 'package:speakup/features/coaching/review/ielts_speaking_report_client.dart';
-import 'package:speakup/features/coaching/review/ielts_speaking_report_controller.dart';
-import 'package:speakup/features/coaching/review/ielts_speaking_report_view.dart';
 
 void main() {
+  testWidgets('Part 1 keeps Tips visible while recording', (tester) async {
+    const capabilities = PracticeCapabilities(
+      retryAllowed: false,
+      questionTranslationAllowed: false,
+      questionTipsAllowed: true,
+      speechFeedbackAllowed: false,
+    );
+    final practice = _IeltsPracticeClient(
+      initialCompleted: 0,
+      capabilities: capabilities,
+    );
+    final controller = PracticeController(
+      client: practice,
+      recorder: _Recorder(),
+    );
+    addTearDown(controller.dispose);
+    await _activatePractice(
+      controller,
+      practice,
+      _ieltsScene,
+      mode: PracticeMode.part1,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: _MemoryProgressStore(),
+          examinerSpeaker: _ImmediateExaminerSpeaker(),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(
+      find.byKey(const ValueKey('ielts-question-tip-question-1')),
+    );
+    await tester.pump();
+    expect(find.byKey(const Key('practice-question-tip-card')), findsOneWidget);
+    expect(find.text('可边看边说'), findsNothing);
+
+    await tester.tap(find.byKey(const Key('ielts-mock-record')));
+    await tester.pump();
+
+    expect(controller.recordingState, PracticeRecordingState.recording);
+    expect(find.byKey(const Key('practice-question-tip-card')), findsOneWidget);
+    await controller.cancelRecording();
+    await tester.pump();
+  });
+
+  testWidgets('Part 1 uses the conversation and composer stage', (
+    tester,
+  ) async {
+    final practice = _IeltsPracticeClient(initialCompleted: 0);
+    final controller = PracticeController(
+      client: practice,
+      recorder: _Recorder(),
+    );
+    addTearDown(controller.dispose);
+    await _activatePractice(controller, practice, _ieltsScene);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: _MemoryProgressStore(),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byKey(const Key('ielts-mock-conversation')), findsOneWidget);
+    expect(
+      find.byKey(const Key('ielts-mock-record')).hitTestable(),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('Part 1 prefers the shared practice question voice', (
     tester,
   ) async {
@@ -62,7 +136,7 @@ void main() {
   });
 
   testWidgets(
-    'Part 1 auto-plays voice bubbles and reveals English only on request',
+    'Part 1 auto-plays and keeps examiner text visible in shared bubbles',
     (tester) async {
       final speaker = _ImmediateExaminerSpeaker();
       final practice = _IeltsPracticeClient(initialCompleted: 0);
@@ -90,18 +164,7 @@ void main() {
         find.byKey(const Key('ielts-question-voice-question-1')),
         findsOneWidget,
       );
-      expect(find.text(_question(1).text), findsNothing);
-
-      await tester.tap(
-        find.byKey(const Key('ielts-question-transcript-toggle-question-1')),
-      );
-      await tester.pump();
-
       expect(find.text(_question(1).text), findsOneWidget);
-      expect(
-        find.byKey(const Key('ielts-question-transcript-question-1')),
-        findsOneWidget,
-      );
 
       await tester.tap(find.byKey(const Key('ielts-mock-record')));
       await tester.pump();
@@ -112,11 +175,11 @@ void main() {
       await tester.pump();
 
       expect(speaker.spoken.last, _question(2).text);
-      expect(find.text(_question(2).text), findsNothing);
+      expect(find.text(_question(2).text), findsOneWidget);
     },
   );
 
-  testWidgets('Part 3 starts with an auto-playing hidden-text voice bubble', (
+  testWidgets('Part 3 starts with an auto-playing visible text bubble', (
     tester,
   ) async {
     final speaker = _ImmediateExaminerSpeaker();
@@ -160,7 +223,7 @@ void main() {
       find.byKey(const Key('ielts-question-voice-question-1')),
       findsOneWidget,
     );
-    expect(find.text(_question(1).text), findsNothing);
+    expect(find.text(_question(1).text), findsOneWidget);
   });
 
   testWidgets(
@@ -234,8 +297,12 @@ void main() {
       expect(store.value?.phase, IeltsMockPhase.part2Speaking);
       expect(controller.recordingState, PracticeRecordingState.recording);
       expect(find.byKey(const Key('ielts-mock-cue-card')), findsNothing);
-      expect(find.textContaining('录音中·'), findsOneWidget);
-      expect(find.byKey(const Key('ielts-mock-finish-speaking')), findsNothing);
+      expect(find.text('录音中'), findsOneWidget);
+      expect(find.text('我的小抄'), findsOneWidget);
+      expect(
+        find.byKey(const Key('ielts-mock-finish-speaking')),
+        findsOneWidget,
+      );
     },
   );
 
@@ -292,6 +359,63 @@ void main() {
     },
   );
 
+  testWidgets('Part 2 recording status fits 320px with 2x text', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final now = DateTime.utc(2026, 8, 4, 9);
+    final startGate = Completer<void>();
+    final practice = _IeltsPracticeClient(initialCompleted: 0, turnLimit: 6);
+    final recorder = _Recorder()..startGate = startGate;
+    final controller = PracticeController(client: practice, recorder: recorder);
+    final store = _MemoryProgressStore(
+      IeltsMockProgress(
+        sessionId: _sessionId,
+        phase: IeltsMockPhase.part2Speaking,
+        startedAt: now,
+        speakingDeadline: now.add(const Duration(seconds: 120)),
+      ),
+    );
+    addTearDown(controller.dispose);
+    await _activatePractice(
+      controller,
+      practice,
+      _ieltsScene,
+      mode: PracticeMode.part2,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MediaQuery(
+          data: const MediaQueryData(
+            size: Size(320, 1000),
+            textScaler: TextScaler.linear(2),
+          ),
+          child: IeltsSpeakingMockPage(
+            controller: controller,
+            progressStore: store,
+            examinerSpeaker: _ImmediateExaminerSpeaker(),
+            now: () => now,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(controller.recordingState, PracticeRecordingState.starting);
+    expect(find.text('正在打开麦克风…'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    startGate.complete();
+    await tester.pump();
+    await controller.cancelRecording();
+    await tester.pump();
+  });
+
   testWidgets(
     'Part 1 boundary enters prep, keeps notes, and submits the Part 2 long turn',
     (tester) async {
@@ -316,9 +440,13 @@ void main() {
       await tester.pump();
 
       expect(
-        find.byKey(const Key('ielts-mock-part-1-complete')),
+        find.byKey(const Key('ielts-section-completion-sheet')),
         findsOneWidget,
       );
+      expect(find.text('Part 1 已完成'), findsOneWidget);
+      expect(find.byKey(const Key('ielts-mock-conversation')), findsOneWidget);
+      expect(find.text(_question(9).text), findsNothing);
+      expect(find.textContaining('You should say:'), findsNothing);
       await tester.tap(find.text('进入 Part 2'));
       await tester.pump();
       expect(find.byKey(const Key('ielts-mock-part-2-intro')), findsOneWidget);
@@ -357,7 +485,8 @@ void main() {
         find.byKey(const Key('ielts-part2-recording-status')),
         findsOneWidget,
       );
-      expect(find.textContaining('录音中·'), findsOneWidget);
+      expect(find.text('录音中'), findsOneWidget);
+      expect(find.text('我的小抄'), findsOneWidget);
       expect(
         find.text('online course, weekly practice, useful at work'),
         findsOneWidget,
@@ -370,10 +499,12 @@ void main() {
       expect(controller.completedTurns, 9);
       expect(practice.confirmedQuestionIds, ['question-9']);
       expect(
-        find.byKey(const Key('ielts-mock-part-2-transition')),
+        find.byKey(const Key('ielts-section-completion-sheet')),
         findsOneWidget,
       );
-      await tester.tap(find.byKey(const Key('ielts-part2-continue-part3')));
+      expect(find.text('Part 2 已完成'), findsOneWidget);
+      expect(find.text(_question(10).text), findsNothing);
+      await tester.tap(find.text('继续 Part 3'));
       await tester.pump();
       expect(find.byKey(const Key('ielts-mock-part-3')), findsOneWidget);
       expect(
@@ -386,130 +517,440 @@ void main() {
     },
   );
 
-  testWidgets(
-    'failed Part 2 transcription retries the same audio in background',
-    (tester) async {
-      final practice = _IeltsPracticeClient(
-        initialCompleted: 8,
-        transcriptionFailuresRemaining: 1,
-      );
-      final controller = PracticeController(
-        client: practice,
-        recorder: _Recorder(),
-      );
-      final store = _MemoryProgressStore();
-      addTearDown(controller.dispose);
-      await _activatePractice(controller, practice, _ieltsScene);
+  testWidgets('failed Part 2 transcription retries the same retained audio', (
+    tester,
+  ) async {
+    final practice = _IeltsPracticeClient(
+      initialCompleted: 8,
+      transcriptionFailuresRemaining: 1,
+    );
+    final controller = PracticeController(
+      client: practice,
+      recorder: _Recorder(),
+    );
+    final store = _MemoryProgressStore();
+    addTearDown(controller.dispose);
+    await _activatePractice(controller, practice, _ieltsScene);
 
-      await tester.pumpWidget(
-        MaterialApp(
-          home: IeltsSpeakingMockPage(
-            controller: controller,
-            progressStore: store,
-            examinerSpeaker: _ImmediateExaminerSpeaker(),
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: store,
+          examinerSpeaker: _ImmediateExaminerSpeaker(),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.text('进入 Part 2'));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-part-2-start')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-start-speaking')));
+    await tester.pump();
+    await controller.finishRecordingGesture();
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 220));
+
+    expect(controller.completedTurns, 9);
+    expect(
+      find.byKey(const Key('ielts-section-completion-sheet')),
+      findsOneWidget,
+    );
+    expect(find.text('Part 2 已完成'), findsOneWidget);
+    expect(controller.hasPendingPracticeAudio, isFalse);
+    await tester.tap(find.text('继续 Part 3'));
+    await tester.pump();
+    expect(find.byKey(const Key('ielts-mock-part-3')), findsOneWidget);
+  });
+
+  testWidgets('Part 2 shows a loading state before offering Part 3', (
+    tester,
+  ) async {
+    final transcriptionGate = Completer<void>();
+    final practice = _IeltsPracticeClient(initialCompleted: 8)
+      ..transcriptionGate = transcriptionGate;
+    final recorder = _Recorder();
+    final controller = PracticeController(client: practice, recorder: recorder);
+    addTearDown(controller.dispose);
+    await _activatePractice(controller, practice, _ieltsScene);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: _MemoryProgressStore(),
+          examinerSpeaker: _ImmediateExaminerSpeaker(),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.text('进入 Part 2'));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-part-2-start')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-start-speaking')));
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('ielts-mock-finish-speaking')));
+    await tester.pump();
+
+    expect(controller.completedTurns, 8);
+    expect(controller.recordingState, PracticeRecordingState.transcribing);
+    expect(
+      find.byKey(const Key('ielts-mock-part-2-transition')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('ielts-part2-processing-indicator')),
+      findsOneWidget,
+    );
+    expect(find.text('正在处理 Part 2'), findsOneWidget);
+    expect(find.textContaining('完成前不会进入 Part 3'), findsOneWidget);
+    expect(find.byKey(const Key('ielts-part2-continue-part3')), findsNothing);
+    expect(find.byKey(const Key('ielts-mock-part-3')), findsNothing);
+    expect(recorder.startCalls, 1);
+
+    transcriptionGate.complete();
+    await tester.pump();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 220));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 220));
+
+    expect(practice.transcribedQuestionIds, ['question-9']);
+    expect(controller.completedTurns, 9);
+    expect(practice.confirmedQuestionIds, ['question-9']);
+    expect(
+      find.byKey(const Key('ielts-section-completion-sheet')),
+      findsOneWidget,
+    );
+    expect(find.text('Part 2 已完成'), findsOneWidget);
+
+    await tester.tap(find.text('继续 Part 3'));
+    await tester.pump();
+
+    expect(find.byKey(const Key('ielts-mock-part-3')), findsOneWidget);
+    expect(find.byKey(const Key('ielts-mock-record')), findsOneWidget);
+  });
+
+  testWidgets('Part 2 can exit while transcription is still in flight', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(800, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final transcriptionGate = Completer<void>();
+    final practice = _IeltsPracticeClient(initialCompleted: 8)
+      ..transcriptionGate = transcriptionGate;
+    final recorder = _Recorder();
+    final controller = PracticeController(client: practice, recorder: recorder);
+    addTearDown(controller.dispose);
+    await _activatePractice(controller, practice, _ieltsScene);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: TextButton(
+              key: const Key('open-part2'),
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => IeltsSpeakingMockPage(
+                    controller: controller,
+                    progressStore: _MemoryProgressStore(),
+                    examinerSpeaker: _ImmediateExaminerSpeaker(),
+                    onExitRequested: controller.parkPractice,
+                  ),
+                ),
+              ),
+              child: const Text('Open Part 2'),
+            ),
           ),
         ),
-      );
-      await tester.pump();
+      ),
+    );
+    await tester.tap(find.byKey(const Key('open-part2')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('进入 Part 2'));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-part-2-start')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-start-speaking')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-finish-speaking')));
+    await tester.pump();
 
-      await tester.tap(find.text('进入 Part 2'));
-      await tester.pump();
-      await tester.tap(find.byKey(const Key('ielts-mock-part-2-start')));
-      await tester.pump();
-      await tester.tap(find.byKey(const Key('ielts-mock-start-speaking')));
-      await tester.pump();
-      await controller.finishRecordingGesture();
-      await tester.pump();
-      await tester.pump(const Duration(seconds: 1));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 220));
+    expect(controller.recordingState, PracticeRecordingState.transcribing);
+    await tester.tap(find.byKey(const Key('ielts-mock-exit')));
+    await tester.pump(const Duration(milliseconds: 500));
+    tester
+        .widget<FilledButton>(find.byKey(const Key('ielts-mock-save-and-exit')))
+        .onPressed!();
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
 
-      expect(controller.completedTurns, 9);
-      expect(
-        find.byKey(const Key('ielts-mock-part-2-transition')),
-        findsOneWidget,
-      );
-      expect(controller.hasPendingPracticeAudio, isFalse);
-      await tester.tap(find.byKey(const Key('ielts-part2-continue-part3')));
-      await tester.pump();
-      expect(find.byKey(const Key('ielts-mock-part-3')), findsOneWidget);
-    },
-  );
+    expect(find.byKey(const Key('open-part2')), findsOneWidget);
+    expect(find.byKey(const Key('ielts-mock-page')), findsNothing);
+    expect(controller.practiceSessionId, isNull);
+    expect(recorder.discardedAudioPaths, contains('ielts-1.wav'));
 
-  testWidgets(
-    'choosing continue enters the Part 3 stage before transcription finishes',
-    (tester) async {
-      final transcriptionGate = Completer<void>();
-      final practice = _IeltsPracticeClient(initialCompleted: 8)
-        ..transcriptionGate = transcriptionGate;
-      final recorder = _Recorder();
-      final controller = PracticeController(
-        client: practice,
-        recorder: recorder,
-      );
-      addTearDown(controller.dispose);
-      await _activatePractice(controller, practice, _ieltsScene);
+    transcriptionGate.complete();
+    await tester.pump();
+    expect(controller.practiceSessionId, isNull);
+  });
 
-      await tester.pumpWidget(
-        MaterialApp(
-          home: IeltsSpeakingMockPage(
-            controller: controller,
-            progressStore: _MemoryProgressStore(),
-            examinerSpeaker: _ImmediateExaminerSpeaker(),
-          ),
+  testWidgets('opening Part 2 exit confirmation pauses failed ASR retries', (
+    tester,
+  ) async {
+    final practice = _IeltsPracticeClient(initialCompleted: 8)
+      ..transcribeFailure = StateError('provider unavailable');
+    final controller = PracticeController(
+      client: practice,
+      recorder: _Recorder(),
+    );
+    addTearDown(controller.dispose);
+    await _activatePractice(controller, practice, _ieltsScene);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: _MemoryProgressStore(),
+          examinerSpeaker: _ImmediateExaminerSpeaker(),
         ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.text('进入 Part 2'));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-part-2-start')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-start-speaking')));
+    await tester.pump();
+    await controller.finishRecordingGesture();
+    await tester.pump();
+
+    expect(practice.transcriptionRequests, hasLength(1));
+    expect(controller.recordingState, PracticeRecordingState.idle);
+    await tester.tap(find.byKey(const Key('ielts-mock-exit')));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 4));
+
+    expect(find.byKey(const Key('ielts-mock-exit-sheet')), findsOneWidget);
+    expect(practice.transcriptionRequests, hasLength(1));
+  });
+
+  testWidgets('Part 2 records locally while Part 3 keeps realtime ASR', (
+    tester,
+  ) async {
+    final practice = _IeltsPracticeClient(initialCompleted: 8);
+    final recorder = _DualModeRecorder();
+    final controller = PracticeController(client: practice, recorder: recorder);
+    addTearDown(controller.dispose);
+    await _activatePractice(controller, practice, _ieltsScene);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: _MemoryProgressStore(),
+          examinerSpeaker: _ImmediateExaminerSpeaker(),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.text('进入 Part 2'));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-part-2-start')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-start-speaking')));
+    await tester.pump();
+
+    expect(controller.recordingState, PracticeRecordingState.recording);
+    expect(recorder.recordedStarts, 1);
+    expect(recorder.streamingStarts, 0);
+    expect(practice.realtimeTranscriptions, 0);
+    expect(find.byKey(const Key('ielts-mock-finish-speaking')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('ielts-mock-finish-speaking')));
+    await tester.pump();
+    for (
+      var attempt = 0;
+      attempt < 10 && controller.completedTurns == 8;
+      attempt++
+    ) {
+      await tester.pump(const Duration(milliseconds: 10));
+    }
+    await tester.pump(const Duration(milliseconds: 220));
+
+    expect(controller.completedTurns, 9);
+    expect(
+      find.byKey(const Key('ielts-section-completion-sheet')),
+      findsOneWidget,
+    );
+    expect(find.text('Part 2 已完成'), findsOneWidget);
+
+    await tester.tap(find.text('继续 Part 3'));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-record')));
+    for (
+      var attempt = 0;
+      attempt < 10 &&
+          controller.recordingState != PracticeRecordingState.recording;
+      attempt++
+    ) {
+      await tester.pump(const Duration(milliseconds: 10));
+    }
+
+    expect(controller.recordingState, PracticeRecordingState.recording);
+    expect(recorder.recordedStarts, 1);
+    expect(recorder.streamingStarts, 1);
+    expect(practice.realtimeTranscriptions, 1);
+  });
+
+  testWidgets('Part 2 confirmation failure retries with one idempotency key', (
+    tester,
+  ) async {
+    final practice = _IeltsPracticeClient(initialCompleted: 8)
+      ..confirmFailure = const PracticeClientException(
+        kind: PracticeClientFailureKind.network,
+        retryable: true,
       );
-      await tester.pump();
-      await tester.tap(find.text('进入 Part 2'));
-      await tester.pump();
-      await tester.tap(find.byKey(const Key('ielts-mock-part-2-start')));
-      await tester.pump();
-      await tester.tap(find.byKey(const Key('ielts-mock-start-speaking')));
-      await tester.pump();
+    final controller = PracticeController(
+      client: practice,
+      recorder: _Recorder(),
+    );
+    addTearDown(controller.dispose);
+    await _activatePractice(controller, practice, _ieltsScene);
 
-      await tester.pump(const Duration(seconds: 120));
-      await tester.pump();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: _MemoryProgressStore(),
+          examinerSpeaker: _ImmediateExaminerSpeaker(),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.text('进入 Part 2'));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-part-2-start')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-start-speaking')));
+    await tester.pump();
+    await controller.finishRecordingGesture();
+    for (
+      var attempt = 0;
+      attempt < 10 && controller.errorMessage == null;
+      attempt++
+    ) {
+      await tester.pump(const Duration(milliseconds: 10));
+    }
 
-      expect(controller.completedTurns, 8);
-      expect(controller.recordingState, PracticeRecordingState.transcribing);
-      expect(
-        find.byKey(const Key('ielts-mock-part-2-transition')),
-        findsOneWidget,
+    expect(
+      controller.recordingState,
+      PracticeRecordingState.awaitingConfirmation,
+    );
+    expect(controller.completedTurns, 8);
+    expect(practice.confirmationIdempotencyKeys, hasLength(1));
+    expect(practice.transcriptionRequests, hasLength(1));
+    expect(
+      find.byKey(const Key('ielts-part2-retry-confirmation')),
+      findsOneWidget,
+    );
+    expect(find.text('重试提交'), findsOneWidget);
+
+    practice.confirmFailure = null;
+    await tester.tap(find.byKey(const Key('ielts-part2-retry-confirmation')));
+    for (
+      var attempt = 0;
+      attempt < 10 && controller.completedTurns == 8;
+      attempt++
+    ) {
+      await tester.pump(const Duration(milliseconds: 10));
+    }
+    await tester.pump(const Duration(milliseconds: 220));
+
+    expect(controller.completedTurns, 9);
+    expect(practice.confirmationIdempotencyKeys, hasLength(2));
+    expect(practice.confirmationIdempotencyKeys.toSet(), hasLength(1));
+    expect(practice.transcriptionRequests, hasLength(1));
+  });
+
+  testWidgets('Part 2 explicitly re-records after confirmation conflict', (
+    tester,
+  ) async {
+    final practice = _IeltsPracticeClient(initialCompleted: 8)
+      ..confirmFailure = const PracticeClientException(
+        kind: PracticeClientFailureKind.conflict,
+        errorCode: 'resource_conflict',
+        retryable: false,
       );
+    final recorder = _Recorder();
+    final controller = PracticeController(client: practice, recorder: recorder);
+    addTearDown(controller.dispose);
+    await _activatePractice(controller, practice, _ieltsScene);
 
-      await tester.tap(find.byKey(const Key('ielts-part2-continue-part3')));
-      await tester.pump();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: _MemoryProgressStore(),
+          examinerSpeaker: _ImmediateExaminerSpeaker(),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.text('进入 Part 2'));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-part-2-start')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-start-speaking')));
+    await tester.pump();
+    await controller.finishRecordingGesture();
+    for (
+      var attempt = 0;
+      attempt < 10 && controller.errorMessage == null;
+      attempt++
+    ) {
+      await tester.pump(const Duration(milliseconds: 10));
+    }
 
-      expect(find.byKey(const Key('ielts-mock-part-3')), findsOneWidget);
-      expect(find.text('Part 3 · Discussion'), findsOneWidget);
-      expect(find.text('Do people often change their plans?'), findsNothing);
-      expect(find.byType(CircularProgressIndicator), findsNothing);
-      expect(find.byKey(const Key('ielts-mock-record')), findsOneWidget);
+    expect(controller.candidateId, isNotNull);
+    expect(practice.transcriptionRequests, hasLength(1));
+    expect(find.byKey(const Key('ielts-part2-rerecord')), findsOneWidget);
 
-      await tester.tap(find.byKey(const Key('ielts-mock-record')));
-      await tester.pump();
-      await tester.pump();
-      expect(recorder.startCalls, 2);
-      expect(controller.recordingState, PracticeRecordingState.transcribing);
+    await tester.tap(find.byKey(const Key('ielts-part2-rerecord')));
+    await tester.pump();
 
-      await tester.tap(find.byKey(const Key('ielts-mock-record')));
-      await tester.pump();
-      expect(recorder.recording, isFalse);
+    expect(controller.candidateId, isNull);
+    expect(controller.recordingState, PracticeRecordingState.recording);
+    expect(
+      find.byKey(const Key('ielts-mock-part-2-long-turn')),
+      findsOneWidget,
+    );
+    expect(recorder.startCalls, 2);
+    expect(practice.transcriptionRequests, hasLength(1));
+    expect(practice.confirmationIdempotencyKeys, hasLength(1));
 
-      transcriptionGate.complete();
-      await tester.pump();
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 220));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 220));
+    await controller.finishRecordingGesture();
+    for (
+      var attempt = 0;
+      attempt < 10 && practice.confirmationIdempotencyKeys.length == 1;
+      attempt++
+    ) {
+      await tester.pump(const Duration(milliseconds: 10));
+    }
 
-      expect(practice.transcribedQuestionIds, ['question-9', 'question-10']);
-      expect(controller.completedTurns, 10);
-      expect(practice.confirmedQuestionIds, ['question-9', 'question-10']);
-      expect(find.byKey(const Key('ielts-mock-part-3')), findsOneWidget);
-      expect(find.byKey(const Key('ielts-mock-record')), findsOneWidget);
-    },
-  );
+    expect(practice.transcriptionRequests, hasLength(2));
+    expect(practice.confirmationIdempotencyKeys, hasLength(2));
+    expect(practice.confirmationIdempotencyKeys.toSet(), hasLength(2));
+  });
 
   testWidgets('Chinese-only voice answer stays on the current IELTS question', (
     tester,
@@ -602,7 +1043,7 @@ void main() {
     expect(find.byKey(const Key('ielts-answer-language-error')), findsNothing);
   });
 
-  testWidgets('Part 2 exhausts bounded retries without starting new audio', (
+  testWidgets('Part 2 manually retries the same retained recording', (
     tester,
   ) async {
     final practice = _IeltsPracticeClient(
@@ -641,19 +1082,48 @@ void main() {
 
     expect(controller.completedTurns, 8);
     expect(controller.recordingState, PracticeRecordingState.idle);
+    expect(find.byKey(const Key('ielts-mock-part-2-transition')), findsNothing);
     expect(
-      find.byKey(const Key('ielts-mock-part-2-transition')),
+      find.byKey(const Key('ielts-mock-part-2-long-turn')),
       findsOneWidget,
     );
     expect(
-      find.byKey(const Key('ielts-part2-retry-submission')),
+      find.byKey(const Key('ielts-part2-retry-transcription')),
       findsOneWidget,
     );
+    expect(find.byKey(const Key('ielts-part2-rerecord')), findsOneWidget);
+    expect(find.text('重试识别'), findsOneWidget);
+    expect(controller.hasPendingPracticeAudio, isTrue);
     expect(recorder.startCalls, 1);
+    expect(practice.transcriptionRequests, hasLength(4));
+    expect(
+      practice.transcriptionRequests
+          .map((request) => request.audio.path)
+          .toSet(),
+      {'ielts-1.wav'},
+    );
+    expect(
+      practice.transcriptionRequests
+          .map((request) => request.clientTurnId)
+          .toSet(),
+      hasLength(1),
+    );
 
-    await tester.pump(const Duration(seconds: 120));
-    expect(controller.recordingState, PracticeRecordingState.idle);
+    await tester.tap(find.byKey(const Key('ielts-part2-retry-transcription')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 220));
+
+    expect(controller.hasPendingPracticeAudio, isFalse);
+    expect(controller.completedTurns, 9);
     expect(recorder.startCalls, 1);
+    expect(recorder.discardedAudioPaths, ['ielts-1.wav']);
+    expect(practice.transcriptionRequests, hasLength(5));
+    expect(
+      practice.transcriptionRequests
+          .map((request) => request.audio.path)
+          .toSet(),
+      {'ielts-1.wav'},
+    );
   });
 
   testWidgets('restores an unexpired preparation checkpoint and notes', (
@@ -696,15 +1166,53 @@ void main() {
     expect(find.text('restored note'), findsOneWidget);
   });
 
-  testWidgets('Part 2 preserves failed audio for an explicit retry', (
+  testWidgets('unconfirmed stale Part 3 progress returns to Part 2', (
+    tester,
+  ) async {
+    final practice = _IeltsPracticeClient(initialCompleted: 8);
+    final recorder = _Recorder();
+    final controller = PracticeController(client: practice, recorder: recorder);
+    addTearDown(controller.dispose);
+    await _activatePractice(controller, practice, _ieltsScene);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: _MemoryProgressStore(
+            IeltsMockProgress(
+              sessionId: _sessionId,
+              phase: IeltsMockPhase.part3,
+              startedAt: DateTime.utc(2026, 8, 11),
+            ),
+          ),
+          examinerSpeaker: _ImmediateExaminerSpeaker(),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      find.byKey(const Key('ielts-mock-part-2-transition')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('ielts-mock-part-3')), findsNothing);
+    expect(find.byKey(const Key('ielts-part2-rerecord')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('ielts-part2-rerecord')));
+    await tester.pump();
+
+    expect(controller.recordingState, PracticeRecordingState.recording);
+    expect(recorder.startCalls, 1);
+  });
+
+  testWidgets('Part 2 deletes retained audio only after explicit re-record', (
     tester,
   ) async {
     final practice = _IeltsPracticeClient(initialCompleted: 8)
       ..transcribeFailure = StateError('transcription failed');
-    final controller = PracticeController(
-      client: practice,
-      recorder: _Recorder(),
-    );
+    final recorder = _Recorder();
+    final controller = PracticeController(client: practice, recorder: recorder);
     addTearDown(controller.dispose);
     await _activatePractice(controller, practice, _ieltsScene);
 
@@ -718,7 +1226,7 @@ void main() {
       ),
     );
     await tester.pump();
-    await tester.tap(find.byKey(const Key('ielts-mock-continue')));
+    await tester.tap(find.text('进入 Part 2'));
     await tester.pump();
     await tester.tap(find.byKey(const Key('ielts-mock-part-2-start')));
     await tester.pump();
@@ -731,16 +1239,23 @@ void main() {
     await tester.pump(const Duration(seconds: 3));
     await tester.pump();
 
-    expect(
-      find.byKey(const Key('ielts-mock-part-2-transition')),
-      findsOneWidget,
-    );
+    expect(find.byKey(const Key('ielts-mock-part-2-transition')), findsNothing);
     expect(controller.hasPendingPracticeAudio, isTrue);
     expect(controller.completedTurns, 8);
     expect(
-      find.byKey(const Key('ielts-part2-retry-submission')),
+      find.byKey(const Key('ielts-part2-retry-transcription')),
       findsOneWidget,
     );
+    expect(find.byKey(const Key('ielts-part2-rerecord')), findsOneWidget);
+    expect(recorder.discardedAudioPaths, isEmpty);
+
+    await tester.tap(find.byKey(const Key('ielts-part2-rerecord')));
+    await tester.pump();
+
+    expect(controller.hasPendingPracticeAudio, isFalse);
+    expect(controller.recordingState, PracticeRecordingState.recording);
+    expect(recorder.startCalls, 2);
+    expect(recorder.discardedAudioPaths, ['ielts-1.wav']);
   });
 
   testWidgets('Part 1 clears failed transcription without a recovery dock', (
@@ -797,7 +1312,7 @@ void main() {
       ),
     );
     await tester.pump();
-    await tester.tap(find.byKey(const Key('ielts-mock-continue')));
+    await tester.tap(find.text('进入 Part 2'));
     await tester.pump();
     await tester.tap(find.byKey(const Key('ielts-mock-part-2-start')));
     await tester.pump();
@@ -828,6 +1343,7 @@ void main() {
         home: IeltsSpeakingMockPage(
           controller: controller,
           progressStore: _MemoryProgressStore(),
+          examinerSpeaker: _ImmediateExaminerSpeaker(),
         ),
       ),
     );
@@ -837,9 +1353,18 @@ void main() {
       tester.getCenter(find.byKey(const Key('ielts-mock-record'))),
     );
     await tester.pump(const Duration(milliseconds: 220));
+    await tester.pump(const Duration(seconds: 1));
     expect(
       tester.getSize(find.byKey(const Key('ielts-mock-stop-recording'))).height,
       48,
+    );
+    expect(
+      tester
+          .widget<Text>(
+            find.byKey(const Key('ielts-mock-voice-target-duration')),
+          )
+          .data,
+      '0:01',
     );
     expect(find.byKey(const Key('ielts-mock-voice-targets')), findsNothing);
     await gesture.moveBy(const Offset(0, -90));
@@ -927,50 +1452,7 @@ void main() {
     },
   );
 
-  testWidgets('clearing practice state fences the bound report poll', (
-    tester,
-  ) async {
-    final practice = _IeltsPracticeClient(initialCompleted: 14);
-    final controller = PracticeController(
-      client: practice,
-      recorder: _Recorder(),
-    );
-    final reportClient = _PendingReportClient();
-    final reportController = IeltsSpeakingReportController(
-      client: reportClient,
-    );
-    addTearDown(controller.dispose);
-    addTearDown(reportController.dispose);
-    await _activatePractice(controller, practice, _ieltsScene);
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: IeltsSpeakingMockPage(
-          controller: controller,
-          progressStore: _MemoryProgressStore(),
-          completedReportBuilder: (_, practiceSessionId) =>
-              IeltsSpeakingSessionReportPanel(
-                practiceSessionId: practiceSessionId,
-                controller: reportController,
-              ),
-        ),
-      ),
-    );
-    await tester.pump();
-    await reportClient.started.future;
-    expect(reportController.practiceSessionId, _sessionId);
-
-    await controller.clearPrivateState();
-    await tester.pump();
-
-    expect(controller.practiceSessionId, isNull);
-    expect(reportController.practiceSessionId, isNull);
-    expect(reportController.isLoading, isFalse);
-  });
-
-  testWidgets('section completion never requests the full-mock report', (
-    tester,
-  ) async {
+  testWidgets('Part 1 completion returns to the section list', (tester) async {
     final practice = _IeltsPracticeClient(initialCompleted: 3, turnLimit: 4);
     final controller = PracticeController(
       client: practice,
@@ -979,21 +1461,14 @@ void main() {
     final preparation = IeltsPreparationController(
       client: _UnusedQuestionBankClient(),
     );
-    final reportClient = _PendingReportClient();
-    final reportController = IeltsSpeakingReportController(
-      client: reportClient,
-    );
     addTearDown(controller.dispose);
     addTearDown(preparation.dispose);
-    addTearDown(reportController.dispose);
     await _activatePractice(
       controller,
       practice,
       _ieltsScene,
       mode: PracticeMode.part1,
     );
-    expect(controller.errorMessage, isNull);
-    expect(controller.practiceSessionId, _sessionId);
     await preparation.beginSession(
       _sessionId,
       PracticeMode.part1,
@@ -1002,39 +1477,44 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        home: IeltsSpeakingMockPage(
-          controller: controller,
-          progressStore: _MemoryProgressStore(),
-          ieltsController: preparation,
-          completedReportBuilder: (_, practiceSessionId) =>
-              IeltsSpeakingSessionReportPanel(
-                practiceSessionId: practiceSessionId,
-                controller: reportController,
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: TextButton(
+              key: const Key('open-section-completion'),
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<IeltsPracticeRouteResult>(
+                  builder: (_) => IeltsSpeakingMockPage(
+                    controller: controller,
+                    progressStore: _MemoryProgressStore(),
+                    ieltsController: preparation,
+                    examinerSpeaker: _ImmediateExaminerSpeaker(),
+                    onExitRequested: () async => true,
+                  ),
+                ),
               ),
+              child: const Text('Open section completion'),
+            ),
+          ),
         ),
       ),
     );
-    await tester.pump();
+    await tester.tap(find.byKey(const Key('open-section-completion')));
+    await tester.pumpAndSettle();
+    await _answerCurrentShortQuestion(tester, controller);
 
-    await tester.tap(find.byKey(const Key('ielts-mock-record')));
-    await tester.pump();
-    await tester.tap(find.byKey(const Key('ielts-mock-record')));
-    await tester.pump();
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 220));
+    await tester.tap(find.byKey(const Key('ielts-section-list-action')));
+    await tester.pumpAndSettle();
 
-    expect(controller.completedTurns, 4);
-    expect(
-      find.byKey(const Key('ielts-section-practice-complete-part1')),
-      findsOneWidget,
-    );
-    expect(reportClient.started.isCompleted, isFalse);
-    expect(reportController.practiceSessionId, isNull);
+    final request = preparation.takeNavigationRequest();
+    expect(request?.mode, PracticeMode.part1);
+    expect(request?.selection, isNull);
+    expect(find.byKey(const Key('open-section-completion')), findsOneWidget);
   });
 
   testWidgets('the full-mock PracticeOption opens the three-part flow', (
     tester,
   ) async {
+    var parkCalls = 0;
     final practice = _IeltsPracticeClient(initialCompleted: 8);
     final controller = PracticeController(
       client: practice,
@@ -1048,13 +1528,29 @@ void main() {
         home: IeltsSpeakingMockPage(
           controller: controller,
           progressStore: _MemoryProgressStore(),
+          onExitRequested: () async {
+            parkCalls++;
+            return true;
+          },
         ),
       ),
     );
     await tester.pump();
 
-    expect(find.byKey(const Key('ielts-mock-part-1-complete')), findsOneWidget);
+    expect(
+      find.byKey(const Key('ielts-section-completion-sheet')),
+      findsOneWidget,
+    );
+    expect(find.text('Part 1 已完成'), findsOneWidget);
+    expect(find.byKey(const Key('ielts-mock-conversation')), findsOneWidget);
+    expect(find.text(_question(9).text), findsNothing);
+    expect(find.textContaining('You should say:'), findsNothing);
     expect(find.byKey(const Key('practice-page')), findsNothing);
+
+    await tester.tap(find.text('保存并退出'));
+    await tester.pumpAndSettle();
+    expect(parkCalls, 1);
+    expect(find.byKey(const Key('ielts-mock-exit-sheet')), findsNothing);
   });
 
   testWidgets(
@@ -1134,8 +1630,16 @@ void main() {
 
     await tester.tap(find.byKey(const Key('ielts-mock-exit')));
     await tester.pumpAndSettle();
-    expect(find.text('Exit mock test?'), findsOneWidget);
-    await tester.tap(find.text('Save & exit'));
+    expect(find.text('退出模拟考试？'), findsOneWidget);
+    await tester.tap(find.text('继续答题'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('ielts-mock-page')), findsOneWidget);
+    expect(parkCalls, 0);
+
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('ielts-mock-exit-sheet')), findsOneWidget);
+    await tester.tap(find.text('保存并退出'));
     await tester.pumpAndSettle();
 
     expect(parkCalls, 1);
@@ -1194,7 +1698,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('ielts-mock-exit')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Save & exit'));
+    await tester.tap(find.text('保存并退出'));
     await tester.pumpAndSettle();
 
     final request = preparation.takeNavigationRequest();
@@ -1224,6 +1728,7 @@ void main() {
           home: IeltsSpeakingMockPage(
             controller: controller,
             progressStore: _MemoryProgressStore(),
+            examinerSpeaker: _ImmediateExaminerSpeaker(),
           ),
         ),
       );
@@ -1241,49 +1746,141 @@ void main() {
     },
   );
 
-  testWidgets('one-question Part 3 section completes after its original item', (
-    tester,
-  ) async {
-    final practice = _IeltsPracticeClient(initialCompleted: 0, turnLimit: 1);
-    final controller = PracticeController(
-      client: practice,
-      recorder: _Recorder(),
-    );
-    addTearDown(controller.dispose);
-    await _activatePractice(
-      controller,
-      practice,
-      _ieltsScene,
-      mode: PracticeMode.part3,
-    );
+  testWidgets(
+    'Part 2 completion can be parked and resumed before entering Part 3',
+    (tester) async {
+      final practice = _IeltsPracticeClient(initialCompleted: 9, turnLimit: 10);
+      final controller = PracticeController(
+        client: practice,
+        recorder: _Recorder(),
+      );
+      final progressStore = _MemoryProgressStore();
+      var parkCalls = 0;
+      addTearDown(controller.dispose);
+      await _activatePractice(controller, practice, _ieltsScene);
 
-    await tester.pumpWidget(
-      MaterialApp(
-        home: IeltsSpeakingMockPage(
-          controller: controller,
-          progressStore: _MemoryProgressStore(),
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                key: const Key('open-part-2-completion'),
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => IeltsSpeakingMockPage(
+                      controller: controller,
+                      progressStore: progressStore,
+                      examinerSpeaker: _ImmediateExaminerSpeaker(),
+                      onExitRequested: () async {
+                        parkCalls++;
+                        return true;
+                      },
+                    ),
+                  ),
+                ),
+                child: const Text('Open Part 2 completion'),
+              ),
+            ),
+          ),
         ),
-      ),
-    );
-    await tester.pump();
+      );
 
-    await tester.tap(find.byKey(const Key('ielts-part3-start')));
-    await tester.pump();
-    expect(find.text('0/1'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('open-part-2-completion')));
+      await tester.pumpAndSettle();
+      expect(find.text('Part 2 已完成'), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('ielts-mock-record')));
-    await tester.pump();
-    await tester.tap(find.byKey(const Key('ielts-mock-record')));
-    await tester.pump();
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 220));
+      await tester.tap(find.text('保存并退出'));
+      await tester.pumpAndSettle();
+      expect(parkCalls, 1);
+      expect(find.byKey(const Key('open-part-2-completion')), findsOneWidget);
 
-    expect(controller.completedTurns, 1);
-    expect(
-      find.byKey(const Key('ielts-section-practice-complete-part3')),
-      findsOneWidget,
-    );
-  });
+      final resumedPractice = _IeltsPracticeClient(
+        initialCompleted: 9,
+        turnLimit: 10,
+      );
+      final resumedController = PracticeController(
+        client: resumedPractice,
+        recorder: _Recorder(),
+      );
+      addTearDown(resumedController.dispose);
+      await _activatePractice(resumedController, resumedPractice, _ieltsScene);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: IeltsSpeakingMockPage(
+            controller: resumedController,
+            progressStore: progressStore,
+            examinerSpeaker: _ImmediateExaminerSpeaker(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Part 2 已完成'), findsOneWidget);
+
+      await tester.tap(find.text('继续 Part 3'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('ielts-mock-part-3')), findsOneWidget);
+      expect(find.text('0/1'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'one-question Part 3 shows its final answer before section review',
+    (tester) async {
+      final practice = _IeltsPracticeClient(initialCompleted: 0, turnLimit: 1);
+      final controller = PracticeController(
+        client: practice,
+        recorder: _Recorder(),
+      );
+      addTearDown(controller.dispose);
+      await _activatePractice(
+        controller,
+        practice,
+        _ieltsScene,
+        mode: PracticeMode.part3,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: IeltsSpeakingMockPage(
+            controller: controller,
+            progressStore: _MemoryProgressStore(),
+            examinerSpeaker: _ImmediateExaminerSpeaker(),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key('ielts-part3-start')));
+      await tester.pump();
+      expect(find.text('0/1'), findsOneWidget);
+
+      await _answerCurrentShortQuestion(tester, controller);
+
+      expect(controller.completedTurns, 1);
+      expect(find.text('Answer 1'), findsOneWidget);
+      expect(
+        find.byKey(const Key('ielts-section-completion-sheet')),
+        findsOneWidget,
+      );
+      expect(find.text('Part 3 已完成'), findsOneWidget);
+      expect(
+        find.byKey(const Key('ielts-section-practice-complete-part3')),
+        findsNothing,
+      );
+
+      await tester.tap(find.byKey(const Key('ielts-section-review-action')));
+      await tester.pump();
+
+      expect(
+        find.byKey(const Key('ielts-section-completion-sheet')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const Key('ielts-section-practice-complete-part3')),
+        findsOneWidget,
+      );
+    },
+  );
 
   testWidgets('full mock completes after a single original Part 3 question', (
     tester,
@@ -1301,16 +1898,18 @@ void main() {
         home: IeltsSpeakingMockPage(
           controller: controller,
           progressStore: _MemoryProgressStore(),
+          examinerSpeaker: _ImmediateExaminerSpeaker(),
         ),
       ),
     );
     await tester.pump();
 
     expect(
-      find.byKey(const Key('ielts-mock-part-2-transition')),
+      find.byKey(const Key('ielts-section-completion-sheet')),
       findsOneWidget,
     );
-    await tester.tap(find.byKey(const Key('ielts-part2-continue-part3')));
+    expect(find.text('Part 2 已完成'), findsOneWidget);
+    await tester.tap(find.text('继续 Part 3'));
     await tester.pumpAndSettle();
     expect(find.text('0/1'), findsOneWidget);
     expect(controller.recordingState, PracticeRecordingState.idle);
@@ -1344,6 +1943,16 @@ void main() {
     }
 
     expect(controller.completedTurns, 10);
+    expect(find.text('Answer 10'), findsOneWidget);
+    expect(
+      find.byKey(const Key('ielts-section-completion-sheet')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('ielts-mock-complete')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('ielts-section-review-action')));
+    await tester.pump(const Duration(milliseconds: 220));
+
     expect(find.byKey(const Key('ielts-mock-complete')), findsOneWidget);
     expect(find.text('1 题'), findsOneWidget);
   });
@@ -1420,6 +2029,38 @@ Future<void> _activatePractice(
   );
 }
 
+Future<void> _answerCurrentShortQuestion(
+  WidgetTester tester,
+  PracticeController controller,
+) async {
+  final completedTurns = controller.completedTurns;
+  await tester.tap(find.byKey(const Key('ielts-mock-record')));
+  for (
+    var attempt = 0;
+    attempt < 20 &&
+        controller.recordingState != PracticeRecordingState.recording;
+    attempt++
+  ) {
+    await tester.pump(const Duration(milliseconds: 20));
+  }
+  expect(controller.recordingState, PracticeRecordingState.recording);
+  await tester.tap(find.byKey(const Key('ielts-mock-record')));
+  for (
+    var attempt = 0;
+    attempt < 20 && controller.completedTurns == completedTurns;
+    attempt++
+  ) {
+    if (controller.recordingState ==
+        PracticeRecordingState.awaitingConfirmation) {
+      await controller.confirmTranscript();
+    }
+    await tester.pump(const Duration(milliseconds: 20));
+  }
+  await tester.pump(const Duration(milliseconds: 220));
+  await tester.pump(const Duration(milliseconds: 220));
+  expect(controller.completedTurns, completedTurns + 1);
+}
+
 final class _MemoryProgressStore implements IeltsMockProgressStore {
   _MemoryProgressStore([this.value]);
 
@@ -1450,25 +2091,35 @@ final class _UnusedQuestionBankClient implements IeltsQuestionBankClient {
   }
 }
 
-final class _IeltsPracticeClient implements PracticeClient {
+final class _IeltsPracticeClient
+    implements
+        PracticeClient,
+        PracticeQuestionTipClient,
+        PracticeRealtimeTranscriptionClient {
   _IeltsPracticeClient({
     required this.initialCompleted,
     this.turnLimit = 14,
     this.transcriptionFailuresRemaining = 0,
     this.transcriptionText,
+    this.capabilities = _practiceCapabilities,
   }) : completed = initialCompleted;
 
   final int initialCompleted;
   Object? transcribeFailure;
+  Object? confirmFailure;
   Completer<void>? transcriptionGate;
   final int turnLimit;
   int transcriptionFailuresRemaining;
   final String? transcriptionText;
+  final PracticeCapabilities capabilities;
   int completed;
   SceneDefinition? activeScene;
   PracticeMode activeMode = PracticeMode.fullMock;
   final List<String> confirmedQuestionIds = [];
   final List<String> transcribedQuestionIds = [];
+  final List<PracticeTranscriptionRequest> transcriptionRequests = [];
+  final List<String> confirmationIdempotencyKeys = [];
+  int realtimeTranscriptions = 0;
 
   @override
   Future<void> clearAccountState() async {
@@ -1498,7 +2149,7 @@ final class _IeltsPracticeClient implements PracticeClient {
       practiceExperience: scene.experience,
       sceneCategory: scene.category,
       practiceMode: activeMode,
-      capabilities: _practiceCapabilities,
+      capabilities: capabilities,
       sessionVersion: completed + 1,
       completedTurns: completed,
       turnLimit: turnLimit,
@@ -1537,6 +2188,7 @@ final class _IeltsPracticeClient implements PracticeClient {
     PracticeTranscriptionRequest request,
   ) async {
     transcribedQuestionIds.add(request.questionId);
+    transcriptionRequests.add(request);
     await transcriptionGate?.future;
     final failure = transcribeFailure;
     if (failure != null) {
@@ -1558,6 +2210,52 @@ final class _IeltsPracticeClient implements PracticeClient {
   }
 
   @override
+  Stream<PracticeTranscriptionEvent> transcribeRealtime({
+    required String sessionId,
+    required String questionId,
+    required String idempotencyKey,
+    required Stream<Uint8List> audioChunks,
+  }) {
+    realtimeTranscriptions++;
+    var sentUpdate = false;
+    final events = StreamController<PracticeTranscriptionEvent>(sync: true);
+    audioChunks.listen(
+      (chunk) {
+        if (chunk.isEmpty || sentUpdate) {
+          return;
+        }
+        sentUpdate = true;
+        events.add(
+          const PracticeTranscriptUpdated(
+            text: 'I led the migration',
+            isFinal: false,
+          ),
+        );
+      },
+      onError: events.addError,
+      onDone: () {
+        if (events.isClosed) {
+          return;
+        }
+        final text = 'I led the migration safely.';
+        events.add(PracticeTranscriptUpdated(text: text, isFinal: true));
+        events.add(
+          PracticeCandidateCompleted(
+            TranscriptionCandidate(
+              id: 'candidate-${completed + 1}',
+              sessionId: sessionId,
+              questionId: questionId,
+              text: text,
+            ),
+          ),
+        );
+        unawaited(events.close());
+      },
+    );
+    return events.stream;
+  }
+
+  @override
   Future<PracticeTurnConfirmation> confirm({
     required String sessionId,
     required String questionId,
@@ -1565,9 +2263,17 @@ final class _IeltsPracticeClient implements PracticeClient {
     required String idempotencyKey,
   }) async {
     final scene = activeScene ?? (throw StateError('No active IELTS Scene.'));
+    confirmationIdempotencyKeys.add(idempotencyKey);
+    final failure = confirmFailure;
+    if (failure != null) {
+      throw failure;
+    }
     confirmedQuestionIds.add(questionId);
     completed++;
     final done = completed == turnLimit;
+    final answerText = realtimeTranscriptions > 0
+        ? 'I led the migration safely.'
+        : transcriptionText ?? 'Answer $completed';
     return PracticeTurnConfirmation(
       turnId: 'turn-$completed',
       sessionId: sessionId,
@@ -1576,7 +2282,7 @@ final class _IeltsPracticeClient implements PracticeClient {
       answer: PracticeMessage(
         id: 'answer-$completed',
         role: PracticeMessageRole.user,
-        text: transcriptionText ?? 'Answer $completed',
+        text: answerText,
       ),
       completedTurns: completed,
       turnLimit: turnLimit,
@@ -1584,7 +2290,7 @@ final class _IeltsPracticeClient implements PracticeClient {
       practiceExperience: scene.experience,
       sceneCategory: scene.category,
       practiceMode: activeMode,
-      capabilities: _practiceCapabilities,
+      capabilities: capabilities,
       sessionVersion: completed + 1,
       nextQuestion: done ? null : _question(completed + 1),
     );
@@ -1599,30 +2305,49 @@ final class _IeltsPracticeClient implements PracticeClient {
   }) {
     throw UnimplementedError();
   }
+
+  @override
+  Future<PracticeQuestionTip> ensureQuestionTip({
+    required String sessionId,
+    required String questionId,
+    required String idempotencyKey,
+  }) async => PracticeQuestionTip(
+    id: 'tip-$questionId',
+    sessionId: sessionId,
+    questionId: questionId,
+    content: 'Give a direct answer and one short reason.',
+    translation: '直接回答，并给出一个简短的理由。',
+    createdAt: DateTime.utc(2026, 8, 10),
+  );
 }
 
 final class _Recorder implements PracticeRecorder {
   bool recording = false;
   int startCalls = 0;
+  Completer<void>? startGate;
+  final List<String> discardedAudioPaths = <String>[];
 
   @override
   Future<void> start() async {
     startCalls++;
+    await startGate?.future;
     recording = true;
   }
 
   @override
   Future<RecordedPracticeAudio> stop() async {
     recording = false;
-    return const RecordedPracticeAudio(
-      path: 'ielts.wav',
+    return RecordedPracticeAudio(
+      path: 'ielts-$startCalls.wav',
       contentType: 'audio/wav',
       sizeBytes: 100,
     );
   }
 
   @override
-  Future<void> discard(RecordedPracticeAudio audio) async {}
+  Future<void> discard(RecordedPracticeAudio audio) async {
+    discardedAudioPaths.add(audio.path);
+  }
 
   @override
   Future<void> discardCurrent() async {
@@ -1632,6 +2357,67 @@ final class _Recorder implements PracticeRecorder {
   @override
   Future<void> clearAccountState() async {
     recording = false;
+  }
+}
+
+final class _DualModeRecorder
+    implements PracticeRecorder, PracticeStreamingRecorder {
+  StreamController<Uint8List>? _chunks;
+  int recordedStarts = 0;
+  int streamingStarts = 0;
+
+  @override
+  Future<void> start() async {
+    recordedStarts++;
+  }
+
+  @override
+  Future<Stream<Uint8List>> startAudioStream() async {
+    if (_chunks != null) {
+      throw StateError('Recorder is already active.');
+    }
+    streamingStarts++;
+    final chunks = StreamController<Uint8List>();
+    _chunks = chunks;
+    return chunks.stream;
+  }
+
+  @override
+  Future<RecordedPracticeAudio> stop() async {
+    return const RecordedPracticeAudio(
+      path: 'ielts-recorded.wav',
+      contentType: 'audio/wav',
+      sizeBytes: 48,
+    );
+  }
+
+  @override
+  Future<RecordedPracticeAudio> stopAudioStream() async {
+    await _closeCurrent();
+    return const RecordedPracticeAudio(
+      path: 'ielts-realtime.wav',
+      contentType: 'audio/wav',
+      sizeBytes: 48,
+    );
+  }
+
+  @override
+  Future<void> discardCurrent() async {
+    await _closeCurrent();
+  }
+
+  @override
+  Future<void> discard(RecordedPracticeAudio audio) async {}
+
+  @override
+  Future<void> clearAccountState() async {
+    await _closeCurrent();
+  }
+
+  Future<void> _closeCurrent() async {
+    final chunks = _chunks;
+    _chunks = null;
+    await chunks?.close();
   }
 }
 
@@ -1672,20 +2458,6 @@ final class _ControlledExaminerSpeaker implements PracticePromptSpeaker {
 
   @override
   Future<void> dispose() async {}
-}
-
-final class _PendingReportClient implements IeltsSpeakingReportClient {
-  final started = Completer<void>();
-  final response = Completer<IeltsSpeakingReportEnvelope>();
-
-  @override
-  Future<IeltsSpeakingReportEnvelope> getReport(String practiceSessionId) {
-    started.complete();
-    return response.future;
-  }
-
-  @override
-  Future<void> clearAccountState() async {}
 }
 
 PracticeQuestion _question(int turn) {
@@ -1752,7 +2524,6 @@ const _practiceCapabilities = PracticeCapabilities(
   retryAllowed: false,
   questionTranslationAllowed: false,
   questionTipsAllowed: false,
-  avatarAllowed: false,
   speechFeedbackAllowed: false,
 );
 final _ieltsScene = _sceneFixture(

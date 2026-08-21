@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"sort"
 	"time"
 
-	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
+	agentclientaction "github.com/1024XEngineer/XE3-ESL/server/internal/agent/clientaction"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 )
 
 type Executor struct {
@@ -51,6 +53,10 @@ func (executor *Executor) Execute(
 		return Result{}, ErrUnknownTool
 	}
 	definition := tool.Definition()
+	inputSchema := definition.InputSchema
+	if call.InputSchema != nil {
+		inputSchema = call.InputSchema
+	}
 	if !call.Actor.Valid() || call.ThreadID == "" ||
 		call.RunID == "" || call.ToolCallID == "" ||
 		call.RequestID == "" {
@@ -58,11 +64,17 @@ func (executor *Executor) Execute(
 	}
 	// 在进入业务工具前统一校验并过滤模型生成的参数，工具实现无需重复处理未知字段。
 	normalizedInput, err := NormalizeInput(
-		definition.InputSchema,
+		inputSchema,
 		invocation.Input,
 	)
 	if err != nil {
-		executor.logFailure(call, definition, 0, err)
+		executor.logFailure(
+			call,
+			definition,
+			0,
+			err,
+			"input_fields", topLevelJSONFields(invocation.Input),
+		)
 		return Result{}, err
 	}
 	startedAt := time.Now()
@@ -75,11 +87,24 @@ func (executor *Executor) Execute(
 	if result.Content == nil {
 		result.Content = map[string]any{}
 	}
-	if err := agenthandoff.ValidateItems(result.Handoffs); err != nil {
+	if !result.TurnOutcome.Valid() {
+		executor.logFailure(call, definition, time.Since(startedAt), ErrExecutionRejected)
+		return Result{}, ErrExecutionRejected
+	}
+	if result.TurnOutcome == TurnOutcomeCompleted {
+		if !conversation.ValidMessageContent(result.AssistantText) {
+			executor.logFailure(call, definition, time.Since(startedAt), ErrExecutionRejected)
+			return Result{}, ErrExecutionRejected
+		}
+	} else if result.AssistantText != "" {
+		executor.logFailure(call, definition, time.Since(startedAt), ErrExecutionRejected)
+		return Result{}, ErrExecutionRejected
+	}
+	if err := agentclientaction.ValidateItems(result.ClientActions); err != nil {
 		executor.logFailure(call, definition, time.Since(startedAt), err)
 		return Result{}, ErrExecutionRejected
 	}
-	result.Handoffs = agenthandoff.CloneItems(result.Handoffs)
+	result.ClientActions = agentclientaction.CloneItems(result.ClientActions)
 	executor.logSucceeded(call, definition, result, time.Since(startedAt))
 	return result, nil
 }
@@ -133,12 +158,12 @@ func (executor *Executor) logFailure(
 	definition Definition,
 	duration time.Duration,
 	err error,
+	extra ...any,
 ) {
 	if executor == nil || executor.logger == nil {
 		return
 	}
-	executor.logger.Warn(
-		"agent.tool.call.failed",
+	attrs := []any{
 		"run_id", call.RunID,
 		"thread_id", call.ThreadID,
 		"tool_call_id", call.ToolCallID,
@@ -146,7 +171,28 @@ func (executor *Executor) logFailure(
 		"duration_ms", duration.Milliseconds(),
 		"error_category", ErrorCategory(err),
 		"retryable", RetryableError(err),
-	)
+	}
+	var diagnostic DiagnosticError
+	if errors.As(err, &diagnostic) {
+		attrs = append(attrs, "diagnostic_code", diagnostic.DiagnosticCode())
+	}
+	attrs = append(attrs, extra...)
+	executor.logger.Warn("agent.tool.call.failed", attrs...)
+}
+
+// topLevelJSONFields exposes only parameter names for local diagnostics. It
+// deliberately never logs values because tool input may contain user content.
+func topLevelJSONFields(input json.RawMessage) []string {
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(input, &object); err != nil {
+		return nil
+	}
+	fields := make([]string, 0, len(object))
+	for field := range object {
+		fields = append(fields, field)
+	}
+	sort.Strings(fields)
+	return fields
 }
 
 func ErrorCategory(err error) string {

@@ -15,7 +15,8 @@ class PracticeRecordingsCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final recordings = controller.recordings;
-    if (recordings.isEmpty) {
+    final notice = controller.recordingNoticeMessage;
+    if (recordings.isEmpty && notice == null) {
       return const SizedBox.shrink();
     }
     return Card(
@@ -42,6 +43,15 @@ class PracticeRecordingsCard extends StatelessWidget {
                 controller: controller,
                 audioAssetId: recording.audioAssetId,
                 effectiveTurn: recording.effectiveTurn,
+              ),
+            if (notice != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(2, 6, 8, 0),
+                child: Text(
+                  notice,
+                  key: const Key('practice-recording-deleted-notice'),
+                  style: SpeakUpDesign.meta,
+                ),
               ),
           ],
         ),
@@ -97,7 +107,7 @@ class _RecordingRow extends StatelessWidget {
           ),
           IconButton(
             key: Key('practice-recording-delete-$audioAssetId'),
-            tooltip: '删除录音',
+            tooltip: '删除录音（保留文字）',
             onPressed: loading || deleting
                 ? null
                 : () => controller.deleteRecording(audioAssetId),

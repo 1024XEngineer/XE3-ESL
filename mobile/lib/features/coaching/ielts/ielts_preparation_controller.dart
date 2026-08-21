@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:speakup/features/coaching/ielts/ielts_practice_history_store.dart';
+import 'package:speakup/features/coaching/ielts/ielts_answer_generation.dart';
 import 'package:speakup/features/coaching/ielts/ielts_question_bank.dart';
 import 'package:speakup/features/coaching/ielts/ielts_question_bank_client.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
@@ -31,10 +32,12 @@ final class IeltsPracticeNavigationRequest {
 final class IeltsPreparationController extends ChangeNotifier {
   IeltsPreparationController({
     required this.client,
+    this.answerGenerator,
     this.historyStore = const NullIeltsPracticeHistoryStore(),
   });
 
   final IeltsQuestionBankClient client;
+  final IeltsAnswerGenerator? answerGenerator;
   final IeltsPracticeHistoryStore historyStore;
 
   IeltsQuestionBank? _questionBank;
@@ -120,20 +123,6 @@ final class IeltsPreparationController extends ChangeNotifier {
     return value ?? const IeltsSetProgress();
   }
 
-  IeltsPracticeSelection? randomFullMockSelection() {
-    final bank = _questionBank;
-    if (bank == null || bank.part1Sets.isEmpty || bank.topicGroups.isEmpty) {
-      return null;
-    }
-    return randomIeltsFullMockSelection(
-      bank: bank,
-      completedPart1SetIds: _completedIds(_part1Progress),
-      completedTopicGroupIds: _completedIds(
-        _part2Progress,
-      ).intersection(_completedIds(_part3Progress)),
-    );
-  }
-
   IeltsPracticeSelection? nextUnfinishedSelection(
     PracticeMode mode, {
     String? afterId,
@@ -192,7 +181,13 @@ final class IeltsPreparationController extends ChangeNotifier {
       case PracticeMode.fullSimulation || PracticeMode.focus:
         throw ArgumentError.value(mode, 'mode');
     }
-    await _saveHistory();
+    try {
+      await _saveHistory();
+    } on Object {
+      if (!_disposed) {
+        _errorMessage = '练习已开始，但本地题目进度暂时无法保存。';
+      }
+    }
     if (!_disposed) {
       notifyListeners();
     }
@@ -303,12 +298,6 @@ final class IeltsPreparationController extends ChangeNotifier {
       lastPracticedAt: now,
     );
   }
-
-  Set<String> _completedIds(Map<String, IeltsSetProgress> values) => values
-      .entries
-      .where((entry) => entry.value.completed)
-      .map((entry) => entry.key)
-      .toSet();
 
   void _clearProgress() {
     _part1Progress.clear();

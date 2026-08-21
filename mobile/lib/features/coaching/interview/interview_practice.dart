@@ -39,7 +39,7 @@ class InterviewPracticePage extends StatefulWidget {
     this.previewMode = false,
     this.practiceController,
     this.onExitRequested,
-    this.onContinueWithAgent,
+    this.onReturnToConversation,
     this.onOpenInterviewReport,
     this.speechFeedbackController,
     this.practicePromptSpeaker,
@@ -49,7 +49,7 @@ class InterviewPracticePage extends StatefulWidget {
   final bool previewMode;
   final PracticeController? practiceController;
   final Future<bool> Function()? onExitRequested;
-  final Future<bool> Function()? onContinueWithAgent;
+  final Future<bool> Function()? onReturnToConversation;
   final OpenInterviewPracticeReport? onOpenInterviewReport;
   final SpeechFeedbackController? speechFeedbackController;
   final PracticePromptSpeaker? practicePromptSpeaker;
@@ -149,6 +149,7 @@ class _InterviewPracticePageState extends State<InterviewPracticePage>
       useSafeArea: true,
       builder: (context) => QuestionTipSheet(
         content: tip.content,
+        translation: tip.translation,
         onSpeak: () async {
           final speaker =
               widget.practicePromptSpeaker ??
@@ -226,7 +227,8 @@ class _InterviewPracticePageState extends State<InterviewPracticePage>
           ),
         ),
       );
-      if (mounted && result == CompletedPracticeRouteResult.continueWithAgent) {
+      if (mounted &&
+          result == CompletedPracticeRouteResult.returnToConversation) {
         Navigator.of(context).pop(result);
       }
     } finally {
@@ -855,8 +857,9 @@ class _RecordingPanelState extends State<_RecordingPanel> {
             phase: capturePhase,
             keyPrefix: 'practice',
             elapsed: Duration(seconds: widget.recordingSeconds),
+            transcript: widget.controller.transcript ?? '',
           ),
-          PracticeRecordingState.transcribing => const PracticeLoadingComposer(
+          PracticeRecordingState.transcribing => PracticeLoadingComposer(
             label: '正在识别英文回答…',
           ),
           PracticeRecordingState.awaitingConfirmation =>

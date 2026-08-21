@@ -8,7 +8,6 @@ import (
 	"sync"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
-	goalcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/agentcapability"
 	reviewcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agentcapability"
 )
 
@@ -24,14 +23,12 @@ var ErrTemporarilyUnavailable = errors.New(
 type Store struct {
 	mu sync.Mutex
 
-	goals     []goalcapability.GoalResult
 	reviews   []reviewcapability.ReviewDetail
 	materials []Material
 	mistakes  []Mistake
 
-	createdGoals map[string]goalcapability.GoalResult
-	forbidden    map[string]bool
-	unavailable  map[string]bool
+	forbidden   map[string]bool
+	unavailable map[string]bool
 }
 
 type Material struct {
@@ -51,25 +48,6 @@ type Mistake struct {
 
 func NewStore() *Store {
 	return &Store{
-		goals: []goalcapability.GoalResult{{
-			GoalID:  "mock-goal-001",
-			Title:   "English PM interview",
-			Status:  "active",
-			Version: 1,
-			SourceRefs: []capability.SourceRef{{
-				Type: "mock_goal",
-				ID:   "mock-goal-001",
-			}},
-		}, {
-			GoalID:  "mock-goal-002",
-			Title:   "Customer escalation meeting",
-			Status:  "active",
-			Version: 1,
-			SourceRefs: []capability.SourceRef{{
-				Type: "mock_goal",
-				ID:   "mock-goal-002",
-			}},
-		}},
 		reviews: []reviewcapability.ReviewDetail{{
 			ID:                 "mock-report-001",
 			PracticeSessionID:  "mock-practice-session-001",
@@ -121,9 +99,8 @@ func NewStore() *Store {
 			Summary:    "Next steps did not include a specific owner or deadline.",
 			Suggestion: "Close with owner, deadline, and expected customer update.",
 		}},
-		createdGoals: make(map[string]goalcapability.GoalResult),
-		forbidden:    make(map[string]bool),
-		unavailable:  make(map[string]bool),
+		forbidden:   make(map[string]bool),
+		unavailable: make(map[string]bool),
 	}
 }
 
@@ -132,8 +109,6 @@ func Tools(store *Store) []capability.Tool {
 		store = NewStore()
 	}
 	return []capability.Tool{
-		goalcapability.NewGoalCreateCapability(store),
-		goalcapability.NewGoalSearchCapability(store),
 		reviewcapability.NewReviewSearchTool(store),
 		reviewcapability.NewReviewGetTool(store),
 		NewMaterialSearchTool(store),
@@ -157,64 +132,6 @@ func (s *Store) SetUnavailable(name string, unavailable bool) {
 	s.unavailable[name] = unavailable
 }
 
-func (s *Store) CreateGoal(
-	ctx context.Context,
-	call capability.CallContext,
-	input goalcapability.GoalCreateInput,
-) (goalcapability.GoalResult, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.beforeLocked(goalcapability.GoalCreateCapabilityName); err != nil {
-		return goalcapability.GoalResult{}, err
-	}
-	if call.RequestID == "" {
-		return goalcapability.GoalResult{}, capability.ErrExecutionRejected
-	}
-	if existing, ok := s.createdGoals[call.RequestID]; ok {
-		if existing.Title != strings.TrimSpace(input.Title) {
-			return goalcapability.GoalResult{}, capability.ErrExecutionRejected
-		}
-		return existing, nil
-	}
-	title := strings.TrimSpace(input.Title)
-	if title == "" {
-		return goalcapability.GoalResult{}, capability.ErrInvalidInput
-	}
-	id := "mock-created-goal-" + stableSuffix(call.RequestID)
-	result := goalcapability.GoalResult{
-		GoalID:  id,
-		Title:   title,
-		Status:  "active",
-		Version: 1,
-		SourceRefs: []capability.SourceRef{{
-			Type: "mock_goal",
-			ID:   id,
-		}},
-	}
-	s.createdGoals[call.RequestID] = result
-	s.goals = append(s.goals, result)
-	return result, nil
-}
-
-func (s *Store) SearchGoals(
-	ctx context.Context,
-	call capability.CallContext,
-	input goalcapability.GoalSearchInput,
-) ([]goalcapability.GoalResult, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.beforeLocked(goalcapability.GoalSearchCapabilityName); err != nil {
-		return nil, err
-	}
-	results := make([]goalcapability.GoalResult, 0)
-	for _, goal := range s.goals {
-		if containsAny(input.Query, goal.Title) {
-			results = append(results, goal)
-		}
-	}
-	return limit(results, input.Limit), nil
-}
-
 func (s *Store) SearchReviews(
 	ctx context.Context,
 	call capability.CallContext,
@@ -227,10 +144,6 @@ func (s *Store) SearchReviews(
 	}
 	results := make([]reviewcapability.ReviewSummary, 0)
 	for _, review := range s.reviews {
-		if input.PracticeSessionID != "" &&
-			input.PracticeSessionID != review.PracticeSessionID {
-			continue
-		}
 		if containsAny(
 			input.Query,
 			review.Summary,
@@ -339,24 +252,6 @@ func limit[T any](items []T, maximum int) []T {
 		return items
 	}
 	return items[:maximum]
-}
-
-func stableSuffix(value string) string {
-	clean := strings.ToLower(strings.TrimSpace(value))
-	clean = strings.Map(func(r rune) rune {
-		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
-			return r
-		}
-		return '-'
-	}, clean)
-	clean = strings.Trim(clean, "-")
-	if clean == "" {
-		return "request"
-	}
-	if len(clean) > 24 {
-		return clean[:24]
-	}
-	return clean
 }
 
 type CapabilitySummary struct {

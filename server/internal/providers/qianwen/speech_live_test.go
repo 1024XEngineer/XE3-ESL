@@ -150,6 +150,59 @@ func TestLiveSpeechSynthesis(t *testing.T) {
 	)
 }
 
+func TestLiveRealtimeSpeechSynthesis(t *testing.T) {
+	if os.Getenv("QIANWEN_TTS_LIVE_TEST") != "1" {
+		t.Skip(
+			"set QIANWEN_TTS_LIVE_TEST=1 and the TTS environment variables " +
+				"to run; the real request may incur charges",
+		)
+	}
+	cfg, err := platformconfig.LoadSpeechSynthesis()
+	if err != nil {
+		t.Fatalf("load speech synthesis config: %v", err)
+	}
+	synthesizer, err := newSpeechSynthesizer(TTSConfig{
+		BaseURL:       cfg.BaseURL,
+		Model:         cfg.Model,
+		Voice:         cfg.Voice,
+		LanguageHint:  cfg.LanguageHint,
+		Timeout:       cfg.Timeout,
+		TempDirectory: cfg.TempDirectory,
+	}, cfg.APIKey.Reveal())
+	if err != nil {
+		t.Fatalf("create Qianwen synthesizer: %v", err)
+	}
+	startedAt := time.Now()
+	firstChunkDelay := time.Duration(0)
+	chunkCount := 0
+	audioBytes := 0
+	err = synthesizer.streamRealtimePCM(
+		context.Background(),
+		"Please repeat after me. This audio should start immediately.",
+		func(chunk []byte) error {
+			if chunkCount == 0 {
+				firstChunkDelay = time.Since(startedAt)
+			}
+			chunkCount++
+			audioBytes += len(chunk)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("live realtime Qianwen TTS failed: %s", safeLiveSpeechError(err))
+	}
+	if chunkCount == 0 || audioBytes == 0 || audioBytes%2 != 0 {
+		t.Fatalf("invalid realtime PCM: chunks=%d bytes=%d", chunkCount, audioBytes)
+	}
+	t.Logf(
+		"realtime TTS success: first_chunk_delay=%s total_duration=%s chunks=%d bytes=%d",
+		firstChunkDelay,
+		time.Since(startedAt),
+		chunkCount,
+		audioBytes,
+	)
+}
+
 func safeLiveSpeechError(err error) string {
 	var speechError *protocol.SpeechError
 	if !errors.As(err, &speechError) {

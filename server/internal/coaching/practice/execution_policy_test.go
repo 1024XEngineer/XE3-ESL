@@ -15,19 +15,25 @@ func TestResolveSessionPolicyUsesExactReference(t *testing.T) {
 		SuggestedDurationSeconds: 600,
 	}
 	tests := []struct {
-		name        string
-		reference   string
-		retry       bool
-		translation bool
-		followUps   int
-		wantErr     error
+		name       string
+		reference  string
+		completion CompletionMode
+		maxTurns   int
+		retry      bool
+		readAids   bool
+		followUps  int
+		wantErr    error
 	}{
-		{"daily", DailyPracticeSessionPolicy, true, false, 1, nil},
-		{"workplace", WorkplacePracticeSessionPolicy, true, false, 1, nil},
-		{"interview", InterviewPracticeSessionPolicy, false, true, 1, nil},
-		{"interview deep dive", InterviewProjectDeepDiveSessionPolicy, false, true, 3, nil},
-		{"exam", ExamPracticeSessionPolicy, false, false, 1, nil},
-		{"unknown", "unknown.practice.session.v1", false, false, 0, ErrExecutionPolicyNotFound},
+		{"daily", DailyPracticeSessionPolicy, CompletionModeUserControlled, 0, true, true, 1, nil},
+		{"daily hotel", DailyHotelCheckinIssueSessionPolicy, CompletionModeUserControlled, 0, true, true, 1, nil},
+		{"workplace", WorkplacePracticeSessionPolicy, CompletionModeUserControlled, 0, true, true, 1, nil},
+		{"workplace risk", WorkplaceProgressRiskUpdateSessionPolicy, CompletionModeUserControlled, 0, true, true, 1, nil},
+		{"turn-limited interview", InterviewPracticeSessionPolicy, CompletionModeTurnLimited, 6, false, true, 3, nil},
+		{"interview", InterviewUserControlledSessionPolicy, CompletionModeUserControlled, 0, false, true, 3, nil},
+		{"turn-limited interview deep dive", InterviewProjectDeepDiveSessionPolicy, CompletionModeTurnLimited, 6, false, true, 3, nil},
+		{"interview deep dive", InterviewProjectDeepDiveUserControlledSessionPolicy, CompletionModeUserControlled, 0, false, true, 3, nil},
+		{"exam", ExamPracticeSessionPolicy, CompletionModeTurnLimited, 6, false, false, 1, nil},
+		{"unknown", "unknown.practice.session.v1", "", 0, false, false, 0, ErrExecutionPolicyNotFound},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -38,8 +44,11 @@ func TestResolveSessionPolicyUsesExactReference(t *testing.T) {
 				}
 				return
 			}
-			if err != nil || policy.RetryAllowed != test.retry ||
-				policy.QuestionTranslationAllowed != test.translation ||
+			if err != nil || policy.CompletionMode != test.completion ||
+				policy.MaxEffectiveTurns != test.maxTurns ||
+				policy.RetryAllowed != test.retry ||
+				policy.QuestionTranslationAllowed != test.readAids ||
+				policy.QuestionTipsAllowed != test.readAids ||
 				policy.MaxFollowUpsPerQuestion != test.followUps ||
 				!ValidSessionPolicy(
 					test.reference,
@@ -111,5 +120,42 @@ func TestResolveSessionPolicyFreezesIELTSBlueprintCount(t *testing.T) {
 		policy.CoverageCheckpointTurn != len(blueprints) ||
 		policy.MaxFollowUpsPerQuestion != 0 || policy.RetryAllowed {
 		t.Fatalf("IELTS policy = %#v", policy)
+	}
+}
+
+func TestResolveSessionPolicyAllowsReadAidsOnlyForIELTSSectionPractice(
+	t *testing.T,
+) {
+	t.Parallel()
+	prompt := ScenePrompt{TurnBlueprints: []string{"question"}}
+	tests := []struct {
+		name      string
+		reference string
+		mode      PracticeMode
+		wantAids  bool
+	}{
+		{"part 1", IELTSSpeakingPart1SessionPolicy, PracticeModePart1, true},
+		{"part 2", IELTSSpeakingPart2SessionPolicy, PracticeModePart2, true},
+		{"part 3", IELTSSpeakingPart3SessionPolicy, PracticeModePart3, true},
+		{"full mock", IELTSSpeakingFullMockSessionPolicy, PracticeModeFullMock, false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			policy, err := ResolveSessionPolicy(
+				test.reference,
+				prompt,
+				PracticeOption{
+					Mode: test.mode, SuggestedDurationSeconds: 300,
+				},
+				0,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if policy.QuestionTranslationAllowed != test.wantAids ||
+				policy.QuestionTipsAllowed != test.wantAids {
+				t.Fatalf("IELTS read aids policy = %#v", policy)
+			}
+		})
 	}
 }

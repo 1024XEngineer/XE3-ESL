@@ -13,34 +13,58 @@ final class EvaluationReport {
   const EvaluationReport({
     required this.id,
     required this.evaluationId,
-    required this.evaluationRevisionId,
     required this.practiceSessionId,
-    required this.revision,
     required this.sceneType,
+    required this.practiceExperience,
     required this.sceneCategory,
+    required this.practiceMode,
     required this.scoreability,
     required this.summary,
+    required this.questions,
     required this.dimensions,
     required this.priorityActions,
-    required this.detailSchema,
-    required this.detail,
     required this.createdAt,
   });
 
   final String id;
   final String evaluationId;
-  final String evaluationRevisionId;
   final String practiceSessionId;
-  final int revision;
   final EvaluationReportSceneType sceneType;
+  final String practiceExperience;
   final String sceneCategory;
+  final String practiceMode;
   final EvaluationReportScoreability scoreability;
   final String summary;
+  final List<EvaluationReportQuestion> questions;
   final List<EvaluationReportDimension> dimensions;
   final List<EvaluationReportPriorityAction> priorityActions;
-  final String detailSchema;
-  final Map<String, Object?> detail;
   final DateTime createdAt;
+}
+
+final class EvaluationReportQuestion {
+  const EvaluationReportQuestion({
+    required this.id,
+    required this.position,
+    required this.text,
+    this.parentQuestionId,
+    this.answer,
+  });
+
+  final String id;
+  final int position;
+  final String text;
+  final String? parentQuestionId;
+  final EvaluationReportAnswer? answer;
+}
+
+final class EvaluationReportAnswer {
+  const EvaluationReportAnswer({
+    required this.turnId,
+    required this.transcript,
+  });
+
+  final String turnId;
+  final String transcript;
 }
 
 final class EvaluationReportDimension {

@@ -16,6 +16,14 @@ typedef AgentVoiceMessagesCommitted =
     void Function(Iterable<AgentMessage> messages);
 typedef AgentVoiceAssistantCommitted =
     FutureOr<void> Function(AgentMessage message);
+typedef AgentVoiceAssistantStreamStarted =
+    Future<void> Function(String transientMessageId);
+typedef AgentVoiceAssistantStreamDelta =
+    void Function(String transientMessageId, String delta);
+typedef AgentVoiceAssistantStreamCompleted =
+    void Function(String transientMessageId, AgentMessage message);
+typedef AgentVoiceAssistantStreamFailed =
+    void Function(String transientMessageId);
 typedef AgentVoiceStreamMessageChanged =
     void Function(String? previousMessageId, AgentMessage message);
 
@@ -27,16 +35,20 @@ final class AgentVoiceController extends ChangeNotifier
     required this.audioPlayer,
     required this.onMessagesCommitted,
     this.onAssistantCommitted,
+    this.onAssistantStreamStarted,
+    this.onAssistantStreamDelta,
+    this.onAssistantStreamCompleted,
+    this.onAssistantStreamFailed,
     this.onStreamMessageChanged,
     required this.idFactory,
     this.clock = DateTime.now,
     this.pollInterval = const Duration(seconds: 1),
-    this.maximumCandidatePolls = 75,
+    this.maximumDraftPolls = 75,
     this.maximumRunPolls = 75,
     this.recordingLimit = const Duration(seconds: 58),
   }) {
     if (pollInterval.isNegative ||
-        maximumCandidatePolls < 1 ||
+        maximumDraftPolls < 1 ||
         maximumRunPolls < 1 ||
         recordingLimit <= Duration.zero ||
         recordingLimit > const Duration(seconds: 60)) {
@@ -53,19 +65,25 @@ final class AgentVoiceController extends ChangeNotifier
   final AgentAudioPlayer audioPlayer;
   final AgentVoiceMessagesCommitted onMessagesCommitted;
   final AgentVoiceAssistantCommitted? onAssistantCommitted;
+  final AgentVoiceAssistantStreamStarted? onAssistantStreamStarted;
+  final AgentVoiceAssistantStreamDelta? onAssistantStreamDelta;
+  final AgentVoiceAssistantStreamCompleted? onAssistantStreamCompleted;
+  final AgentVoiceAssistantStreamFailed? onAssistantStreamFailed;
   final AgentVoiceStreamMessageChanged? onStreamMessageChanged;
   final AgentVoiceIdFactory idFactory;
   final AgentVoiceControllerClock clock;
   final Duration pollInterval;
-  final int maximumCandidatePolls;
+  final int maximumDraftPolls;
   final int maximumRunPolls;
   final Duration recordingLimit;
 
   String? _threadId;
   AgentVoiceComposerState _state = AgentVoiceComposerState.idle;
   AgentVoiceLocalRecording? _recording;
-  AgentVoiceCandidate? _candidate;
+  AgentVoiceDraft? _draft;
   AgentVoiceRun? _pendingRun;
+  String? _completedStreamMessageId;
+  String? _completedStreamText;
   String _editedTranscript = '';
   String _liveTranscript = '';
   String? _errorMessage;
@@ -86,7 +104,7 @@ final class AgentVoiceController extends ChangeNotifier
   bool _backgrounded = false;
   int _lifecycleGeneration = 0;
   Future<void>? _workflowOperation;
-  Future<_RealtimeCandidateResult>? _realtimeCandidate;
+  Future<_RealtimeDraftResult>? _realtimeDraft;
   Future<void>? _cleanupFuture;
 
   bool _draftPlaying = false;
@@ -95,7 +113,7 @@ final class AgentVoiceController extends ChangeNotifier
   String? get threadId => _threadId;
   AgentVoiceComposerState get state => _state;
   AgentVoiceLocalRecording? get recording => _recording;
-  AgentVoiceCandidate? get candidate => _candidate;
+  AgentVoiceDraft? get draft => _draft;
   String get editedTranscript => _editedTranscript;
   String get liveTranscript => _liveTranscript;
   String? get errorMessage => _errorMessage;
@@ -114,7 +132,7 @@ final class AgentVoiceController extends ChangeNotifier
           (_state == AgentVoiceComposerState.failed &&
               _retry == _VoiceRetry.upload));
   bool get canConfirm =>
-      _candidate?.isReady == true &&
+      _draft?.isReady == true &&
       _editedTranscript.trim().isNotEmpty &&
       utf8.encode(_editedTranscript.trim()).length <= 16384 &&
       _state == AgentVoiceComposerState.awaitingConfirmation;
@@ -129,7 +147,7 @@ final class AgentVoiceController extends ChangeNotifier
       return;
     }
     final staleRecording = _recording;
-    final staleCandidate = _candidate;
+    final staleDraft = _draft;
     _workflowGeneration++;
     _draftPlaybackGeneration++;
     _cancelRecordingTimers();
@@ -144,8 +162,8 @@ final class AgentVoiceController extends ChangeNotifier
         _discardCurrentBestEffort(),
         if (staleRecording != null) _discardRecordingBestEffort(staleRecording),
         Future<void>.sync(audioPlayer.stop),
-        if (staleCandidate != null && !_isConfirmed(staleCandidate))
-          _deleteCandidateBestEffort(staleCandidate.id),
+        if (staleDraft != null && !_isConfirmed(staleDraft))
+          _deleteDraftBestEffort(staleDraft.id),
       ]);
     } catch (_) {
       if (!_disposed && _threadId == threadId) {
@@ -192,9 +210,9 @@ final class AgentVoiceController extends ChangeNotifier
         final idempotencyKey = _newId('voice-upload');
         final chunks = await streamingRecorder.startAudioStream();
         _uploadIdempotencyKey = idempotencyKey;
-        _realtimeCandidate = _collectRealtimeCandidate(
+        _realtimeDraft = _collectRealtimeDraft(
           fence,
-          (client as AgentVoiceRealtimeInputClient).createCandidateRealtime(
+          (client as AgentVoiceRealtimeInputClient).createDraftRealtime(
             threadId: fence.threadId,
             audioChunks: chunks,
             idempotencyKey: idempotencyKey,
@@ -250,9 +268,9 @@ final class AgentVoiceController extends ChangeNotifier
   }
 
   Future<void> _stopRecording(_WorkflowFence fence) async {
-    final usedRealtimeInput = _realtimeCandidate != null;
+    final usedRealtimeInput = _realtimeDraft != null;
     try {
-      final realtime = _realtimeCandidate;
+      final realtime = _realtimeDraft;
       final recording =
           realtime != null && recorder is AgentVoiceStreamingRecorder
           ? await (recorder as AgentVoiceStreamingRecorder).stopAudioStream()
@@ -270,30 +288,30 @@ final class AgentVoiceController extends ChangeNotifier
         _state = AgentVoiceComposerState.transcribing;
         notifyListeners();
         final result = await realtime;
-        _realtimeCandidate = null;
+        _realtimeDraft = null;
         if (result.error case final error?) {
           throw error;
         }
-        final candidate = result.candidate;
-        if (candidate == null) {
-          throw StateError('Realtime voice stream ended without a candidate.');
+        final draft = result.draft;
+        if (draft == null) {
+          throw StateError('Realtime voice stream ended without a draft.');
         }
-        _validateCandidate(candidate, expectedThreadId: fence.threadId);
-        _candidate = candidate;
+        _validateDraft(draft, expectedThreadId: fence.threadId);
+        _draft = draft;
         _recording = null;
         await _discardRecordingBestEffort(recording);
         if (!_isWorkflowCurrent(fence)) {
-          await _deleteCandidateBestEffort(candidate.id);
+          await _deleteDraftBestEffort(draft.id);
           return;
         }
-        await _resolveCandidate(fence, candidate);
+        await _resolveDraft(fence, draft);
         return;
       }
       _errorMessage = null;
       _retry = null;
     } catch (error) {
       if (_isWorkflowCurrent(fence)) {
-        _realtimeCandidate = null;
+        _realtimeDraft = null;
         _state = AgentVoiceComposerState.failed;
         if (usedRealtimeInput && _recording != null) {
           _errorMessage = _uploadFailureMessage(error);
@@ -309,16 +327,16 @@ final class AgentVoiceController extends ChangeNotifier
     }
   }
 
-  Future<_RealtimeCandidateResult> _collectRealtimeCandidate(
+  Future<_RealtimeDraftResult> _collectRealtimeDraft(
     _WorkflowFence fence,
     Stream<AgentVoiceTranscriptionEvent> events,
   ) async {
-    AgentVoiceCandidate? completed;
+    AgentVoiceDraft? completed;
     try {
       await for (final event in events) {
         if (!_isWorkflowCurrent(fence)) {
-          if (event case AgentVoiceCandidateCompleted(:final candidate)) {
-            await _deleteCandidateBestEffort(candidate.id);
+          if (event case AgentVoiceDraftCompleted(:final draft)) {
+            await _deleteDraftBestEffort(draft.id);
           }
           continue;
         }
@@ -326,24 +344,24 @@ final class AgentVoiceController extends ChangeNotifier
           case AgentVoiceTranscriptUpdated(:final text):
             _liveTranscript = text;
             notifyListeners();
-          case AgentVoiceCandidateCompleted(:final candidate):
-            completed = candidate;
+          case AgentVoiceDraftCompleted(:final draft):
+            completed = draft;
         }
       }
-      return _RealtimeCandidateResult(candidate: completed);
+      return _RealtimeDraftResult(draft: completed);
     } catch (error) {
-      return _RealtimeCandidateResult(error: error);
+      return _RealtimeDraftResult(error: error);
     }
   }
 
   Future<void> cancel() async {
     final staleRecording = _recording;
-    final staleCandidate = _candidate;
+    final staleDraft = _draft;
     _workflowGeneration++;
     _draftPlaybackGeneration++;
     _cancelRecordingTimers();
     _resetWorkflowPresentation();
-    _realtimeCandidate = null;
+    _realtimeDraft = null;
     _resetDraftPlayback();
     if (!_disposed) {
       notifyListeners();
@@ -352,8 +370,8 @@ final class AgentVoiceController extends ChangeNotifier
       _discardCurrentBestEffort(),
       if (staleRecording != null) _discardRecordingBestEffort(staleRecording),
       Future<void>.sync(audioPlayer.stop),
-      if (staleCandidate != null && !_isConfirmed(staleCandidate))
-        _deleteCandidateBestEffort(staleCandidate.id),
+      if (staleDraft != null && !_isConfirmed(staleDraft))
+        _deleteDraftBestEffort(staleDraft.id),
     ]);
   }
 
@@ -432,15 +450,15 @@ final class AgentVoiceController extends ChangeNotifier
     required String idempotencyKey,
   }) async {
     try {
-      AgentVoiceCandidate? completedCandidate;
-      await for (final event in client.createCandidateStream(
+      AgentVoiceDraft? completedDraft;
+      await for (final event in client.createDraftStream(
         threadId: fence.threadId,
         recording: recording,
         idempotencyKey: idempotencyKey,
       )) {
         if (!_isWorkflowCurrent(fence)) {
-          if (event case AgentVoiceCandidateCompleted(:final candidate)) {
-            await _deleteCandidateBestEffort(candidate.id);
+          if (event case AgentVoiceDraftCompleted(:final draft)) {
+            await _deleteDraftBestEffort(draft.id);
           }
           return;
         }
@@ -449,39 +467,37 @@ final class AgentVoiceController extends ChangeNotifier
             _liveTranscript = text;
             _state = AgentVoiceComposerState.transcribing;
             notifyListeners();
-          case AgentVoiceCandidateCompleted(:final candidate):
-            completedCandidate = candidate;
+          case AgentVoiceDraftCompleted(:final draft):
+            completedDraft = draft;
         }
       }
-      final candidate = completedCandidate;
-      if (candidate == null) {
-        throw StateError(
-          'Voice transcription stream ended without a candidate.',
-        );
+      final draft = completedDraft;
+      if (draft == null) {
+        throw StateError('Voice transcription stream ended without a draft.');
       }
       if (!_isWorkflowCurrent(fence)) {
-        await _deleteCandidateBestEffort(candidate.id);
+        await _deleteDraftBestEffort(draft.id);
         await _discardRecordingBestEffort(recording);
         return;
       }
-      _validateCandidate(candidate, expectedThreadId: fence.threadId);
-      _candidate = candidate;
+      _validateDraft(draft, expectedThreadId: fence.threadId);
+      _draft = draft;
       _recording = null;
       await _discardRecordingBestEffort(recording);
       if (!_isWorkflowCurrent(fence)) {
-        await _deleteCandidateBestEffort(candidate.id);
+        await _deleteDraftBestEffort(draft.id);
         return;
       }
-      await _resolveCandidate(fence, candidate);
+      await _resolveDraft(fence, draft);
     } catch (error) {
       if (_isWorkflowCurrent(fence)) {
         _state = AgentVoiceComposerState.failed;
-        final uploadCommitted = _candidate != null;
+        final uploadCommitted = _draft != null;
         _errorMessage = uploadCommitted
             ? _asrFailureMessage(error)
             : _uploadFailureMessage(error);
         _retry = uploadCommitted
-            ? _VoiceRetry.restoreCandidate
+            ? _VoiceRetry.restoreDraft
             : _VoiceRetry.upload;
         notifyListeners();
         await _clearOnAuthenticationFailure(error);
@@ -489,19 +505,19 @@ final class AgentVoiceController extends ChangeNotifier
     }
   }
 
-  Future<void> _resolveCandidate(
+  Future<void> _resolveDraft(
     _WorkflowFence fence,
-    AgentVoiceCandidate initial,
+    AgentVoiceDraft initial,
   ) async {
-    var candidate = initial;
-    for (var attempt = 0; attempt < maximumCandidatePolls; attempt++) {
+    var draft = initial;
+    for (var attempt = 0; attempt < maximumDraftPolls; attempt++) {
       if (!_isWorkflowCurrent(fence)) {
         return;
       }
-      _validateCandidate(candidate, expectedThreadId: fence.threadId);
-      _candidate = candidate;
-      if (candidate.isReady) {
-        _editedTranscript = candidate.transcript!.text;
+      _validateDraft(draft, expectedThreadId: fence.threadId);
+      _draft = draft;
+      if (draft.isReady) {
+        _editedTranscript = draft.transcript!.text;
         _liveTranscript = _editedTranscript;
         _state = AgentVoiceComposerState.awaitingConfirmation;
         _retry = null;
@@ -509,17 +525,17 @@ final class AgentVoiceController extends ChangeNotifier
         notifyListeners();
         return;
       }
-      if (candidate.status == AgentVoiceCandidateStatus.failed) {
+      if (draft.status == AgentVoiceDraftStatus.failed) {
         _state = AgentVoiceComposerState.failed;
-        _retry = candidate.failure?.retryable == true ? _VoiceRetry.asr : null;
-        _errorMessage = candidate.failure?.retryable == true
+        _retry = draft.failure?.retryable == true ? _VoiceRetry.asr : null;
+        _errorMessage = draft.failure?.retryable == true
             ? '语音转写没有完成，可以重试识别。'
             : '语音转写失败，请取消后重新录音。';
         notifyListeners();
         return;
       }
-      if (!candidate.isAsrPending) {
-        throw StateError('Unexpected Agent voice candidate state.');
+      if (!draft.isAsrPending) {
+        throw StateError('Unexpected Agent voice draft state.');
       }
       _state = AgentVoiceComposerState.transcribing;
       notifyListeners();
@@ -527,15 +543,15 @@ final class AgentVoiceController extends ChangeNotifier
       if (!_isWorkflowCurrent(fence)) {
         return;
       }
-      final restored = await client.getCandidate(candidateId: candidate.id);
-      if (restored.version < candidate.version) {
-        throw StateError('Agent voice candidate version moved backwards.');
+      final restored = await client.getDraft(draftId: draft.id);
+      if (restored.version < draft.version) {
+        throw StateError('Agent voice draft version moved backwards.');
       }
-      candidate = restored;
+      draft = restored;
     }
     if (_isWorkflowCurrent(fence)) {
       _state = AgentVoiceComposerState.failed;
-      _retry = _VoiceRetry.restoreCandidate;
+      _retry = _VoiceRetry.restoreDraft;
       _errorMessage = '转写仍在处理中，请稍后继续检查。';
       notifyListeners();
     }
@@ -555,25 +571,27 @@ final class AgentVoiceController extends ChangeNotifier
         await upload();
       case _VoiceRetry.asr:
         await retryAsr();
-      case _VoiceRetry.restoreCandidate:
-        await restoreCandidate();
+      case _VoiceRetry.restoreDraft:
+        await restoreDraft();
       case _VoiceRetry.confirm:
         await _retryConfirmation();
       case _VoiceRetry.run:
         await retryAssistant();
+      case _VoiceRetry.message:
+        await retryAssistantMessage();
     }
   }
 
   Future<void> retryAsr() async {
-    final candidate = _candidate;
-    if (candidate == null ||
-        candidate.failure?.retryable != true ||
+    final draft = _draft;
+    if (draft == null ||
+        draft.failure?.retryable != true ||
         _workflowOperation != null) {
       return;
     }
     final fence = _captureWorkflowFence(
-      candidateId: candidate.id,
-      candidateVersion: candidate.version,
+      draftId: draft.id,
+      draftVersion: draft.version,
     );
     _state = AgentVoiceComposerState.transcribing;
     _errorMessage = null;
@@ -586,62 +604,48 @@ final class AgentVoiceController extends ChangeNotifier
           try {
             final ambiguous = _ambiguousAsrRetry;
             if (ambiguous != null &&
-                (ambiguous.candidateId != candidate.id ||
-                    ambiguous.candidateVersion != candidate.version)) {
+                (ambiguous.draftId != draft.id ||
+                    ambiguous.draftVersion != draft.version)) {
               _ambiguousAsrRetry = null;
             }
             if (ambiguous != null &&
-                ambiguous.candidateId == candidate.id &&
-                ambiguous.candidateVersion == candidate.version) {
-              final durable = await client.getCandidate(
-                candidateId: candidate.id,
-              );
-              _validateCandidate(durable, expectedThreadId: fence.threadId);
-              if (durable.id != candidate.id ||
-                  durable.version < candidate.version) {
+                ambiguous.draftId == draft.id &&
+                ambiguous.draftVersion == draft.version) {
+              final durable = await client.getDraft(draftId: draft.id);
+              _validateDraft(durable, expectedThreadId: fence.threadId);
+              if (durable.id != draft.id || durable.version < draft.version) {
                 throw StateError(
-                  'Agent voice candidate reconciliation moved backwards.',
+                  'Agent voice draft reconciliation moved backwards.',
                 );
               }
-              if (!_isWorkflowCurrent(
-                fence,
-                allowCandidateVersionAdvance: true,
-              )) {
+              if (!_isWorkflowCurrent(fence, allowDraftVersionAdvance: true)) {
                 return;
               }
-              if (durable.version != candidate.version ||
-                  durable.status != AgentVoiceCandidateStatus.failed ||
+              if (durable.version != draft.version ||
+                  durable.status != AgentVoiceDraftStatus.failed ||
                   durable.failure?.retryable != true) {
                 _ambiguousAsrRetry = null;
-                await _resolveCandidate(
-                  fence.withoutCandidateVersion(),
-                  durable,
-                );
+                await _resolveDraft(fence.withoutDraftVersion(), durable);
                 return;
               }
             }
             _ambiguousAsrRetry = null;
             retryPosted = true;
-            final retried = await client.retryCandidate(
-              candidateId: candidate.id,
-            );
+            final retried = await client.retryDraft(draftId: draft.id);
             _ambiguousAsrRetry = null;
-            if (!_isWorkflowCurrent(
-              fence,
-              allowCandidateVersionAdvance: true,
-            )) {
+            if (!_isWorkflowCurrent(fence, allowDraftVersionAdvance: true)) {
               return;
             }
-            if (retried.version <= candidate.version) {
-              throw StateError('ASR retry did not advance candidate version.');
+            if (retried.version <= draft.version) {
+              throw StateError('ASR retry did not advance draft version.');
             }
-            await _resolveCandidate(fence.withoutCandidateVersion(), retried);
+            await _resolveDraft(fence.withoutDraftVersion(), retried);
           } catch (error) {
-            if (_isWorkflowCurrent(fence, allowCandidateVersionAdvance: true)) {
+            if (_isWorkflowCurrent(fence, allowDraftVersionAdvance: true)) {
               if (retryPosted && _isAmbiguousMutationFailure(error)) {
                 _ambiguousAsrRetry = _AsrRetryCommand(
-                  candidateId: candidate.id,
-                  candidateVersion: candidate.version,
+                  draftId: draft.id,
+                  draftVersion: draft.version,
                 );
               }
               _state = AgentVoiceComposerState.failed;
@@ -660,12 +664,12 @@ final class AgentVoiceController extends ChangeNotifier
     await operation;
   }
 
-  Future<void> restoreCandidate() async {
-    final candidate = _candidate;
-    if (candidate == null || _workflowOperation != null) {
+  Future<void> restoreDraft() async {
+    final draft = _draft;
+    if (draft == null || _workflowOperation != null) {
       return;
     }
-    final fence = _captureWorkflowFence(candidateId: candidate.id);
+    final fence = _captureWorkflowFence(draftId: draft.id);
     _state = AgentVoiceComposerState.transcribing;
     _errorMessage = null;
     _retry = null;
@@ -674,19 +678,14 @@ final class AgentVoiceController extends ChangeNotifier
     operation =
         Future<void>.sync(() async {
           try {
-            final restored = await client.getCandidate(
-              candidateId: candidate.id,
-            );
-            if (_isWorkflowCurrent(fence, allowCandidateVersionAdvance: true)) {
-              await _resolveCandidate(
-                fence.withoutCandidateVersion(),
-                restored,
-              );
+            final restored = await client.getDraft(draftId: draft.id);
+            if (_isWorkflowCurrent(fence, allowDraftVersionAdvance: true)) {
+              await _resolveDraft(fence.withoutDraftVersion(), restored);
             }
           } catch (error) {
-            if (_isWorkflowCurrent(fence, allowCandidateVersionAdvance: true)) {
+            if (_isWorkflowCurrent(fence, allowDraftVersionAdvance: true)) {
               _state = AgentVoiceComposerState.failed;
-              _retry = _VoiceRetry.restoreCandidate;
+              _retry = _VoiceRetry.restoreDraft;
               _errorMessage = _asrFailureMessage(error);
               notifyListeners();
               await _clearOnAuthenticationFailure(error);
@@ -712,18 +711,18 @@ final class AgentVoiceController extends ChangeNotifier
   }
 
   Future<void> confirm() {
-    final candidate = _candidate;
+    final draft = _draft;
     final text = _editedTranscript.trim();
-    if (candidate == null ||
-        !candidate.isReady ||
+    if (draft == null ||
+        !draft.isReady ||
         !canConfirm ||
         _workflowOperation != null ||
         text.isEmpty) {
       return Future<void>.value();
     }
     final command = _ConfirmationCommand(
-      candidateId: candidate.id,
-      candidateVersion: candidate.version,
+      draftId: draft.id,
+      draftVersion: draft.version,
       clientMessageId: _newId('voice-message'),
       confirmedText: text,
     );
@@ -731,12 +730,12 @@ final class AgentVoiceController extends ChangeNotifier
     if (client is AgentVoiceStreamingClient) {
       return _startConfirmationStream(
         client: client as AgentVoiceStreamingClient,
-        candidate: candidate,
+        draft: draft,
         command: command,
       );
     }
     return _startConfirmation(
-      candidate: candidate,
+      draft: draft,
       command: command,
       reconcileFirst: false,
     );
@@ -744,12 +743,12 @@ final class AgentVoiceController extends ChangeNotifier
 
   Future<void> _startConfirmationStream({
     required AgentVoiceStreamingClient client,
-    required AgentVoiceCandidate candidate,
+    required AgentVoiceDraft draft,
     required _ConfirmationCommand command,
   }) {
     final fence = _captureWorkflowFence(
-      candidateId: candidate.id,
-      candidateVersion: candidate.version,
+      draftId: draft.id,
+      draftVersion: draft.version,
     );
     _state = AgentVoiceComposerState.confirming;
     _errorMessage = null;
@@ -760,7 +759,7 @@ final class AgentVoiceController extends ChangeNotifier
         _confirmStream(
           client: client,
           fence: fence,
-          candidate: candidate,
+          draft: draft,
           command: command,
         ).whenComplete(() {
           if (identical(_workflowOperation, operation)) {
@@ -774,16 +773,16 @@ final class AgentVoiceController extends ChangeNotifier
   Future<void> _confirmStream({
     required AgentVoiceStreamingClient client,
     required _WorkflowFence fence,
-    required AgentVoiceCandidate candidate,
+    required AgentVoiceDraft draft,
     required _ConfirmationCommand command,
   }) async {
     var messageCommitted = false;
     var assistantText = '';
     String? transientAssistantId;
     try {
-      await for (final event in client.confirmCandidateStream(
-        candidateId: command.candidateId,
-        candidateVersion: command.candidateVersion,
+      await for (final event in client.confirmDraftStream(
+        draftId: command.draftId,
+        draftVersion: command.draftVersion,
         clientMessageId: command.clientMessageId,
         confirmedText: command.confirmedText,
       )) {
@@ -794,31 +793,35 @@ final class AgentVoiceController extends ChangeNotifier
           case AgentVoiceInputCommitted(:final confirmation):
             _validateConfirmation(
               confirmation,
-              expectedCandidate: candidate,
+              expectedDraft: draft,
+              expectedClientMessageId: command.clientMessageId,
               confirmedText: command.confirmedText,
             );
-            _candidate = confirmation.candidate;
+            _draft = confirmation.draft;
             _pendingRun = confirmation.run;
-            onMessagesCommitted(<AgentMessage>[confirmation.message]);
             messageCommitted = true;
+            _commitMessages(<AgentMessage>[confirmation.message]);
             _editedTranscript = '';
             _recording = null;
             _uploadIdempotencyKey = null;
             _confirmationCommand = null;
             _state = AgentVoiceComposerState.awaitingAssistant;
             notifyListeners();
-          case AgentVoiceAssistantStarted(:final runId):
-            transientAssistantId = 'stream-$runId';
+          case AgentVoiceToolStepEvent():
+            break;
+          case AgentVoiceAssistantOutputStarted(:final outputId):
+            transientAssistantId = outputId;
             _changeStreamMessage(
               null,
               AgentMessage(
-                id: transientAssistantId,
+                id: outputId,
                 role: AgentMessageRole.assistant,
                 text: '',
                 isStreaming: true,
               ),
             );
-          case AgentVoiceAssistantDelta(:final delta):
+            await _startAssistantStream(outputId);
+          case AgentVoiceAssistantOutputDelta(:final delta):
             final messageId = transientAssistantId;
             if (messageId == null) {
               throw StateError('Voice assistant delta started out of order.');
@@ -833,33 +836,76 @@ final class AgentVoiceController extends ChangeNotifier
                 isStreaming: true,
               ),
             );
-          case AgentVoiceRunCompleted(:final run):
-            _pendingRun = run;
-            final messageId = run.assistantMessageId;
-            if (messageId == null) {
-              throw StateError('Completed voice Run has no assistant Message.');
+            _appendAssistantStream(messageId, delta);
+          case AgentVoiceAssistantOutputCompleted(:final outputId, :final text):
+            if (transientAssistantId != outputId || assistantText != text) {
+              throw StateError(
+                'Voice assistant output completed inconsistently.',
+              );
             }
-            final assistant = await this.client.getMessage(
-              threadId: fence.threadId,
-              messageId: messageId,
+            _completedStreamMessageId = outputId;
+            _completedStreamText = text;
+            final completed = AgentMessage(
+              id: outputId,
+              role: AgentMessageRole.assistant,
+              text: text,
             );
-            if (!_isWorkflowCurrent(fence)) {
-              return;
+            _completeAssistantStream(outputId, completed);
+            _changeStreamMessage(outputId, completed);
+          case AgentVoiceRunCompleted(:final run):
+            final initial = _pendingRun;
+            if (initial == null) {
+              throw StateError('Completed voice Run has no committed input.');
             }
-            if (assistant == null ||
-                assistant.role != AgentMessageRole.assistant) {
-              throw StateError('Voice assistant Message is unavailable.');
+            _validateRun(
+              run,
+              expectedThreadId: fence.threadId,
+              expectedRunId: initial.id,
+              expectedInputMessageId: initial.inputMessageId,
+              expectedAttempt: initial.attempt,
+              expectedRetryOfRunId: initial.retryOfRunId,
+              expectedClientRetryId: initial.clientRetryId,
+            );
+            if (run.status != AgentRunStatus.completed) {
+              throw StateError('Voice Run completion event was not completed.');
             }
-            final transientId = transientAssistantId;
-            if (transientId == null) {
-              onMessagesCommitted(<AgentMessage>[assistant]);
-            } else {
-              _changeStreamMessage(transientId, assistant);
+            _pendingRun = run;
+            try {
+              await _hydrateCompletedRun(
+                fence,
+                run,
+                expectedMessageId: transientAssistantId,
+                expectedText: assistantText,
+              );
+            } catch (error) {
+              if (_isWorkflowCurrent(fence)) {
+                _setMessageHydrationFailure(error);
+                await _clearOnAuthenticationFailure(error);
+              }
             }
-            _resetWorkflowPresentation();
-            notifyListeners();
-            _notifyAssistantCommitted(assistant);
-          case AgentVoiceRunFailed(:final kind, :final retryable):
+            return;
+          case AgentVoiceRunFailed(:final run, :final kind, :final retryable):
+            if (run != null) {
+              final initial = _pendingRun;
+              if (initial == null) {
+                throw StateError('Failed voice Run has no committed input.');
+              }
+              _validateRun(
+                run,
+                expectedThreadId: fence.threadId,
+                expectedRunId: initial.id,
+                expectedInputMessageId: initial.inputMessageId,
+                expectedAttempt: initial.attempt,
+                expectedRetryOfRunId: initial.retryOfRunId,
+                expectedClientRetryId: initial.clientRetryId,
+              );
+              if (run.status != AgentRunStatus.failed ||
+                  run.failureKind != kind ||
+                  run.failureRetryable != retryable) {
+                throw StateError('Voice Run failure event is inconsistent.');
+              }
+              _pendingRun = run;
+            }
             throw AgentClientException(
               kind: AgentClientFailureKind.runFailed,
               errorCode: kind,
@@ -868,67 +914,181 @@ final class AgentVoiceController extends ChangeNotifier
         }
       }
     } catch (error) {
-      if (_isWorkflowCurrent(fence)) {
-        if (transientAssistantId case final messageId?) {
-          _changeStreamMessage(
-            messageId,
-            AgentMessage(
-              id: messageId,
-              role: AgentMessageRole.assistant,
-              text: assistantText,
-              hasFailed: true,
-            ),
-          );
-        }
-        if (messageCommitted) {
-          _state = AgentVoiceComposerState.failed;
-          _retry = _VoiceRetry.run;
-          _errorMessage = '回复中断了，可以重试；你的语音消息已保留。';
-        } else {
-          _state = AgentVoiceComposerState.awaitingConfirmation;
-          _retry = null;
-          _errorMessage = _confirmationFailureMessage(error);
-        }
-        notifyListeners();
-        await _clearOnAuthenticationFailure(error);
+      if (!_isWorkflowCurrent(fence)) {
+        return;
       }
+      if (transientAssistantId case final messageId?) {
+        _failAssistantStream(messageId);
+        _changeStreamMessage(
+          messageId,
+          AgentMessage(
+            id: messageId,
+            role: AgentMessageRole.assistant,
+            text: assistantText,
+            hasFailed: true,
+          ),
+        );
+      }
+      if (messageCommitted) {
+        final run = _pendingRun;
+        final retryable = switch (run?.status) {
+          AgentRunStatus.failed => run!.failureRetryable,
+          _ => error is! AgentClientException || error.retryable,
+        };
+        _state = AgentVoiceComposerState.failed;
+        _retry = retryable ? _VoiceRetry.run : null;
+        _errorMessage = retryable
+            ? '回复中断了，可以重试；你的语音消息已保留。'
+            : 'Agent 回复失败；你的语音消息与确认文字已保留。';
+      } else if (_isAmbiguousMutationFailure(error)) {
+        _state = AgentVoiceComposerState.failed;
+        _retry = _VoiceRetry.confirm;
+        _errorMessage = _confirmationFailureMessage(error);
+      } else {
+        _confirmationCommand = null;
+        _state = AgentVoiceComposerState.awaitingConfirmation;
+        _retry = null;
+        _errorMessage = _confirmationFailureMessage(error);
+      }
+      notifyListeners();
+      await _clearOnAuthenticationFailure(error);
+    }
+  }
+
+  void _commitMessages(Iterable<AgentMessage> messages) {
+    try {
+      onMessagesCommitted(messages);
+    } catch (_) {
+      // Presentation callbacks cannot change the authoritative Agent result.
     }
   }
 
   void _changeStreamMessage(String? previousMessageId, AgentMessage message) {
-    final callback = onStreamMessageChanged;
+    try {
+      final callback = onStreamMessageChanged;
+      if (callback == null) {
+        _commitMessages(<AgentMessage>[message]);
+        return;
+      }
+      callback(previousMessageId, message);
+    } catch (_) {
+      // Presentation callbacks cannot change the authoritative Agent result.
+    }
+  }
+
+  Future<void> _startAssistantStream(String transientMessageId) async {
+    final callback = onAssistantStreamStarted;
     if (callback == null) {
-      onMessagesCommitted(<AgentMessage>[message]);
       return;
     }
-    callback(previousMessageId, message);
+    try {
+      await callback(transientMessageId);
+    } catch (_) {
+      _failAssistantStream(transientMessageId);
+    }
+  }
+
+  void _appendAssistantStream(String transientMessageId, String delta) {
+    try {
+      onAssistantStreamDelta?.call(transientMessageId, delta);
+    } catch (_) {
+      _failAssistantStream(transientMessageId);
+    }
+  }
+
+  void _completeAssistantStream(
+    String transientMessageId,
+    AgentMessage message,
+  ) {
+    try {
+      onAssistantStreamCompleted?.call(transientMessageId, message);
+    } catch (_) {
+      _failAssistantStream(transientMessageId);
+    }
+  }
+
+  void _failAssistantStream(String transientMessageId) {
+    try {
+      onAssistantStreamFailed?.call(transientMessageId);
+    } catch (_) {
+      // Speech presentation cannot change the authoritative Agent result.
+    }
+  }
+
+  Future<void> _hydrateCompletedRun(
+    _WorkflowFence fence,
+    AgentRun run, {
+    String? expectedMessageId,
+    String? expectedText,
+  }) async {
+    final messageId = run.assistantMessageId;
+    if (run.status != AgentRunStatus.completed || messageId == null) {
+      throw StateError('Completed voice Run has no assistant Message.');
+    }
+    final assistant = await client.getMessage(
+      threadId: fence.threadId,
+      messageId: messageId,
+    );
+    if (!_isWorkflowCurrent(fence)) {
+      return;
+    }
+    if (assistant == null) {
+      throw const _AssistantMessageHydrationPending();
+    }
+    if (assistant.id != messageId ||
+        assistant.role != AgentMessageRole.assistant ||
+        assistant.producedByRunId != run.id ||
+        assistant.text.trim().isEmpty ||
+        (expectedMessageId != null && assistant.id != expectedMessageId) ||
+        (expectedText != null && assistant.text != expectedText)) {
+      throw StateError('Invalid assistant Message after voice Run.');
+    }
+    if (expectedMessageId == null) {
+      _commitMessages(<AgentMessage>[assistant]);
+    } else {
+      _changeStreamMessage(expectedMessageId, assistant);
+    }
+    _resetWorkflowPresentation();
+    notifyListeners();
+    _notifyAssistantCommitted(assistant);
+  }
+
+  void _setMessageHydrationFailure(Object error) {
+    _state = AgentVoiceComposerState.failed;
+    _retry = _VoiceRetry.message;
+    _errorMessage =
+        error is AgentClientException &&
+            error.kind == AgentClientFailureKind.authenticationRequired
+        ? '登录状态已失效，请重新登录。'
+        : '回复已完成，但确认入口暂时无法读取。请重试刷新。';
+    notifyListeners();
   }
 
   Future<void> _retryConfirmation() {
-    final candidate = _candidate;
+    final draft = _draft;
     final command = _confirmationCommand;
-    if (candidate == null ||
+    if (draft == null ||
         command == null ||
-        candidate.id != command.candidateId ||
-        candidate.version != command.candidateVersion ||
+        draft.id != command.draftId ||
+        draft.version != command.draftVersion ||
         _workflowOperation != null) {
       return Future<void>.value();
     }
     return _startConfirmation(
-      candidate: candidate,
+      draft: draft,
       command: command,
       reconcileFirst: true,
     );
   }
 
   Future<void> _startConfirmation({
-    required AgentVoiceCandidate candidate,
+    required AgentVoiceDraft draft,
     required _ConfirmationCommand command,
     required bool reconcileFirst,
   }) {
     final fence = _captureWorkflowFence(
-      candidateId: candidate.id,
-      candidateVersion: candidate.version,
+      draftId: draft.id,
+      draftVersion: draft.version,
     );
     _state = AgentVoiceComposerState.confirming;
     _errorMessage = null;
@@ -938,7 +1098,7 @@ final class AgentVoiceController extends ChangeNotifier
     operation =
         _confirm(
           fence: fence,
-          candidate: candidate,
+          draft: draft,
           command: command,
           reconcileFirst: reconcileFirst,
         ).whenComplete(() {
@@ -952,7 +1112,7 @@ final class AgentVoiceController extends ChangeNotifier
 
   Future<void> _confirm({
     required _WorkflowFence fence,
-    required AgentVoiceCandidate candidate,
+    required AgentVoiceDraft draft,
     required _ConfirmationCommand command,
     required bool reconcileFirst,
   }) async {
@@ -960,9 +1120,9 @@ final class AgentVoiceController extends ChangeNotifier
     try {
       final confirmation = reconcileFirst
           ? await _reconcileConfirmation(fence, command)
-          : await client.confirmCandidate(
-              candidateId: command.candidateId,
-              candidateVersion: command.candidateVersion,
+          : await client.confirmDraft(
+              draftId: command.draftId,
+              draftVersion: command.draftVersion,
               clientMessageId: command.clientMessageId,
               confirmedText: command.confirmedText,
             );
@@ -971,15 +1131,16 @@ final class AgentVoiceController extends ChangeNotifier
       }
       _validateConfirmation(
         confirmation,
-        expectedCandidate: candidate,
+        expectedDraft: draft,
+        expectedClientMessageId: command.clientMessageId,
         confirmedText: command.confirmedText,
       );
-      _candidate = confirmation.candidate;
+      _draft = confirmation.draft;
       _pendingRun = confirmation.run;
-      onMessagesCommitted(<AgentMessage>[confirmation.message]);
       messageCommitted = true;
+      _commitMessages(<AgentMessage>[confirmation.message]);
       if (confirmation.assistantMessage case final assistant?) {
-        onMessagesCommitted(<AgentMessage>[assistant]);
+        _commitMessages(<AgentMessage>[assistant]);
       }
       _editedTranscript = '';
       _recording = null;
@@ -998,10 +1159,13 @@ final class AgentVoiceController extends ChangeNotifier
       if (_backgrounded) {
         return;
       }
-      await _resolveRun(fence.withoutCandidate(), confirmation.run);
+      await _resolveRun(fence.withoutDraft(), confirmation.run);
     } catch (error) {
       if (_isWorkflowCurrent(fence)) {
-        if (messageCommitted) {
+        if (messageCommitted &&
+            _pendingRun?.status == AgentRunStatus.completed) {
+          _setMessageHydrationFailure(error);
+        } else if (messageCommitted) {
           _state = AgentVoiceComposerState.failed;
           _retry = _VoiceRetry.run;
           _errorMessage = '暂时无法恢复 Agent 回复。你的语音消息已保留。';
@@ -1017,7 +1181,9 @@ final class AgentVoiceController extends ChangeNotifier
           _retry = null;
           _errorMessage = _confirmationFailureMessage(error);
         }
-        notifyListeners();
+        if (_retry != _VoiceRetry.message) {
+          notifyListeners();
+        }
         await _clearOnAuthenticationFailure(error);
       }
     }
@@ -1027,10 +1193,10 @@ final class AgentVoiceController extends ChangeNotifier
     _WorkflowFence fence,
     _ConfirmationCommand command,
   ) async {
-    final durable = await client.getCandidate(candidateId: command.candidateId);
-    _validateCandidate(durable, expectedThreadId: fence.threadId);
-    if (durable.id != command.candidateId ||
-        durable.version != command.candidateVersion) {
+    final durable = await client.getDraft(draftId: command.draftId);
+    _validateDraft(durable, expectedThreadId: fence.threadId);
+    if (durable.id != command.draftId ||
+        durable.version != command.draftVersion) {
       throw const _ConfirmationCommandConflict();
     }
     if (_hasConfirmationProjection(durable)) {
@@ -1045,22 +1211,15 @@ final class AgentVoiceController extends ChangeNotifier
       if (message == null) {
         throw const _ConfirmationReconciliationPending();
       }
-      return AgentVoiceConfirmation(
-        candidate: durable,
-        message: message,
-        run: run,
-      );
+      return AgentVoiceConfirmation(draft: durable, message: message, run: run);
     }
-    if (durable.status == AgentVoiceCandidateStatus.candidateReady) {
-      return client.confirmCandidate(
-        candidateId: command.candidateId,
-        candidateVersion: command.candidateVersion,
+    if (durable.status == AgentVoiceDraftStatus.ready) {
+      return client.confirmDraft(
+        draftId: command.draftId,
+        draftVersion: command.draftVersion,
         clientMessageId: command.clientMessageId,
         confirmedText: command.confirmedText,
       );
-    }
-    if (durable.status == AgentVoiceCandidateStatus.confirming) {
-      throw const _ConfirmationReconciliationPending();
     }
     throw const _ConfirmationCommandConflict();
   }
@@ -1071,7 +1230,15 @@ final class AgentVoiceController extends ChangeNotifier
       if (!_isWorkflowCurrent(fence)) {
         return;
       }
-      _validateRun(run, expectedThreadId: fence.threadId);
+      _validateRun(
+        run,
+        expectedThreadId: fence.threadId,
+        expectedRunId: initial.id,
+        expectedInputMessageId: initial.inputMessageId,
+        expectedAttempt: initial.attempt,
+        expectedRetryOfRunId: initial.retryOfRunId,
+        expectedClientRetryId: initial.clientRetryId,
+      );
       _pendingRun = run;
       if (run.status == AgentVoiceRunStatus.failed) {
         _state = AgentVoiceComposerState.failed;
@@ -1083,28 +1250,14 @@ final class AgentVoiceController extends ChangeNotifier
         return;
       }
       if (run.status == AgentVoiceRunStatus.completed) {
-        final messageId = run.assistantMessageId!;
-        final assistant = await client.getMessage(
-          threadId: fence.threadId,
-          messageId: messageId,
-        );
-        if (!_isWorkflowCurrent(fence)) {
-          return;
+        try {
+          await _hydrateCompletedRun(fence, run);
+        } catch (error) {
+          if (_isWorkflowCurrent(fence)) {
+            _setMessageHydrationFailure(error);
+            await _clearOnAuthenticationFailure(error);
+          }
         }
-        if (assistant == null) {
-          await _waitForPoll();
-          run = await client.getRun(runId: run.id);
-          continue;
-        }
-        if (assistant.id != messageId ||
-            assistant.role != AgentMessageRole.assistant ||
-            assistant.text.trim().isEmpty) {
-          throw StateError('Invalid assistant Message after voice Run.');
-        }
-        onMessagesCommitted(<AgentMessage>[assistant]);
-        _resetWorkflowPresentation();
-        notifyListeners();
-        _notifyAssistantCommitted(assistant);
         return;
       }
       await _waitForPoll();
@@ -1146,18 +1299,79 @@ final class AgentVoiceController extends ChangeNotifier
                 runId: run.id,
                 clientRetryId: _runRetryId!,
               );
+              _validateRun(
+                next,
+                expectedThreadId: fence.threadId,
+                expectedInputMessageId: run.inputMessageId,
+                expectedAttempt: run.attempt + 1,
+                expectedRetryOfRunId: run.id,
+                expectedClientRetryId: _runRetryId,
+              );
+              if (next.id == run.id) {
+                throw StateError('Agent Run retry did not create a new Run.');
+              }
             } else {
               next = await client.getRun(runId: run.id);
+              _validateRun(
+                next,
+                expectedThreadId: fence.threadId,
+                expectedRunId: run.id,
+                expectedInputMessageId: run.inputMessageId,
+                expectedAttempt: run.attempt,
+                expectedRetryOfRunId: run.retryOfRunId,
+                expectedClientRetryId: run.clientRetryId,
+              );
             }
             if (_isWorkflowCurrent(fence)) {
               await _resolveRun(fence, next);
             }
           } catch (error) {
             if (_isWorkflowCurrent(fence)) {
-              _state = AgentVoiceComposerState.failed;
-              _retry = _VoiceRetry.run;
-              _errorMessage = '暂时无法恢复 Agent 回复。你的语音消息已保留。';
-              notifyListeners();
+              if (_pendingRun?.status == AgentRunStatus.completed) {
+                _setMessageHydrationFailure(error);
+              } else {
+                _state = AgentVoiceComposerState.failed;
+                _retry = _VoiceRetry.run;
+                _errorMessage = '暂时无法恢复 Agent 回复。你的语音消息已保留。';
+                notifyListeners();
+              }
+              await _clearOnAuthenticationFailure(error);
+            }
+          }
+        }).whenComplete(() {
+          if (identical(_workflowOperation, operation)) {
+            _workflowOperation = null;
+          }
+        });
+    _workflowOperation = operation;
+    await operation;
+  }
+
+  Future<void> retryAssistantMessage() async {
+    final run = _pendingRun;
+    if (run == null ||
+        run.status != AgentRunStatus.completed ||
+        _workflowOperation != null) {
+      return;
+    }
+    final fence = _captureWorkflowFence();
+    _state = AgentVoiceComposerState.awaitingAssistant;
+    _errorMessage = null;
+    _retry = null;
+    notifyListeners();
+    late final Future<void> operation;
+    operation =
+        Future<void>.sync(() async {
+          try {
+            await _hydrateCompletedRun(
+              fence,
+              run,
+              expectedMessageId: _completedStreamMessageId,
+              expectedText: _completedStreamText,
+            );
+          } catch (error) {
+            if (_isWorkflowCurrent(fence)) {
+              _setMessageHydrationFailure(error);
               await _clearOnAuthenticationFailure(error);
             }
           }
@@ -1279,9 +1493,15 @@ final class AgentVoiceController extends ChangeNotifier
         Future<void>.sync(() async {
           try {
             final durable = await client.getRun(runId: run.id);
-            if (durable.id != run.id) {
-              throw StateError('Foreground Agent Run identity changed.');
-            }
+            _validateRun(
+              durable,
+              expectedThreadId: fence.threadId,
+              expectedRunId: run.id,
+              expectedInputMessageId: run.inputMessageId,
+              expectedAttempt: run.attempt,
+              expectedRetryOfRunId: run.retryOfRunId,
+              expectedClientRetryId: run.clientRetryId,
+            );
             if (_isWorkflowCurrent(fence)) {
               await _resolveRun(fence, durable);
             }
@@ -1368,8 +1588,10 @@ final class AgentVoiceController extends ChangeNotifier
   void _resetWorkflowPresentation() {
     _state = AgentVoiceComposerState.idle;
     _recording = null;
-    _candidate = null;
+    _draft = null;
     _pendingRun = null;
+    _completedStreamMessageId = null;
+    _completedStreamText = null;
     _editedTranscript = '';
     _liveTranscript = '';
     _errorMessage = null;
@@ -1379,16 +1601,13 @@ final class AgentVoiceController extends ChangeNotifier
     _confirmationCommand = null;
     _runRetrySourceRunId = null;
     _runRetryId = null;
-    _realtimeCandidate = null;
+    _realtimeDraft = null;
     _recordingElapsed = Duration.zero;
   }
 
   void _resetDraftPlayback() => _draftPlaying = false;
 
-  _WorkflowFence _captureWorkflowFence({
-    String? candidateId,
-    int? candidateVersion,
-  }) {
+  _WorkflowFence _captureWorkflowFence({String? draftId, int? draftVersion}) {
     final threadId = _threadId;
     if (threadId == null) {
       throw StateError('An Agent Thread is required for voice work.');
@@ -1397,26 +1616,26 @@ final class AgentVoiceController extends ChangeNotifier
       accountEpoch: _accountEpoch,
       generation: _workflowGeneration,
       threadId: threadId,
-      candidateId: candidateId,
-      candidateVersion: candidateVersion,
+      draftId: draftId,
+      draftVersion: draftVersion,
     );
   }
 
   bool _isWorkflowCurrent(
     _WorkflowFence fence, {
-    bool allowCandidateVersionAdvance = false,
+    bool allowDraftVersionAdvance = false,
   }) {
-    final candidate = _candidate;
+    final draft = _draft;
     return !_disposed &&
         fence.accountEpoch == _accountEpoch &&
         fence.generation == _workflowGeneration &&
         fence.threadId == _threadId &&
-        (fence.candidateId == null || fence.candidateId == candidate?.id) &&
-        (fence.candidateVersion == null ||
-            fence.candidateVersion == candidate?.version ||
-            (allowCandidateVersionAdvance &&
-                candidate != null &&
-                candidate.version >= fence.candidateVersion!));
+        (fence.draftId == null || fence.draftId == draft?.id) &&
+        (fence.draftVersion == null ||
+            fence.draftVersion == draft?.version ||
+            (allowDraftVersionAdvance &&
+                draft != null &&
+                draft.version >= fence.draftVersion!));
   }
 
   _DraftPlaybackFence _captureDraftPlaybackFence() {
@@ -1444,11 +1663,11 @@ final class AgentVoiceController extends ChangeNotifier
     }
   }
 
-  Future<void> _deleteCandidateBestEffort(String candidateId) async {
+  Future<void> _deleteDraftBestEffort(String draftId) async {
     try {
-      await client.deleteCandidate(candidateId: candidateId);
+      await client.deleteDraft(draftId: draftId);
     } catch (_) {
-      // Candidates expire server-side; local private state is already fenced.
+      // Drafts expire server-side; local private state is already fenced.
     }
   }
 
@@ -1473,7 +1692,11 @@ final class AgentVoiceController extends ChangeNotifier
   void _notifyAssistantCommitted(AgentMessage message) {
     final callback = onAssistantCommitted;
     if (callback != null) {
-      unawaited(Future<void>.sync(() => callback(message)));
+      unawaited(
+        Future<void>.sync(() => callback(message)).catchError((_) {
+          // Post-commit presentation cannot change the durable Run result.
+        }),
+      );
     }
   }
 
@@ -1496,95 +1719,164 @@ final class AgentVoiceController extends ChangeNotifier
     }
   }
 
-  void _validateCandidate(
-    AgentVoiceCandidate candidate, {
+  void _validateDraft(
+    AgentVoiceDraft draft, {
     required String expectedThreadId,
   }) {
-    final hasTranscript = candidate.transcript != null;
-    final hasFailure = candidate.failure != null;
-    if (candidate.id.trim().isEmpty ||
-        candidate.threadId != expectedThreadId ||
-        candidate.version < 0 ||
-        candidate.asrAttempt < 0 ||
-        candidate.recording.contentType != 'audio/wav' ||
-        candidate.recording.sizeBytes < 1 ||
-        candidate.recording.sizeBytes > 7400000 ||
-        candidate.recording.duration <= Duration.zero ||
-        candidate.recording.duration > const Duration(seconds: 60) ||
-        candidate.recording.sampleRate < 8000 ||
-        candidate.recording.sampleRate > 48000 ||
-        candidate.expiresAt.isBefore(candidate.createdAt) ||
-        candidate.updatedAt.isBefore(candidate.createdAt) ||
-        (candidate.status == AgentVoiceCandidateStatus.candidateReady &&
-            (!hasTranscript || hasFailure || candidate.version < 1)) ||
-        (candidate.status == AgentVoiceCandidateStatus.failed &&
-            (hasTranscript || !hasFailure))) {
-      throw StateError('Invalid Agent voice candidate.');
+    final hasTranscript = draft.transcript != null;
+    final hasFailure = draft.failure != null;
+    final confirmationFields = <Object?>[
+      draft.confirmedMessageId,
+      draft.confirmedRunId,
+      draft.messageAudioId,
+      draft.confirmedAt,
+    ];
+    final hasAnyConfirmation = confirmationFields.any((field) => field != null);
+    final hasAllConfirmation = confirmationFields.every(
+      (field) => field != null,
+    );
+    if (draft.id.trim().isEmpty ||
+        draft.threadId != expectedThreadId ||
+        draft.version < 1 ||
+        draft.asrAttempt < 1 ||
+        draft.version != draft.asrAttempt ||
+        draft.recording.contentType != 'audio/wav' ||
+        draft.recording.sizeBytes < 1 ||
+        draft.recording.sizeBytes > 7400000 ||
+        draft.recording.duration <= Duration.zero ||
+        draft.recording.duration > const Duration(seconds: 60) ||
+        draft.recording.sampleRate < 8000 ||
+        draft.recording.sampleRate > 48000 ||
+        (draft.expiresAt != null &&
+            !draft.expiresAt!.isAfter(draft.createdAt)) ||
+        (draft.confirmedAt?.isBefore(draft.createdAt) ?? false) ||
+        draft.updatedAt.isBefore(draft.createdAt) ||
+        (draft.status == AgentVoiceDraftStatus.confirmed &&
+            draft.expiresAt != null) ||
+        (draft.status != AgentVoiceDraftStatus.confirmed &&
+            draft.expiresAt == null) ||
+        (draft.status == AgentVoiceDraftStatus.transcribing &&
+            (hasTranscript || hasFailure || hasAnyConfirmation)) ||
+        (draft.status == AgentVoiceDraftStatus.ready &&
+            (!hasTranscript ||
+                hasFailure ||
+                draft.version < 1 ||
+                hasAnyConfirmation)) ||
+        (draft.status == AgentVoiceDraftStatus.failed &&
+            (hasTranscript || !hasFailure || hasAnyConfirmation)) ||
+        (draft.status == AgentVoiceDraftStatus.confirmed &&
+            (!hasTranscript ||
+                hasFailure ||
+                draft.version < 1 ||
+                !hasAllConfirmation))) {
+      throw StateError('Invalid Agent voice draft.');
     }
   }
 
   void _validateConfirmation(
     AgentVoiceConfirmation confirmation, {
-    required AgentVoiceCandidate expectedCandidate,
+    required AgentVoiceDraft expectedDraft,
+    required String expectedClientMessageId,
     required String confirmedText,
   }) {
-    _validateCandidate(
-      confirmation.candidate,
-      expectedThreadId: expectedCandidate.threadId,
+    _validateDraft(
+      confirmation.draft,
+      expectedThreadId: expectedDraft.threadId,
     );
     final message = confirmation.message;
     final audio = message.audio;
-    if (confirmation.candidate.id != expectedCandidate.id ||
-        !_hasConfirmationProjection(confirmation.candidate) ||
-        confirmation.candidate.version != expectedCandidate.version ||
-        message.id != confirmation.candidate.confirmedMessageId ||
+    if (confirmation.draft.id != expectedDraft.id ||
+        !_hasConfirmationProjection(confirmation.draft) ||
+        confirmation.draft.version != expectedDraft.version ||
+        message.id != confirmation.draft.confirmedMessageId ||
         message.role != AgentMessageRole.user ||
         message.modality != AgentMessageModality.voice ||
         message.text != confirmedText ||
+        message.clientMessageId != expectedClientMessageId ||
+        message.producedByRunId != null ||
         audio == null ||
-        audio.id != confirmation.candidate.messageAudioId ||
-        confirmation.run.id != confirmation.candidate.confirmedRunId ||
-        confirmation.run.threadId != expectedCandidate.threadId ||
-        confirmation.run.inputMessageId != message.id) {
+        audio.id != confirmation.draft.messageAudioId ||
+        confirmation.run.id != confirmation.draft.confirmedRunId ||
+        confirmation.run.threadId != expectedDraft.threadId ||
+        confirmation.run.inputMessageId != message.id ||
+        confirmation.run.attempt != 1 ||
+        confirmation.run.retryOfRunId != null ||
+        confirmation.run.clientRetryId != null) {
       throw StateError('Invalid Agent voice confirmation.');
     }
     _validateRun(
       confirmation.run,
-      expectedThreadId: expectedCandidate.threadId,
+      expectedThreadId: expectedDraft.threadId,
+      expectedInputMessageId: message.id,
+      expectedAttempt: 1,
+      expectedRetryOfRunId: null,
+      expectedClientRetryId: null,
     );
+    if (confirmation.assistantMessage case final assistant?) {
+      if (confirmation.run.status != AgentRunStatus.completed ||
+          assistant.id != confirmation.run.assistantMessageId ||
+          assistant.role != AgentMessageRole.assistant ||
+          assistant.producedByRunId != confirmation.run.id ||
+          assistant.text.trim().isEmpty) {
+        throw StateError('Invalid Agent voice assistant Message.');
+      }
+    }
   }
 
-  void _validateRun(AgentVoiceRun run, {required String expectedThreadId}) {
+  void _validateRun(
+    AgentVoiceRun run, {
+    required String expectedThreadId,
+    String? expectedRunId,
+    String? expectedInputMessageId,
+    int? expectedAttempt,
+    String? expectedRetryOfRunId,
+    String? expectedClientRetryId,
+  }) {
+    final validateRetryIdentity = expectedAttempt != null;
     if (run.id.trim().isEmpty ||
         run.threadId != expectedThreadId ||
         run.inputMessageId.trim().isEmpty ||
+        run.attempt < 1 ||
+        run.requestedProvider.trim().isEmpty ||
+        run.requestedModel.trim().isEmpty ||
+        run.maxOutputTokens < 1 ||
+        run.updatedAt.isBefore(run.createdAt) ||
+        (run.retryOfRunId == null) != (run.clientRetryId == null) ||
+        (run.attempt == 1 && run.retryOfRunId != null) ||
+        (run.attempt > 1 && run.retryOfRunId == null) ||
         (run.status == AgentVoiceRunStatus.completed) !=
-            (run.assistantMessageId != null) ||
-        (run.status == AgentVoiceRunStatus.failed) !=
-            (run.failureKind != null)) {
+            (run.assistantMessageId != null && run.completion != null) ||
+        (run.status == AgentVoiceRunStatus.failed) != (run.failure != null) ||
+        (run.status == AgentRunStatus.pending && run.startedAt != null) ||
+        (run.status == AgentRunStatus.running && run.startedAt == null) ||
+        (run.isTerminal &&
+            (run.startedAt == null || run.completedAt == null)) ||
+        (!run.isTerminal && run.completedAt != null) ||
+        (expectedRunId != null && run.id != expectedRunId) ||
+        (expectedInputMessageId != null &&
+            run.inputMessageId != expectedInputMessageId) ||
+        (expectedAttempt != null && run.attempt != expectedAttempt) ||
+        (validateRetryIdentity && run.retryOfRunId != expectedRetryOfRunId) ||
+        (validateRetryIdentity && run.clientRetryId != expectedClientRetryId)) {
       throw StateError('Invalid Agent voice Run.');
     }
   }
 
   bool get _hasDurableRunWorkflow =>
       _pendingRun != null &&
-      _candidate != null &&
-      _hasConfirmationProjection(_candidate!);
+      _draft != null &&
+      _hasConfirmationProjection(_draft!);
 
-  bool _hasConfirmationProjection(AgentVoiceCandidate candidate) {
-    final statusAllowsProjection =
-        candidate.status == AgentVoiceCandidateStatus.confirmed ||
-        candidate.status == AgentVoiceCandidateStatus.deleting ||
-        candidate.status == AgentVoiceCandidateStatus.deleted;
-    return statusAllowsProjection &&
-        candidate.confirmedMessageId != null &&
-        candidate.confirmedRunId != null &&
-        candidate.messageAudioId != null &&
-        candidate.confirmedAt != null;
+  bool _hasConfirmationProjection(AgentVoiceDraft draft) {
+    return draft.status == AgentVoiceDraftStatus.confirmed &&
+        draft.confirmedMessageId != null &&
+        draft.confirmedRunId != null &&
+        draft.messageAudioId != null &&
+        draft.confirmedAt != null;
   }
 
-  bool _isConfirmed(AgentVoiceCandidate candidate) {
-    return _hasConfirmationProjection(candidate);
+  bool _isConfirmed(AgentVoiceDraft draft) {
+    return _hasConfirmationProjection(draft);
   }
 
   String _newId(String scope) {
@@ -1665,33 +1957,30 @@ final class AgentVoiceController extends ChangeNotifier
   }
 }
 
-final class _RealtimeCandidateResult {
-  const _RealtimeCandidateResult({this.candidate, this.error});
+final class _RealtimeDraftResult {
+  const _RealtimeDraftResult({this.draft, this.error});
 
-  final AgentVoiceCandidate? candidate;
+  final AgentVoiceDraft? draft;
   final Object? error;
 }
 
 final class _AsrRetryCommand {
-  const _AsrRetryCommand({
-    required this.candidateId,
-    required this.candidateVersion,
-  });
+  const _AsrRetryCommand({required this.draftId, required this.draftVersion});
 
-  final String candidateId;
-  final int candidateVersion;
+  final String draftId;
+  final int draftVersion;
 }
 
 final class _ConfirmationCommand {
   const _ConfirmationCommand({
-    required this.candidateId,
-    required this.candidateVersion,
+    required this.draftId,
+    required this.draftVersion,
     required this.clientMessageId,
     required this.confirmedText,
   });
 
-  final String candidateId;
-  final int candidateVersion;
+  final String draftId;
+  final int draftVersion;
   final String clientMessageId;
   final String confirmedText;
 }
@@ -1700,28 +1989,32 @@ final class _ConfirmationReconciliationPending implements Exception {
   const _ConfirmationReconciliationPending();
 }
 
+final class _AssistantMessageHydrationPending implements Exception {
+  const _AssistantMessageHydrationPending();
+}
+
 final class _ConfirmationCommandConflict implements Exception {
   const _ConfirmationCommandConflict();
 }
 
-enum _VoiceRetry { start, upload, asr, restoreCandidate, confirm, run }
+enum _VoiceRetry { start, upload, asr, restoreDraft, confirm, run, message }
 
 final class _WorkflowFence {
   const _WorkflowFence({
     required this.accountEpoch,
     required this.generation,
     required this.threadId,
-    this.candidateId,
-    this.candidateVersion,
+    this.draftId,
+    this.draftVersion,
   });
 
   final int accountEpoch;
   final int generation;
   final String threadId;
-  final String? candidateId;
-  final int? candidateVersion;
+  final String? draftId;
+  final int? draftVersion;
 
-  _WorkflowFence withoutCandidate() {
+  _WorkflowFence withoutDraft() {
     return _WorkflowFence(
       accountEpoch: accountEpoch,
       generation: generation,
@@ -1729,12 +2022,12 @@ final class _WorkflowFence {
     );
   }
 
-  _WorkflowFence withoutCandidateVersion() {
+  _WorkflowFence withoutDraftVersion() {
     return _WorkflowFence(
       accountEpoch: accountEpoch,
       generation: generation,
       threadId: threadId,
-      candidateId: candidateId,
+      draftId: draftId,
     );
   }
 }

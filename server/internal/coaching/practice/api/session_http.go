@@ -81,6 +81,10 @@ func (h *Handler) RegisterRoutes(routes gin.IRoutes) {
 		h.resumeSession,
 	)
 	routes.POST(
+		"/v1/practice-sessions/:practice_session_id/complete",
+		h.completeSession,
+	)
+	routes.POST(
 		"/v1/practice-sessions/:practice_session_id/end-early",
 		h.endSessionEarly,
 	)
@@ -133,14 +137,6 @@ func (h *Handler) createSession(c *gin.Context) {
 		request,
 	)
 	if err != nil {
-		if errors.Is(err, practice.ErrActiveSessionConflict) {
-			writePracticeContextHTTPError(
-				c,
-				http.StatusConflict,
-				"active_session_conflict",
-			)
-			return
-		}
 		if errors.Is(err, practice.ErrConflict) {
 			writePracticeContextHTTPError(
 				c,
@@ -205,6 +201,10 @@ func (h *Handler) pauseSession(c *gin.Context) {
 
 func (h *Handler) resumeSession(c *gin.Context) {
 	h.transitionSession(c, practice.SessionResume)
+}
+
+func (h *Handler) completeSession(c *gin.Context) {
+	h.transitionSession(c, practice.SessionComplete)
 }
 
 func (h *Handler) endSessionEarly(c *gin.Context) {
@@ -385,12 +385,6 @@ func writePracticeContextServiceError(
 			http.StatusConflict,
 			"idempotency_key_conflict",
 		)
-	case errors.Is(err, practice.ErrConfirmationRequired):
-		writePracticeContextHTTPError(
-			c,
-			http.StatusConflict,
-			"confirmation_required",
-		)
 	case errors.Is(err, practice.ErrSessionCompleted):
 		writePracticeContextHTTPError(
 			c,
@@ -443,7 +437,6 @@ func writePracticeContextHTTPError(
 		"idempotency_key_conflict":          "Idempotency key conflicts with the original request.",
 		"confirmation_required":             "Explicit user confirmation is required.",
 		"version_conflict":                  "The Practice Plan revision has changed.",
-		"active_session_conflict":           "An active Practice Session already exists.",
 		"resource_conflict":                 "Resource state conflicts with this operation.",
 		"internal_error":                    "An internal error occurred.",
 	}
@@ -458,12 +451,11 @@ func writePracticeContextHTTPError(
 }
 
 func validCreateSessionRequest(request practice.CreateSessionRequest) bool {
-	return request.ExpectedPlanRevision > 0
+	return request.ExpectedPlanVersion > 0
 }
 
 func validContextResourceID(value string) bool {
-	return utf8.ValidString(value) && value != "" && len(value) <= 128 &&
-		!strings.ContainsRune(value, '\x00') && strings.TrimSpace(value) == value
+	return practice.ValidAggregateID(value)
 }
 
 func validContextIdempotencyKey(value string) bool {

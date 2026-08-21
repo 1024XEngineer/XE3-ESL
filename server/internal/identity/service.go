@@ -59,18 +59,15 @@ func (s *Service) Register(
 	ctx context.Context,
 	email string,
 	password string,
-	displayNameInput ...*string,
+	displayNameInput *string,
 ) (User, error) {
-	if len(displayNameInput) > 1 {
-		return User{}, ErrInvalidRequest
-	}
 	canonicalEmail, err := NormalizeEmail(email)
 	if err != nil || ValidatePassword(password) != nil {
 		return User{}, ErrInvalidRequest
 	}
 	var displayName *string
-	if len(displayNameInput) == 1 && displayNameInput[0] != nil {
-		normalized, normalizeErr := NormalizeDisplayName(*displayNameInput[0])
+	if displayNameInput != nil {
+		normalized, normalizeErr := NormalizeDisplayName(*displayNameInput)
 		if normalizeErr != nil {
 			return User{}, ErrInvalidRequest
 		}
@@ -118,7 +115,7 @@ func (s *Service) UpdateProfile(
 	actor requestcontext.Actor,
 	command UpdateProfileCommand,
 ) (UserProfile, error) {
-	if !actor.Valid() || !validIdempotencyKey(command.IdempotencyKey) {
+	if !actor.Valid() {
 		return UserProfile{}, ErrInvalidRequest
 	}
 	displayName, err := NormalizeDisplayName(command.DisplayName)
@@ -133,11 +130,6 @@ func (s *Service) UpdateProfile(
 		UserID:                 actor.UserID,
 		DisplayName:            displayName,
 		ExpectedProfileVersion: command.ExpectedProfileVersion,
-		IdempotencyKey:         command.IdempotencyKey,
-		RequestDigest: profileRequestDigest(
-			displayName,
-			command.ExpectedProfileVersion,
-		),
 	})
 }
 

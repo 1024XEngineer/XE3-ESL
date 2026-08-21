@@ -28,10 +28,8 @@ const (
 	FailureInterrupted                  = "interrupted"
 	FailureConfigurationDrift           = "configuration_drift"
 	FailureInvalidContext               = "invalid_context"
-	FailureMemoryConsistencyUnavailable = "memory_consistency_unavailable"
 	FailureToolIterationBudgetExhausted = "tool_iteration_budget_exhausted"
 	FailureToolCallBudgetExhausted      = "tool_call_budget_exhausted"
-	FailureWriteToolCallBudgetExhausted = "write_tool_call_budget_exhausted"
 	FailureDuplicateToolCall            = "duplicate_tool_call"
 	FailureInternal                     = "internal_error"
 )
@@ -45,6 +43,7 @@ type Run struct {
 	RetryOfRunID         string
 	RetryClientID        string
 	Status               Status
+	Phase                string
 	RequestedProvider    string
 	RequestedModel       string
 	MaxOutputTokens      int
@@ -55,6 +54,9 @@ type Run struct {
 	ProviderCompletionID string
 	ProviderModel        string
 	FinishReason         string
+	CompletionSource     CompletionSource
+	DomainToolCallID     string
+	DomainToolName       string
 	Usage                TokenUsage
 	FailureKind          string
 	FailureRetryable     bool

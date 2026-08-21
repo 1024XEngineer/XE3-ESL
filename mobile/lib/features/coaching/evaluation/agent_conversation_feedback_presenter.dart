@@ -86,6 +86,12 @@ final class AgentConversationFeedbackPresenter extends ChangeNotifier
     );
   }
 
+  @override
+  String? feedbackNoticeFor(AgentMessage message) {
+    final strength = _projection(message)?.feedback?.items.strength;
+    return strength == null ? null : '表达已经很自然，无需润色';
+  }
+
   SpeechFeedbackProjection? _projection(AgentMessage message) {
     if (message.speechFeedbackStatusUrl == null) {
       return null;

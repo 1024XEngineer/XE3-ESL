@@ -54,12 +54,11 @@ final class FakeAgentImageClient implements AgentImageClient {
     }
     final asset = AgentImageAsset(
       id: 'image_local_${_accountGeneration}_${++_sequence}',
-      threadId: threadId,
       contentType: image.contentType,
       sizeBytes: image.sizeBytes,
       width: 1,
       height: 1,
-      status: AgentImageAssetStatus.staged,
+      status: AgentImageAssetStatus.ready,
       createdAt: DateTime.now().toUtc(),
     );
     _assets[asset.id] = asset;

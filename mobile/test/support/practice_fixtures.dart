@@ -9,13 +9,13 @@ const testPracticeCapabilities = PracticeCapabilities(
   retryAllowed: true,
   questionTranslationAllowed: true,
   questionTipsAllowed: true,
-  avatarAllowed: true,
   speechFeedbackAllowed: true,
 );
 
 PracticeSessionSnapshot testPracticeSnapshot({
   required SceneDefinition scene,
   String sessionId = 'session-test',
+  String? planId,
   int completedTurns = 0,
   int turnLimit = 3,
   int? sessionVersion,
@@ -34,7 +34,7 @@ PracticeSessionSnapshot testPracticeSnapshot({
   final completed = completedTurns == turnLimit;
   return PracticeSessionSnapshot(
     sessionId: sessionId,
-    planId: testPracticePlanId(sessionId),
+    planId: planId ?? testPracticePlanId(sessionId),
     practiceExperience: scene.experience,
     sceneCategory: scene.category,
     practiceMode: practiceMode ?? scene.practiceOptions.first.mode,
@@ -124,12 +124,13 @@ Future<void> activateTestPractice({
   required PracticeController controller,
   required SceneDefinition scene,
   String sessionId = 'session-test',
+  String? planId,
   String clientOperationId = 'activate-test-session',
 }) async {
   await controller.activateCreatedPractice(
     scene: scene,
     sessionId: sessionId,
-    planId: testPracticePlanId(sessionId),
+    planId: planId ?? testPracticePlanId(sessionId),
     practiceMode: scene.practiceOptions.first.mode,
     turnLimit: 3,
     clientOperationId: clientOperationId,

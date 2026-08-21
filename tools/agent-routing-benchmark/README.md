@@ -55,21 +55,54 @@ Thread 和工具数据。
   "messages": ["看看我上次面试评价"],
   "expected_decision": "tool_call",
   "expected_tools": ["review.search.v2"],
-  "forbidden_tools": ["goal.create.v1"]
+  "forbidden_tools": ["practice.preview.v3"],
+  "required_response_terms": ["评价"],
+  "forbidden_response_terms": ["report_id"],
+  "expected_response_language": "zh-CN",
+  "max_non_empty_paragraphs": 2,
+  "max_sentences": 2
 }
 ```
 
+调用 `practice.preview.v3` 的用例还应声明服务端真正收到的场景决议，例如：
+
+```json
+"expected_preview_input": {
+  "kind": "CATALOG",
+  "catalog_scene_id": "scn_travel_hotel_checkin"
+}
+```
+
+Benchmark 只记录并比对 `kind`、`catalog_scene_id` 和
+`candidate_scene_ids`；不会把 `scene_query`、用户消息或用户背景写入验收日志和
+生成的 JSON、Markdown、HTML 报告。默认情况下候选 ID 按集合精确比对；大类澄清用例
+可设置 `candidate_scene_ids_mode: "subset"`，表示实际候选必须是允许集合的非空子集，
+用于避免把模型合理的有限选项顺序或取舍误判为产品错误。报告通过 case 名、`thread_id` 与 `run_id`
+关联结果。
+
 `messages` 可以包含多条用户消息。它们会在同一 Thread 中顺序发送，最后一条
-消息对应的 Run 是评分目标。评分要求：
+消息对应的 Run 是评分目标。Run 完成后，Benchmark 会通过正式消息接口读取该
+Run 持久化的 Assistant 回复。评分要求：
 
 - 第一条 `agent.routing.decision` 与 `expected_decision` 一致；
 - 目标 Run 的去重工具集合与 `expected_tools` 完全一致；
 - 不调用 `forbidden_tools`；
 - 每个 `agent.tool.call.started` 都有对应的 `succeeded`；
-- 不重复调用同名工具。
+- 不重复调用同名工具；
+- 配置了 `expected_preview_input` 时，恰好存在一条结构化 Preview 输入记录，
+  且场景决议类型及 Catalog 场景 ID 完全匹配；
+- 回复包含全部 `required_response_terms`，且不包含任何
+  `forbidden_response_terms`（均按不区分大小写的子串匹配）；
+- 配置 `expected_response_language` 为 `zh-CN` 或 `en` 时，回复通过对应的
+  Han / Latin 脚本契约；中文允许必要的英文产品名或术语，英文回复不得夹带中文；
+- 回复不超过可选的 `max_non_empty_paragraphs` 和 `max_sentences`。
+
+段落按空行分隔；句数按中英文句末标点统计，连续英文省略号不会被算作多个
+句子。没有配置回复字段的既有用例只验收路由与工具执行。
 
 修改提示词后直接重新运行，即可用相同用例比较总体准确率、决策准确率、工具
-选择准确率、禁用工具安全率、工具执行成功率和重复调用率。
+选择准确率、禁用工具安全率、工具执行成功率、Preview 输入契约通过率、回复契约
+通过率和重复调用率。
 
 ## 自测
 

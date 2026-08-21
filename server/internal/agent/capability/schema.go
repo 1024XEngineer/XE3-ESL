@@ -13,7 +13,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	agenthandoff "github.com/1024XEngineer/XE3-ESL/server/internal/agent/handoff"
+	agentclientaction "github.com/1024XEngineer/XE3-ESL/server/internal/agent/clientaction"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -47,11 +47,14 @@ type SourceRef struct {
 }
 
 type CallContext struct {
-	Actor      requestcontext.Actor
-	ThreadID   string
-	RunID      string
-	ToolCallID string
-	RequestID  string
+	Actor          requestcontext.Actor
+	ThreadID       string
+	RunID          string
+	InputMessageID string
+	ToolCallID     string
+	RequestID      string
+	Authorization  json.RawMessage
+	InputSchema    map[string]any
 }
 
 type Invocation struct {
@@ -80,10 +83,33 @@ type InvocationEffectClassifier interface {
 	) (InvocationEffect, error)
 }
 
+// DiagnosticError exposes a stable, non-sensitive failure code to structured
+// logs. Implementations must never include user-authored values in the code.
+type DiagnosticError interface {
+	error
+	DiagnosticCode() string
+}
+
+// TurnOutcome tells the Agent loop whether a successful capability result has
+// completed the current user turn's domain work. It is orchestration metadata
+// and is never exposed to the model or persisted as tool result content.
+type TurnOutcome uint8
+
+const (
+	TurnOutcomeContinue TurnOutcome = iota
+	TurnOutcomeCompleted
+)
+
+func (outcome TurnOutcome) Valid() bool {
+	return outcome == TurnOutcomeContinue || outcome == TurnOutcomeCompleted
+}
+
 type Result struct {
-	Content    map[string]any      `json:"content"`
-	SourceRefs []SourceRef         `json:"source_refs,omitempty"`
-	Handoffs   []agenthandoff.Item `json:"handoffs,omitempty"`
+	Content       map[string]any             `json:"content"`
+	SourceRefs    []SourceRef                `json:"source_refs,omitempty"`
+	ClientActions []agentclientaction.Action `json:"client_actions,omitempty"`
+	TurnOutcome   TurnOutcome                `json:"-"`
+	AssistantText string                     `json:"-"`
 }
 
 type Tool interface {

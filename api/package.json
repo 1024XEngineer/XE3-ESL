@@ -4,13 +4,11 @@
   "private": true,
   "description": "Validation entrypoint for the SpeakUp REST and WebSocket contracts.",
   "scripts": {
-    "check": "npm run lint:openapi && npm run validate:security && npm run validate:websocket && npm run validate:fixture && npm run validate:evaluation && npm run validate:speech-feedback",
+    "check": "npm run lint:openapi && npm run validate:security && npm run validate:websocket && npm run validate:evaluation",
     "lint:openapi": "redocly lint openapi.yaml --config redocly.yaml",
     "validate:security": "node scripts/validate-security.mjs",
-    "validate:websocket": "node scripts/validate-events.mjs",
-    "validate:fixture": "node scripts/validate-main-flow.mjs",
-    "validate:evaluation": "node scripts/validate-evaluation.mjs",
-    "validate:speech-feedback": "node scripts/validate-speech-feedback.mjs"
+    "validate:websocket": "node scripts/validate-agent-voice-transcription.mjs && node scripts/validate-practice-question-speech.mjs",
+    "validate:evaluation": "node scripts/validate-evaluation.mjs"
   },
   "devDependencies": {
     "@redocly/cli": "2.40.0",

@@ -97,6 +97,7 @@ void main() {
         conversationController.dispose();
       });
       await conversationController.initialize();
+      expect(await conversationController.sendText('Existing message'), isTrue);
 
       await composerController.pickAgentImages();
       final oldThreadId = conversationController.threadId;
@@ -126,6 +127,7 @@ void main() {
       conversationController.dispose();
     });
     await conversationController.initialize();
+    expect(await conversationController.sendText('Existing message'), isTrue);
     final oldThreadId = conversationController.threadId!;
 
     final selection = composerController.pickAgentImages();
@@ -184,12 +186,11 @@ final class _FailOnceImageClient implements AgentImageClient {
     }
     return AgentImageAsset(
       id: 'image-retry',
-      threadId: threadId,
       contentType: 'image/png',
       sizeBytes: image.sizeBytes,
       width: 1,
       height: 1,
-      status: AgentImageAssetStatus.staged,
+      status: AgentImageAssetStatus.ready,
       createdAt: DateTime.now().toUtc(),
     );
   }
@@ -214,12 +215,11 @@ class _RecordingImageClient implements AgentImageClient {
   }) async {
     return AgentImageAsset(
       id: 'image-recorded',
-      threadId: threadId,
       contentType: image.contentType,
       sizeBytes: image.sizeBytes,
       width: 1,
       height: 1,
-      status: AgentImageAssetStatus.staged,
+      status: AgentImageAssetStatus.ready,
       createdAt: DateTime.now().toUtc(),
     );
   }
@@ -243,12 +243,11 @@ final class _ControlledImageClient extends _RecordingImageClient {
     _uploadResult.complete(
       AgentImageAsset(
         id: 'image-controlled',
-        threadId: threadId,
         contentType: 'image/png',
         sizeBytes: 4,
         width: 1,
         height: 1,
-        status: AgentImageAssetStatus.staged,
+        status: AgentImageAssetStatus.ready,
         createdAt: DateTime.now().toUtc(),
       ),
     );

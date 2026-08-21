@@ -1,0 +1,469 @@
+name: Coverage Comment
+
+on:
+  workflow_run:
+    workflows:
+      - Quality
+    types:
+      - completed
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: write
+
+jobs:
+  comment:
+    name: Update PR coverage comment
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Resolve PR and coverage baseline
+        id: context
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            const currentArtifacts = await github.paginate(
+              github.rest.actions.listWorkflowRunArtifacts,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: run.id,
+                per_page: 100,
+              },
+            );
+            const currentGoAvailable = currentArtifacts.some(
+              (artifact) => artifact.name === "go-coverage-server",
+            );
+            const currentFlutterAvailable = currentArtifacts.some(
+              (artifact) => artifact.name === "flutter-coverage-mobile",
+            );
+            if (!currentGoAvailable && !currentFlutterAvailable) {
+              core.warning("PR run has no coverage artifacts; comment skipped");
+              core.setOutput("available", "false");
+              core.setOutput("reason", "current coverage artifacts are unavailable");
+              return;
+            }
+
+            let pullRequest = null;
+            const linkedPullRequest = run.pull_requests?.[0];
+            if (linkedPullRequest?.number) {
+              const response = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: linkedPullRequest.number,
+              });
+              pullRequest = response.data;
+            }
+
+            if (!pullRequest) {
+              const headOwner = run.head_repository?.owner?.login;
+              if (headOwner && run.head_branch) {
+                const candidates = await github.paginate(
+                  github.rest.pulls.list,
+                  {
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    state: "open",
+                    head: `${headOwner}:${run.head_branch}`,
+                    per_page: 100,
+                  },
+                );
+                pullRequest = candidates.find(
+                  (candidate) => candidate.head.sha === run.head_sha,
+                ) ?? null;
+              }
+            }
+
+            if (!pullRequest?.base?.ref) {
+              core.warning("Unable to resolve the pull request; comment skipped");
+              core.setOutput("available", "false");
+              core.setOutput("reason", "pull request context is unavailable");
+              return;
+            }
+
+            const runs = await github.paginate(
+              github.rest.actions.listWorkflowRuns,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: run.workflow_id,
+                branch: pullRequest.base.ref,
+                event: "push",
+                status: "completed",
+                per_page: 100,
+              },
+            );
+
+            let goBaseline = null;
+            let flutterBaseline = null;
+            for (const candidate of runs.filter(
+              (item) => item.conclusion === "success",
+            )) {
+              if (
+                (!currentGoAvailable || goBaseline) &&
+                (!currentFlutterAvailable || flutterBaseline)
+              ) {
+                break;
+              }
+              const artifacts = await github.paginate(
+                github.rest.actions.listWorkflowRunArtifacts,
+                {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  run_id: candidate.id,
+                  per_page: 100,
+                },
+              );
+              if (
+                currentGoAvailable &&
+                !goBaseline &&
+                artifacts.some(
+                  (artifact) => artifact.name === "go-coverage-server",
+                )
+              ) {
+                goBaseline = candidate;
+              }
+              if (
+                currentFlutterAvailable &&
+                !flutterBaseline &&
+                artifacts.some(
+                  (artifact) => artifact.name === "flutter-coverage-mobile",
+                )
+              ) {
+                flutterBaseline = candidate;
+              }
+            }
+
+            if (currentGoAvailable && !goBaseline) {
+              core.warning(
+                "Base branch has no successful Go coverage artifact; Go comparison omitted",
+              );
+            }
+            if (currentFlutterAvailable && !flutterBaseline) {
+              core.warning(
+                "Base branch has no successful Flutter coverage artifact; Flutter comparison omitted",
+              );
+            }
+
+            const goAvailable = currentGoAvailable && Boolean(goBaseline);
+            const flutterAvailable =
+              currentFlutterAvailable && Boolean(flutterBaseline);
+            if (!goAvailable && !flutterAvailable) {
+              core.setOutput("available", "false");
+              core.setOutput(
+                "reason",
+                "comparable base branch coverage artifacts are unavailable",
+              );
+              return;
+            }
+
+            core.setOutput("available", "true");
+            core.setOutput("go_available", String(goAvailable));
+            core.setOutput("flutter_available", String(flutterAvailable));
+            if (goBaseline) {
+              core.setOutput("go_baseline_run_id", String(goBaseline.id));
+            }
+            if (flutterBaseline) {
+              core.setOutput(
+                "flutter_baseline_run_id",
+                String(flutterBaseline.id),
+              );
+            }
+            core.setOutput("base_branch", pullRequest.base.ref);
+            core.setOutput("pull_request_number", String(pullRequest.number));
+
+      - name: Explain why coverage comment is unavailable
+        if: steps.context.outputs.available != 'true'
+        env:
+          SKIP_REASON: ${{ steps.context.outputs.reason }}
+        run: echo "Coverage comment skipped because ${SKIP_REASON}."
+
+      - name: Download current Go coverage
+        if: steps.context.outputs.go_available == 'true'
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: go-coverage-server
+          path: coverage/current/go
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Download baseline Go coverage
+        if: steps.context.outputs.go_available == 'true'
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: go-coverage-server
+          path: coverage/baseline/go
+          run-id: ${{ steps.context.outputs.go_baseline_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Download current Flutter coverage
+        if: steps.context.outputs.flutter_available == 'true'
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: flutter-coverage-mobile
+          path: coverage/current/flutter
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Download baseline Flutter coverage
+        if: steps.context.outputs.flutter_available == 'true'
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: flutter-coverage-mobile
+          path: coverage/baseline/flutter
+          run-id: ${{ steps.context.outputs.flutter_baseline_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Create or update PR coverage comment
+        if: steps.context.outputs.available == 'true'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          BASE_BRANCH: ${{ steps.context.outputs.base_branch }}
+          FLUTTER_AVAILABLE: ${{ steps.context.outputs.flutter_available }}
+          GO_AVAILABLE: ${{ steps.context.outputs.go_available }}
+          PULL_REQUEST_NUMBER: ${{ steps.context.outputs.pull_request_number }}
+        with:
+          script: |
+            const fs = require("fs");
+            const path = require("path");
+            const marker = "<!-- go-native-coverage -->";
+            const modulePrefix =
+              "github.com/1024XEngineer/XE3-ESL/server/";
+            const maxFiles = 5;
+
+            function displayGoPath(source) {
+              if (source.startsWith(modulePrefix)) {
+                return `server/${source.slice(modulePrefix.length)}`;
+              }
+              return `server/${source}`;
+            }
+
+            function displayFlutterPath(source) {
+              const normalized = source.replaceAll("\\", "/");
+              const mobileMarker = "/mobile/";
+              const mobileOffset = normalized.lastIndexOf(mobileMarker);
+              if (mobileOffset >= 0) {
+                return `mobile/${normalized.slice(
+                  mobileOffset + mobileMarker.length,
+                )}`;
+              }
+              if (normalized.startsWith("mobile/")) return normalized;
+              return `mobile/${normalized}`;
+            }
+
+            function emptyStats() {
+              return { totalUnits: 0, coveredUnits: 0 };
+            }
+
+            function addUnit(stats, units, covered) {
+              stats.totalUnits += units;
+              stats.coveredUnits += covered;
+            }
+
+            function readGoCoverage(profilePath) {
+              const files = new Map();
+              const total = emptyStats();
+              const content = fs.readFileSync(profilePath, "utf8");
+
+              for (const line of content.split(/\r?\n/)) {
+                if (!line || line.startsWith("mode:")) continue;
+
+                const match = line.match(
+                  /^(.*):\d+\.\d+,\d+\.\d+\s+(\d+)\s+(\d+)$/,
+                );
+                if (!match) continue;
+
+                const file = displayGoPath(match[1]);
+                const statements = Number(match[2]);
+                const hits = Number(match[3]);
+                const covered = hits > 0 ? statements : 0;
+                addUnit(total, statements, covered);
+
+                const current = files.get(file) ?? emptyStats();
+                addUnit(current, statements, covered);
+                files.set(file, current);
+              }
+
+              return { files, total };
+            }
+
+            function readFlutterCoverage(reportPath) {
+              const files = new Map();
+              const total = emptyStats();
+              const content = fs.readFileSync(reportPath, "utf8");
+              let activeFile = null;
+
+              for (const line of content.split(/\r?\n/)) {
+                if (line.startsWith("SF:")) {
+                  activeFile = displayFlutterPath(line.slice(3));
+                  continue;
+                }
+                if (!activeFile || !line.startsWith("DA:")) continue;
+
+                const fields = line.slice(3).split(",");
+                const hits = Number(fields[1]);
+                if (!Number.isFinite(hits)) continue;
+
+                const covered = hits > 0 ? 1 : 0;
+                addUnit(total, 1, covered);
+                const current = files.get(activeFile) ?? emptyStats();
+                addUnit(current, 1, covered);
+                files.set(activeFile, current);
+              }
+
+              return { files, total };
+            }
+
+            function percent(stats) {
+              return stats.totalUnits === 0
+                ? 0
+                : (stats.coveredUnits / stats.totalUnits) * 100;
+            }
+
+            function formatPercent(value) {
+              return `${value.toFixed(1)}%`;
+            }
+
+            function formatDelta(value) {
+              const rounded = Number(value.toFixed(1));
+              return `${rounded >= 0 ? "+" : ""}${rounded.toFixed(1)}%`;
+            }
+
+            function escapeCell(value) {
+              return value.replaceAll("|", "\\|").replace(/[\r\n]+/g, " ");
+            }
+
+            const bodyLines = [
+              marker,
+              "## Test coverage",
+              "",
+              "| Scope | Current | Baseline | Delta |",
+              "| --- | ---: | ---: | ---: |",
+            ];
+
+            const scopes = [];
+            if (process.env.GO_AVAILABLE === "true") {
+              scopes.push({
+                name: "server (Go)",
+                current: readGoCoverage(
+                  path.join("coverage", "current", "go", "coverage.out"),
+                ),
+                baseline: readGoCoverage(
+                  path.join("coverage", "baseline", "go", "coverage.out"),
+                ),
+              });
+            }
+            if (process.env.FLUTTER_AVAILABLE === "true") {
+              scopes.push({
+                name: "mobile (Flutter)",
+                current: readFlutterCoverage(
+                  path.join("coverage", "current", "flutter", "lcov.info"),
+                ),
+                baseline: readFlutterCoverage(
+                  path.join("coverage", "baseline", "flutter", "lcov.info"),
+                ),
+              });
+            }
+
+            for (const scope of scopes) {
+              const currentTotal = percent(scope.current.total);
+              const baselineTotal = percent(scope.baseline.total);
+              bodyLines.push(
+                `| ${scope.name} | ${formatPercent(currentTotal)} | ` +
+                  `${formatPercent(baselineTotal)} | ` +
+                  `${formatDelta(currentTotal - baselineTotal)} |`,
+              );
+            }
+
+            const lowFiles = [];
+            for (const scope of scopes) {
+              for (const [file, currentFile] of scope.current.files) {
+                const baselineFile = scope.baseline.files.get(file);
+                if (!baselineFile) continue;
+
+                const currentFilePercent = percent(currentFile);
+                const baselineFilePercent = percent(baselineFile);
+                const delta = currentFilePercent - baselineFilePercent;
+                if (Number(delta.toFixed(1)) < 0) {
+                  lowFiles.push({
+                    scope: scope.name,
+                    file,
+                    current: currentFilePercent,
+                    baseline: baselineFilePercent,
+                    delta,
+                  });
+                }
+              }
+            }
+            lowFiles.sort(
+              (left, right) =>
+                left.delta - right.delta ||
+                left.scope.localeCompare(right.scope) ||
+                left.file.localeCompare(right.file),
+            );
+
+            if (lowFiles.length > 0) {
+              bodyLines.push(
+                "",
+                "### Files below baseline",
+                "",
+                `Showing up to ${maxFiles} largest file-level regressions.`,
+                "",
+                "| Scope | File | Current | Baseline | Delta |",
+                "| --- | --- | ---: | ---: | ---: |",
+              );
+              for (const file of lowFiles.slice(0, maxFiles)) {
+                bodyLines.push(
+                  `| ${file.scope} | ${escapeCell(file.file)} | ` +
+                    `${formatPercent(file.current)} | ` +
+                    `${formatPercent(file.baseline)} | ` +
+                    `${formatDelta(file.delta)} |`,
+                );
+              }
+            }
+
+            const run = context.payload.workflow_run;
+            bodyLines.push(
+              "",
+              `Base branch: ${process.env.BASE_BRANCH} · ` +
+                `Commit: ${run.head_sha.slice(0, 7)} · ` +
+                `[Quality workflow run](${run.html_url})`,
+            );
+            const body = bodyLines.join("\n");
+            const pullRequestNumber = Number(
+              process.env.PULL_REQUEST_NUMBER,
+            );
+
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pullRequestNumber,
+                per_page: 100,
+              },
+            );
+            const existing = comments.find(
+              (comment) =>
+                comment.user?.login === "github-actions[bot]" &&
+                comment.body?.includes(marker),
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pullRequestNumber,
+                body,
+              });
+            }

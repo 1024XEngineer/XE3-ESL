@@ -61,20 +61,17 @@ func WithBodyReadTimeout(timeout time.Duration) HTTPOption {
 func NewHTTPHandler(
 	application Application,
 	authenticator Authenticator,
+	logoutSessions LogoutSessionResolver,
 	rateLimits RateLimiters,
 	correlationID CorrelationIDGenerator,
 	options ...HTTPOption,
 ) (*HTTPHandler, error) {
-	if application == nil || authenticator == nil ||
+	if application == nil || authenticator == nil || logoutSessions == nil ||
 		rateLimits.RegistrationIP == nil ||
 		rateLimits.LoginIP == nil ||
 		rateLimits.LoginAccount == nil ||
 		rateLimits.ProfileUser == nil {
 		return nil, errors.New("identity: HTTP dependency is required")
-	}
-	logoutSessions, ok := authenticator.(LogoutSessionResolver)
-	if !ok {
-		return nil, errors.New("identity: logout Session resolver is required")
 	}
 	if correlationID == nil {
 		correlationID = newCorrelationID
@@ -202,13 +199,6 @@ func (h *HTTPHandler) updateProfile(c *gin.Context) {
 	) {
 		return
 	}
-	idempotencyKey, ok := singleHeaderValue(
-		c.Request.Header.Values("Idempotency-Key"),
-	)
-	if !ok {
-		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
-		return
-	}
 	request, ok := h.decodeProfileUpdate(c)
 	if !ok {
 		h.writeError(c, http.StatusBadRequest, "invalid_request", false)
@@ -220,7 +210,6 @@ func (h *HTTPHandler) updateProfile(c *gin.Context) {
 		UpdateProfileCommand{
 			DisplayName:            request.DisplayName,
 			ExpectedProfileVersion: request.ExpectedProfileVersion,
-			IdempotencyKey:         idempotencyKey,
 		},
 	)
 	if err != nil {
@@ -351,8 +340,6 @@ func (h *HTTPHandler) writeApplicationError(c *gin.Context, err error) {
 		h.writeError(c, http.StatusNotFound, "profile_not_found", false)
 	case errors.Is(err, ErrProfileVersionConflict):
 		h.writeError(c, http.StatusConflict, "profile_version_conflict", false)
-	case errors.Is(err, ErrIdempotencyKeyConflict):
-		h.writeError(c, http.StatusConflict, "idempotency_key_conflict", false)
 	case errors.Is(err, ErrPasswordUnavailable):
 		c.Header("Retry-After", "1")
 		h.writeError(c, http.StatusTooManyRequests, "rate_limited", true)
@@ -380,7 +367,6 @@ func (h *HTTPHandler) writeError(
 		"rate_limited":                     "Too many requests. Try again later.",
 		"profile_not_found":                "User profile was not found.",
 		"profile_version_conflict":         "User profile changed before this update.",
-		"idempotency_key_conflict":         "Idempotency key was already used for a different request.",
 		"internal_error":                   "An internal error occurred.",
 	}
 	c.JSON(status, gin.H{
@@ -556,14 +542,6 @@ func decodeProfileUpdateObject(raw []byte) (profileUpdateRequest, bool) {
 	return request, true
 }
 
-func singleHeaderValue(values []string) (string, bool) {
-	if len(values) != 1 || values[0] != strings.TrimSpace(values[0]) ||
-		strings.Contains(values[0], ",") {
-		return "", false
-	}
-	return values[0], true
-}
-
 func validJSONSurrogates(raw []byte) bool {
 	inString := false
 	for index := 0; index < len(raw); index++ {
@@ -636,13 +614,21 @@ func userResponse(user User) gin.H {
 }
 
 func profileResponse(profile UserProfile) gin.H {
-	return gin.H{
+	response := gin.H{
 		"user_id":         profile.UserID,
 		"display_name":    profile.DisplayName,
 		"profile_version": profile.ProfileVersion,
 		"created_at":      profile.CreatedAt.UTC().Format(time.RFC3339Nano),
 		"updated_at":      profile.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
+	if profile.Avatar != nil {
+		response["avatar"] = gin.H{
+			"width":      profile.Avatar.Width,
+			"height":     profile.Avatar.Height,
+			"updated_at": profile.Avatar.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		}
+	}
+	return response
 }
 
 func newCorrelationID() string {

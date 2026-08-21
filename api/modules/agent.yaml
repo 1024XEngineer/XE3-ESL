@@ -5,18 +5,9 @@ paths:
         - Agent
       summary: Create a durable Agent Thread
       description: |
-        The optional active Goal must belong to the trusted Actor and be
-        active. The Thread can start without a Goal for direct expression
-        help. This operation does not create a Run or call a model.
+        Creates an empty conversation Thread for the trusted Actor. This
+        operation does not create a Run or call a model.
       operationId: createAgentThread
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateAgentThreadRequest'
-            example:
-              active_goal_id: 10000000-0000-4000-8000-000000000001
       responses:
         '201':
           description: The durable Thread was created.
@@ -41,8 +32,7 @@ paths:
       description: |
         Uses endpoint-specific opaque keyset cursors over
         `(updated_at DESC, thread_id DESC)`. A cursor from another endpoint is
-        invalid. The focused Thread ID is returned independently of whether
-        that Thread appears on the current page.
+        invalid.
       operationId: listAgentThreads
       parameters:
         - $ref: '#/components/parameters/ThreadPageSize'
@@ -60,67 +50,6 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/Unauthorized
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
-  /v1/agent-threads/focused:
-    get:
-      tags:
-        - Agent
-      summary: Restore the trusted Actor's focused Agent Thread
-      operationId: getFocusedAgentThread
-      responses:
-        '200':
-          description: The current focused Thread.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AgentThread'
-        '204':
-          description: The Actor has no focused Thread.
-        '401':
-          $ref: ../common/errors.yaml#/components/responses/Unauthorized
-        default:
-          $ref: ../common/errors.yaml#/components/responses/DefaultError
-    put:
-      tags:
-        - Agent
-      summary: Select one owned Agent Thread as focused
-      description: |
-        Repeating the same selection is idempotent. Selecting a missing or
-        foreign-owned Thread returns the same not-found response.
-      operationId: setFocusedAgentThread
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SetFocusedAgentThreadRequest'
-      responses:
-        '200':
-          description: The selected canonical Agent Thread.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AgentThread'
-        '400':
-          $ref: ../common/errors.yaml#/components/responses/BadRequest
-        '401':
-          $ref: ../common/errors.yaml#/components/responses/Unauthorized
-        '404':
-          $ref: ../common/errors.yaml#/components/responses/NotFound
-        default:
-          $ref: ../common/errors.yaml#/components/responses/DefaultError
-    delete:
-      tags:
-        - Agent
-      summary: Clear the trusted Actor's focused Agent Thread
-      description: Clearing an already empty focused selection is idempotent.
-      operationId: clearFocusedAgentThread
-      responses:
-        '204':
-          description: The Actor now has no focused Thread.
-        '401':
-          $ref: ../common/errors.yaml#/components/responses/Unauthorized
-        default:
-          $ref: ../common/errors.yaml#/components/responses/DefaultError
   /v1/agent-threads/{thread_id}:
     parameters:
       - $ref: '#/components/parameters/AgentThreadId'
@@ -131,7 +60,7 @@ paths:
       operationId: getAgentThread
       responses:
         '200':
-          description: The owned Thread and its selected active Goal.
+          description: The owned Thread.
           content:
             application/json:
               schema:
@@ -149,8 +78,7 @@ paths:
       description: |
         Removes only a Thread owned by the trusted Actor from conversation
         history. Practice-linked records remain available to the training and
-        review flows. Deleting the focused Thread also clears the focused
-        selection.
+        review flows.
       operationId: deleteAgentThread
       responses:
         '204':
@@ -159,41 +87,6 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/Unauthorized
         '404':
           $ref: ../common/errors.yaml#/components/responses/NotFound
-        default:
-          $ref: ../common/errors.yaml#/components/responses/DefaultError
-  /v1/agent-threads/{thread_id}/active-goal:
-    parameters:
-      - $ref: '#/components/parameters/AgentThreadId'
-    put:
-      tags:
-        - Agent
-      summary: Select one active Goal for a Thread
-      description: |
-        The link is owned by Agent Runtime. Goal remains authoritative for
-        its lifecycle and must be revalidated by every future Run. Replaying an
-        unchanged eligible selection is idempotent and preserves its timestamps.
-      operationId: setAgentThreadActiveGoal
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SetActiveGoalRequest'
-      responses:
-        '200':
-          description: The Goal is now the Thread's single selected Goal.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ThreadGoalLink'
-        '400':
-          $ref: ../common/errors.yaml#/components/responses/BadRequest
-        '401':
-          $ref: ../common/errors.yaml#/components/responses/Unauthorized
-        '404':
-          $ref: ../common/errors.yaml#/components/responses/NotFound
-        '409':
-          $ref: ../common/errors.yaml#/components/responses/Conflict
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
   /v1/agent-threads/{thread_id}/messages:
@@ -235,11 +128,11 @@ paths:
     post:
       tags:
         - Agent
-      summary: Upload one private image asset for an Agent Thread
+      summary: Upload one private image asset after validating an Agent Thread
       description: |
         The body is one raw JPEG, PNG, or WebP image. The server verifies the
         decoded format, byte and pixel limits, Actor ownership, and Thread
-        binding before storing it under the private `image/v1` namespace.
+        access before storing a user-owned asset under the private media namespace.
         Uploading an image does not create a Message or Run.
       operationId: createAgentImageAsset
       parameters:
@@ -264,7 +157,18 @@ paths:
               maxLength: 10485760
       responses:
         '201':
-          description: The original or idempotently restored image asset.
+          description: The ready image asset.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentImageAsset'
+        '202':
+          description: Another request is still completing the staged upload.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+                minimum: 1
           content:
             application/json:
               schema:
@@ -290,7 +194,7 @@ paths:
       summary: Issue a short-lived read capability for an owned image
       description: |
         Returns a newly signed private-object URL. The URL is never persisted
-        and is unavailable after the image enters deleting or deleted state.
+        and is unavailable after the image enters deleting state.
       operationId: getAgentImageAssetContent
       responses:
         '200':
@@ -335,37 +239,133 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/Conflict
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
-  /v1/agent-threads/{thread_id}/voice-message-candidates:
+  /v1/agent-threads/{thread_id}/voice-transcriptions/realtime:
     parameters:
       - $ref: '#/components/parameters/AgentThreadId'
-    post:
+    get:
       tags:
         - Agent
-      summary: Upload and transcribe one Agent voice Message candidate
+      summary: Stream one non-persistent Agent voice transcription
       description: |
-        The body is raw `audio/wav`. The server validates the recording, stores
-        it under Agent-owned private object storage, and creates durable ASR
-        candidate state. This operation never creates an AgentMessage or
-        AgentRun; the user must explicitly confirm a returned candidate
-        version. The upload idempotency scope is the trusted Actor, Thread, key,
-        and recording checksum.
-      operationId: createAgentVoiceMessageCandidate
+        Upgrade to a Thread-scoped WebSocket that sends mono PCM s16le frames
+        directly to the configured realtime speech recognizer. The server
+        authenticates the Bearer Session, resolves Thread ownership, and
+        validates `Sec-WebSocket-Protocol` before upgrading. The accepted
+        connection is bound to that Actor and Thread; switching accounts
+        requires closing it and authenticating a new connection.
+
+        The client first sends `start` with an 8-128 character idempotency key
+        and `sample_rate=16000`, then binary PCM frames, followed by `finish` or
+        `cancel`. At most 1,920,000 PCM bytes are accepted. The server emits
+        `transcription.started`, zero or more `transcription.updated`, and one
+        `transcription.completed` or `transcription.failed` terminal event.
+        Idempotency keys validate the live attempt only; this ephemeral stream
+        does not persist or replay a prior result.
+
+        This operation never creates a Voice Draft, Agent Message, audio
+        attachment, transcript evidence, or object-storage entry. After
+        `transcription.completed`, clients submit edited text through the
+        existing Agent Run endpoint.
+      operationId: streamAgentVoiceTranscription
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-      requestBody:
-        required: true
-        content:
-          audio/wav:
-            schema:
-              type: string
-              format: binary
+        - name: Sec-WebSocket-Protocol
+          in: header
+          required: true
+          description: Required Agent voice input subprotocol.
+          schema:
+            type: string
+            const: speakup.voice-input.v1
       responses:
-        '201':
-          description: Durable candidate state, including the current ASR result.
-          content:
-            application/json:
+        '101':
+          description: WebSocket protocol upgrade accepted.
+          headers:
+            Sec-WebSocket-Protocol:
+              description: Negotiated Agent voice input protocol.
               schema:
-                $ref: '#/components/schemas/AgentVoiceMessageCandidate'
+                type: string
+                const: speakup.voice-input.v1
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+      x-websocket-client-text-frame-schema:
+        $ref: ../websocket/agent-voice-transcription.schema.json#/$defs/ClientTextFrame
+      x-websocket-event-schema:
+        $ref: ../websocket/agent-voice-transcription.schema.json#/$defs/ServerEvent
+      x-websocket-security:
+        credential_location: authorization_header
+        header: Authorization
+        scheme: Bearer
+        other_credential_locations_allowed: false
+        production_transport: wss
+        local_loopback_transport: ws
+        pre_upgrade:
+          validation_order:
+            - session
+            - actor
+            - resource_ownership
+            - subprotocol
+            - upgrade
+          authentication_failure:
+            http_status: 401
+            error_code: authentication_required
+          resource_not_visible:
+            http_status: 404
+            error_code: resource_not_found
+        reconnect:
+          reauthenticate: true
+        connection_binding:
+          actor_fields:
+            - user_id
+            - session_id
+          target_field: thread_id
+          target_switch_allowed: false
+        subprotocol:
+          allowed:
+            - speakup.voice-input.v1
+          carries_credentials: false
+  /v1/agent-threads/{thread_id}/voice-drafts/realtime:
+    parameters:
+      - $ref: '#/components/parameters/AgentThreadId'
+    get:
+      tags:
+        - Agent
+      summary: Stream and transcribe one durable Agent voice Draft
+      description: |
+        Upgrade to a Thread-scoped WebSocket. The client sends `start` with an
+        8-128 character idempotency key and `sample_rate=16000`, then mono PCM
+        s16le binary frames followed by `finish` or `cancel`. The server stores
+        the resulting WAV in private media storage and creates one durable ASR
+        Draft. It emits `transcription.started`, zero or more
+        `transcription.updated` events, and one terminal `draft.ready` or
+        `draft.failed` event. A terminal persisted event carries the current
+        Draft under `data.draft`.
+
+        This operation never creates an AgentMessage or AgentRun. The user must
+        explicitly confirm the returned `draft_version`. The idempotency scope
+        is the trusted Actor, Thread, key, and recording checksum.
+      operationId: streamAgentVoiceDraft
+      parameters:
+        - name: Sec-WebSocket-Protocol
+          in: header
+          required: true
+          description: Required Agent voice input subprotocol.
+          schema:
+            type: string
+            const: speakup.voice-input.v1
+      responses:
+        '101':
+          description: WebSocket protocol upgrade accepted.
+          headers:
+            Sec-WebSocket-Protocol:
+              description: Negotiated Agent voice input protocol.
+              schema:
+                type: string
+                const: speakup.voice-input.v1
         '400':
           $ref: ../common/errors.yaml#/components/responses/BadRequest
         '401':
@@ -376,21 +376,55 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/Conflict
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
-  /v1/agent-voice-message-candidates/{candidate_id}:
+      x-websocket-client-text-frame-schema:
+        $ref: ../websocket/agent-voice-transcription.schema.json#/$defs/ClientTextFrame
+      x-websocket-security:
+        credential_location: authorization_header
+        header: Authorization
+        scheme: Bearer
+        other_credential_locations_allowed: false
+        production_transport: wss
+        local_loopback_transport: ws
+        pre_upgrade:
+          validation_order:
+            - session
+            - actor
+            - resource_ownership
+            - subprotocol
+            - upgrade
+          authentication_failure:
+            http_status: 401
+            error_code: authentication_required
+          resource_not_visible:
+            http_status: 404
+            error_code: resource_not_found
+        reconnect:
+          reauthenticate: true
+        connection_binding:
+          actor_fields:
+            - user_id
+            - session_id
+          target_field: thread_id
+          target_switch_allowed: false
+        subprotocol:
+          allowed:
+            - speakup.voice-input.v1
+          carries_credentials: false
+  /v1/agent-voice-drafts/{draft_id}:
     parameters:
-      - $ref: '#/components/parameters/AgentVoiceCandidateId'
+      - $ref: '#/components/parameters/AgentVoiceDraftId'
     get:
       tags:
         - Agent
-      summary: Restore one owned Agent voice Message candidate
-      operationId: getAgentVoiceMessageCandidate
+      summary: Restore one owned Agent voice Draft
+      operationId: getAgentVoiceDraft
       responses:
         '200':
-          description: Current durable candidate and ASR state.
+          description: Current durable Draft and ASR state.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AgentVoiceMessageCandidate'
+                $ref: '#/components/schemas/AgentVoiceDraft'
         '401':
           $ref: ../common/errors.yaml#/components/responses/Unauthorized
         '404':
@@ -400,16 +434,15 @@ paths:
     delete:
       tags:
         - Agent
-      summary: Delete one unconfirmed Agent voice Message candidate
+      summary: Delete one unconfirmed Agent voice Draft
       description: |
-        Object deletion is ordered after durable `deleting` state. Repeating a
-        completed deletion is idempotent. If the candidate was already
-        confirmed, its canonical AgentMessage text and AgentRun remain durable
-        while the attached recording becomes unavailable.
-      operationId: deleteAgentVoiceMessageCandidate
+        Deletes the unconfirmed Draft and schedules its private recording for
+        cleanup. Repeating a completed deletion is idempotent. A confirmed Draft
+        must be managed through its attached Message audio resource.
+      operationId: deleteAgentVoiceDraft
       responses:
         '204':
-          description: Candidate recording deletion completed.
+          description: Draft deletion accepted and recording cleanup scheduled.
         '401':
           $ref: ../common/errors.yaml#/components/responses/Unauthorized
         '404':
@@ -418,26 +451,26 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/Conflict
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
-  /v1/agent-voice-message-candidates/{candidate_id}/retries:
+  /v1/agent-voice-drafts/{draft_id}/retries:
     parameters:
-      - $ref: '#/components/parameters/AgentVoiceCandidateId'
+      - $ref: '#/components/parameters/AgentVoiceDraftId'
     post:
       tags:
         - Agent
-      summary: Retry ASR for one retryable Agent voice Message candidate
+      summary: Retry ASR for one retryable Agent voice Draft
       description: |
         A successful lease claim increments both `asr_attempt` and
-        `candidate_version`. The server reloads the private recording and fences
+        `draft_version`. The server reloads the private recording and fences
         late workers so an older attempt cannot overwrite the current result.
         The request has no body.
-      operationId: retryAgentVoiceMessageCandidate
+      operationId: retryAgentVoiceDraft
       responses:
         '200':
-          description: Current candidate after the retry or concurrent recovery.
+          description: Current Draft after the retry or concurrent recovery.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AgentVoiceMessageCandidate'
+                $ref: '#/components/schemas/AgentVoiceDraft'
         '400':
           $ref: ../common/errors.yaml#/components/responses/BadRequest
         '401':
@@ -448,27 +481,26 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/Conflict
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
-  /v1/agent-voice-message-candidates/{candidate_id}/confirmations:
+  /v1/agent-voice-drafts/{draft_id}/confirmations:
     parameters:
-      - $ref: '#/components/parameters/AgentVoiceCandidateId'
+      - $ref: '#/components/parameters/AgentVoiceDraftId'
     post:
       tags:
         - Agent
-      summary: Confirm a candidate as one canonical Agent voice Message
+      summary: Confirm a Draft as one canonical Agent voice Message
       description: |
-        Confirmation atomically creates the user AgentMessage, its durable audio
-        projection, immutable transcript evidence, and the initial pending
-        AgentRun. `confirmed_text`, not the provider candidate text, becomes the
-        canonical Message content. Replaying the same version and command
-        restores and, when needed, resumes the original Run. Confirming an old
-        candidate version returns 409.
-      operationId: confirmAgentVoiceMessageCandidate
+        Confirmation atomically creates the user AgentMessage, its ordered audio
+        attachment, and the initial pending AgentRun. `confirmed_text`, not the
+        provider transcript, becomes the canonical Message content. Replaying
+        the same version and command restores and, when needed, resumes the
+        original Run. Confirming an old Draft version returns 409.
+      operationId: confirmAgentVoiceDraft
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ConfirmAgentVoiceMessageCandidateRequest'
+              $ref: '#/components/schemas/ConfirmAgentVoiceDraftRequest'
       responses:
         '201':
           description: The original or replayed Run reached a terminal state.
@@ -482,6 +514,59 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AgentVoiceMessageConfirmation'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/agent-voice-drafts/{draft_id}/confirmations/stream:
+    parameters:
+      - $ref: '#/components/parameters/AgentVoiceDraftId'
+    post:
+      tags:
+        - Agent
+      summary: Confirm a Draft and stream the Agent response
+      description: |
+        Commits the same Draft, Message, attachment, and Run as the non-streaming
+        confirmation endpoint, then returns Server-Sent Events ordered as
+        `input.committed`, zero or more typed `tool.started` plus
+        `tool.completed` or `tool.failed` steps, one final output sequence
+        (`assistant.output.started`, one or more `assistant.output.delta`, and
+        `assistant.output.completed`), and exactly one terminal `run.completed`
+        or `run.failed`. The `input.committed` payload contains the confirmed
+        Draft under `draft`. Tool events expose only stable step identity and
+        name; tool inputs and results remain private. Final output events share
+        an `output_id` equal to the persisted assistant Message ID. Ordered
+        deltas carry a one-based `sequence`, and their concatenation equals the
+        completed output `text` and canonical Message content.
+      operationId: streamAgentVoiceDraftConfirmation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmAgentVoiceDraftRequest'
+      responses:
+        '200':
+          description: Agent voice confirmation event stream.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              description: Always `no-cache, no-store`.
+            X-Accel-Buffering:
+              schema:
+                type: string
+              description: Always `no`.
+          content:
+            text/event-stream:
+              schema:
+                type: string
         '400':
           $ref: ../common/errors.yaml#/components/responses/BadRequest
         '401':
@@ -534,8 +619,8 @@ paths:
       summary: Delete the recording attached to an Agent voice Message
       description: |
         The canonical AgentMessage and its confirmed text remain in history.
-        The audio projection becomes `deleted` and no longer exposes a playback
-        path. Repeating a completed deletion is idempotent.
+        Later Message projections omit `audio`; `modality: voice` remains as
+        provenance. Repeating a completed deletion is idempotent.
       operationId: deleteAgentMessageAudio
       responses:
         '204':
@@ -578,6 +663,43 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/Unauthorized
         '404':
           $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/agent-messages/{message_id}/translation:
+    parameters:
+      - $ref: '#/components/parameters/AgentMessageId'
+    get:
+      tags:
+        - Agent
+      summary: Translate one completed assistant Agent Message on demand
+      description: |
+        The server reads the canonical Message by the trusted Actor and Message
+        ID; clients never submit translation source text. Only a persisted,
+        non-empty assistant Message produced by a completed Run is eligible.
+        The translation is ephemeral and does not modify the Message, Thread,
+        Summary, Memory, or practice context.
+      operationId: getAgentMessageTranslation
+      responses:
+        '200':
+          description: Ephemeral Simplified Chinese translation.
+          headers:
+            Cache-Control:
+              description: Prevent shared or persistent storage of generated text.
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentMessageTranslation'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        '409':
+          $ref: ../common/errors.yaml#/components/responses/Conflict
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
   /v1/agent-messages/{message_id}/speech-previews:
@@ -676,12 +798,16 @@ paths:
       description: |
         Commits the same durable user Message and AgentRun as the non-streaming
         endpoint, then returns a bounded UTF-8 Server-Sent Events stream.
-        Events are ordered as `input.committed`, `assistant.started`, zero or
-        more `assistant.delta`, and exactly one terminal `run.completed` or
-        `run.failed`. Deltas contain visible assistant text only; reasoning and
-        fragmented tool-call arguments are never exposed. Only the validated
-        canonical assistant Message is persisted. Replaying
-        `client_message_id` never creates a duplicate user Message.
+        Events are ordered as `input.committed`, zero or more typed
+        `tool.started` plus `tool.completed` or `tool.failed` steps, one final
+        output sequence (`assistant.output.started`, one or more
+        `assistant.output.delta`, and `assistant.output.completed`), and exactly
+        one terminal `run.completed` or `run.failed`. Tool inputs, results,
+        reasoning, and non-final model text are never exposed. Final output
+        events share an `output_id` equal to the persisted assistant Message
+        ID. Ordered deltas carry a one-based `sequence`, and their concatenation
+        equals the completed output `text` and canonical Message content.
+        Replaying `client_message_id` never creates a duplicate user Message.
       operationId: streamAgentTextRun
       requestBody:
         required: true
@@ -813,31 +939,6 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/Conflict
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
-  /v1/agent-runs/{run_id}/context-manifest:
-    parameters:
-      - $ref: '#/components/parameters/AgentRunId'
-    get:
-      tags:
-        - Agent
-      summary: Explain the persisted sources and budgets for one AgentRun
-      description: |
-        This audit projection contains selected Goal and Message sources,
-        trimming, and final model configuration. It never contains hidden
-        reasoning or credentials.
-      operationId: getAgentRunContextManifest
-      responses:
-        '200':
-          description: The immutable ContextManifest for the owned Run.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ContextManifest'
-        '401':
-          $ref: ../common/errors.yaml#/components/responses/Unauthorized
-        '404':
-          $ref: ../common/errors.yaml#/components/responses/NotFound
-        default:
-          $ref: ../common/errors.yaml#/components/responses/DefaultError
 components:
   parameters:
     AgentThreadId:
@@ -854,8 +955,8 @@ components:
       schema:
         type: string
         format: uuid
-    AgentVoiceCandidateId:
-      name: candidate_id
+    AgentVoiceDraftId:
+      name: draft_id
       in: path
       required: true
       schema:
@@ -930,11 +1031,7 @@ components:
             - string
             - "null"
           minLength: 1
-          maxLength: 25
-          readOnly: true
-        active_goal_id:
-          type: string
-          format: uuid
+          maxLength: 32
           readOnly: true
         created_at:
           type: string
@@ -954,69 +1051,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AgentThread'
-        focused_thread_id:
-          type: string
-          format: uuid
-          readOnly: true
         next_cursor:
           type: string
           minLength: 1
           maxLength: 1024
-          readOnly: true
-    CreateAgentThreadRequest:
-      type: object
-      additionalProperties: false
-      properties:
-        active_goal_id:
-          type: string
-          format: uuid
-    SetFocusedAgentThreadRequest:
-      type: object
-      additionalProperties: false
-      required:
-        - thread_id
-      properties:
-        thread_id:
-          type: string
-          format: uuid
-    SetActiveGoalRequest:
-      type: object
-      additionalProperties: false
-      required:
-        - goal_id
-      properties:
-        goal_id:
-          type: string
-          format: uuid
-    ThreadGoalLink:
-      type: object
-      additionalProperties: false
-      required:
-        - thread_id
-        - goal_id
-        - active
-        - linked_at
-        - updated_at
-      properties:
-        thread_id:
-          type: string
-          format: uuid
-          readOnly: true
-        goal_id:
-          type: string
-          format: uuid
-          readOnly: true
-        active:
-          type: boolean
-          const: true
-          readOnly: true
-        linked_at:
-          type: string
-          format: date-time
-          readOnly: true
-        updated_at:
-          type: string
-          format: date-time
           readOnly: true
     AgentMessage:
       type: object
@@ -1064,7 +1102,9 @@ components:
           description: |
             Present as `voice` for a voice Message. It remains absent for a
             plain text Message so pre-voice strict clients keep the original
-            response shape; absence therefore means `text`.
+            response shape; absence therefore means `text`. A user-deleted
+            recording does not rewrite Message provenance, so `voice` may
+            remain while `audio` is absent.
         content:
           type: string
           minLength: 1
@@ -1073,6 +1113,7 @@ components:
           x-max-utf8-bytes: 16384
         audio:
           $ref: '#/components/schemas/AgentMessageAudio'
+          description: Present only while the confirmed recording is retained.
         images:
           type: array
           minItems: 1
@@ -1085,21 +1126,22 @@ components:
           type: string
           minLength: 1
           maxLength: 256
-          pattern: '^/v1/speech-feedback/[A-Za-z0-9._~-]{1,128}$'
+          pattern: '^/v1/agent-messages/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/evaluation$'
           readOnly: true
           description: |
-            Present only for an eligible, confirmed user voice Message. It is
-            absent, never null, for text, assistant, unconfirmed, hidden, or
-            deleted sources.
-        handoffs:
+            Actor-owned AGENT_MESSAGE_FEEDBACK Evaluation URL. Present only for
+            an eligible, confirmed user voice Message. It is absent, never null,
+            for text, assistant, unconfirmed, hidden, or deleted sources.
+        client_actions:
           type: array
           maxItems: 4
           description: |
-            Trusted operations persisted with succeeded ToolCalls. The client
-            must use these exact resource revisions instead of parsing
-            assistant prose or model Tool output.
+            Trusted generic client operations persisted with succeeded
+            ToolCalls. Business clients validate each versioned payload before
+            executing it. Actions never come from assistant prose or model Tool
+            output.
           items:
-            $ref: '#/components/schemas/AgentMessageHandoff'
+            $ref: '#/components/schemas/AgentClientAction'
         created_at:
           type: string
           format: date-time
@@ -1109,7 +1151,6 @@ components:
       additionalProperties: false
       required:
         - image_asset_id
-        - thread_id
         - content_type
         - size_bytes
         - width
@@ -1118,10 +1159,6 @@ components:
         - created_at
       properties:
         image_asset_id:
-          type: string
-          format: uuid
-          readOnly: true
-        thread_id:
           type: string
           format: uuid
           readOnly: true
@@ -1152,9 +1189,8 @@ components:
           type: string
           enum:
             - staged
-            - attached
+            - ready
             - deleting
-            - deleted
           readOnly: true
         created_at:
           type: string
@@ -1180,97 +1216,23 @@ components:
           type: string
           format: date-time
           readOnly: true
-    AgentMessageHandoff:
+    AgentClientAction:
       type: object
       additionalProperties: false
       required:
         - type
-        - label
-        - practice_plan_id
-        - plan_revision
-        - target
-        - scene_name
-        - practice_experience
-        - scene_category
-        - practice_mode
-        - roles
-        - practice_scope
-        - suggested_duration_seconds
-        - min_effective_turns
-        - max_effective_turns
-        - executable_status
-        - confirmation_prompt
+        - payload
       properties:
         type:
           type: string
-          const: confirm_practice_plan
-          readOnly: true
-        label:
-          type: string
           minLength: 1
-          maxLength: 100
+          maxLength: 64
+          pattern: '^[A-Za-z][A-Za-z0-9._:-]{0,63}$'
           readOnly: true
-        practice_plan_id:
-          type: string
-          format: uuid
-          readOnly: true
-        plan_revision:
-          type: integer
-          minimum: 1
-          readOnly: true
-        target:
-          type: string
-          minLength: 1
-          maxLength: 500
-          readOnly: true
-        scene_name:
-          type: string
-          minLength: 1
-          maxLength: 200
-          readOnly: true
-        practice_experience:
-          $ref: ./scene.yaml#/components/schemas/PracticeExperience
-        scene_category:
-          $ref: ./scene.yaml#/components/schemas/SceneCategory
-        practice_mode:
-          $ref: ./scene.yaml#/components/schemas/PracticeMode
-        roles:
-          type: array
-          minItems: 1
-          maxItems: 8
-          uniqueItems: true
-          items:
-            type: string
-            minLength: 1
-            maxLength: 200
-          readOnly: true
-        practice_scope:
-          type: string
-          minLength: 1
-          maxLength: 200
-          readOnly: true
-        suggested_duration_seconds:
-          type: integer
-          minimum: 1
-          readOnly: true
-        min_effective_turns:
-          type: integer
-          minimum: 1
-          maximum: 100
-          readOnly: true
-        max_effective_turns:
-          type: integer
-          minimum: 1
-          maximum: 100
-          readOnly: true
-        executable_status:
-          type: string
-          const: ready
-          readOnly: true
-        confirmation_prompt:
-          type: string
-          minLength: 1
-          maxLength: 300
+        payload:
+          type: object
+          additionalProperties: true
+          x-max-utf8-bytes: 16384
           readOnly: true
     AgentMessageModality:
       type: string
@@ -1281,10 +1243,7 @@ components:
       readOnly: true
     AgentMessageAudioStatus:
       type: string
-      enum:
-        - readable
-        - deleting
-        - deleted
+      const: readable
       readOnly: true
     AgentMessageAudio:
       type: object
@@ -1292,13 +1251,16 @@ components:
       description: |
         Safe public recording metadata for one voice Message. Private object
         keys, checksums, provider ETags, and signed URLs are never included.
-        `playback_path` is present only while status is `readable`.
+        Deletion is acknowledged with HTTP 204; deleted recordings are absent
+        from later Message projections instead of exposing a second durable
+        audio state machine.
       required:
         - audio_id
         - status
         - content_type
         - size_bytes
         - duration_ms
+        - playback_path
       properties:
         audio_id:
           type: string
@@ -1326,21 +1288,13 @@ components:
           type: string
           pattern: '^/v1/agent-message-audios/[0-9a-f-]+/playback$'
           readOnly: true
-        deleted_at:
-          type: string
-          format: date-time
-          readOnly: true
-    AgentVoiceMessageCandidateStatus:
+    AgentVoiceDraftStatus:
       type: string
       enum:
-        - staged
         - transcribing
-        - candidate_ready
+        - ready
         - failed
-        - confirming
         - confirmed
-        - deleting
-        - deleted
       readOnly: true
     AgentVoiceRecording:
       type: object
@@ -1372,16 +1326,16 @@ components:
           minimum: 8000
           maximum: 48000
           readOnly: true
-    AgentVoiceTranscriptCandidate:
+    AgentVoiceTranscript:
       type: object
       additionalProperties: false
       required:
-        - candidate_text
+        - text
         - request_id
         - provider
         - model
       properties:
-        candidate_text:
+        text:
           type: string
           minLength: 1
           maxLength: 4096
@@ -1418,7 +1372,7 @@ components:
           minLength: 1
           maxLength: 64
           readOnly: true
-    AgentVoiceCandidateFailure:
+    AgentVoiceDraftFailure:
       type: object
       additionalProperties: false
       required:
@@ -1432,25 +1386,24 @@ components:
         retryable:
           type: boolean
           readOnly: true
-    AgentVoiceMessageCandidate:
+    AgentVoiceDraft:
       type: object
       additionalProperties: false
       description: |
-        Agent-owned workflow state. The provider transcript is only a candidate;
-        it does not become Message content until explicit confirmation. Storage
-        object keys, checksums, leases, and fencing tokens are server-only.
+        Agent-owned durable voice-input workflow. The provider transcript does
+        not become Message content until explicit confirmation. Storage object
+        keys, checksums, leases, and fencing tokens are server-only.
       required:
-        - candidate_id
+        - draft_id
         - thread_id
         - status
         - asr_attempt
-        - candidate_version
+        - draft_version
         - recording
-        - expires_at
         - created_at
         - updated_at
       properties:
-        candidate_id:
+        draft_id:
           type: string
           format: uuid
           readOnly: true
@@ -1459,22 +1412,22 @@ components:
           format: uuid
           readOnly: true
         status:
-          $ref: '#/components/schemas/AgentVoiceMessageCandidateStatus'
+          $ref: '#/components/schemas/AgentVoiceDraftStatus'
         asr_attempt:
           type: integer
-          minimum: 0
+          minimum: 1
           readOnly: true
-        candidate_version:
+        draft_version:
           type: integer
           format: int64
-          minimum: 0
+          minimum: 1
           readOnly: true
         recording:
           $ref: '#/components/schemas/AgentVoiceRecording'
         transcript:
-          $ref: '#/components/schemas/AgentVoiceTranscriptCandidate'
+          $ref: '#/components/schemas/AgentVoiceTranscript'
         failure:
-          $ref: '#/components/schemas/AgentVoiceCandidateFailure'
+          $ref: '#/components/schemas/AgentVoiceDraftFailure'
         expires_at:
           type: string
           format: date-time
@@ -1495,10 +1448,6 @@ components:
           type: string
           format: date-time
           readOnly: true
-        deleted_at:
-          type: string
-          format: date-time
-          readOnly: true
         created_at:
           type: string
           format: date-time
@@ -1507,15 +1456,15 @@ components:
           type: string
           format: date-time
           readOnly: true
-    ConfirmAgentVoiceMessageCandidateRequest:
+    ConfirmAgentVoiceDraftRequest:
       type: object
       additionalProperties: false
       required:
-        - candidate_version
+        - draft_version
         - client_message_id
         - confirmed_text
       properties:
-        candidate_version:
+        draft_version:
           type: integer
           format: int64
           minimum: 1
@@ -1534,12 +1483,12 @@ components:
       type: object
       additionalProperties: false
       required:
-        - candidate
+        - draft
         - message
         - run
       properties:
-        candidate:
-          $ref: '#/components/schemas/AgentVoiceMessageCandidate'
+        draft:
+          $ref: '#/components/schemas/AgentVoiceDraft'
         message:
           $ref: '#/components/schemas/AgentMessage'
         run:
@@ -1563,6 +1512,27 @@ components:
         expires_at:
           type: string
           format: date-time
+          readOnly: true
+    AgentMessageTranslation:
+      type: object
+      additionalProperties: false
+      required:
+        - message_id
+        - target_language
+        - translation
+      properties:
+        message_id:
+          type: string
+          format: uuid
+          readOnly: true
+        target_language:
+          type: string
+          const: zh-CN
+          readOnly: true
+        translation:
+          type: string
+          minLength: 1
+          maxLength: 8000
           readOnly: true
     SubmitAgentRunRequest:
       $ref: '#/components/schemas/AppendAgentMessageRequest'
@@ -1673,6 +1643,16 @@ components:
           type: string
           format: uuid
           readOnly: true
+        completion_source:
+          type: string
+          enum:
+            - model
+            - domain
+          description: >-
+            Present only for completed Runs. Model completions include provider
+            metadata and usage; domain completions include the completing tool
+            identity instead.
+          readOnly: true
         provider_completion_id:
           type: string
           minLength: 1
@@ -1693,6 +1673,18 @@ components:
           readOnly: true
         usage:
           $ref: '#/components/schemas/TokenUsage'
+        domain_tool_call_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+          readOnly: true
+        domain_tool_name:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+          readOnly: true
         failure:
           $ref: '#/components/schemas/AgentRunFailure'
         created_at:
@@ -1708,285 +1700,6 @@ components:
           format: date-time
           readOnly: true
         updated_at:
-          type: string
-          format: date-time
-          readOnly: true
-    ContextMessageSource:
-      type: object
-      additionalProperties: false
-      required:
-        - message_id
-        - sequence
-        - role
-      properties:
-        message_id:
-          type: string
-          format: uuid
-          readOnly: true
-        sequence:
-          type: integer
-          format: int64
-          minimum: 1
-          readOnly: true
-        role:
-          type: string
-          enum:
-            - user
-            - assistant
-          readOnly: true
-    ContextGoalSource:
-      type: object
-      additionalProperties: false
-      required:
-        - goal_id
-        - version
-      properties:
-        goal_id:
-          type: string
-          format: uuid
-          readOnly: true
-        version:
-          type: integer
-          format: int64
-          minimum: 1
-          readOnly: true
-    ContextMemorySource:
-      type: object
-      additionalProperties: false
-      required:
-        - memory_id
-        - memory_version
-        - type
-        - scope
-        - similarity
-        - score
-        - embedding_provider
-        - embedding_model
-        - embedding_dimensions
-        - embedding_policy_version
-        - retrieval_policy_version
-      properties:
-        memory_id:
-          type: string
-          format: uuid
-          readOnly: true
-        memory_version:
-          type: integer
-          format: int64
-          minimum: 1
-          readOnly: true
-        type:
-          type: string
-          minLength: 1
-          maxLength: 32
-          readOnly: true
-        scope:
-          type: string
-          enum:
-            - user
-            - goal
-          readOnly: true
-        goal_id:
-          type: string
-          format: uuid
-          readOnly: true
-        similarity:
-          type: number
-          format: double
-          minimum: -1
-          maximum: 1
-          readOnly: true
-        score:
-          type: number
-          format: double
-          readOnly: true
-        embedding_provider:
-          type: string
-          pattern: '^[a-z][a-z0-9_-]{0,63}$'
-          readOnly: true
-        embedding_model:
-          type: string
-          minLength: 1
-          maxLength: 128
-          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
-          readOnly: true
-        embedding_dimensions:
-          type: integer
-          enum:
-            - 1024
-          readOnly: true
-        embedding_policy_version:
-          type: string
-          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$'
-          readOnly: true
-        retrieval_policy_version:
-          type: string
-          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$'
-          readOnly: true
-    ContextStableProfileSource:
-      type: object
-      additionalProperties: false
-      required:
-        - memory_id
-        - memory_version
-        - canonical_key
-        - type
-        - scope
-      properties:
-        memory_id:
-          type: string
-          format: uuid
-          readOnly: true
-        memory_version:
-          type: integer
-          format: int64
-          minimum: 1
-          readOnly: true
-        canonical_key:
-          type: string
-          enum:
-            - profile.preferred_name
-            - preference.form_of_address
-            - profile.gender
-            - career.occupation
-            - career.experience_years
-            - coaching.style
-          readOnly: true
-        type:
-          type: string
-          enum:
-            - profile
-            - preference
-          readOnly: true
-        scope:
-          type: string
-          enum:
-            - user
-          readOnly: true
-    ContextManifest:
-      type: object
-      additionalProperties: false
-      required:
-        - run_id
-        - thread_id
-        - input_message_id
-        - instruction_version
-        - stable_profile_context_policy_version
-        - selected_stable_profile
-        - memory_context_policy_version
-        - selected_memories
-        - memory_extraction_barrier_policy_version
-        - memory_extraction_barrier_cutoff
-        - memory_extraction_barrier_status
-        - memory_extraction_barrier_waited_milliseconds
-        - selected_messages
-        - omitted_message_count
-        - trim_reason
-        - max_input_characters
-        - used_input_characters
-        - requested_provider
-        - requested_model
-        - max_output_tokens
-        - created_at
-      properties:
-        run_id:
-          type: string
-          format: uuid
-          readOnly: true
-        thread_id:
-          type: string
-          format: uuid
-          readOnly: true
-        input_message_id:
-          type: string
-          format: uuid
-          readOnly: true
-        active_goal:
-          $ref: '#/components/schemas/ContextGoalSource'
-        instruction_version:
-          type: string
-          pattern: '^[a-z][a-z0-9._-]{0,63}$'
-          readOnly: true
-        stable_profile_context_policy_version:
-          type: string
-          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$'
-          readOnly: true
-        selected_stable_profile:
-          type: array
-          maxItems: 6
-          items:
-            $ref: '#/components/schemas/ContextStableProfileSource'
-        memory_context_policy_version:
-          type: string
-          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$'
-          readOnly: true
-        selected_memories:
-          type: array
-          items:
-            $ref: '#/components/schemas/ContextMemorySource'
-        memory_extraction_barrier_policy_version:
-          type: string
-          enum:
-            - memory-extraction-barrier-v1
-          readOnly: true
-        memory_extraction_barrier_cutoff:
-          type: string
-          format: date-time
-          readOnly: true
-        memory_extraction_barrier_status:
-          type: string
-          enum:
-            - not_required
-            - ready
-            - waited
-          readOnly: true
-        memory_extraction_barrier_waited_milliseconds:
-          type: integer
-          minimum: 0
-          maximum: 5000
-          readOnly: true
-        memory_extraction_barrier_covered_through:
-          type: string
-          format: date-time
-          readOnly: true
-        selected_messages:
-          type: array
-          minItems: 1
-          items:
-            $ref: '#/components/schemas/ContextMessageSource'
-        omitted_message_count:
-          type: integer
-          minimum: 0
-          readOnly: true
-        trim_reason:
-          type: string
-          enum:
-            - none
-            - context_budget
-          readOnly: true
-        max_input_characters:
-          type: integer
-          minimum: 1
-          readOnly: true
-        used_input_characters:
-          type: integer
-          minimum: 1
-          readOnly: true
-        requested_provider:
-          type: string
-          pattern: '^[a-z][a-z0-9_-]{0,63}$'
-          readOnly: true
-        requested_model:
-          type: string
-          minLength: 1
-          maxLength: 128
-          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
-          readOnly: true
-        max_output_tokens:
-          type: integer
-          minimum: 1
-          readOnly: true
-        created_at:
           type: string
           format: date-time
           readOnly: true

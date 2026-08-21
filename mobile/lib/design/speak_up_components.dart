@@ -1,6 +1,57 @@
 import 'package:flutter/material.dart';
 import 'package:speakup/design/speak_up_design.dart';
 
+class SpeakUpWordmark extends StatelessWidget {
+  const SpeakUpWordmark({this.height = 28, super.key});
+
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label: 'Speak Up',
+      image: true,
+      child: ExcludeSemantics(
+        child: Image.asset(
+          'assets/images/brand/speak-up-wordmark-black.png',
+          height: height,
+          fit: BoxFit.contain,
+        ),
+      ),
+    );
+  }
+}
+
+/// The brand-level heading used only on primary product destinations.
+class SpeakUpDisplayTitle extends StatelessWidget {
+  const SpeakUpDisplayTitle({
+    required this.title,
+    required this.semanticLabel,
+    super.key,
+  });
+
+  final String title;
+  final String semanticLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      header: true,
+      label: semanticLabel,
+      child: ExcludeSemantics(
+        child: SizedBox(
+          width: double.infinity,
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(title, maxLines: 1, style: SpeakUpDesign.displayTitle),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class SpeakUpContentWidth extends StatelessWidget {
   const SpeakUpContentWidth({required this.child, super.key});
 
@@ -81,31 +132,34 @@ class SpeakUpPageHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Semantics(
       header: true,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (leading != null) ...[
-            Align(alignment: Alignment.centerLeft, child: leading),
-            const SizedBox(height: SpeakUpDesign.space16),
+            leading!,
+            const SizedBox(width: SpeakUpDesign.space8),
           ],
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Text(
-                  title,
-                  style: Theme.of(context).textTheme.headlineLarge,
-                ),
+          Expanded(
+            child: Padding(
+              padding: EdgeInsets.only(top: leading == null ? 0 : 5),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: Theme.of(context).textTheme.headlineLarge),
+                  if (subtitle != null) ...[
+                    const SizedBox(height: SpeakUpDesign.space4),
+                    Text(
+                      subtitle!,
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                  ],
+                ],
               ),
-              if (trailing != null) ...[
-                const SizedBox(width: SpeakUpDesign.space12),
-                trailing!,
-              ],
-            ],
+            ),
           ),
-          if (subtitle != null) ...[
-            const SizedBox(height: SpeakUpDesign.space8),
-            Text(subtitle!, style: Theme.of(context).textTheme.bodyMedium),
+          if (trailing != null) ...[
+            const SizedBox(width: SpeakUpDesign.space12),
+            trailing!,
           ],
         ],
       ),
@@ -172,6 +226,53 @@ class SpeakUpBackButton extends StatelessWidget {
       ),
       onPressed: onPressed ?? () => Navigator.of(context).maybePop(),
       icon: const Icon(Icons.arrow_back_rounded),
+    );
+  }
+}
+
+class SpeakUpNavigationHeader extends StatelessWidget {
+  const SpeakUpNavigationHeader({
+    required this.title,
+    this.onBack,
+    this.backButtonKey,
+    this.titleKey,
+    this.titleStyle,
+    this.semanticLabel,
+    this.trailing,
+    super.key,
+  });
+
+  final String title;
+  final VoidCallback? onBack;
+  final Key? backButtonKey;
+  final Key? titleKey;
+  final TextStyle? titleStyle;
+  final String? semanticLabel;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        SpeakUpBackButton(key: backButtonKey, onPressed: onBack),
+        const SizedBox(width: SpeakUpDesign.space8),
+        Expanded(
+          child: Semantics(
+            header: true,
+            label: semanticLabel,
+            excludeSemantics: semanticLabel != null,
+            child: Text(
+              title,
+              key: titleKey,
+              style: titleStyle ?? Theme.of(context).textTheme.titleLarge,
+            ),
+          ),
+        ),
+        if (trailing != null) ...[
+          const SizedBox(width: SpeakUpDesign.space12),
+          trailing!,
+        ],
+      ],
     );
   }
 }

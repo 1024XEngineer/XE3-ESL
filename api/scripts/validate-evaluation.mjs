@@ -1,1664 +1,299 @@
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
-
+import {execFile} from 'node:child_process';
+import {mkdtemp, readFile, rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {resolve} from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {promisify} from 'node:util';
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
 
 const execFileAsync = promisify(execFile);
 const apiDirectory = fileURLToPath(new URL('..', import.meta.url));
-const fixture = JSON.parse(
-  await readFile(
-    resolve(apiDirectory, 'examples/evaluation-contract.json'),
-    'utf8',
-  ),
-);
-const interviewReportFixture = JSON.parse(
-  await readFile(
-    resolve(apiDirectory, 'examples/interview-report-contract.json'),
-    'utf8',
-  ),
-);
-const ieltsSpeakingReportFixture = JSON.parse(
-  await readFile(
-    resolve(apiDirectory, 'examples/ielts-speaking-report-contract.json'),
-    'utf8',
-  ),
-);
+const temporaryDirectory = await mkdtemp(resolve(tmpdir(), 'speakup-evaluation-'));
+const bundlePath = resolve(temporaryDirectory, 'openapi.bundle.json');
 
-const bundleOpenApi = async () => {
-  const temporaryDirectory = await mkdtemp(
-    resolve(tmpdir(), 'speakup-evaluation-bundle-'),
+try {
+  await execFileAsync(
+    process.execPath,
+    [
+      resolve(apiDirectory, 'node_modules/@redocly/cli/bin/cli.js'),
+      'bundle',
+      resolve(apiDirectory, 'openapi.yaml'),
+      '--config',
+      resolve(apiDirectory, 'redocly.yaml'),
+      '--output',
+      bundlePath,
+      '--ext',
+      'json',
+    ],
+    {cwd: apiDirectory, maxBuffer: 10 * 1024 * 1024},
   );
-  const bundlePath = resolve(temporaryDirectory, 'openapi.bundle.json');
-  const redoclyCliPath = resolve(
-    apiDirectory,
-    'node_modules/@redocly/cli/bin/cli.js',
-  );
+  const contract = JSON.parse(await readFile(bundlePath, 'utf8'));
+  const ajv = new Ajv2020({allErrors: true, strict: false});
+  addFormats(ajv);
+  ajv.addSchema(contract, 'contract');
+  const validate = (schema, value) => {
+    const validator = ajv.compile({$ref: `contract#/components/schemas/${schema}`});
+    assert.equal(
+      validator(value),
+      true,
+      `${schema}: ${ajv.errorsText(validator.errors, {separator: '\n'})}`,
+    );
+  };
+  const reject = (schema, value) => {
+    const validator = ajv.compile({$ref: `contract#/components/schemas/${schema}`});
+    assert.equal(validator(value), false, `${schema} unexpectedly accepted value`);
+  };
 
-  try {
-    await execFileAsync(
-      process.execPath,
-      [
-        redoclyCliPath,
-        'bundle',
-        resolve(apiDirectory, 'openapi.yaml'),
-        '--config',
-        resolve(apiDirectory, 'redocly.yaml'),
-        '--output',
-        bundlePath,
-        '--ext',
-        'json',
-      ],
+  const evaluationId = '10000000-0000-4000-8000-000000000001';
+  const sessionId = '20000000-0000-4000-8000-000000000001';
+  const turnId = '30000000-0000-4000-8000-000000000001';
+  const createdAt = '2026-08-15T08:00:00Z';
+  validate('EvaluationResource', {
+    evaluation_id: evaluationId,
+    kind: 'SESSION_REPORT',
+    source_id: sessionId,
+    context_id: sessionId,
+    status: 'QUEUED',
+    created_at: createdAt,
+    updated_at: createdAt,
+    feedback_items: [],
+  });
+
+  validate('CreateRetryTurnResponse', {
+    turn: {
+      turn_id: '50000000-0000-4000-8000-000000000001',
+      practice_session_id: sessionId,
+      question_id: '40000000-0000-4000-8000-000000000001',
+      original_turn_id: turnId,
+      sequence: 2,
+      status: 'confirmed',
+      created_at: createdAt,
+    },
+    replayed: true,
+  });
+
+  const pronunciationUnavailable = {
+    schema_version: 'evaluation-report/v2',
+    scene_type: 'IELTS_SPEAKING',
+    practice_experience: 'IELTS_SPEAKING',
+    scene_category: 'IELTS_SPEAKING',
+    practice_mode: 'FULL_MOCK',
+    scoreability_status: 'PROVISIONAL',
+    summary: 'The transcript dimensions are ready; pronunciation was unavailable.',
+    questions: [
       {
-        cwd: apiDirectory,
-        maxBuffer: 10 * 1024 * 1024,
+        question_id: '40000000-0000-4000-8000-000000000001',
+        position: 1,
+        text: 'Tell me about a memorable trip.',
+        answer: {
+          turn_id: turnId,
+          transcript: 'I travelled with my family last summer.',
+        },
       },
-    );
-    return JSON.parse(await readFile(bundlePath, 'utf8'));
-  } finally {
-    await rm(temporaryDirectory, { recursive: true, force: true });
-  }
-};
-
-const decodeJsonPointerToken = (token) =>
-  token.replaceAll('~1', '/').replaceAll('~0', '~');
-const encodeJsonPointerToken = (token) =>
-  token.replaceAll('~', '~0').replaceAll('/', '~1');
-const componentReferencePrefix = '#/components/schemas/';
-
-const findComponentReferences = (value, references = new Set()) => {
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      findComponentReferences(item, references);
-    }
-    return references;
-  }
-  if (value === null || typeof value !== 'object') {
-    return references;
-  }
-  if (
-    typeof value.$ref === 'string' &&
-    value.$ref.startsWith(componentReferencePrefix)
-  ) {
-    references.add(
-      decodeJsonPointerToken(value.$ref.slice(componentReferencePrefix.length)),
-    );
-  }
-  for (const item of Object.values(value)) {
-    findComponentReferences(item, references);
-  }
-  return references;
-};
-
-const rewriteComponentReferences = (value) => {
-  if (Array.isArray(value)) {
-    return value.map(rewriteComponentReferences);
-  }
-  if (value === null || typeof value !== 'object') {
-    return value;
-  }
-  return Object.fromEntries(
-    Object.entries(value).map(([key, item]) => {
-      if (
-        key === '$ref' &&
-        typeof item === 'string' &&
-        item.startsWith(componentReferencePrefix)
-      ) {
-        const schemaName = decodeJsonPointerToken(
-          item.slice(componentReferencePrefix.length),
-        );
-        return [key, `#/$defs/${encodeJsonPointerToken(schemaName)}`];
-      }
-      return [key, rewriteComponentReferences(item)];
-    }),
-  );
-};
-
-const openApiBundle = await bundleOpenApi();
-const componentSchemas = openApiBundle.components?.schemas;
-assert.ok(componentSchemas, 'Bundled OpenAPI must contain component schemas.');
-
-const buildSchema = (rootSchemaName) => {
-  const definitions = {};
-  const collect = (schemaName) => {
-    if (Object.hasOwn(definitions, schemaName)) {
-      return;
-    }
-    const schema = componentSchemas[schemaName];
-    assert.ok(schema, `Missing bundled ${schemaName} schema.`);
-    definitions[schemaName] = rewriteComponentReferences(schema);
-    for (const dependencyName of findComponentReferences(schema)) {
-      collect(dependencyName);
-    }
+    ],
+    dimensions: [
+      {
+        key: 'FLUENCY_COHERENCE',
+        score: 6.5,
+        scale: 'IELTS_BAND_9',
+        coverage: 1,
+        confidence: 0.8,
+        reason_codes: [],
+        evidence_ref_ids: [],
+        strengths: [],
+        improvements: [],
+        recommended_examples: [],
+      },
+      {
+        key: 'PRONUNCIATION',
+        score: null,
+        scale: 'IELTS_BAND_9',
+        coverage: 0,
+        confidence: 0,
+        reason_codes: ['ACOUSTIC_ASSESSMENT_FAILED'],
+        evidence_ref_ids: [],
+        strengths: [],
+        improvements: [],
+        recommended_examples: [],
+      },
+    ],
+    priority_actions: [],
   };
-  collect(rootSchemaName);
-  return {
-    $schema: 'https://json-schema.org/draft/2020-12/schema',
-    $ref: `#/$defs/${encodeJsonPointerToken(rootSchemaName)}`,
-    $defs: definitions,
-  };
-};
-
-const ajv = new Ajv2020({
-  allErrors: true,
-  strict: true,
-  strictRequired: false,
-});
-addFormats(ajv);
-
-const validators = Object.fromEntries(
-  [
-    'CreateEvaluationRequest',
-    'EvaluationAccepted',
-    'EvaluationReplay',
-    'Evaluation',
-    'InterviewReportEnvelope',
-    'IeltsSpeakingReportEnvelope',
-    'SceneEvaluationResult',
-    'CoreAbilityObservation',
-    'EvidenceRef',
-  ].map((schemaName) => [schemaName, ajv.compile(buildSchema(schemaName))]),
-);
-
-const validationErrors = (validator) =>
-  (validator.errors ?? [])
-    .map(
-      ({ instancePath, keyword, message }) =>
-        `${instancePath || '/'} ${keyword}: ${message}`,
-    )
-    .join('\n');
-
-const assertValid = (caseName, schemaName, value) => {
-  const validator = validators[schemaName];
-  assert.equal(
-    validator(value),
-    true,
-    `${caseName} violates ${schemaName}:\n${validationErrors(validator)}`,
-  );
-};
-
-const assertSchemaRejected = (caseName, schemaName, value) => {
-  const validator = validators[schemaName];
-  assert.equal(
-    validator(value),
-    false,
-    `${caseName}: invalid ${schemaName} fixture was accepted`,
-  );
-};
-
-assertValid(
-  'dual-channel create',
-  'CreateEvaluationRequest',
-  fixture.create_dual_channel,
-);
-const digitLeadingPracticeCreate = structuredClone(
-  fixture.create_dual_channel,
-);
-digitLeadingPracticeCreate.practice_session_id =
-  '20000000-0000-4000-8000-000000000001';
-assertValid(
-  'digit-leading Practice session create',
-  'CreateEvaluationRequest',
-  digitLeadingPracticeCreate,
-);
-assertValid('queued create response', 'EvaluationAccepted', fixture.queued);
-assert.match(
-  fixture.queued.evaluation_id,
-  /^[0-9]/,
-  'queued fixture must cover a digit-leading Evaluation UUID',
-);
-assertValid(
-  'ready idempotent replay',
-  'EvaluationReplay',
-  fixture.ready_replay,
-);
-for (const status of ['RUNNING', 'READY', 'FAILED']) {
-  const replay = structuredClone(fixture.ready_replay);
-  replay.evaluation_status = status;
-  assertValid(
-    `${status} idempotent replay`,
-    'EvaluationReplay',
-    replay,
-  );
-}
-const laterRevisionReplay = structuredClone(fixture.ready_replay);
-laterRevisionReplay.evaluation_revision_id =
-  'a1000002-0000-4000-8000-000000000002';
-laterRevisionReplay.revision = 2;
-laterRevisionReplay.supersedes_revision_id =
-  'a1000001-0000-4000-8000-000000000001';
-assertValid(
-  'later current revision idempotent replay',
-  'EvaluationReplay',
-  laterRevisionReplay,
-);
-assertValid('Core 4D ready', 'Evaluation', fixture.core_4d_ready);
-assert.match(
-  fixture.core_4d_ready.evaluation_id,
-  /^[A-Fa-f]/,
-  'ready fixture must cover a letter-leading Evaluation UUID',
-);
-assertValid(
-  'short sample blocked',
-  'Evaluation',
-  fixture.short_sample_blocked,
-);
-assertValid(
-  'low ASR feedback only',
-  'Evaluation',
-  fixture.low_asr_feedback_only,
-);
-assertValid('IELTS ready', 'Evaluation', fixture.ielts_ready);
-assertValid(
-  'Interview missing opportunity',
-  'Evaluation',
-  fixture.interview_missing_opportunity,
-);
-assertValid('technical failure', 'Evaluation', fixture.failed);
-assertValid(
-  'replacement revision queued',
-  'EvaluationAccepted',
-  fixture.revision_queued,
-);
-
-const replayDisguisedAsQueued = structuredClone(fixture.ready_replay);
-replayDisguisedAsQueued.evaluation_status = 'QUEUED';
-assertSchemaRejected(
-  'idempotent replay disguised as queued',
-  'EvaluationReplay',
-  replayDisguisedAsQueued,
-);
-
-const freshAcceptedDisguisedAsReady = structuredClone(fixture.queued);
-freshAcceptedDisguisedAsReady.evaluation_status = 'READY';
-assertSchemaRejected(
-  'fresh accepted response disguised as ready',
-  'EvaluationAccepted',
-  freshAcceptedDisguisedAsReady,
-);
-
-const scoreFields = [
-  'raw',
-  'display',
-  'raw_score',
-  'display_score',
-  'interval',
-];
-const assertNoScores = (value, context) => {
-  for (const field of scoreFields) {
-    assert.equal(
-      value[field],
-      undefined,
-      `${context}: non-PASS result contains ${field}`,
-    );
-  }
-};
-
-const assertEvidenceSemantics = (evidence, context) => {
-  if (evidence.transcript_span !== undefined) {
-    assert.ok(
-      evidence.transcript_span.start_utf8_byte <
-        evidence.transcript_span.end_utf8_byte,
-      `${context}: transcript span must be non-empty`,
-    );
-  }
-  if (evidence.audio_span !== undefined) {
-    assert.ok(
-      evidence.audio_span.start_ms < evidence.audio_span.end_ms,
-      `${context}: audio span must be non-empty`,
-    );
-  }
-};
-
-const assertDimensionSemantics = (dimension, context) => {
-  if (dimension.gate_status !== 'PASS') {
-    assertNoScores(dimension, context);
-    assert.ok(
-      dimension.reason_codes.length > 0,
-      `${context}: unscored result requires a reason`,
-    );
-  } else {
-    assert.ok(
-      dimension.evidence_refs.length > 0,
-      `${context}: scored result requires evidence`,
-    );
-    if (dimension.interval !== undefined) {
-      assert.ok(
-        dimension.interval[0] <= dimension.interval[1],
-        `${context}: interval bounds are reversed`,
-      );
-    }
-  }
-  for (const evidence of dimension.evidence_refs) {
-    assertEvidenceSemantics(evidence, context);
-  }
-};
-
-const assertEvaluationSemantics = (evaluation) => {
-  const hasSceneChannel = evaluation.channels.includes('SCENE');
-  const hasCoreChannel = evaluation.channels.includes('CORE_4D');
-  assert.equal(
-    evaluation.scene_strategy_ref !== undefined,
-    hasSceneChannel,
-    `${evaluation.evaluation_id}: SCENE strategy/channel mismatch`,
-  );
-  assert.equal(
-    evaluation.core_4d_strategy_ref !== undefined,
-    hasCoreChannel,
-    `${evaluation.evaluation_id}: CORE_4D strategy/channel mismatch`,
-  );
-  if (evaluation.scene_result !== undefined) {
-    assert.ok(hasSceneChannel);
-    assert.equal(evaluation.scene_result.scene_type, evaluation.scene_type);
-    assert.equal(
-      evaluation.scene_result.strategy_ref,
-      evaluation.scene_strategy_ref,
-    );
-  }
-  if (evaluation.core_4d_observations !== undefined) {
-    assert.ok(hasCoreChannel);
-    assert.equal(
-      new Set(
-        evaluation.core_4d_observations.map(
-          (observation) => observation.dimension,
-        ),
-      ).size,
-      evaluation.core_4d_observations.length,
-      `${evaluation.evaluation_id}: duplicate Core 4D dimensions`,
-    );
-    assert.ok(
-      evaluation.core_4d_observations.every(
-        (observation) =>
-          observation.strategy_ref === evaluation.core_4d_strategy_ref,
-      ),
-      `${evaluation.evaluation_id}: Core strategy mismatch`,
-    );
-  }
-  if (evaluation.scoreability_status === 'PROVISIONAL') {
-    assert.equal(
-      evaluation.is_final,
-      false,
-      `${evaluation.evaluation_id}: provisional result cannot be final`,
-    );
-  }
-};
-
-for (const evaluation of [
-  fixture.core_4d_ready,
-  fixture.short_sample_blocked,
-  fixture.low_asr_feedback_only,
-  fixture.ielts_ready,
-  fixture.interview_missing_opportunity,
-  fixture.failed,
-]) {
-  assertEvaluationSemantics(evaluation);
-}
-
-const coreDimensions = new Set([
-  'PRONUNCIATION',
-  'FLUENCY',
-  'VOCABULARY',
-  'GRAMMAR',
-]);
-assert.deepEqual(
-  new Set(
-    fixture.core_4d_ready.core_4d_observations.map(
-      (observation) => observation.dimension,
-    ),
-  ),
-  coreDimensions,
-);
-for (const observation of fixture.core_4d_ready.core_4d_observations) {
-  assertDimensionSemantics(
-    observation,
-    `Core 4D ${observation.dimension}`,
-  );
-  const weightSum = observation.weights.reduce(
-    (sum, weight) => sum + weight.value,
-    0,
-  );
-  assert.ok(
-    Math.abs(weightSum - 1) < Number.EPSILON,
-    `${observation.dimension}: weights must sum to one`,
-  );
-  if (observation.dimension === 'PRONUNCIATION') {
-    assert.ok(
-      observation.evidence_refs.every(
-        (evidence) => evidence.audio_span !== undefined,
-      ),
-      'Pronunciation evidence requires audio spans',
-    );
-  }
-}
-
-for (const evaluation of [
-  fixture.short_sample_blocked,
-  fixture.low_asr_feedback_only,
-]) {
-  for (const observation of evaluation.core_4d_observations) {
-    assertDimensionSemantics(
-      observation,
-      `${evaluation.evaluation_id} ${observation.dimension}`,
-    );
-    assert.equal(observation.profile_update_eligible, false);
-  }
-}
-
-const ielts = fixture.ielts_ready.scene_result;
-const ieltsDimensionIds = new Set(
-  ielts.dimensions.map((dimension) => dimension.dimension_id),
-);
-assert.deepEqual(
-  ieltsDimensionIds,
-  new Set(['IELTS_FC', 'IELTS_LR', 'IELTS_GRA', 'IELTS_PR']),
-);
-for (const dimension of ielts.dimensions) {
-  assertDimensionSemantics(dimension, dimension.dimension_id);
-  if (dimension.dimension_id === 'IELTS_PR') {
-    assert.ok(
-      dimension.evidence_refs.every(
-        (evidence) => evidence.audio_span !== undefined,
-      ),
-      'IELTS pronunciation requires audio spans',
-    );
-  }
-}
-const ieltsOverallRaw =
-  ielts.dimensions.reduce((sum, dimension) => sum + dimension.display, 0) /
-  ielts.dimensions.length;
-const ieltsOverallDisplay = Math.floor(ieltsOverallRaw * 2 + 0.5) / 2;
-assert.equal(ieltsOverallRaw, 6.75);
-assert.equal(ielts.overall_raw, ieltsOverallRaw);
-assert.equal(ielts.overall_display, ieltsOverallDisplay);
-assert.equal(ieltsOverallDisplay, 7);
-
-const interview = fixture.interview_missing_opportunity.scene_result;
-assert.equal(interview.overall_raw, undefined);
-assert.equal(interview.overall_display, undefined);
-assert.equal(interview.total_raw, undefined);
-assert.equal(interview.total_display, undefined);
-assert.equal(interview.weights, undefined);
-assert.equal(interview.readiness_level, 'NOT_ASSESSED');
-assert.deepEqual(
-  new Set(interview.dimensions.map((dimension) => dimension.dimension_id)),
-  new Set([
-    'INTERVIEW_RELEVANCE',
-    'INTERVIEW_STRUCTURE',
-    'INTERVIEW_EVIDENCE',
-    'INTERVIEW_PROFESSIONAL',
-    'INTERVIEW_INTERACTION',
-  ]),
-);
-for (const dimension of interview.dimensions) {
-  assertDimensionSemantics(dimension, dimension.dimension_id);
-}
-const interaction = interview.dimensions.find(
-  (dimension) => dimension.dimension_id === 'INTERVIEW_INTERACTION',
-);
-assert.equal(interaction.gate_status, 'BLOCKED');
-assert.deepEqual(interaction.reason_codes, ['OPPORTUNITY_NOT_PROVIDED']);
-assert.equal(interview.task_results.length, 1);
-assert.equal(interview.question_results.length, 1);
-const missingFollowup = interview.question_results[0];
-assert.equal(missingFollowup.opportunity_status, 'NOT_PROVIDED');
-assert.deepEqual(missingFollowup.response_turn_ids, []);
-assert.equal(missingFollowup.dimension_evidence.length, 1);
-assert.equal(
-  missingFollowup.dimension_evidence[0].dimension_id,
-  'INTERVIEW_INTERACTION',
-);
-assert.equal(
-  missingFollowup.dimension_evidence[0].question_score,
-  undefined,
-);
-assert.deepEqual(
-  missingFollowup.dimension_evidence[0].reason_codes,
-  ['OPPORTUNITY_NOT_PROVIDED'],
-);
-
-assert.equal(fixture.failed.scoreability_status, undefined);
-assert.equal(fixture.failed.gate_status, undefined);
-assert.equal(fixture.failed.scene_result, undefined);
-assert.equal(fixture.failed.core_4d_observations, undefined);
-assert.ok(fixture.failed.stable_failure);
-
-assert.ok(fixture.revision_queued.revision > 1);
-assert.ok(fixture.revision_queued.supersedes_revision_id);
-
-const invalidCreateWithOwner = structuredClone(fixture.create_dual_channel);
-invalidCreateWithOwner.owner_user_id = 'user_injected';
-assertSchemaRejected(
-  'caller-supplied owner',
-  'CreateEvaluationRequest',
-  invalidCreateWithOwner,
-);
-
-const invalidAcceptedEvaluationId = structuredClone(fixture.queued);
-invalidAcceptedEvaluationId.evaluation_id = 'evaluation_not_a_uuid';
-assertSchemaRejected(
-  'non-UUID Evaluation ID',
-  'EvaluationAccepted',
-  invalidAcceptedEvaluationId,
-);
-
-const invalidCreateWithoutSceneStrategy = structuredClone(
-  fixture.create_dual_channel,
-);
-delete invalidCreateWithoutSceneStrategy.scene_strategy_ref;
-assertSchemaRejected(
-  'SCENE channel without strategy',
-  'CreateEvaluationRequest',
-  invalidCreateWithoutSceneStrategy,
-);
-
-const invalidCreateWithDuplicateChannel = structuredClone(
-  fixture.create_dual_channel,
-);
-invalidCreateWithDuplicateChannel.channels = ['SCENE', 'SCENE'];
-assertSchemaRejected(
-  'duplicate Evaluation channel',
-  'CreateEvaluationRequest',
-  invalidCreateWithDuplicateChannel,
-);
-
-const invalidBlockedWithScore = structuredClone(
-  fixture.short_sample_blocked.core_4d_observations[0],
-);
-invalidBlockedWithScore.raw_score = 0;
-invalidBlockedWithScore.display_score = 0;
-assertSchemaRejected(
-  'non-PASS Core result with zero score',
-  'CoreAbilityObservation',
-  invalidBlockedWithScore,
-);
-
-const invalidInterviewTotal = structuredClone(interview);
-invalidInterviewTotal.overall_raw = 75;
-invalidInterviewTotal.overall_display = 75;
-assertSchemaRejected(
-  'non-IELTS numeric total',
-  'SceneEvaluationResult',
-  invalidInterviewTotal,
-);
-
-const invalidFailedWithGate = structuredClone(fixture.failed);
-invalidFailedWithGate.scoreability_status = 'INSUFFICIENT';
-invalidFailedWithGate.gate_status = 'BLOCKED';
-assertSchemaRejected(
-  'technical failure disguised as unscoreable',
-  'Evaluation',
-  invalidFailedWithGate,
-);
-
-const invalidCoreTotal = structuredClone(
-  fixture.core_4d_ready.core_4d_observations[0],
-);
-invalidCoreTotal.total_display = 78;
-assertSchemaRejected(
-  'Core observation with aggregate total',
-  'CoreAbilityObservation',
-  invalidCoreTotal,
-);
-
-const invalidEvidenceWithoutLocator = structuredClone(
-  fixture.core_4d_ready.core_4d_observations[0].evidence_refs[0],
-);
-delete invalidEvidenceWithoutLocator.audio_span;
-assertSchemaRejected(
-  'EvidenceRef without a transcript or audio locator',
-  'EvidenceRef',
-  invalidEvidenceWithoutLocator,
-);
-
-const invalidEvidenceWithPermanentUrl = structuredClone(
-  fixture.core_4d_ready.core_4d_observations[0].evidence_refs[0],
-);
-invalidEvidenceWithPermanentUrl.audio_url = 'https://storage.example/audio.wav';
-assertSchemaRejected(
-  'EvidenceRef exposing a permanent object URL',
-  'EvidenceRef',
-  invalidEvidenceWithPermanentUrl,
-);
-
-const invalidMissingVersion = structuredClone(
-  fixture.core_4d_ready.core_4d_observations[0],
-);
-delete invalidMissingVersion.aggregation_version;
-assertSchemaRejected(
-  'Core observation missing aggregation version',
-  'CoreAbilityObservation',
-  invalidMissingVersion,
-);
-
-const reversedTranscriptEvidence = structuredClone(
-  fixture.core_4d_ready.core_4d_observations[2].evidence_refs[0],
-);
-reversedTranscriptEvidence.transcript_span.start_utf8_byte = 48;
-reversedTranscriptEvidence.transcript_span.end_utf8_byte = 12;
-assert.throws(
-  () =>
-    assertEvidenceSemantics(
-      reversedTranscriptEvidence,
-      'reversed transcript evidence',
-    ),
-  /transcript span must be non-empty/,
-);
-
-const reversedAudioEvidence = structuredClone(
-  fixture.core_4d_ready.core_4d_observations[0].evidence_refs[0],
-);
-reversedAudioEvidence.audio_span.start_ms = 4800;
-reversedAudioEvidence.audio_span.end_ms = 1200;
-assert.throws(
-  () =>
-    assertEvidenceSemantics(reversedAudioEvidence, 'reversed audio evidence'),
-  /audio span must be non-empty/,
-);
-
-const mismatchedSceneResult = structuredClone(fixture.ielts_ready);
-mismatchedSceneResult.scene_result.scene_type = 'INTERVIEW';
-assert.throws(
-  () => assertEvaluationSemantics(mismatchedSceneResult),
-  /Expected values to be strictly equal/,
-);
-
-const duplicatedCoreDimension = structuredClone(fixture.core_4d_ready);
-duplicatedCoreDimension.core_4d_observations[1].dimension = 'PRONUNCIATION';
-assert.throws(
-  () => assertEvaluationSemantics(duplicatedCoreDimension),
-  /duplicate Core 4D dimensions/,
-);
-
-const provisionalMarkedFinal = structuredClone(fixture.low_asr_feedback_only);
-provisionalMarkedFinal.is_final = true;
-assert.throws(
-  () => assertEvaluationSemantics(provisionalMarkedFinal),
-  /provisional result cannot be final/,
-);
-
-const interviewDimensionOrder = [
-  'INTERVIEW_RELEVANCE',
-  'INTERVIEW_STRUCTURE',
-  'INTERVIEW_EVIDENCE',
-  'INTERVIEW_PROFESSIONAL',
-  'INTERVIEW_INTERACTION',
-];
-const interviewFindingKinds = [
-  ['strengths', 'strength_finding_ids'],
-  ['improvements', 'improvement_finding_ids'],
-  ['recommended_expressions', 'recommended_expression_finding_ids'],
-];
-const forbiddenInterviewReportField = new RegExp(
-  String.raw`(^|_)(raw|display|score|overall|total|weight|weights|probe_weight)($|_)`,
-  'u',
-);
-
-const assertNoUnexpectedInterviewScoreFields = (value, path = 'report') => {
-  if (Array.isArray(value)) {
-    value.forEach((item, index) =>
-      assertNoUnexpectedInterviewScoreFields(item, `${path}[${index}]`),
-    );
-    return;
-  }
-  if (value === null || typeof value !== 'object') {
-    return;
-  }
-  for (const [field, item] of Object.entries(value)) {
-    if (field === 'score' && /^report\.dimensions\[\d+\]$/u.test(path)) {
-      continue;
-    }
-    assert.doesNotMatch(
-      field,
-      forbiddenInterviewReportField,
-      `${path}.${field} exposes a forbidden numeric score field`,
-    );
-    assertNoUnexpectedInterviewScoreFields(item, `${path}.${field}`);
-  }
-};
-
-const sortedStrings = (values) => [...values].sort();
-
-const assertInterviewReportSemantics = (envelope) => {
-  assert.equal(
-    envelope.status_url,
-    `/v1/practice-sessions/${envelope.practice_session_id}/interview-report`,
-    'Interview report status_url must address the same Practice Session',
-  );
-  if (envelope.evaluation_status !== 'READY') {
-    return;
-  }
-
-  const report = envelope.report;
-  assert.equal(report.schema_version, 'interview-report/v1');
-  assert.equal(report.readiness_level, 'NOT_ASSESSED');
-  assertNoUnexpectedInterviewScoreFields(report);
-  assert.deepEqual(
-    report.dimensions.map((dimension) => dimension.dimension_id),
-    interviewDimensionOrder,
-    'Interview report dimensions must use the canonical order',
-  );
-
-  const questionById = new Map();
-  const questionByTurnId = new Map();
-  for (const question of report.questions) {
-    assert.ok(
-      !questionById.has(question.question_id),
-      `Duplicate question ${question.question_id}`,
-    );
-    questionById.set(question.question_id, question);
-    if (question.response_turn_id !== undefined) {
-      assert.ok(
-        !questionByTurnId.has(question.response_turn_id),
-        `Duplicate response Turn ${question.response_turn_id}`,
-      );
-      questionByTurnId.set(question.response_turn_id, question);
-    }
-    assert.deepEqual(
-      question.dimension_findings.map(
-        (dimension) => dimension.dimension_id,
-      ),
-      interviewDimensionOrder,
-      `${question.question_id}: dimension finding order changed`,
-    );
-    if (question.assessment_status === 'NOT_ASSESSED') {
-      for (const dimension of question.dimension_findings) {
-        for (const [, referenceField] of interviewFindingKinds) {
-          assert.deepEqual(
-            dimension[referenceField],
-            [],
-            `${question.question_id}: unassessed question references findings`,
-          );
-        }
-      }
-    }
-  }
-  for (const question of report.questions) {
-    if (question.question_type === 'FOLLOW_UP') {
-      const parent = questionById.get(question.parent_question_id);
-      assert.ok(parent, `${question.question_id}: parent question is missing`);
-      assert.equal(
-        parent.question_type,
-        'PRIMARY',
-        `${question.question_id}: parent must be PRIMARY`,
-      );
-    }
-  }
-
-  const findingById = new Map();
-  for (const dimension of report.dimensions) {
-    if (dimension.scoreability_status === 'PROVISIONAL') {
-      assert.ok(Number.isInteger(dimension.score));
-      assert.ok(dimension.score >= 0 && dimension.score <= 100);
-    } else {
-      assert.ok(!Object.hasOwn(dimension, 'score'));
-    }
-    if (report.scoreability_status === 'INSUFFICIENT') {
-      assert.equal(dimension.scoreability_status, 'INSUFFICIENT');
-      assert.equal(dimension.gate_status, 'BLOCKED');
-    } else {
-      assert.ok(
-        (dimension.scoreability_status === 'PROVISIONAL' &&
-          dimension.gate_status === 'FEEDBACK_ONLY') ||
-          (dimension.scoreability_status === 'INSUFFICIENT' &&
-            dimension.gate_status === 'BLOCKED'),
-        `${dimension.dimension_id}: invalid qualitative gate`,
-      );
-    }
-
-    const evidenceRefIds = new Set();
-    for (const [findingField, referenceField] of interviewFindingKinds) {
-      for (const finding of dimension[findingField]) {
-        assert.ok(
-          !findingById.has(finding.finding_id),
-          `Duplicate finding ${finding.finding_id}`,
-        );
-        findingById.set(finding.finding_id, {
-          dimensionId: dimension.dimension_id,
-          findingField,
-          referenceField,
-          finding,
-        });
-        for (const evidence of finding.evidence) {
-          evidenceRefIds.add(evidence.evidence_ref_id);
-          assert.ok(
-            evidence.start_utf8_byte < evidence.end_utf8_byte,
-            `${finding.finding_id}: evidence span must be non-empty`,
-          );
-          const question = questionByTurnId.get(evidence.turn_id);
-          assert.ok(
-            question,
-            `${finding.finding_id}: evidence Turn is not a confirmed response`,
-          );
-          assert.ok(
-            question.evidence_ref_ids.includes(evidence.evidence_ref_id),
-            `${finding.finding_id}: evidence reference is outside its response`,
-          );
-          const transcriptBytes = Buffer.from(
-            question.confirmed_transcript,
-            'utf8',
-          );
-          assert.ok(
-            evidence.end_utf8_byte <= transcriptBytes.length,
-            `${finding.finding_id}: evidence span exceeds its response`,
-          );
-          assert.equal(
-            transcriptBytes
-              .subarray(evidence.start_utf8_byte, evidence.end_utf8_byte)
-              .toString('utf8'),
-            evidence.original_excerpt,
-            `${finding.finding_id}: evidence excerpt does not match its response`,
-          );
-        }
-      }
-    }
-    assert.deepEqual(
-      sortedStrings(dimension.evidence_ref_ids),
-      sortedStrings(evidenceRefIds),
-      `${dimension.dimension_id}: evidence_ref_ids must equal finding evidence`,
-    );
-  }
-
-  for (const question of report.questions) {
-    for (const dimension of question.dimension_findings) {
-      for (const [, referenceField] of interviewFindingKinds) {
-        for (const findingId of dimension[referenceField]) {
-          const target = findingById.get(findingId);
-          assert.ok(
-            target,
-            `${question.question_id}: dangling finding ${findingId}`,
-          );
-          assert.equal(
-            target.dimensionId,
-            dimension.dimension_id,
-            `${question.question_id}: finding dimension mismatch`,
-          );
-          assert.equal(
-            target.referenceField,
-            referenceField,
-            `${question.question_id}: finding category mismatch`,
-          );
-          assert.ok(
-            target.finding.evidence.some((evidence) =>
-              question.evidence_ref_ids.includes(evidence.evidence_ref_id),
-            ),
-            `${question.question_id}: finding is unrelated to its response`,
-          );
-        }
-      }
-    }
-  }
-
-  for (const action of report.priority_actions) {
-    const target = findingById.get(action.finding_id);
-    assert.ok(target, `Priority action ${action.finding_id} is dangling`);
-    assert.equal(
-      target.dimensionId,
-      action.dimension_id,
-      `Priority action ${action.finding_id} has the wrong dimension`,
-    );
-    assert.equal(
-      target.findingField,
-      'improvements',
-      `Priority action ${action.finding_id} must reference an improvement`,
-    );
-  }
-};
-
-for (const [name, value] of Object.entries(interviewReportFixture)) {
-  assertValid(
-    `Interview report ${name}`,
-    'InterviewReportEnvelope',
-    value,
-  );
-  assertInterviewReportSemantics(value);
-}
-
-const digitLeadingInterviewReport = structuredClone(
-  interviewReportFixture.ready,
-);
-digitLeadingInterviewReport.practice_session_id =
-  '20000000-0000-4000-8000-000000000001';
-digitLeadingInterviewReport.status_url =
-  '/v1/practice-sessions/20000000-0000-4000-8000-000000000001/interview-report';
-assertValid(
-  'digit-leading Practice session Interview report',
-  'InterviewReportEnvelope',
-  digitLeadingInterviewReport,
-);
-assertInterviewReportSemantics(digitLeadingInterviewReport);
-
-for (const reasonCode of [
-  'POLICY_VIOLATION',
-  'EVIDENCE_REF_INVALID',
-  'VERSION_CONFLICT',
-]) {
-  const nonRetryableFailure = structuredClone(interviewReportFixture.failed);
-  nonRetryableFailure.stable_failure = {
-    reason_code: reasonCode,
-    retryable: false,
-  };
-  assertValid(
-    `Interview report ${reasonCode} failure`,
-    'InterviewReportEnvelope',
-    nonRetryableFailure,
-  );
-}
-
-const retryablePolicyFailure = structuredClone(interviewReportFixture.failed);
-retryablePolicyFailure.stable_failure = {
-  reason_code: 'POLICY_VIOLATION',
-  retryable: true,
-};
-assertSchemaRejected(
-  'retryable non-transient Interview report failure',
-  'InterviewReportEnvelope',
-  retryablePolicyFailure,
-);
-
-const nonRetryableInternalFailure = structuredClone(
-  interviewReportFixture.failed,
-);
-nonRetryableInternalFailure.stable_failure.retryable = false;
-assertSchemaRejected(
-  'non-retryable INTERNAL_RETRYABLE Interview report failure',
-  'InterviewReportEnvelope',
-  nonRetryableInternalFailure,
-);
-
-const readyWithoutReport = structuredClone(interviewReportFixture.ready);
-delete readyWithoutReport.report;
-assertSchemaRejected(
-  'READY Interview report without report',
-  'InterviewReportEnvelope',
-  readyWithoutReport,
-);
-
-const failedWithReport = structuredClone(interviewReportFixture.failed);
-failedWithReport.report = structuredClone(interviewReportFixture.ready.report);
-assertSchemaRejected(
-  'FAILED Interview report carrying a report',
-  'InterviewReportEnvelope',
-  failedWithReport,
-);
-
-const pendingWithReport = structuredClone(interviewReportFixture.running);
-pendingWithReport.report = structuredClone(interviewReportFixture.ready.report);
-assertSchemaRejected(
-  'pending Interview report carrying a report',
-  'InterviewReportEnvelope',
-  pendingWithReport,
-);
-
-const reportWithUnknownVersion = structuredClone(interviewReportFixture.ready);
-reportWithUnknownVersion.report.schema_version = 'interview-report/v2';
-assertSchemaRejected(
-  'Interview report with unknown schema version',
-  'InterviewReportEnvelope',
-  reportWithUnknownVersion,
-);
-
-for (const [caseName, mutate] of [
-  ['overall score', (value) => (value.report.overall = 75)],
-  ['dimension raw value', (value) => (value.report.dimensions[0].raw = 75)],
-  [
-    'finding display score',
-    (value) =>
-      (value.report.dimensions[0].improvements[0].display_score = 75),
-  ],
-  [
-    'question probe weight',
-    (value) => (value.report.questions[0].probe_weight = 1),
-  ],
-  [
-    'priority action weight',
-    (value) => (value.report.priority_actions[0].weight = 1),
-  ],
-]) {
-  const invalid = structuredClone(interviewReportFixture.ready);
-  mutate(invalid);
-  assertSchemaRejected(
-    `Interview report with ${caseName}`,
-    'InterviewReportEnvelope',
-    invalid,
-  );
-}
-
-const interviewReportWithoutDimensionScore = structuredClone(
-  interviewReportFixture.ready,
-);
-delete interviewReportWithoutDimensionScore.report.dimensions[0].score;
-assertSchemaRejected(
-  'Interview report missing an assessable dimension score',
-  'InterviewReportEnvelope',
-  interviewReportWithoutDimensionScore,
-);
-
-const interviewReportWithInvalidDimensionScore = structuredClone(
-  interviewReportFixture.ready,
-);
-interviewReportWithInvalidDimensionScore.report.dimensions[0].score = 101;
-assertSchemaRejected(
-  'Interview report with an out-of-range dimension score',
-  'InterviewReportEnvelope',
-  interviewReportWithInvalidDimensionScore,
-);
-
-const insufficientInterviewReportWithScore = structuredClone(
-  interviewReportFixture.insufficient,
-);
-insufficientInterviewReportWithScore.report.dimensions[0].score = 0;
-assertSchemaRejected(
-  'unscoreable Interview report dimension carrying zero',
-  'InterviewReportEnvelope',
-  insufficientInterviewReportWithScore,
-);
-
-const unknownReportReason = structuredClone(interviewReportFixture.ready);
-unknownReportReason.report.dimensions[0].reason_codes = ['UNKNOWN'];
-assertSchemaRejected(
-  'Interview report with free-text reason relationship',
-  'InterviewReportEnvelope',
-  unknownReportReason,
-);
-
-const unknownQuestionType = structuredClone(interviewReportFixture.ready);
-unknownQuestionType.report.questions[0].question_type = 'RELATED';
-assertSchemaRejected(
-  'Interview report with free-text question relationship',
-  'InterviewReportEnvelope',
-  unknownQuestionType,
-);
-
-const unknownParent = structuredClone(interviewReportFixture.ready);
-unknownParent.report.questions[1].parent_question_id = 'question_missing';
-assert.throws(
-  () => assertInterviewReportSemantics(unknownParent),
-  /parent question is missing/,
-);
-
-const danglingQuestionFinding = structuredClone(
-  interviewReportFixture.ready,
-);
-danglingQuestionFinding.report.questions[0].dimension_findings[0]
-  .improvement_finding_ids = ['interview_finding_missing'];
-assertValid(
-  'schema-valid dangling question finding',
-  'InterviewReportEnvelope',
-  danglingQuestionFinding,
-);
-assert.throws(
-  () => assertInterviewReportSemantics(danglingQuestionFinding),
-  /dangling finding/,
-);
-
-const danglingPriorityAction = structuredClone(
-  interviewReportFixture.ready,
-);
-danglingPriorityAction.report.priority_actions[0].finding_id =
-  'interview_finding_missing';
-assertValid(
-  'schema-valid dangling priority action',
-  'InterviewReportEnvelope',
-  danglingPriorityAction,
-);
-assert.throws(
-  () => assertInterviewReportSemantics(danglingPriorityAction),
-  /is dangling/,
-);
-
-const mismatchedFindingCategory = structuredClone(
-  interviewReportFixture.ready,
-);
-mismatchedFindingCategory.report.questions[0].dimension_findings[0]
-  .strength_finding_ids = ['interview_finding_relevance_001'];
-mismatchedFindingCategory.report.questions[0].dimension_findings[0]
-  .improvement_finding_ids = [];
-assertValid(
-  'schema-valid mismatched finding category',
-  'InterviewReportEnvelope',
-  mismatchedFindingCategory,
-);
-assert.throws(
-  () => assertInterviewReportSemantics(mismatchedFindingCategory),
-  /finding category mismatch/,
-);
-
-const forgedInterviewExcerpt = structuredClone(interviewReportFixture.ready);
-forgedInterviewExcerpt.report.dimensions[0].improvements[0].evidence[0]
-  .original_excerpt = 'forged excerpt';
-assertValid(
-  'schema-valid forged Interview excerpt',
-  'InterviewReportEnvelope',
-  forgedInterviewExcerpt,
-);
-assert.throws(
-  () => assertInterviewReportSemantics(forgedInterviewExcerpt),
-  /evidence excerpt does not match/,
-);
-
-const mismatchedReportStatusUrl = structuredClone(
-  interviewReportFixture.running,
-);
-mismatchedReportStatusUrl.status_url =
-  '/v1/practice-sessions/session_other/interview-report';
-assertValid(
-  'schema-valid mismatched Interview status URL',
-  'InterviewReportEnvelope',
-  mismatchedReportStatusUrl,
-);
-assert.throws(
-  () => assertInterviewReportSemantics(mismatchedReportStatusUrl),
-  /same Practice Session/,
-);
-
-const ieltsCriterionOrder = ['IELTS_FC', 'IELTS_LR', 'IELTS_GRA', 'IELTS_PR'];
-const ieltsPartOrder = ['PART_1', 'PART_2', 'PART_3'];
-const ieltsFindingKinds = [
-  ['strengths', 'strength_finding_ids'],
-  ['improvements', 'improvement_finding_ids'],
-  ['upgrade_examples', 'upgrade_example_finding_ids'],
-];
-
-const assertIeltsSpeakingReportSemantics = (envelope) => {
-  assert.equal(
-    envelope.status_url,
-    `/v1/practice-sessions/${envelope.practice_session_id}/ielts-speaking-report`,
-    'IELTS report status_url must address the same Practice Session',
-  );
-  if (envelope.evaluation_status !== 'READY') {
-    return;
-  }
-
-  const report = envelope.report;
-  assert.equal(report.schema_version, 'ielts-speaking-report/v1');
-  assert.equal(
-    report.disclaimer_code,
-    'AI_PRACTICE_ESTIMATE_NOT_OFFICIAL_IELTS',
-  );
-  assert.equal(report.speaking_overall.status, 'NOT_AVAILABLE');
-  assert.equal(report.target_plan.status, 'NOT_CONFIGURED');
-  assert.deepEqual(
-    report.criteria.map((criterion) => criterion.criterion_id),
-    ieltsCriterionOrder,
-    'IELTS criteria must use the canonical order',
-  );
-  assert.deepEqual(
-    report.part_reviews.map((part) => part.part_id),
-    ieltsPartOrder,
-    'IELTS Parts must use the canonical order',
-  );
-
-  const questionByIndex = new Map();
-  const questionByTurnId = new Map();
-  const questionByEvidenceRefId = new Map();
-  const questionIds = new Set();
-  const questionIndexesByPart = new Map(
-    ieltsPartOrder.map((part) => [part, []]),
-  );
-  let currentPartOffset = 0;
-  for (let offset = 0; offset < report.questions.length; offset += 1) {
-    const question = report.questions[offset];
-    const expectedIndex = offset + 1;
-    assert.equal(
-      question.index,
-      expectedIndex,
-      'IELTS questions must use one contiguous frozen sequence',
-    );
-    const partOffset = ieltsPartOrder.indexOf(question.part_id);
-    assert.ok(
-      partOffset >= currentPartOffset && partOffset <= currentPartOffset + 1,
-      `Question ${expectedIndex} breaks the frozen IELTS Part order`,
-    );
-    currentPartOffset = partOffset;
-    questionIndexesByPart.get(question.part_id).push(question.index);
-    assert.ok(
-      !questionIds.has(question.question_id),
-      `Duplicate question ${question.question_id}`,
-    );
-    questionIds.add(question.question_id);
-    questionByIndex.set(question.index, question);
-    if (question.response_turn_id !== undefined) {
-      assert.ok(
-        !questionByTurnId.has(question.response_turn_id),
-        `Duplicate response Turn ${question.response_turn_id}`,
-      );
-      questionByTurnId.set(question.response_turn_id, question);
-    }
-    for (const evidenceRefId of question.evidence_ref_ids) {
-      assert.ok(
-        !questionByEvidenceRefId.has(evidenceRefId),
-        `Duplicate response EvidenceRef ${evidenceRefId}`,
-      );
-      questionByEvidenceRefId.set(evidenceRefId, question);
-    }
-    assert.deepEqual(
-      question.criterion_findings.map(
-        (criterion) => criterion.criterion_id,
-      ),
-      ieltsCriterionOrder,
-      `Question ${expectedIndex}: criterion finding order changed`,
-    );
-    if (question.assessment_status === 'NOT_ASSESSED') {
-      for (const criterion of question.criterion_findings) {
-        for (const [, referenceField] of ieltsFindingKinds) {
-          assert.deepEqual(
-            criterion[referenceField],
-            [],
-            `Question ${expectedIndex}: unassessed response references findings`,
-          );
-        }
-      }
-    }
-  }
-  assert.deepEqual(
-    ieltsPartOrder.map((part) => questionIndexesByPart.get(part).length > 0),
-    [true, true, true],
-    'IELTS Full Mock must contain all three Parts',
-  );
-  assert.equal(
-    report.test_summary.question_count,
-    report.questions.length,
-    'IELTS question_count must match the frozen Part composition',
-  );
-  assert.equal(
-    report.test_summary.answered_count,
-    report.questions.filter(
-      (question) => question.opportunity_status === 'PROVIDED',
-    ).length,
-    'IELTS answered_count must match the provided response count',
-  );
-
-  const findingById = new Map();
-  for (const criterion of report.criteria) {
-    if (criterion.criterion_id === 'IELTS_FC') {
-      assert.equal(criterion.estimated_band, undefined);
-      assert.equal(criterion.band_descriptor, undefined);
-    }
-    if (criterion.criterion_id === 'IELTS_PR') {
-      assert.equal(criterion.scoreability_status, 'INSUFFICIENT');
-      assert.equal(criterion.gate_status, 'BLOCKED');
-      assert.equal(criterion.estimated_band, undefined);
-      assert.equal(criterion.band_descriptor, undefined);
-      assert.deepEqual(criterion.strengths, []);
-      assert.deepEqual(criterion.improvements, []);
-      assert.deepEqual(criterion.upgrade_examples, []);
-    }
-    if (
-      ['IELTS_LR', 'IELTS_GRA'].includes(criterion.criterion_id) &&
-      criterion.scoreability_status === 'PROVISIONAL'
-    ) {
-      assert.ok(
-        Number.isInteger(criterion.estimated_band) &&
-          criterion.estimated_band >= 1 &&
-          criterion.estimated_band <= 9,
-        `${criterion.criterion_id}: provisional Band must be an integer 1..9`,
-      );
-      assert.equal(typeof criterion.band_descriptor, 'string');
-    }
-    if (criterion.scoreability_status === 'INSUFFICIENT') {
-      assert.equal(criterion.estimated_band, undefined);
-      assert.equal(criterion.band_descriptor, undefined);
-    }
-
-    const evidenceRefIds = new Set();
-    for (const [findingField, referenceField] of ieltsFindingKinds) {
-      for (const finding of criterion[findingField]) {
-        assert.ok(
-          !findingById.has(finding.finding_id),
-          `Duplicate IELTS finding ${finding.finding_id}`,
-        );
-        findingById.set(finding.finding_id, {
-          criterionId: criterion.criterion_id,
-          findingField,
-          referenceField,
-          finding,
-        });
-        for (const evidence of finding.evidence) {
-          evidenceRefIds.add(evidence.evidence_ref_id);
-          assert.ok(
-            evidence.start_utf8_byte < evidence.end_utf8_byte,
-            `${finding.finding_id}: evidence span must be non-empty`,
-          );
-          const question = questionByTurnId.get(evidence.turn_id);
-          assert.ok(
-            question,
-            `${finding.finding_id}: evidence Turn is not a confirmed response`,
-          );
-          assert.ok(
-            question.evidence_ref_ids.includes(evidence.evidence_ref_id),
-            `${finding.finding_id}: evidence reference is outside its response`,
-          );
-          const transcriptBytes = Buffer.from(
-            question.confirmed_transcript,
-            'utf8',
-          );
-          assert.ok(
-            evidence.end_utf8_byte <= transcriptBytes.length,
-            `${finding.finding_id}: evidence span exceeds its response`,
-          );
-          assert.equal(
-            transcriptBytes
-              .subarray(evidence.start_utf8_byte, evidence.end_utf8_byte)
-              .toString('utf8'),
-            evidence.original_excerpt,
-            `${finding.finding_id}: evidence excerpt does not match its response`,
-          );
-        }
-      }
-    }
-    assert.deepEqual(
-      sortedStrings(criterion.evidence_ref_ids),
-      sortedStrings(evidenceRefIds),
-      `${criterion.criterion_id}: evidence_ref_ids must equal finding evidence`,
-    );
-  }
-
-  for (const question of report.questions) {
-    for (const criterion of question.criterion_findings) {
-      for (const [, referenceField] of ieltsFindingKinds) {
-        for (const findingId of criterion[referenceField]) {
-          const target = findingById.get(findingId);
-          assert.ok(
-            target,
-            `Question ${question.index}: dangling finding ${findingId}`,
-          );
-          assert.equal(
-            target.criterionId,
-            criterion.criterion_id,
-            `Question ${question.index}: finding criterion mismatch`,
-          );
-          assert.equal(
-            target.referenceField,
-            referenceField,
-            `Question ${question.index}: finding category mismatch`,
-          );
-          assert.ok(
-            target.finding.evidence.some((evidence) =>
-              question.evidence_ref_ids.includes(evidence.evidence_ref_id),
-            ),
-            `Question ${question.index}: finding is unrelated to its response`,
-          );
-        }
-      }
-    }
-  }
-
-  for (let offset = 0; offset < report.part_reviews.length; offset += 1) {
-    const part = report.part_reviews[offset];
-    const expectedIndexes = questionIndexesByPart.get(part.part_id);
-    assert.deepEqual(
-      part.question_indexes,
-      expectedIndexes,
-      `${part.part_id}: question indexes changed`,
-    );
-    const partEvidence = new Set(
-      expectedIndexes.flatMap(
-        (index) => questionByIndex.get(index).evidence_ref_ids,
-      ),
-    );
-    assert.deepEqual(
-      sortedStrings(part.evidence_ref_ids),
-      sortedStrings(partEvidence),
-      `${part.part_id}: evidence refs must equal its question evidence`,
-    );
-    for (const [, referenceField] of ieltsFindingKinds) {
-      for (const findingId of part[referenceField]) {
-        const target = findingById.get(findingId);
-        assert.ok(target, `${part.part_id}: dangling finding ${findingId}`);
-        assert.equal(
-          target.referenceField,
-          referenceField,
-          `${part.part_id}: finding category mismatch`,
-        );
-        assert.ok(
-          target.finding.evidence.some((evidence) =>
-            partEvidence.has(evidence.evidence_ref_id),
-          ),
-          `${part.part_id}: finding is unrelated to the Part`,
-        );
-      }
-    }
-  }
-
-  for (const action of report.priority_actions) {
-    const target = findingById.get(action.finding_id);
-    assert.ok(target, `Priority action ${action.finding_id} is dangling`);
-    assert.equal(
-      target.criterionId,
-      action.criterion_id,
-      `Priority action ${action.finding_id} has the wrong criterion`,
-    );
-    assert.equal(
-      target.findingField,
-      'improvements',
-      `Priority action ${action.finding_id} must reference an improvement`,
-    );
-  }
-
-  if (report.scoreability_status === 'INSUFFICIENT') {
-    assert.ok(
-      report.criteria.every(
-        (criterion) =>
-          criterion.scoreability_status === 'INSUFFICIENT' &&
-          criterion.gate_status === 'BLOCKED',
-      ),
-      'INSUFFICIENT report cannot retain provisional criteria',
-    );
-    assert.deepEqual(report.priority_actions, []);
-  }
-};
-
-for (const [name, value] of Object.entries(ieltsSpeakingReportFixture)) {
-  assertValid(
-    `IELTS Speaking report ${name}`,
-    'IeltsSpeakingReportEnvelope',
-    value,
-  );
-  assertIeltsSpeakingReportSemantics(value);
-}
-const digitLeadingIeltsReport = structuredClone(
-  ieltsSpeakingReportFixture.ready,
-);
-digitLeadingIeltsReport.practice_session_id =
-  '20000000-0000-4000-8000-000000000001';
-digitLeadingIeltsReport.status_url =
-  '/v1/practice-sessions/20000000-0000-4000-8000-000000000001/ielts-speaking-report';
-assertValid(
-  'digit-leading Practice session IELTS Speaking report',
-  'IeltsSpeakingReportEnvelope',
-  digitLeadingIeltsReport,
-);
-assertIeltsSpeakingReportSemantics(digitLeadingIeltsReport);
-
-const ieltsReportWithMissingOpportunity = structuredClone(
-  ieltsSpeakingReportFixture.ready,
-);
-const missingQuestion =
-  ieltsReportWithMissingOpportunity.report.questions[13];
-missingQuestion.opportunity_status = 'NOT_PROVIDED';
-missingQuestion.assessment_status = 'NOT_ASSESSED';
-delete missingQuestion.confirmed_transcript;
-delete missingQuestion.response_turn_id;
-missingQuestion.evidence_ref_ids = [];
-ieltsReportWithMissingOpportunity.report.test_summary.answered_count -= 1;
-ieltsReportWithMissingOpportunity.report.part_reviews[2]
-  .evidence_ref_ids.pop();
-assertValid(
-  'IELTS Speaking report with a missing opportunity',
-  'IeltsSpeakingReportEnvelope',
-  ieltsReportWithMissingOpportunity,
-);
-assertIeltsSpeakingReportSemantics(ieltsReportWithMissingOpportunity);
-
-for (const reasonCode of [
-  'POLICY_VIOLATION',
-  'EVIDENCE_REF_INVALID',
-  'VERSION_CONFLICT',
-  'INTERNAL_NON_RETRYABLE',
-]) {
-  const failure = structuredClone(ieltsSpeakingReportFixture.failed);
-  failure.stable_failure = { reason_code: reasonCode, retryable: false };
-  assertValid(
-    `IELTS Speaking ${reasonCode} failure`,
-    'IeltsSpeakingReportEnvelope',
-    failure,
-  );
-}
-const retryableNonTransientIeltsFailure = structuredClone(
-  ieltsSpeakingReportFixture.failed,
-);
-retryableNonTransientIeltsFailure.stable_failure = {
-  reason_code: 'INTERNAL_NON_RETRYABLE',
-  retryable: true,
-};
-assertSchemaRejected(
-  'retryable non-transient IELTS Speaking failure',
-  'IeltsSpeakingReportEnvelope',
-  retryableNonTransientIeltsFailure,
-);
-
-const ieltsReadyWithoutReport = structuredClone(
-  ieltsSpeakingReportFixture.ready,
-);
-delete ieltsReadyWithoutReport.report;
-assertSchemaRejected(
-  'READY IELTS Speaking report without report',
-  'IeltsSpeakingReportEnvelope',
-  ieltsReadyWithoutReport,
-);
-
-for (const [caseName, mutate] of [
-  [
-    'FC Band',
-    (value) => {
-      value.report.criteria[0].estimated_band = 6;
-      value.report.criteria[0].band_descriptor = 'forbidden';
+  validate('EvaluationResource', {
+    evaluation_id: evaluationId,
+    kind: 'SESSION_REPORT',
+    source_id: sessionId,
+    context_id: sessionId,
+    status: 'READY',
+    created_at: createdAt,
+    updated_at: createdAt,
+    feedback_items: [],
+    result: pronunciationUnavailable,
+  });
+  validate('StoredFormalReport', {
+    report_id: evaluationId,
+    evaluation_id: evaluationId,
+    practice_session_id: sessionId,
+    report: pronunciationUnavailable,
+    created_at: createdAt,
+  });
+
+  validate('EvaluationResource', {
+    evaluation_id: '10000000-0000-4000-8000-000000000002',
+    kind: 'PRACTICE_TURN_FEEDBACK',
+    source_id: turnId,
+    context_id: sessionId,
+    status: 'READY',
+    created_at: createdAt,
+    updated_at: createdAt,
+    feedback_items: [],
+    result: {
+      schema_version: 'speech-feedback/v1',
+      scoreability_status: 'PROVISIONAL',
+      summary: 'Feedback is ready.',
+      reason_codes: [],
+      acoustic: {
+        status: 'ASSESSED',
+        pronunciation: 82,
+        fluency: 79,
+      },
     },
-  ],
-  [
-    'PR Band',
-    (value) => {
-      value.report.criteria[3].estimated_band = 6;
-      value.report.criteria[3].band_descriptor = 'forbidden';
+  });
+
+  const feedbackEvidence = {
+    evidence_ref_id: turnId,
+    start_utf8_byte: 0,
+    end_utf8_byte: 3,
+    original_excerpt: 'and',
+  };
+  reject('FeedbackItem', {
+    feedback_item_id: '40000000-0000-4000-8000-000000000001',
+    evaluation_id: evaluationId,
+    position: 1,
+    category: 'STYLE_CORRECTION',
+    evidence: feedbackEvidence,
+    recommendation: 'Optional wording.',
+    correction: 'so',
+    repractice_mode: 'SAME_QUESTION',
+    created_at: createdAt,
+  });
+  reject('EvaluationResource', {
+    evaluation_id: '10000000-0000-4000-8000-000000000003',
+    kind: 'PRACTICE_TURN_FEEDBACK',
+    source_id: turnId,
+    context_id: sessionId,
+    status: 'READY',
+    created_at: createdAt,
+    updated_at: createdAt,
+    feedback_items: [
+      {
+        feedback_item_id: '40000000-0000-4000-8000-000000000001',
+        evaluation_id: '10000000-0000-4000-8000-000000000003',
+        position: 1,
+        category: 'STRENGTH',
+        evidence: feedbackEvidence,
+        recommendation: 'No change is needed.',
+        repractice_mode: 'NONE',
+        created_at: createdAt,
+      },
+      {
+        feedback_item_id: '40000000-0000-4000-8000-000000000002',
+        evaluation_id: '10000000-0000-4000-8000-000000000003',
+        position: 2,
+        category: 'RECOMMENDED_EXPRESSION',
+        evidence: feedbackEvidence,
+        recommendation: 'Optional wording.',
+        correction: 'so',
+        repractice_mode: 'SAME_QUESTION',
+        created_at: createdAt,
+      },
+    ],
+    result: {
+      schema_version: 'speech-feedback/v1',
+      scoreability_status: 'PROVISIONAL',
+      summary: 'Feedback is ready.',
+      reason_codes: [],
+      acoustic: {
+        status: 'NOT_ASSESSED',
+        reason: 'ACOUSTIC_ASSESSMENT_NOT_CONFIGURED',
+      },
     },
-  ],
-  [
-    'numeric Speaking Overall',
-    (value) => (value.report.speaking_overall.estimated_band = 6),
-  ],
-  [
-    'Part Band',
-    (value) => (value.report.part_reviews[0].estimated_band = 6),
-  ],
-  [
-    'question score',
-    (value) => (value.report.questions[0].score = 6),
-  ],
-  [
-    'invented target Band',
-    (value) => (value.report.target_plan.target_band = 7),
-  ],
-]) {
-  const invalid = structuredClone(ieltsSpeakingReportFixture.ready);
-  mutate(invalid);
-  assertSchemaRejected(
-    `IELTS Speaking report with ${caseName}`,
-    'IeltsSpeakingReportEnvelope',
-    invalid,
+  });
+
+  const operations = new Set();
+  for (const [path, item] of Object.entries(contract.paths)) {
+    for (const method of ['get', 'post', 'put', 'patch', 'delete']) {
+      if (item[method]) operations.add(`${method.toUpperCase()} ${path}`);
+    }
+  }
+  for (const expected of [
+    'GET /v1/practice-sessions/{practice_session_id}/evaluation',
+    'POST /v1/practice-sessions/{practice_session_id}/evaluation/retry',
+    'GET /v1/practice-turns/{turn_id}/evaluation',
+    'GET /v1/agent-messages/{message_id}/evaluation',
+    'GET /v1/evaluation-reports',
+    'GET /v1/evaluation-reports/{report_id}',
+    'POST /v1/evaluation-feedback-items/{feedback_item_id}/retry-turns',
+  ]) {
+    assert.ok(operations.has(expected), `missing ${expected}`);
+  }
+  const retrySessionEvaluation = contract.paths[
+    '/v1/practice-sessions/{practice_session_id}/evaluation/retry'
+  ].post;
+  assert.equal(retrySessionEvaluation.requestBody, undefined);
+  for (const status of ['200', '202']) {
+    assert.equal(
+      retrySessionEvaluation.responses[status].content['application/json'].schema.$ref,
+      '#/components/schemas/EvaluationResource',
+    );
+  }
+  for (const retired of [
+    'POST /v1/evaluations',
+    'GET /v1/evaluations/{evaluation_id}',
+    'POST /v1/evaluations/{evaluation_id}/re-evaluate',
+    'GET /v1/speech-feedback/{speech_feedback_id}',
+    'POST /v1/feedback-items/{feedback_item_id}/retry-requests',
+    'GET /v1/retry-requests/{retry_request_id}',
+  ]) {
+    assert.ok(!operations.has(retired), `retired operation remains: ${retired}`);
+  }
+
+  const assessed = contract.components.schemas.AcousticAssessed;
+  assert.equal(assessed.properties.provider, undefined);
+  assert.equal(assessed.properties.provider_session, undefined);
+  assert.ok(contract.components.schemas.ReportDimension.required.includes('score'));
+  const retry = contract.paths[
+    '/v1/evaluation-feedback-items/{feedback_item_id}/retry-turns'
+  ].post;
+  assert.equal(retry.requestBody, undefined);
+  assert.equal(retry.responses['201'].headers, undefined);
+  assert.deepEqual(
+    contract.components.schemas.FeedbackItem.properties.repractice_mode.enum,
+    ['NONE', 'SAME_QUESTION'],
   );
+  assert.deepEqual(contract.components.schemas.FeedbackItemCategory.enum, [
+    'CORRECTION',
+    'STRENGTH',
+    'RECOMMENDED_EXPRESSION',
+  ]);
+  assert.deepEqual(
+    contract.components.schemas.RetryTurnResource.properties.status.enum,
+    ['answering', 'transcribing', 'transcribed', 'confirmed', 'failed'],
+  );
+  const agentStatusPattern = new RegExp(
+    contract.components.schemas.AgentMessage.properties.speech_feedback_status_url.pattern,
+  );
+  const practiceStatusPattern = new RegExp(
+    contract.components.schemas.ConfirmedPracticeTurn.properties.speech_feedback_status_url.pattern,
+  );
+  assert.match(`/v1/agent-messages/${turnId}/evaluation`, agentStatusPattern);
+  assert.match(`/v1/practice-turns/${turnId}/evaluation`, practiceStatusPattern);
+  assert.doesNotMatch(`/v1/speech-feedback/${turnId}`, agentStatusPattern);
+  assert.doesNotMatch(`/v1/speech-feedback/${turnId}`, practiceStatusPattern);
+
+  console.log('Validated the unified Evaluation lifecycle, report, and retry contract.');
+} finally {
+  await rm(temporaryDirectory, {recursive: true, force: true});
 }
-
-const wrongIeltsQuestionIndex = structuredClone(
-  ieltsSpeakingReportFixture.ready,
-);
-wrongIeltsQuestionIndex.report.questions[0].index = 2;
-assertValid(
-  'schema-valid wrong IELTS question index',
-  'IeltsSpeakingReportEnvelope',
-  wrongIeltsQuestionIndex,
-);
-assert.throws(
-  () => assertIeltsSpeakingReportSemantics(wrongIeltsQuestionIndex),
-  /frozen sequence/,
-);
-
-const wrongIeltsPartIndexes = structuredClone(
-  ieltsSpeakingReportFixture.ready,
-);
-wrongIeltsPartIndexes.report.part_reviews[0].question_indexes = [1, 2, 3];
-assertValid(
-  'schema-valid wrong IELTS Part indexes',
-  'IeltsSpeakingReportEnvelope',
-  wrongIeltsPartIndexes,
-);
-assert.throws(
-  () => assertIeltsSpeakingReportSemantics(wrongIeltsPartIndexes),
-  /question indexes changed/,
-);
-
-const forgedIeltsExcerpt = structuredClone(ieltsSpeakingReportFixture.ready);
-forgedIeltsExcerpt.report.criteria[0].strengths[0].evidence[0]
-  .original_excerpt = 'forged excerpt';
-assertValid(
-  'schema-valid forged IELTS excerpt',
-  'IeltsSpeakingReportEnvelope',
-  forgedIeltsExcerpt,
-);
-assert.throws(
-  () => assertIeltsSpeakingReportSemantics(forgedIeltsExcerpt),
-  /evidence excerpt does not match/,
-);
-
-const danglingIeltsQuestionFinding = structuredClone(
-  ieltsSpeakingReportFixture.ready,
-);
-danglingIeltsQuestionFinding.report.questions[0].criterion_findings[1]
-  .improvement_finding_ids = ['ielts_finding_missing'];
-assertValid(
-  'schema-valid dangling IELTS question finding',
-  'IeltsSpeakingReportEnvelope',
-  danglingIeltsQuestionFinding,
-);
-assert.throws(
-  () => assertIeltsSpeakingReportSemantics(danglingIeltsQuestionFinding),
-  /dangling finding/,
-);
-
-const duplicatedIeltsQuestionEvidence = structuredClone(
-  ieltsSpeakingReportFixture.ready,
-);
-duplicatedIeltsQuestionEvidence.report.questions[2].evidence_ref_ids = [
-  duplicatedIeltsQuestionEvidence.report.questions[1].evidence_ref_ids[0],
-];
-duplicatedIeltsQuestionEvidence.report.part_reviews[0].evidence_ref_ids =
-  duplicatedIeltsQuestionEvidence.report.part_reviews[0].evidence_ref_ids
-    .filter((refID) => refID !== 'ielts_evidence_003');
-assertValid(
-  'schema-valid duplicate IELTS question EvidenceRef',
-  'IeltsSpeakingReportEnvelope',
-  duplicatedIeltsQuestionEvidence,
-);
-assert.throws(
-  () => assertIeltsSpeakingReportSemantics(duplicatedIeltsQuestionEvidence),
-  /Duplicate response EvidenceRef/,
-);
-
-const mismatchedIeltsStatusUrl = structuredClone(
-  ieltsSpeakingReportFixture.running,
-);
-mismatchedIeltsStatusUrl.status_url =
-  '/v1/practice-sessions/session_other/ielts-speaking-report';
-assertValid(
-  'schema-valid mismatched IELTS status URL',
-  'IeltsSpeakingReportEnvelope',
-  mismatchedIeltsStatusUrl,
-);
-assert.throws(
-  () => assertIeltsSpeakingReportSemantics(mismatchedIeltsStatusUrl),
-  /same Practice Session/,
-);

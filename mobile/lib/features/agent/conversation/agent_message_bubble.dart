@@ -1,34 +1,40 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:speakup/design/conversation_bubble_surface.dart';
+import 'package:speakup/design/conversation_message_content.dart';
 import 'package:speakup/design/practice_conversation_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
-import 'package:speakup/features/agent/handoff/agent_handoff.dart';
-import 'package:speakup/features/agent/handoff/practice_plan_handoff_card.dart';
+import 'package:speakup/features/agent/client_action/agent_client_action.dart';
 
 import 'agent_models.dart';
 import 'agent_message_audio_controller.dart';
+
+typedef AgentClientActionBuilder =
+    Widget? Function(BuildContext context, AgentClientAction action);
 
 final class AgentMessageBubble extends StatefulWidget {
   const AgentMessageBubble({
     required this.message,
     this.messageAudioController,
-    this.onHandoff,
+    this.onTranslate,
+    this.clientActionBuilder,
     this.onRefreshImage,
     this.correction,
     this.polish,
+    this.feedbackNotice,
     super.key,
   });
 
   final AgentMessage message;
   final AgentMessageAudioController? messageAudioController;
-  final ValueChanged<AgentHandoff>? onHandoff;
+  final Future<String> Function(AgentMessage message)? onTranslate;
+  final AgentClientActionBuilder? clientActionBuilder;
   final FutureOr<void> Function(String messageId, String imageAssetId)?
   onRefreshImage;
   final InlineLanguageSuggestion? correction;
   final InlineLanguageSuggestion? polish;
+  final String? feedbackNotice;
 
   @override
   State<AgentMessageBubble> createState() => _AgentMessageBubbleState();
@@ -36,6 +42,7 @@ final class AgentMessageBubble extends StatefulWidget {
 
 class _AgentMessageBubbleState extends State<AgentMessageBubble> {
   late _AgentMessageAudioSnapshot _audioSnapshot;
+  bool _languageFeedbackExpanded = false;
 
   @override
   void initState() {
@@ -47,6 +54,12 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
   @override
   void didUpdateWidget(covariant AgentMessageBubble oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.message.id != widget.message.id ||
+        (widget.correction == null &&
+            widget.polish == null &&
+            widget.feedbackNotice == null)) {
+      _languageFeedbackExpanded = false;
+    }
     if (oldWidget.messageAudioController != widget.messageAudioController) {
       oldWidget.messageAudioController?.removeListener(_handleAudioController);
       widget.messageAudioController?.addListener(_handleAudioController);
@@ -97,7 +110,18 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
   @override
   Widget build(BuildContext context) {
     final message = widget.message;
+    final actionBuilder = widget.clientActionBuilder;
+    final clientActionWidgets = actionBuilder == null
+        ? const <Widget>[]
+        : message.clientActions
+              .map((action) => actionBuilder(context, action))
+              .whereType<Widget>()
+              .toList(growable: false);
     final isUser = message.role == AgentMessageRole.user;
+    final voiceNeedsBottomInset =
+        isUser &&
+        message.modality == AgentMessageModality.voice &&
+        (_languageFeedbackExpanded || _audioSnapshot.error != null);
     const foreground = SpeakUpDesign.ink;
     final primaryContent = switch (message.modality) {
       AgentMessageModality.voice => _buildUserVoice(context, foreground),
@@ -105,142 +129,120 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
         context,
         foreground,
       ),
-      AgentMessageModality.text => _buildTextMessage(context, foreground),
+      AgentMessageModality.text => _buildTextMessage(),
     };
-    return ConversationBubbleSurface(
+    final bubble = ConversationBubbleSurface(
       bubbleKey: Key('agent-message-${message.id}'),
       isUser: isUser,
-      margin: const EdgeInsets.only(bottom: 7),
-      child: message.handoffs.isEmpty
-          ? primaryContent
-          : Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                primaryContent,
-                const SizedBox(height: 10),
-                for (final handoff in message.handoffs)
-                  switch (handoff) {
-                    ConfirmPracticePlanHandoff() => PracticePlanHandoffCard(
-                      handoff: handoff,
-                      onConfirm: widget.onHandoff == null
-                          ? null
-                          : () => widget.onHandoff!(handoff),
-                    ),
-                  },
-              ],
-            ),
+      margin: clientActionWidgets.isEmpty
+          ? const EdgeInsets.only(bottom: 7)
+          : EdgeInsets.zero,
+      padding: isUser && message.modality == AgentMessageModality.voice
+          ? EdgeInsets.fromLTRB(14, 11, 12, voiceNeedsBottomInset ? 11 : 0)
+          : null,
+      child: primaryContent,
+    );
+    if (clientActionWidgets.isEmpty) {
+      return bubble;
+    }
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 7),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          bubble,
+          const SizedBox(height: 10),
+          for (final action in clientActionWidgets) action,
+        ],
+      ),
     );
   }
 
-  Widget _buildTextMessage(BuildContext context, Color foreground) {
+  Widget _buildTextMessage() {
     final message = widget.message;
     final audioController = widget.messageAudioController;
-    if (message.role == AgentMessageRole.user) {
-      return Text(
-        message.text,
-        style: TextStyle(color: foreground, fontSize: 15, height: 1.45),
-      );
-    }
-    final markdown = _AssistantMarkdown(
-      key: Key('agent-assistant-text-${message.id}'),
-      data: message.text,
-      foreground: foreground,
-    );
-    if (message.isStreaming && message.text.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 6),
-        child: SizedBox.square(
-          key: Key('agent-assistant-streaming'),
-          dimension: 16,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
-      );
-    }
-    if (message.isStreaming || message.hasFailed) {
-      return markdown;
-    }
-    if (audioController == null) {
-      return markdown;
-    }
-    final loading = audioController.loadingMessageId == message.id;
-    final playing = audioController.playingMessageId == message.id;
-    final error = audioController.errorMessageId == message.id
-        ? audioController.errorMessage
+    final loading = audioController?.loadingMessageId == message.id;
+    final playing = audioController?.playingMessageId == message.id;
+    final error = audioController?.errorMessageId == message.id
+        ? audioController?.errorMessage
         : null;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        markdown,
-        const SizedBox(height: 6),
-        Wrap(
-          spacing: 4,
-          runSpacing: 4,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            TextButton.icon(
-              key: Key('agent-assistant-tts-${message.id}'),
-              onPressed: () => audioController.toggleMessagePlayback(message),
-              style: TextButton.styleFrom(
-                foregroundColor: SpeakUpDesign.primary,
-                backgroundColor: SpeakUpDesign.surfaceMuted,
-                minimumSize: const Size(0, 32),
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                visualDensity: VisualDensity.compact,
-                textStyle: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              icon: loading
-                  ? const SizedBox.square(
-                      dimension: 14,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : Icon(
-                      playing ? Icons.stop_rounded : Icons.volume_up_outlined,
-                      size: 17,
-                    ),
-              label: Text(
-                loading
-                    ? '加载中'
-                    : playing
-                    ? '停止朗读'
-                    : error == null
-                    ? '朗读'
-                    : '重试朗读',
-              ),
-            ),
-            TextButton(
-              key: Key('agent-assistant-speed-${message.id}'),
-              onPressed: audioController.cycleSpeechSpeed,
-              style: TextButton.styleFrom(
-                foregroundColor: SpeakUpDesign.secondary,
-                minimumSize: const Size(0, 32),
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                visualDensity: VisualDensity.compact,
-                textStyle: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              child: Text('${_formatSpeed(audioController.speechSpeed)}×'),
-            ),
-          ],
-        ),
-        if (error != null) ...[
-          const SizedBox(height: 3),
-          Text(
-            error,
-            key: Key('agent-message-media-error-${message.id}'),
-            style: const TextStyle(
-              color: SpeakUpDesign.error,
-              fontSize: 12,
-              height: 1.35,
+    final actions = <Widget>[];
+    if (audioController != null && message.role == AgentMessageRole.assistant) {
+      actions.addAll([
+        TextButton.icon(
+          key: Key('agent-assistant-tts-${message.id}'),
+          onPressed: message.isStreaming
+              ? null
+              : () => audioController.toggleMessagePlayback(message),
+          style: TextButton.styleFrom(
+            foregroundColor: SpeakUpDesign.primary,
+            backgroundColor: SpeakUpDesign.surfaceMuted,
+            minimumSize: const Size(0, 32),
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            visualDensity: VisualDensity.compact,
+            textStyle: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
             ),
           ),
-        ],
-      ],
+          icon: loading
+              ? const SizedBox.square(
+                  dimension: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Icon(
+                  playing ? Icons.stop_rounded : Icons.volume_up_outlined,
+                  size: 17,
+                ),
+          label: Text(
+            loading
+                ? '加载中'
+                : playing
+                ? '停止朗读'
+                : error == null
+                ? '朗读'
+                : '重试朗读',
+          ),
+        ),
+        TextButton(
+          key: Key('agent-assistant-speed-${message.id}'),
+          onPressed: audioController.cycleSpeechSpeed,
+          style: TextButton.styleFrom(
+            foregroundColor: SpeakUpDesign.secondary,
+            minimumSize: const Size(0, 32),
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            visualDensity: VisualDensity.compact,
+            textStyle: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          child: Text('${_formatSpeed(audioController.speechSpeed)}×'),
+        ),
+      ]);
+    }
+    return ConversationTextMessageContent(
+      sourceId: message.id,
+      text: message.text,
+      isUser: message.role == AgentMessageRole.user,
+      isStreaming: message.isStreaming,
+      hasFailed: message.hasFailed,
+      textKey: message.role == AgentMessageRole.assistant
+          ? Key('agent-assistant-text-${message.id}')
+          : null,
+      streamingKey: const Key('agent-assistant-streaming'),
+      translationButtonKey: Key('agent-assistant-translate-${message.id}'),
+      translationContentKey: Key('agent-assistant-translation-${message.id}'),
+      translationErrorKey: Key(
+        'agent-assistant-translation-error-${message.id}',
+      ),
+      onTranslate: widget.onTranslate == null
+          ? null
+          : () => widget.onTranslate!(message),
+      leadingActions: actions,
+      mediaError: error,
+      mediaErrorKey: Key('agent-message-media-error-${message.id}'),
     );
   }
 
@@ -274,9 +276,12 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
 
   Widget _buildUserVoice(BuildContext context, Color foreground) {
     final message = widget.message;
-    final audio = message.audio!;
+    final audio = message.audio;
     final audioController = widget.messageAudioController;
-    final readable = audio.isReadable && audioController != null;
+    final recordingDeleted =
+        audio == null || audio.status == AgentMessageAudioStatus.deleted;
+    final readable =
+        !recordingDeleted && audio.isReadable && audioController != null;
     final loading =
         audioController?.loadingMessageId == message.id &&
         audioController?.messagePlaybackUsesPreview == false;
@@ -289,13 +294,11 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
     final previewPlaying =
         audioController?.playingMessageId == message.id &&
         audioController?.messagePlaybackUsesPreview == true;
-    final deleting =
-        audioController?.deletingMessageId == message.id ||
-        audio.status == AgentMessageAudioStatus.deleting;
     final error = audioController?.errorMessageId == message.id
         ? audioController?.errorMessage
         : null;
     return Column(
+      mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
@@ -303,61 +306,41 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
           key: Key('agent-user-voice-transcript-${message.id}'),
           style: TextStyle(color: foreground, fontSize: 16, height: 1.45),
         ),
-        const SizedBox(height: 10),
-        InlineLanguageFeedback(
-          leading: _VoicePlaybackAction(
-            key: Key('agent-user-voice-play-${message.id}'),
-            durationKey: Key('agent-user-voice-duration-${message.id}'),
-            loading: loading,
-            playing: playing,
-            duration: audio.duration,
-            onPressed: readable
-                ? () => audioController.toggleMessagePlayback(message)
-                : null,
+        if (recordingDeleted) ...[
+          const SizedBox(height: 4),
+          const Text(
+            '录音已删除，文字已保留',
+            key: Key('agent-user-voice-recording-deleted'),
+            style: SpeakUpDesign.meta,
           ),
+        ],
+        InlineLanguageFeedback(
+          leading: recordingDeleted
+              ? null
+              : _VoicePlaybackAction(
+                  key: Key('agent-user-voice-play-${message.id}'),
+                  loading: loading,
+                  playing: playing,
+                  duration: audio.duration,
+                  onPressed: readable
+                      ? () => audioController.toggleMessagePlayback(message)
+                      : null,
+                ),
           correction: widget.correction,
           polish: widget.polish,
+          feedbackNotice: widget.feedbackNotice,
+          optimizeIconOnly: true,
+          onExpandedChanged: (expanded) {
+            if (_languageFeedbackExpanded == expanded) {
+              return;
+            }
+            setState(() => _languageFeedbackExpanded = expanded);
+          },
           suggestionLoading: previewLoading,
           suggestionPlaying: previewPlaying,
           onSpeakSuggestion: audioController == null
               ? null
               : (text) => audioController.toggleSpeechPreview(message, text),
-          trailing:
-              audio.status != AgentMessageAudioStatus.deleted &&
-                  audioController != null
-              ? IconButton(
-                  key: Key('agent-user-voice-delete-${message.id}'),
-                  tooltip: deleting ? '正在删除录音' : '删除录音',
-                  onPressed: deleting
-                      ? null
-                      : () => audioController.deleteMessageAudio(message),
-                  constraints: const BoxConstraints.tightFor(
-                    width: SpeakUpDesign.minTapTarget,
-                    height: SpeakUpDesign.minTapTarget,
-                  ),
-                  padding: EdgeInsets.zero,
-                  visualDensity: VisualDensity.compact,
-                  color: SpeakUpDesign.secondary,
-                  icon: deleting
-                      ? const SizedBox.square(
-                          dimension: 14,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.delete_outline_rounded, size: 19),
-                )
-              : !audio.isReadable
-              ? Text(
-                  audio.status == AgentMessageAudioStatus.deleting
-                      ? '正在删除录音'
-                      : '录音已删除',
-                  key: Key(
-                    audio.status == AgentMessageAudioStatus.deleting
-                        ? 'agent-user-voice-deleting-${message.id}'
-                        : 'agent-user-voice-deleted-${message.id}',
-                  ),
-                  style: SpeakUpDesign.meta,
-                )
-              : null,
         ),
         if (error != null) ...[
           const SizedBox(height: 4),
@@ -378,7 +361,6 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
 
 class _VoicePlaybackAction extends StatelessWidget {
   const _VoicePlaybackAction({
-    required this.durationKey,
     required this.loading,
     required this.playing,
     required this.duration,
@@ -386,7 +368,6 @@ class _VoicePlaybackAction extends StatelessWidget {
     super.key,
   });
 
-  final Key durationKey;
   final bool loading;
   final bool playing;
   final Duration duration;
@@ -403,40 +384,21 @@ class _VoicePlaybackAction extends StatelessWidget {
         child: InkWell(
           onTap: onPressed,
           borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(
-              minWidth: SpeakUpDesign.minTapTarget,
-              minHeight: SpeakUpDesign.minTapTarget,
-            ),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 6),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (loading)
-                    const SizedBox.square(
+          child: SizedBox.square(
+            dimension: SpeakUpDesign.minTapTarget,
+            child: Center(
+              child: loading
+                  ? const SizedBox.square(
                       dimension: 18,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  else
-                    Icon(
+                  : Icon(
                       playing ? Icons.pause_rounded : Icons.graphic_eq_rounded,
                       size: 24,
                       color: onPressed == null
                           ? SpeakUpDesign.tertiary
                           : SpeakUpDesign.primary,
                     ),
-                  const SizedBox(width: 5),
-                  Text(
-                    _formatDuration(duration),
-                    key: durationKey,
-                    style: SpeakUpDesign.meta.copyWith(
-                      color: SpeakUpDesign.primary,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
-              ),
             ),
           ),
         ),
@@ -497,65 +459,6 @@ class _MessageImageThumbnail extends StatelessWidget {
                 errorBuilder: (_, _, _) => placeholder,
               ),
             ),
-    );
-  }
-}
-
-class _AssistantMarkdown extends StatelessWidget {
-  const _AssistantMarkdown({
-    required this.data,
-    required this.foreground,
-    super.key,
-  });
-
-  final String data;
-  final Color foreground;
-
-  @override
-  Widget build(BuildContext context) {
-    final body = TextStyle(color: foreground, fontSize: 15, height: 1.48);
-    return MarkdownBody(
-      data: data,
-      selectable: true,
-      fitContent: true,
-      styleSheet: MarkdownStyleSheet(
-        a: body,
-        p: body,
-        pPadding: EdgeInsets.zero,
-        em: body.copyWith(fontStyle: FontStyle.italic),
-        strong: body.copyWith(fontWeight: FontWeight.w700),
-        code: body.copyWith(
-          fontFamily: 'monospace',
-          fontSize: 13.5,
-          backgroundColor: SpeakUpDesign.surfaceMuted,
-        ),
-        h1: body.copyWith(fontSize: 20, fontWeight: FontWeight.w700),
-        h2: body.copyWith(fontSize: 18, fontWeight: FontWeight.w700),
-        h3: body.copyWith(fontSize: 16, fontWeight: FontWeight.w700),
-        h4: body.copyWith(fontWeight: FontWeight.w700),
-        h5: body.copyWith(fontWeight: FontWeight.w700),
-        h6: body.copyWith(fontWeight: FontWeight.w700),
-        blockquote: body.copyWith(color: SpeakUpDesign.secondary),
-        listBullet: body,
-        listIndent: 20,
-        blockSpacing: 8,
-        blockquotePadding: const EdgeInsets.fromLTRB(10, 5, 8, 5),
-        blockquoteDecoration: const BoxDecoration(
-          color: SpeakUpDesign.surfaceMuted,
-          border: Border(
-            left: BorderSide(color: SpeakUpDesign.primary, width: 3),
-          ),
-        ),
-        codeblockPadding: const EdgeInsets.all(10),
-        codeblockDecoration: BoxDecoration(
-          color: SpeakUpDesign.surfaceMuted,
-          borderRadius: BorderRadius.circular(8),
-        ),
-      ),
-      imageBuilder: (uri, title, alt) => Text(
-        alt == null || alt.trim().isEmpty ? '[图片已隐藏]' : '[图片：$alt]',
-        style: body.copyWith(color: SpeakUpDesign.secondary),
-      ),
     );
   }
 }

@@ -15,13 +15,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	conversationhttp "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/http"
 	conversationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation/postgres"
-	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal"
-	goalhttp "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/goal/http"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpresponse"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/migration"
@@ -38,9 +35,9 @@ const (
 	agentTestUserC = "10000000-0000-4000-8000-000000000003"
 )
 
-func TestPostgresAgentDataVerticalSlice(t *testing.T) {
+func TestPostgresAgentConversationVerticalSlice(t *testing.T) {
 	database := newAgentTestDatabase(t)
-	goalService, service := newAgentDataServices(t, database.pool)
+	service := newAgentDataServices(t, database.pool)
 	actorA := requestcontext.Actor{
 		UserID:    agentTestUserA,
 		SessionID: "20000000-0000-4000-8000-000000000001",
@@ -49,82 +46,14 @@ func TestPostgresAgentDataVerticalSlice(t *testing.T) {
 		UserID:    agentTestUserB,
 		SessionID: "20000000-0000-4000-8000-000000000002",
 	}
-	actorC := requestcontext.Actor{
-		UserID:    agentTestUserC,
-		SessionID: "20000000-0000-4000-8000-000000000003",
-	}
 
-	goalA, err := goalService.Create(
-		context.Background(),
-		actorA,
-		"Customer renewal meeting",
-	)
-	if err != nil {
-		t.Fatalf("create goal A: %v", err)
-	}
-	secondGoalA, err := goalService.Create(
-		context.Background(),
-		actorA,
-		"Quarterly presentation",
-	)
-	if err != nil {
-		t.Fatalf("create second goal A: %v", err)
-	}
-	goalB, err := goalService.Create(
-		context.Background(),
-		actorB,
-		"Private interview",
-	)
-	if err != nil {
-		t.Fatalf("create goal B: %v", err)
-	}
-	if _, err := goalService.Create(
-		context.Background(),
-		actorC,
-		"Standalone ownership constraint",
-	); err != nil {
-		t.Fatalf("create standalone Goal: %v", err)
-	}
-	listA, err := goalService.List(context.Background(), actorA)
-	if err != nil {
-		t.Fatalf("list goals A: %v", err)
-	}
-	if len(listA) != 2 {
-		t.Fatalf("goal A count = %d, want 2", len(listA))
-	}
-	if _, err := goalService.ReadOwned(
-		context.Background(),
-		actorA,
-		goalB.ID,
-	); !errors.Is(err, goal.ErrNotFound) {
-		t.Fatalf("cross-owner Goal read error = %v, want not found", err)
-	}
-
-	threadA, err := service.CreateThread(
-		context.Background(),
-		actorA,
-		goalA.ID,
-	)
+	threadA, err := service.CreateThread(context.Background(), actorA)
 	if err != nil {
 		t.Fatalf("create thread A: %v", err)
 	}
-	if threadA.ActiveGoalID != goalA.ID {
-		t.Fatalf("active goal = %q, want %q", threadA.ActiveGoalID, goalA.ID)
-	}
-	threadB, err := service.CreateThread(
-		context.Background(),
-		actorB,
-		goalB.ID,
-	)
+	threadB, err := service.CreateThread(context.Background(), actorB)
 	if err != nil {
 		t.Fatalf("create thread B: %v", err)
-	}
-	if _, err := service.CreateThread(
-		context.Background(),
-		actorA,
-		goalB.ID,
-	); !errors.Is(err, conversation.ErrNotFound) {
-		t.Fatalf("cross-owner Goal link error = %v, want not found", err)
 	}
 	if _, err := service.GetThread(
 		context.Background(),
@@ -160,9 +89,6 @@ func TestPostgresAgentDataVerticalSlice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("append first message: %v", err)
 	}
-	if first.Modality != conversation.MessageModalityText {
-		t.Fatalf("plain Message modality = %q, want text", first.Modality)
-	}
 	replayed, err := service.AppendUserMessage(
 		context.Background(),
 		actorA,
@@ -191,21 +117,20 @@ func TestPostgresAgentDataVerticalSlice(t *testing.T) {
 	results := make(chan conversation.Message, concurrentMessages)
 	failures := make(chan error, concurrentMessages)
 	var writers sync.WaitGroup
-	for index := 0; index < concurrentMessages; index++ {
-		index := index
+	for index := range concurrentMessages {
 		writers.Add(1)
 		go func() {
 			defer writers.Done()
 			<-start
-			message, err := service.AppendUserMessage(
+			message, appendErr := service.AppendUserMessage(
 				context.Background(),
 				actorA,
 				threadA.ID,
 				fmt.Sprintf("parallel-%02d", index),
 				fmt.Sprintf("parallel content %02d", index),
 			)
-			if err != nil {
-				failures <- err
+			if appendErr != nil {
+				failures <- appendErr
 				return
 			}
 			results <- message
@@ -215,8 +140,8 @@ func TestPostgresAgentDataVerticalSlice(t *testing.T) {
 	writers.Wait()
 	close(results)
 	close(failures)
-	for err := range failures {
-		t.Errorf("parallel append: %v", err)
+	for failure := range failures {
+		t.Errorf("parallel append: %v", failure)
 	}
 	if t.Failed() {
 		t.FailNow()
@@ -229,66 +154,12 @@ func TestPostgresAgentDataVerticalSlice(t *testing.T) {
 		return sequences[left] < sequences[right]
 	})
 	for index, sequence := range sequences {
-		want := int64(index + 1)
-		if sequence != want {
+		if want := int64(index + 1); sequence != want {
 			t.Fatalf("sequence[%d] = %d, want %d", index, sequence, want)
 		}
 	}
 
-	sameKeyThread, err := service.CreateThread(
-		context.Background(),
-		actorA,
-		"",
-	)
-	if err != nil {
-		t.Fatalf("create same-key thread: %v", err)
-	}
-	const sameKeyWriters = 8
-	sameKeyStart := make(chan struct{})
-	sameKeyResults := make(chan conversation.Message, sameKeyWriters)
-	sameKeyFailures := make(chan error, sameKeyWriters)
-	writers = sync.WaitGroup{}
-	for range sameKeyWriters {
-		writers.Add(1)
-		go func() {
-			defer writers.Done()
-			<-sameKeyStart
-			message, err := service.AppendUserMessage(
-				context.Background(),
-				actorA,
-				sameKeyThread.ID,
-				"same-client-message",
-				"Store this exactly once.",
-			)
-			if err != nil {
-				sameKeyFailures <- err
-				return
-			}
-			sameKeyResults <- message
-		}()
-	}
-	close(sameKeyStart)
-	writers.Wait()
-	close(sameKeyResults)
-	close(sameKeyFailures)
-	for err := range sameKeyFailures {
-		t.Errorf("same-key append: %v", err)
-	}
-	var sameKeyID string
-	for result := range sameKeyResults {
-		if sameKeyID == "" {
-			sameKeyID = result.ID
-		}
-		if result.ID != sameKeyID || result.Sequence != 1 {
-			t.Fatalf("same-key result = %#v, want one sequence-1 message", result)
-		}
-	}
-
-	panicThread, err := service.CreateThread(
-		context.Background(),
-		actorA,
-		"",
-	)
+	panicThread, err := service.CreateThread(context.Background(), actorA)
 	if err != nil {
 		t.Fatalf("create panic rollback thread: %v", err)
 	}
@@ -304,9 +175,7 @@ func TestPostgresAgentDataVerticalSlice(t *testing.T) {
 	acquiredBeforePanic := database.pool.Stat().AcquiredConns()
 	var recovered any
 	func() {
-		defer func() {
-			recovered = recover()
-		}()
+		defer func() { recovered = recover() }()
 		_, _ = panicRepository.AppendUserMessage(
 			context.Background(),
 			actorA.UserID,
@@ -318,8 +187,7 @@ func TestPostgresAgentDataVerticalSlice(t *testing.T) {
 	if recovered == nil {
 		t.Fatal("panic ID generator did not panic")
 	}
-	if acquiredAfterPanic := database.pool.Stat().AcquiredConns(); acquiredAfterPanic !=
-		acquiredBeforePanic {
+	if acquiredAfterPanic := database.pool.Stat().AcquiredConns(); acquiredAfterPanic != acquiredBeforePanic {
 		t.Fatalf(
 			"acquired connections after panic = %d, want %d",
 			acquiredAfterPanic,
@@ -336,141 +204,23 @@ func TestPostgresAgentDataVerticalSlice(t *testing.T) {
 		t.Fatalf("append after repository panic: %v", err)
 	}
 
-	link, err := service.SetActiveGoal(
-		context.Background(),
-		actorA,
-		threadA.ID,
-		secondGoalA.ID,
-	)
-	if err != nil {
-		t.Fatalf("change active goal: %v", err)
-	}
-	if !link.Active || link.GoalID != secondGoalA.ID {
-		t.Fatalf("unexpected active link: %#v", link)
-	}
-	threadAfterSelection, err := service.GetThread(
-		context.Background(),
-		actorA,
-		threadA.ID,
-	)
-	if err != nil {
-		t.Fatalf("get Thread after active Goal selection: %v", err)
-	}
-	replayedLink, err := service.SetActiveGoal(
-		context.Background(),
-		actorA,
-		threadA.ID,
-		secondGoalA.ID,
-	)
-	if err != nil {
-		t.Fatalf("replay active Goal selection: %v", err)
-	}
-	threadAfterSelectionReplay, err := service.GetThread(
-		context.Background(),
-		actorA,
-		threadA.ID,
-	)
-	if err != nil {
-		t.Fatalf("get Thread after active Goal replay: %v", err)
-	}
-	if !replayedLink.LinkedAt.Equal(link.LinkedAt) ||
-		!replayedLink.UpdatedAt.Equal(link.UpdatedAt) ||
-		!threadAfterSelectionReplay.UpdatedAt.Equal(threadAfterSelection.UpdatedAt) {
-		t.Fatalf(
-			"replayed active Goal changed timestamps: %#v / %#v",
-			link,
-			replayedLink,
-		)
-	}
-	if _, err := service.SetActiveGoal(
-		context.Background(),
-		actorA,
-		threadA.ID,
-		goalB.ID,
-	); !errors.Is(err, conversation.ErrNotFound) {
-		t.Fatalf("cross-owner active Goal error = %v, want not found", err)
-	}
-
-	archived, err := goalService.ChangeStatus(
-		context.Background(),
-		actorA,
-		goalA.ID,
-		goalA.Version,
-		goal.StatusArchived,
-	)
-	if err != nil {
-		t.Fatalf("archive Goal: %v", err)
-	}
-	if _, err := service.SetActiveGoal(
-		context.Background(),
-		actorA,
-		threadA.ID,
-		archived.ID,
-	); !errors.Is(err, conversation.ErrConflict) {
-		t.Fatalf("select archived Goal error = %v, want conflict", err)
-	}
-	reopened, err := goalService.ChangeStatus(
-		context.Background(),
-		actorA,
-		archived.ID,
-		archived.Version,
-		goal.StatusActive,
-	)
-	if err != nil || reopened.Status != goal.StatusActive {
-		t.Fatalf("reopen Goal = %#v, %v", reopened, err)
-	}
-
-	assertCrossOwnerDatabaseConstraints(
-		t,
-		database.pool,
-		threadA.ID,
-		threadB.ID,
-		goalA.ID,
-		goalB.ID,
-	)
-	assertRestrictedCrossModuleDeletes(
-		t,
-		database.pool,
-		secondGoalA.ID,
-		agentTestUserC,
-	)
-
-	messages, err := service.ListMessages(
-		context.Background(),
-		actorA,
-		threadA.ID,
-	)
+	assertConversationDatabaseConstraints(t, database.pool, threadA.ID)
+	messages, err := service.ListMessages(context.Background(), actorA, threadA.ID)
 	if err != nil {
 		t.Fatalf("list messages before reconnect: %v", err)
 	}
 	if len(messages) != concurrentMessages+1 {
-		t.Fatalf(
-			"message count = %d, want %d",
-			len(messages),
-			concurrentMessages+1,
-		)
+		t.Fatalf("message count = %d, want %d", len(messages), concurrentMessages+1)
 	}
 	database.pool.Close()
 	reopenedPool := database.reopen(t)
-	recoveredGoalService, recoveredService := newAgentDataServices(t, reopenedPool)
-	recoveredGoal, err := recoveredGoalService.ReadOwned(
-		context.Background(),
-		actorA,
-		goalA.ID,
-	)
-	if err != nil ||
-		recoveredGoal.Title != reopened.Title ||
-		recoveredGoal.Status != reopened.Status ||
-		recoveredGoal.Version != reopened.Version {
-		t.Fatalf("recovered Goal = %#v, %v", recoveredGoal, err)
-	}
-	recoveredThread, err := recoveredService.GetThread(
+	recoveredService := newAgentDataServices(t, reopenedPool)
+	if _, err := recoveredService.GetThread(
 		context.Background(),
 		actorA,
 		threadA.ID,
-	)
-	if err != nil || recoveredThread.ActiveGoalID != secondGoalA.ID {
-		t.Fatalf("recovered thread = %#v, %v", recoveredThread, err)
+	); err != nil {
+		t.Fatalf("recover Thread: %v", err)
 	}
 	recoveredMessages, err := recoveredService.ListMessages(
 		context.Background(),
@@ -487,338 +237,9 @@ func TestPostgresAgentDataVerticalSlice(t *testing.T) {
 	}
 }
 
-func TestPostgresGoalAgentToolPersistence(t *testing.T) {
+func TestPostgresAgentConversationProtectedHTTP(t *testing.T) {
 	database := newAgentTestDatabase(t)
-	goalService, _ := newAgentDataServices(t, database.pool)
-	actorA := requestcontext.Actor{
-		UserID:    agentTestUserA,
-		SessionID: "20000000-0000-4000-8000-000000000001",
-	}
-	actorB := requestcontext.Actor{
-		UserID:    agentTestUserB,
-		SessionID: "20000000-0000-4000-8000-000000000002",
-	}
-
-	first, err := goalService.CreateIdempotent(
-		context.Background(),
-		actorA,
-		"goal-tool-request-1",
-		"PM interview",
-	)
-	if err != nil {
-		t.Fatalf("create idempotent Goal: %v", err)
-	}
-	replayed, err := goalService.CreateIdempotent(
-		context.Background(),
-		actorA,
-		"goal-tool-request-1",
-		"PM interview",
-	)
-	if err != nil {
-		t.Fatalf("replay idempotent Goal: %v", err)
-	}
-	if replayed.ID != first.ID {
-		t.Fatalf("replayed Goal id = %q, want %q", replayed.ID, first.ID)
-	}
-	concurrentResults := make(chan goal.Goal, 2)
-	concurrentErrors := make(chan error, 2)
-	var concurrentCreates sync.WaitGroup
-	for range 2 {
-		concurrentCreates.Add(1)
-		go func() {
-			defer concurrentCreates.Done()
-			item, createErr := goalService.CreateIdempotent(
-				context.Background(),
-				actorA,
-				"goal-tool-concurrent-1",
-				"Concurrent interview",
-			)
-			concurrentResults <- item
-			concurrentErrors <- createErr
-		}()
-	}
-	concurrentCreates.Wait()
-	close(concurrentResults)
-	close(concurrentErrors)
-	for createErr := range concurrentErrors {
-		if createErr != nil {
-			t.Fatalf("concurrent idempotent Goal: %v", createErr)
-		}
-	}
-	var concurrentGoalID string
-	for item := range concurrentResults {
-		if concurrentGoalID == "" {
-			concurrentGoalID = item.ID
-			continue
-		}
-		if item.ID != concurrentGoalID {
-			t.Fatalf(
-				"concurrent Goal id = %q, want %q",
-				item.ID,
-				concurrentGoalID,
-			)
-		}
-	}
-	if _, err := goalService.CreateIdempotent(
-		context.Background(),
-		actorA,
-		"goal-tool-request-1",
-		"Changed interview",
-	); !errors.Is(err, goal.ErrConflict) {
-		t.Fatalf("changed replay error = %v, want conflict", err)
-	}
-
-	otherOwner, err := goalService.CreateIdempotent(
-		context.Background(),
-		actorB,
-		"goal-tool-request-1",
-		"Private interview",
-	)
-	if err != nil {
-		t.Fatalf("create other-owner Goal: %v", err)
-	}
-	if otherOwner.ID == first.ID {
-		t.Fatal("idempotency request leaked across owners")
-	}
-	if _, err := goalService.Create(
-		context.Background(),
-		actorA,
-		"Interview follow-up",
-	); err != nil {
-		t.Fatalf("create second matching Goal: %v", err)
-	}
-
-	search := func() []goal.Goal {
-		items, searchErr := goalService.Search(
-			context.Background(),
-			actorA,
-			goal.SearchQuery{Query: "INTERVIEW", Limit: 1},
-		)
-		if searchErr != nil {
-			t.Fatalf("search Goals: %v", searchErr)
-		}
-		return items
-	}
-	firstSearch := search()
-	secondSearch := search()
-	if len(firstSearch) != 1 ||
-		firstSearch[0].OwnerID != actorA.UserID ||
-		len(secondSearch) != 1 ||
-		secondSearch[0].ID != firstSearch[0].ID {
-		t.Fatalf(
-			"bounded stable owner search = %#v then %#v",
-			firstSearch,
-			secondSearch,
-		)
-	}
-
-	for _, table := range []string{
-		"practice_sessions",
-		"evaluation_ledgers",
-		"evaluation_formal_reports",
-	} {
-		var count int
-		if err := database.pool.QueryRow(
-			context.Background(),
-			"SELECT count(*) FROM "+table,
-		).Scan(&count); err != nil {
-			t.Fatalf("count %s: %v", table, err)
-		}
-		if count != 0 {
-			t.Fatalf("%s count = %d, want no writes", table, count)
-		}
-	}
-}
-
-func TestPostgresActiveGoalBindingSerializesWithLifecycleTransition(
-	t *testing.T,
-) {
-	testCases := []struct {
-		name         string
-		targetStatus goal.Status
-		createThread bool
-	}{
-		{
-			name:         "create thread while Goal is archived",
-			targetStatus: goal.StatusArchived,
-			createThread: true,
-		},
-		{
-			name:         "select Goal while it is completed",
-			targetStatus: goal.StatusCompleted,
-		},
-	}
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			database := newAgentTestDatabase(t)
-			goalService, normalService := newAgentDataServices(t, database.pool)
-			actor := requestcontext.Actor{
-				UserID:    agentTestUserA,
-				SessionID: "20000000-0000-4000-8000-000000000001",
-			}
-			item, err := goalService.Create(
-				context.Background(),
-				actor,
-				"Concurrent lifecycle transition",
-			)
-			if err != nil {
-				t.Fatalf("create Goal: %v", err)
-			}
-			var thread conversation.Thread
-			if !testCase.createThread {
-				thread, err = normalService.CreateThread(
-					context.Background(),
-					actor,
-					"",
-				)
-				if err != nil {
-					t.Fatalf("create Thread: %v", err)
-				}
-			}
-
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			transition, err := database.pool.Begin(ctx)
-			if err != nil {
-				t.Fatalf("begin Goal transition: %v", err)
-			}
-			defer func() {
-				_ = transition.Rollback(context.Background())
-			}()
-			if _, err := transition.Exec(ctx, `
-UPDATE coaching_goals
-SET
-    status = $3,
-    version = version + 1,
-    updated_at = GREATEST(
-        CURRENT_TIMESTAMP,
-        updated_at + INTERVAL '1 microsecond'
-    )
-WHERE goal_id = $1 AND owner_user_id = $2`,
-				item.ID,
-				actor.UserID,
-				string(testCase.targetStatus),
-			); err != nil {
-				t.Fatalf("stage Goal transition: %v", err)
-			}
-
-			lockAttempted := make(chan struct{}, 1)
-			observedDatabase := &queryObservingPostgreSQL{
-				Pool: database.pool,
-				observeQuery: func(query string) {
-					if strings.Contains(query, "FROM coaching_goals") &&
-						strings.Contains(query, "FOR UPDATE") {
-						select {
-						case lockAttempted <- struct{}{}:
-						default:
-						}
-					}
-				},
-			}
-			repository, err := conversationpostgres.New(
-				observedDatabase,
-				identity.NewUUIDv4Generator(nil),
-			)
-			if err != nil {
-				t.Fatalf("new observed Agent repository: %v", err)
-			}
-			observedService, err := conversation.NewService(
-				repository,
-				agentConversationGoals(t, goalService),
-			)
-			if err != nil {
-				t.Fatalf("new observed Agent service: %v", err)
-			}
-			result := make(chan error, 1)
-			go func() {
-				if testCase.createThread {
-					_, operationErr := observedService.CreateThread(
-						ctx,
-						actor,
-						item.ID,
-					)
-					result <- operationErr
-					return
-				}
-				_, operationErr := observedService.SetActiveGoal(
-					ctx,
-					actor,
-					thread.ID,
-					item.ID,
-				)
-				result <- operationErr
-			}()
-
-			select {
-			case <-lockAttempted:
-			case operationErr := <-result:
-				t.Fatalf(
-					"binding completed before atomic Goal lock: %v",
-					operationErr,
-				)
-			case <-ctx.Done():
-				t.Fatal("binding did not attempt the atomic Goal lock")
-			}
-			select {
-			case operationErr := <-result:
-				t.Fatalf(
-					"binding escaped the uncommitted Goal transition: %v",
-					operationErr,
-				)
-			default:
-			}
-			if err := transition.Commit(ctx); err != nil {
-				t.Fatalf("commit Goal transition: %v", err)
-			}
-			select {
-			case operationErr := <-result:
-				if !errors.Is(operationErr, conversation.ErrConflict) {
-					t.Fatalf(
-						"binding error after Goal transition = %v, want conflict",
-						operationErr,
-					)
-				}
-			case <-ctx.Done():
-				t.Fatal("binding did not finish after Goal transition")
-			}
-
-			if testCase.createThread {
-				threads, err := normalService.ListThreads(
-					context.Background(),
-					actor,
-				)
-				if err != nil {
-					t.Fatalf("list Threads after rejected binding: %v", err)
-				}
-				if len(threads) != 0 {
-					t.Fatalf(
-						"Thread count after rejected binding = %d, want 0",
-						len(threads),
-					)
-				}
-			} else {
-				recovered, err := normalService.GetThread(
-					context.Background(),
-					actor,
-					thread.ID,
-				)
-				if err != nil {
-					t.Fatalf("recover Thread after rejected binding: %v", err)
-				}
-				if recovered.ActiveGoalID != "" {
-					t.Fatalf(
-						"active Goal after rejected binding = %q, want empty",
-						recovered.ActiveGoalID,
-					)
-				}
-			}
-		})
-	}
-}
-
-func TestPostgresAgentDataProtectedHTTP(t *testing.T) {
-	database := newAgentTestDatabase(t)
-	goalService, service := newAgentDataServices(t, database.pool)
+	service := newAgentDataServices(t, database.pool)
 	actors := map[string]requestcontext.Actor{
 		"token-a": {
 			UserID:    agentTestUserA,
@@ -829,20 +250,8 @@ func TestPostgresAgentDataProtectedHTTP(t *testing.T) {
 			SessionID: "20000000-0000-4000-8000-000000000002",
 		},
 	}
-	renderer := httpresponse.NewRenderer(
-		func() string { return "corr_agent_data_test" },
-	)
-	goalHandler, err := goalhttp.NewHandler(
-		goalService,
-		renderer,
-	)
-	if err != nil {
-		t.Fatalf("new Goal HTTP handler: %v", err)
-	}
-	conversationHandler, err := conversationhttp.NewHandler(
-		service,
-		renderer,
-	)
+	renderer := httpresponse.NewRenderer(func() string { return "corr_agent_data_test" })
+	handler, err := conversationhttp.NewHandler(service, renderer)
 	if err != nil {
 		t.Fatalf("new Conversation HTTP handler: %v", err)
 	}
@@ -850,10 +259,7 @@ func TestPostgresAgentDataProtectedHTTP(t *testing.T) {
 	router := gin.New()
 	protected := router.Group("")
 	protected.Use(func(c *gin.Context) {
-		token := strings.TrimPrefix(
-			c.GetHeader("Authorization"),
-			"Bearer ",
-		)
+		token := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
 		if actor, ok := actors[token]; ok {
 			c.Request = c.Request.WithContext(
 				requestcontext.WithActor(c.Request.Context(), actor),
@@ -861,13 +267,12 @@ func TestPostgresAgentDataProtectedHTTP(t *testing.T) {
 		}
 		c.Next()
 	})
-	goalHandler.RegisterRoutes(protected)
-	conversationHandler.RegisterRoutes(protected)
+	handler.RegisterRoutes(protected)
 
 	missingAuth := performAgentRequest(
 		router,
-		http.MethodGet,
-		"/v1/goals",
+		http.MethodPost,
+		"/v1/agent-threads",
 		"",
 		"",
 	)
@@ -875,112 +280,21 @@ func TestPostgresAgentDataProtectedHTTP(t *testing.T) {
 		missingAuth.Header().Get("WWW-Authenticate") != "Bearer" {
 		t.Fatalf("missing auth response: %d %s", missingAuth.Code, missingAuth.Body)
 	}
-
-	forged := performAgentRequest(
-		router,
-		http.MethodPost,
-		"/v1/goals",
-		`{"title":"Forged","owner_user_id":"`+agentTestUserB+`"}`,
-		"token-a",
-	)
-	if forged.Code != http.StatusBadRequest {
-		t.Fatalf("forged owner response: %d %s", forged.Code, forged.Body)
-	}
-
-	createdGoal := performAgentRequest(
-		router,
-		http.MethodPost,
-		"/v1/goals",
-		`{"title":"Customer meeting"}`,
-		"token-a",
-	)
-	if createdGoal.Code != http.StatusCreated {
-		t.Fatalf(
-			"create Goal response: %d %s",
-			createdGoal.Code,
-			createdGoal.Body,
-		)
-	}
-	var goalBody struct {
-		ID string `json:"goal_id"`
-	}
-	if err := json.Unmarshal(createdGoal.Body.Bytes(), &goalBody); err != nil {
-		t.Fatalf("decode Goal response: %v", err)
-	}
-	nulGoal := performAgentRequest(
-		router,
-		http.MethodPost,
-		"/v1/goals",
-		`{"title":"invalid\u0000title"}`,
-		"token-a",
-	)
-	if nulGoal.Code != http.StatusBadRequest {
-		t.Fatalf("NUL Goal response: %d %s", nulGoal.Code, nulGoal.Body)
-	}
-	recoveredGoal := performAgentRequest(
-		router,
-		http.MethodGet,
-		"/v1/goals/"+goalBody.ID,
-		"",
-		"token-a",
-	)
-	if recoveredGoal.Code != http.StatusOK ||
-		!strings.Contains(recoveredGoal.Body.String(), `"title":"Customer meeting"`) {
-		t.Fatalf(
-			"recover Goal response: %d %s",
-			recoveredGoal.Code,
-			recoveredGoal.Body,
-		)
-	}
-	privateGoal := performAgentRequest(
-		router,
-		http.MethodGet,
-		"/v1/goals/"+goalBody.ID,
-		"",
-		"token-b",
-	)
-	if privateGoal.Code != http.StatusNotFound {
-		t.Fatalf(
-			"cross-user Goal response: %d %s",
-			privateGoal.Code,
-			privateGoal.Body,
-		)
-	}
-
 	createdThread := performAgentRequest(
 		router,
 		http.MethodPost,
 		"/v1/agent-threads",
-		`{"active_goal_id":"`+goalBody.ID+`"}`,
+		"",
 		"token-a",
 	)
 	if createdThread.Code != http.StatusCreated {
-		t.Fatalf(
-			"create Thread response: %d %s",
-			createdThread.Code,
-			createdThread.Body,
-		)
+		t.Fatalf("create Thread response: %d %s", createdThread.Code, createdThread.Body)
 	}
 	var threadBody struct {
 		ID string `json:"thread_id"`
 	}
 	if err := json.Unmarshal(createdThread.Body.Bytes(), &threadBody); err != nil {
 		t.Fatalf("decode Thread response: %v", err)
-	}
-
-	messageWrite := performAgentRequest(
-		router,
-		http.MethodPost,
-		"/v1/agent-threads/"+threadBody.ID+"/messages",
-		`{"client_message_id":"mobile-0001","content":"Help me prepare."}`,
-		"token-a",
-	)
-	if messageWrite.Code != http.StatusNotFound {
-		t.Fatalf(
-			"raw Message write route must not be exposed: %d %s",
-			messageWrite.Code,
-			messageWrite.Body,
-		)
 	}
 	if _, err := service.AppendUserMessage(
 		context.Background(),
@@ -991,7 +305,6 @@ func TestPostgresAgentDataProtectedHTTP(t *testing.T) {
 	); err != nil {
 		t.Fatalf("seed Message for read contract: %v", err)
 	}
-
 	privateThread := performAgentRequest(
 		router,
 		http.MethodGet,
@@ -1000,11 +313,7 @@ func TestPostgresAgentDataProtectedHTTP(t *testing.T) {
 		"token-b",
 	)
 	if privateThread.Code != http.StatusNotFound {
-		t.Fatalf(
-			"cross-user Thread response: %d %s",
-			privateThread.Code,
-			privateThread.Body,
-		)
+		t.Fatalf("cross-user Thread response: %d %s", privateThread.Code, privateThread.Body)
 	}
 	privateMessages := performAgentRequest(
 		router,
@@ -1014,11 +323,7 @@ func TestPostgresAgentDataProtectedHTTP(t *testing.T) {
 		"token-b",
 	)
 	if privateMessages.Code != http.StatusNotFound {
-		t.Fatalf(
-			"cross-user Messages response: %d %s",
-			privateMessages.Code,
-			privateMessages.Body,
-		)
+		t.Fatalf("cross-user Messages response: %d %s", privateMessages.Code, privateMessages.Body)
 	}
 	messages := performAgentRequest(
 		router,
@@ -1033,56 +338,10 @@ func TestPostgresAgentDataProtectedHTTP(t *testing.T) {
 	}
 }
 
-type authenticatorFunc func(
-	context.Context,
-	string,
-) (requestcontext.Actor, error)
-
-func (f authenticatorFunc) AuthenticateSession(
-	ctx context.Context,
-	token string,
-) (requestcontext.Actor, error) {
-	return f(ctx, token)
-}
-
 type idGeneratorFunc func() (string, error)
 
-func (f idGeneratorFunc) NewID() (string, error) {
-	return f()
-}
-
-type queryObservingPostgreSQL struct {
-	*pgxpool.Pool
-	observeQuery func(string)
-}
-
-func (database *queryObservingPostgreSQL) Begin(
-	ctx context.Context,
-) (pgx.Tx, error) {
-	tx, err := database.Pool.Begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return &queryObservingTx{
-		Tx:           tx,
-		observeQuery: database.observeQuery,
-	}, nil
-}
-
-type queryObservingTx struct {
-	pgx.Tx
-	observeQuery func(string)
-}
-
-func (tx *queryObservingTx) QueryRow(
-	ctx context.Context,
-	query string,
-	args ...any,
-) pgx.Row {
-	if tx.observeQuery != nil {
-		tx.observeQuery(query)
-	}
-	return tx.Tx.QueryRow(ctx, query, args...)
+func (generator idGeneratorFunc) NewID() (string, error) {
+	return generator()
 }
 
 type agentTestDatabase struct {
@@ -1112,10 +371,7 @@ func newAgentTestDatabase(t *testing.T) agentTestDatabase {
 	}
 	schema := "agent_data_" + hex.EncodeToString(random)
 	identifier := pgx.Identifier{schema}.Sanitize()
-	if _, err := admin.Exec(
-		context.Background(),
-		"CREATE SCHEMA "+identifier,
-	); err != nil {
+	if _, err := admin.Exec(context.Background(), "CREATE SCHEMA "+identifier); err != nil {
 		t.Fatalf("create test schema: %v", err)
 	}
 	t.Cleanup(func() {
@@ -1134,7 +390,6 @@ func newAgentTestDatabase(t *testing.T) agentTestDatabase {
 	query := scopedURL.Query()
 	query.Set("search_path", schema)
 	scopedURL.RawQuery = query.Encode()
-
 	runner, err := migration.Open(scopedURL.String())
 	if err != nil {
 		t.Fatalf("open migration runner: %v", err)
@@ -1170,18 +425,14 @@ func newAgentTestDatabase(t *testing.T) agentTestDatabase {
 	} {
 		if _, err := pool.Exec(
 			context.Background(),
-			`INSERT INTO identity_users (id, canonical_email)
-VALUES ($1, $2)`,
+			`INSERT INTO users (id, canonical_email) VALUES ($1, $2)`,
 			user.id,
 			user.email,
 		); err != nil {
-			t.Fatalf("insert identity user: %v", err)
+			t.Fatalf("insert user: %v", err)
 		}
 	}
-	return agentTestDatabase{
-		pool:      pool,
-		scopedURL: scopedURL.String(),
-	}
+	return agentTestDatabase{pool: pool, scopedURL: scopedURL.String()}
 }
 
 func (database agentTestDatabase) reopen(t *testing.T) *pgxpool.Pool {
@@ -1201,111 +452,38 @@ func (database agentTestDatabase) reopen(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-func newAgentDataServices(
-	t *testing.T,
-	pool *pgxpool.Pool,
-) (*goal.Service, *conversation.Service) {
+func newAgentDataServices(t *testing.T, pool *pgxpool.Pool) *conversation.Service {
 	t.Helper()
-	ids := identity.NewUUIDv4Generator(nil)
-	goalRepository, err := goal.NewPostgresRepository(pool, ids)
-	if err != nil {
-		t.Fatalf("new Goal repository: %v", err)
-	}
-	goalService, err := goal.NewService(goalRepository)
-	if err != nil {
-		t.Fatalf("new Goal service: %v", err)
-	}
-	repository, err := conversationpostgres.New(pool, ids)
+	repository, err := conversationpostgres.New(
+		pool,
+		identity.NewUUIDv4Generator(nil),
+	)
 	if err != nil {
 		t.Fatalf("new Agent repository: %v", err)
 	}
-	service, err := conversation.NewService(
-		repository,
-		agentConversationGoals(t, goalService),
-	)
+	service, err := conversation.NewService(repository)
 	if err != nil {
 		t.Fatalf("new Agent service: %v", err)
 	}
-	return goalService, service
+	return service
 }
 
-func assertCrossOwnerDatabaseConstraints(
+func assertConversationDatabaseConstraints(
 	t *testing.T,
 	pool *pgxpool.Pool,
 	threadA string,
-	threadB string,
-	goalA string,
-	goalB string,
 ) {
 	t.Helper()
 	assertPostgresConstraint(
 		t,
 		pool,
-		`INSERT INTO agent_thread_goal_links (
-    owner_user_id,
-    thread_id,
-    goal_id,
-    is_active
-) VALUES ($1, $2, $3, false)`,
-		[]any{agentTestUserA, threadA, goalB},
-		"23503",
-		"agent_thread_goal_links_goal_owner_fkey",
-	)
-	assertPostgresConstraint(
-		t,
-		pool,
 		`INSERT INTO agent_messages (
-    id,
-    owner_user_id,
-    thread_id,
-    sequence_no,
-    role,
-    client_message_id,
-    content
+    id, thread_id, sequence_no, role, client_message_id, content
 ) VALUES (
-    '30000000-0000-4000-8000-000000000001',
-    $1,
-    $2,
-    999,
-    'user',
-    'forged-owner',
-    'must fail'
+    '30000000-0000-4000-8000-000000000002', $1, 1000, 'user',
+    'client-message-1', 'duplicate client identifier'
 )`,
-		[]any{agentTestUserA, threadB},
-		"23503",
-		"agent_messages_thread_owner_fkey",
-	)
-	assertPostgresConstraint(
-		t,
-		pool,
-		`UPDATE agent_thread_goal_links
-SET is_active = true
-WHERE owner_user_id = $1 AND thread_id = $2 AND goal_id = $3`,
-		[]any{agentTestUserA, threadA, goalA},
-		"23505",
-		"agent_thread_goal_links_one_active_idx",
-	)
-	assertPostgresConstraint(
-		t,
-		pool,
-		`INSERT INTO agent_messages (
-    id,
-    owner_user_id,
-    thread_id,
-    sequence_no,
-    role,
-    client_message_id,
-    content
-) VALUES (
-    '30000000-0000-4000-8000-000000000002',
-    $1,
-    $2,
-    1000,
-    'user',
-    'client-message-1',
-    'duplicate client identifier'
-)`,
-		[]any{agentTestUserA, threadA},
+		[]any{threadA},
 		"23505",
 		"agent_messages_client_idempotency_key",
 	)
@@ -1313,23 +491,12 @@ WHERE owner_user_id = $1 AND thread_id = $2 AND goal_id = $3`,
 		t,
 		pool,
 		`INSERT INTO agent_messages (
-    id,
-    owner_user_id,
-    thread_id,
-    sequence_no,
-    role,
-    client_message_id,
-    content
+    id, thread_id, sequence_no, role, client_message_id, content
 ) VALUES (
-    '30000000-0000-4000-8000-000000000003',
-    $1,
-    $2,
-    1,
-    'user',
-    'duplicate-sequence',
-    'duplicate sequence'
+    '30000000-0000-4000-8000-000000000003', $1, 1, 'user',
+    'duplicate-sequence', 'duplicate sequence'
 )`,
-		[]any{agentTestUserA, threadA},
+		[]any{threadA},
 		"23505",
 		"agent_messages_thread_sequence_key",
 	)
@@ -1337,50 +504,14 @@ WHERE owner_user_id = $1 AND thread_id = $2 AND goal_id = $3`,
 		t,
 		pool,
 		`INSERT INTO agent_messages (
-    id,
-    owner_user_id,
-    thread_id,
-    sequence_no,
-    role,
-    client_message_id,
-    content
+    id, thread_id, sequence_no, role, client_message_id, content
 ) VALUES (
-    '30000000-0000-4000-8000-000000000004',
-    $1,
-    $2,
-    1001,
-    'user',
-    'oversized-content',
-    $3
+    '30000000-0000-4000-8000-000000000004', $1, 1001, 'user',
+    'oversized-content', $2
 )`,
-		[]any{agentTestUserA, threadA, strings.Repeat("x", 4097)},
+		[]any{threadA, strings.Repeat("x", 4097)},
 		"23514",
-		"agent_messages_content_length_check",
-	)
-}
-
-func assertRestrictedCrossModuleDeletes(
-	t *testing.T,
-	pool *pgxpool.Pool,
-	goalID string,
-	goalOwnerID string,
-) {
-	t.Helper()
-	assertPostgresConstraint(
-		t,
-		pool,
-		"DELETE FROM coaching_goals WHERE goal_id = $1",
-		[]any{goalID},
-		"23001",
-		"agent_thread_goal_links_goal_owner_fkey",
-	)
-	assertPostgresConstraint(
-		t,
-		pool,
-		"DELETE FROM identity_users WHERE id = $1",
-		[]any{goalOwnerID},
-		"23001",
-		"coaching_goals_owner_user_id_fkey",
+		"agent_messages_content_check",
 	)
 }
 
@@ -1401,12 +532,7 @@ func assertPostgresConstraint(
 	if !errors.As(err, &postgresError) ||
 		postgresError.Code != code ||
 		postgresError.ConstraintName != constraint {
-		t.Fatalf(
-			"statement error = %v, want %s/%s",
-			err,
-			code,
-			constraint,
-		)
+		t.Fatalf("statement error = %v, want %s/%s", err, code, constraint)
 	}
 }
 

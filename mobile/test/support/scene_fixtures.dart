@@ -1,4 +1,3 @@
-import 'package:speakup/features/coaching/goal/goal.dart';
 import 'package:speakup/features/coaching/scene/scene.dart';
 
 const _prompt = ScenePrompt(
@@ -272,22 +271,3 @@ PracticeOption testPracticeOption({
   sessionPolicyRef: sessionPolicyRef ?? 'session-$id',
   evaluationPolicyRef: evaluationPolicyRef ?? 'evaluation-$id',
 );
-
-Goal testGoal({
-  String id = 'goal-1',
-  String title = '练习目标',
-  GoalStatus status = GoalStatus.active,
-  int version = 1,
-  DateTime? createdAt,
-  DateTime? updatedAt,
-}) {
-  final timestamp = createdAt ?? DateTime.utc(2026, 1, 1);
-  return Goal(
-    id: id,
-    title: title,
-    status: status,
-    version: version,
-    createdAt: timestamp,
-    updatedAt: updatedAt ?? timestamp,
-  );
-}

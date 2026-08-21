@@ -25,11 +25,14 @@ class InlineLanguageFeedback extends StatefulWidget {
     this.trailing,
     this.correction,
     this.polish,
+    this.feedbackNotice,
     this.correctionFooter,
     this.polishFooter,
     this.onSpeakSuggestion,
     this.suggestionLoading = false,
     this.suggestionPlaying = false,
+    this.optimizeIconOnly = false,
+    this.onExpandedChanged,
     this.foregroundColor = SpeakUpDesign.primary,
     this.textColor = SpeakUpDesign.ink,
     super.key,
@@ -39,11 +42,14 @@ class InlineLanguageFeedback extends StatefulWidget {
   final Widget? trailing;
   final InlineLanguageSuggestion? correction;
   final InlineLanguageSuggestion? polish;
+  final String? feedbackNotice;
   final Widget? correctionFooter;
   final Widget? polishFooter;
   final ValueChanged<String>? onSpeakSuggestion;
   final bool suggestionLoading;
   final bool suggestionPlaying;
+  final bool optimizeIconOnly;
+  final ValueChanged<bool>? onExpandedChanged;
   final Color foregroundColor;
   final Color textColor;
 
@@ -57,18 +63,28 @@ class _InlineLanguageFeedbackState extends State<InlineLanguageFeedback> {
   @override
   void didUpdateWidget(covariant InlineLanguageFeedback oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.correction == null && widget.polish == null) {
+    if (widget.correction == null &&
+        widget.polish == null &&
+        widget.feedbackNotice == null) {
       _expanded = false;
     }
   }
 
   void _toggle() {
-    setState(() => _expanded = !_expanded);
+    final expanded = !_expanded;
+    setState(() => _expanded = expanded);
+    widget.onExpandedChanged?.call(expanded);
   }
 
   @override
   Widget build(BuildContext context) {
-    final hasFeedback = widget.correction != null || widget.polish != null;
+    final feedbackNotice = widget.correction == null && widget.polish == null
+        ? widget.feedbackNotice
+        : null;
+    final hasFeedback =
+        widget.correction != null ||
+        widget.polish != null ||
+        feedbackNotice != null;
     final spokenSuggestion = widget.polish ?? widget.correction;
     final actions = <Widget>[
       if (widget.leading != null) widget.leading!,
@@ -77,30 +93,43 @@ class _InlineLanguageFeedbackState extends State<InlineLanguageFeedback> {
           key: const Key('inline-language-optimize'),
           icon: Icons.auto_awesome_outlined,
           label: '优化',
+          iconOnly: widget.optimizeIconOnly,
           selected: _expanded,
           color: widget.foregroundColor,
           onPressed: _toggle,
         ),
     ];
+    final actionWrap = Wrap(
+      spacing: SpeakUpDesign.space4,
+      runSpacing: SpeakUpDesign.space4,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: actions,
+    );
     return Column(
+      mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
+          mainAxisSize: widget.trailing == null
+              ? MainAxisSize.min
+              : MainAxisSize.max,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
-              child: Wrap(
-                spacing: SpeakUpDesign.space4,
-                runSpacing: SpeakUpDesign.space4,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: actions,
-              ),
-            ),
+            if (widget.trailing == null)
+              actionWrap
+            else
+              Expanded(child: actionWrap),
             if (widget.trailing != null) widget.trailing!,
           ],
         ),
         if (_expanded && hasFeedback) ...[
           const SizedBox(height: SpeakUpDesign.space8),
+          if (feedbackNotice case final notice?)
+            Text(
+              notice,
+              key: const Key('inline-language-feedback-notice'),
+              style: SpeakUpDesign.body.copyWith(color: widget.textColor),
+            ),
           if (widget.correction case final correction?) ...[
             _InlineFeedbackHeading(label: '纠错', color: widget.foregroundColor),
             const SizedBox(height: SpeakUpDesign.space4),
@@ -365,6 +394,7 @@ class _InlineFeedbackAction extends StatelessWidget {
     required this.onPressed,
     this.selected = false,
     this.loading = false,
+    this.iconOnly = false,
     super.key,
   });
 
@@ -374,9 +404,30 @@ class _InlineFeedbackAction extends StatelessWidget {
   final VoidCallback? onPressed;
   final bool selected;
   final bool loading;
+  final bool iconOnly;
 
   @override
   Widget build(BuildContext context) {
+    final actionIcon = loading
+        ? const SizedBox.square(
+            dimension: 16,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
+        : Icon(selected ? Icons.keyboard_arrow_up_rounded : icon, size: 19);
+    if (iconOnly) {
+      return IconButton(
+        tooltip: label,
+        onPressed: onPressed,
+        color: color,
+        constraints: const BoxConstraints.tightFor(
+          width: SpeakUpDesign.minTapTarget,
+          height: SpeakUpDesign.minTapTarget,
+        ),
+        padding: EdgeInsets.zero,
+        visualDensity: VisualDensity.compact,
+        icon: actionIcon,
+      );
+    }
     return TextButton.icon(
       onPressed: onPressed,
       style: TextButton.styleFrom(
@@ -386,12 +437,7 @@ class _InlineFeedbackAction extends StatelessWidget {
         visualDensity: VisualDensity.compact,
         textStyle: SpeakUpDesign.label,
       ),
-      icon: loading
-          ? const SizedBox.square(
-              dimension: 16,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : Icon(selected ? Icons.keyboard_arrow_up_rounded : icon, size: 19),
+      icon: actionIcon,
       label: Text(label),
     );
   }
@@ -477,6 +523,7 @@ class PracticeRecordingComposer extends StatelessWidget {
     required this.phase,
     required this.keyPrefix,
     this.elapsed,
+    this.transcript = '',
     this.upwardCancelOnly = false,
     super.key,
   });
@@ -485,6 +532,7 @@ class PracticeRecordingComposer extends StatelessWidget {
   final VoiceCapturePhase phase;
   final String keyPrefix;
   final Duration? elapsed;
+  final String transcript;
   final bool upwardCancelOnly;
 
   @override
@@ -498,6 +546,8 @@ class PracticeRecordingComposer extends StatelessWidget {
       stopRecordingKey: Key('$keyPrefix-stop-recording'),
       stateLabelKey: Key('$keyPrefix-voice-state-label'),
       durationKey: Key('$keyPrefix-voice-target-duration'),
+      liveTranscript: transcript,
+      liveTranscriptKey: Key('$keyPrefix-live-transcript'),
       upwardCancelOnly: upwardCancelOnly,
     );
   }

@@ -7,6 +7,7 @@ import 'package:speakup/features/coaching/practice/practice_client_error.dart';
 
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/bearer_authentication.dart';
+import 'package:speakup/identity/network/authenticated_web_socket.dart';
 import 'package:speakup/identity/network/transport_security.dart';
 
 typedef PracticeMediaClock = DateTime Function();
@@ -23,6 +24,14 @@ abstract interface class PracticeMediaClient {
   Future<void> clearAccountState();
 
   Future<void> dispose();
+}
+
+abstract interface class PracticeQuestionSpeechClient {
+  Stream<Uint8List> streamQuestionSpeech(String questionId);
+}
+
+abstract interface class PracticeTextSpeechClient {
+  Stream<Uint8List> streamTextSpeech(String text);
 }
 
 final class PracticeMediaWireRequest {
@@ -62,7 +71,11 @@ abstract interface class PracticeMediaWireTransport {
 /// API requests use the authenticated, same-origin transport. A recording's
 /// signed URL is consumed by a separate request with no App Session header,
 /// then only the resulting WAV bytes cross the player boundary.
-final class WirePracticeMediaClient implements PracticeMediaClient {
+final class WirePracticeMediaClient
+    implements
+        PracticeMediaClient,
+        PracticeQuestionSpeechClient,
+        PracticeTextSpeechClient {
   factory WirePracticeMediaClient({
     required Uri baseUri,
     required AuthSessionCredentialProvider credentialProvider,
@@ -70,6 +83,7 @@ final class WirePracticeMediaClient implements PracticeMediaClient {
     PracticeMediaWireTransport? apiTransport,
     PracticeMediaWireTransport? signedAudioTransport,
     PracticeMediaWireTransportFactory? transportFactory,
+    AuthenticatedWebSocketConnector? questionSpeechConnector,
     PracticeMediaClock? clock,
     Duration timeout = const Duration(seconds: 30),
   }) {
@@ -88,6 +102,16 @@ final class WirePracticeMediaClient implements PracticeMediaClient {
       apiTransport == null,
       signedAudioTransport == null,
       createTransport,
+      SessionAuthenticatedWebSocketConnector(
+        connector:
+            questionSpeechConnector ??
+            IoAuthenticatedWebSocketConnector(
+              protocols: const <String>[_questionSpeechProtocol],
+            ),
+        credentialProvider: credentialProvider,
+        invalidateSession: invalidateSession,
+        trustedBaseUri: _practiceWebSocketBaseUri(baseUri),
+      ),
       clock ?? _utcNow,
       timeout,
     );
@@ -103,6 +127,7 @@ final class WirePracticeMediaClient implements PracticeMediaClient {
     this._ownsApiTransport,
     this._ownsSignedAudioTransport,
     this._transportFactory,
+    this._questionSpeechConnector,
     this._clock,
     this._timeout,
   );
@@ -111,6 +136,7 @@ final class WirePracticeMediaClient implements PracticeMediaClient {
   static const _maximumJsonBytes = 64 * 1024;
   static const _maximumPlaybackLifetime = Duration(minutes: 2);
   static const _maximumLocalClockSkew = Duration(seconds: 30);
+  static const _questionSpeechProtocol = 'speakup.practice-question-speech.v1';
 
   final Uri _baseUri;
   final TrustedIdentityHttpOrigin _trustedOrigin;
@@ -121,6 +147,7 @@ final class WirePracticeMediaClient implements PracticeMediaClient {
   final bool _ownsApiTransport;
   final bool _ownsSignedAudioTransport;
   final PracticeMediaWireTransportFactory _transportFactory;
+  final SessionAuthenticatedWebSocketConnector _questionSpeechConnector;
   final PracticeMediaClock _clock;
   final Duration _timeout;
 
@@ -149,9 +176,93 @@ final class WirePracticeMediaClient implements PracticeMediaClient {
   }
 
   @override
+  Stream<Uint8List> streamQuestionSpeech(String questionId) async* {
+    final id = _requireResourceId(questionId);
+    final uri = _practiceWebSocketBaseUri(_baseUri).resolve(
+      '/v1/practice-questions/${Uri.encodeComponent(id)}/speech/realtime',
+    );
+    yield* _streamSpeech(uri);
+  }
+
+  @override
+  Stream<Uint8List> streamTextSpeech(String text) async* {
+    final value = text.trim();
+    if (value.isEmpty || value.runes.length > 4096) {
+      throw const PracticeClientException(
+        kind: PracticeClientFailureKind.invalidRequest,
+      );
+    }
+    final uri = _practiceWebSocketBaseUri(
+      _baseUri,
+    ).resolve('/v1/practice-speech/realtime');
+    yield* _streamSpeech(
+      uri,
+      initialMessage: jsonEncode(<String, String>{
+        'type': 'speak',
+        'text': value,
+      }),
+    );
+  }
+
+  Stream<Uint8List> _streamSpeech(Uri uri, {String? initialMessage}) async* {
+    final generation = _accountGeneration;
+    SessionAuthenticatedWebSocketConnection? connection;
+    StreamIterator<dynamic>? messages;
+    var receivedBytes = 0;
+    try {
+      connection = await _questionSpeechConnector.connect(uri: uri);
+      _requireGeneration(generation);
+      messages = StreamIterator<dynamic>(connection.socket);
+      final ready = await _nextPracticeSpeechMessage(messages);
+      _requirePracticeSpeechEvent(ready, 'stream.ready');
+      if (initialMessage != null) {
+        connection.socket.add(initialMessage);
+      }
+      while (true) {
+        final message = await _nextPracticeSpeechMessage(messages);
+        if (message is String) {
+          _requirePracticeSpeechEvent(message, 'stream.completed');
+          if (receivedBytes == 0) {
+            throw const PracticeClientException(
+              kind: PracticeClientFailureKind.invalidResponse,
+            );
+          }
+          break;
+        }
+        if (message is! List<int> || message.isEmpty || message.length.isOdd) {
+          throw const PracticeClientException(
+            kind: PracticeClientFailureKind.invalidResponse,
+          );
+        }
+        receivedBytes += message.length;
+        if (receivedBytes > _maximumAudioBytes) {
+          throw const PracticeClientException(
+            kind: PracticeClientFailureKind.invalidResponse,
+          );
+        }
+        yield Uint8List.fromList(message);
+      }
+    } on AuthenticatedWebSocketException catch (error) {
+      throw PracticeClientException(
+        kind: error.invalidatesAuthentication
+            ? PracticeClientFailureKind.authenticationRequired
+            : PracticeClientFailureKind.network,
+        retryable: !error.invalidatesAuthentication,
+      );
+    } on FormatException {
+      throw const PracticeClientException(
+        kind: PracticeClientFailureKind.invalidResponse,
+      );
+    } finally {
+      await messages?.cancel();
+      await connection?.socket.close();
+    }
+  }
+
+  @override
   Future<Uint8List> loadRecording(String audioAssetId) {
     return _run((generation) async {
-      final id = _requireResourceId(audioAssetId);
+      final id = _requireAudioAssetId(audioAssetId);
       final credential = _requireCredential();
       final metadata = await _sendApiWithCredential(
         generation: generation,
@@ -217,7 +328,7 @@ final class WirePracticeMediaClient implements PracticeMediaClient {
   @override
   Future<void> deleteRecording(String audioAssetId) {
     return _run((generation) async {
-      final id = _requireResourceId(audioAssetId);
+      final id = _requireAudioAssetId(audioAssetId);
       final response = await _sendApi(
         generation: generation,
         method: 'DELETE',
@@ -668,6 +779,17 @@ String _requireResourceId(String value) {
   return value;
 }
 
+final _audioAssetIdPattern = RegExp(
+  r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+);
+
+String _requireAudioAssetId(String value) {
+  if (!_audioAssetIdPattern.hasMatch(value)) {
+    throw ArgumentError.value(value, 'audioAssetId', 'Invalid media asset ID.');
+  }
+  return value;
+}
+
 void _validateSignedHttpsUri(Uri uri) {
   final host = uri.host;
   if (uri.scheme != 'https' ||
@@ -700,6 +822,88 @@ PracticeClientException _invalidResponse() {
     kind: PracticeClientFailureKind.invalidResponse,
     retryable: true,
   );
+}
+
+Future<dynamic> _nextPracticeSpeechMessage(
+  StreamIterator<dynamic> messages,
+) async {
+  if (!await messages.moveNext()) {
+    throw const PracticeClientException(
+      kind: PracticeClientFailureKind.network,
+      retryable: true,
+    );
+  }
+  return messages.current;
+}
+
+void _requirePracticeSpeechEvent(dynamic message, String expected) {
+  if (message is! String) {
+    throw const PracticeClientException(
+      kind: PracticeClientFailureKind.invalidResponse,
+    );
+  }
+  final decoded = jsonDecode(message);
+  if (decoded is! Map<String, dynamic> ||
+      decoded.keys.toSet().difference(const <String>{
+        'type',
+        'data',
+      }).isNotEmpty ||
+      !decoded.containsKey('type') ||
+      !decoded.containsKey('data')) {
+    throw const PracticeClientException(
+      kind: PracticeClientFailureKind.invalidResponse,
+    );
+  }
+  final type = decoded['type'];
+  final data = decoded['data'];
+  if (data is! Map<String, dynamic>) {
+    throw const PracticeClientException(
+      kind: PracticeClientFailureKind.invalidResponse,
+    );
+  }
+  if (type == 'stream.failed') {
+    final kind = data['kind'];
+    final retryable = data['retryable'];
+    if (data.length != 2 ||
+        kind is! String ||
+        kind.isEmpty ||
+        kind.length > 64 ||
+        kind.trim() != kind ||
+        retryable is! bool) {
+      throw const PracticeClientException(
+        kind: PracticeClientFailureKind.invalidResponse,
+      );
+    }
+    throw PracticeClientException(
+      kind: PracticeClientFailureKind.network,
+      errorCode: kind,
+      retryable: retryable,
+    );
+  }
+  if (type != expected || (type == 'stream.completed' && data.isNotEmpty)) {
+    throw const PracticeClientException(
+      kind: PracticeClientFailureKind.invalidResponse,
+    );
+  }
+  if (expected == 'stream.ready' &&
+      (data['content_type'] != 'audio/pcm' ||
+          data.length != 4 ||
+          data['sample_rate'] != 24000 ||
+          data['channel_count'] != 1 ||
+          data['bits_per_sample'] != 16)) {
+    throw const PracticeClientException(
+      kind: PracticeClientFailureKind.invalidResponse,
+    );
+  }
+}
+
+Uri _practiceWebSocketBaseUri(Uri httpBaseUri) {
+  final scheme = switch (httpBaseUri.scheme) {
+    'https' => 'wss',
+    'http' => 'ws',
+    _ => throw ArgumentError('Practice media base URI must use HTTP or HTTPS.'),
+  };
+  return httpBaseUri.replace(scheme: scheme);
 }
 
 DateTime _utcNow() => DateTime.now().toUtc();

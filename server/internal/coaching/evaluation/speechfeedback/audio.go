@@ -3,7 +3,9 @@ package speechfeedback
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,88 +13,88 @@ import (
 	"strings"
 	"time"
 
-	practicevoice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/voice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 )
 
-const maxSpeechFeedbackAudioBytes = 9_600_000
+var ErrAcousticUnavailable = errors.New("evaluation: acoustic assessment unavailable")
 
-const speechFeedbackAudioReadTimeout = 30 * time.Second
+const (
+	AudioReadTimeout = 30 * time.Second
+	maxAudioBytes    = 9_600_000
+	maxSignedURLTTL  = 2 * time.Minute
+)
 
-// NewSpeechFeedbackAudioHTTPClient owns the bounded read and redirect policy
-// used to fetch protected Practice audio for acoustic assessment.
-func NewSpeechFeedbackAudioHTTPClient() *http.Client {
+type AudioReader interface {
+	ReadOwnedAudio(context.Context, string, string) ([]byte, error)
+}
+
+// AudioMetadata is the exact Practice-owned metadata required to assess one
+// readable recording. Evaluation never owns or copies the audio lifecycle.
+type AudioMetadata struct {
+	ObjectKey      string
+	Size           int64
+	ChecksumSHA256 string
+}
+
+type AudioMetadataReader interface {
+	GetReadableOwnedAudio(context.Context, string, string) (AudioMetadata, error)
+}
+
+type ProductionAudioReader struct {
+	metadata AudioMetadataReader
+	store    objectstore.Store
+	client   *http.Client
+}
+
+func NewProductionAudioReader(
+	metadata AudioMetadataReader,
+	store objectstore.Store,
+	client *http.Client,
+) (*ProductionAudioReader, error) {
+	if metadata == nil || store == nil || client == nil || client.Timeout <= 0 {
+		return nil, ErrAcousticUnavailable
+	}
+	return &ProductionAudioReader{metadata: metadata, store: store, client: client}, nil
+}
+
+func NewAudioHTTPClient() *http.Client {
 	return &http.Client{
-		Timeout: speechFeedbackAudioReadTimeout,
+		Timeout: AudioReadTimeout,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
 	}
 }
 
-type speechFeedbackAudioReader struct {
-	service *practicevoice.AudioAssetService
-	store   objectstore.Store
-	client  *http.Client
-}
-
-func NewSpeechFeedbackAudioReader(
-	service *practicevoice.AudioAssetService,
-	store objectstore.Store,
-	client *http.Client,
-) (SpeechFeedbackAudioReader, error) {
-	if service == nil || store == nil || client == nil {
-		return nil, ErrInvalidSpeechFeedback
-	}
-	return &speechFeedbackAudioReader{
-		service: service,
-		store:   store,
-		client:  client,
-	}, nil
-}
-
-func (reader *speechFeedbackAudioReader) ReadSpeechFeedbackAudio(
+func (reader *ProductionAudioReader) ReadOwnedAudio(
 	ctx context.Context,
-	ownerUserID string,
+	userID string,
 	audioAssetID string,
-	audioObjectKey string,
-	expectedChecksum string,
 ) ([]byte, error) {
-	if reader == nil || reader.service == nil ||
-		reader.store == nil || reader.client == nil {
-		return nil, ErrSpeechFeedbackAcousticUnavailable
+	if reader == nil || reader.metadata == nil || reader.store == nil ||
+		reader.client == nil || ctx == nil || strings.TrimSpace(userID) == "" ||
+		strings.TrimSpace(audioAssetID) == "" {
+		return nil, ErrAcousticUnavailable
 	}
-	var playback objectstore.SignedGetResult
-	var err error
-	if audioObjectKey == "" {
-		playback, err = reader.service.Playback(
-			ctx,
-			practicevoice.AudioAssetActor{UserID: ownerUserID},
-			audioAssetID,
-		)
-	} else {
-		playback, err = reader.store.SignedGet(ctx, audioObjectKey)
+	metadata, err := reader.metadata.GetReadableOwnedAudio(ctx, userID, audioAssetID)
+	if err != nil || metadata.ObjectKey == "" || metadata.Size <= 0 ||
+		metadata.Size > maxAudioBytes || !validChecksum(metadata.ChecksumSHA256) {
+		return nil, ErrAcousticUnavailable
 	}
-	if err != nil || !playback.ExpiresAt.After(time.Now()) {
-		return nil, ErrSpeechFeedbackAcousticUnavailable
-	}
-	playbackURL, err := url.Parse(playback.URL)
-	if err != nil ||
-		!strings.EqualFold(playbackURL.Scheme, "https") ||
-		playbackURL.Host == "" ||
-		playback.ExpiresAt.After(
-			time.Now().Add(practicevoice.MaxPlaybackURLTTL),
-		) {
-		return nil, ErrSpeechFeedbackAcousticUnavailable
-	}
-	request, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodGet,
-		playback.URL,
-		nil,
-	)
+	signed, err := reader.store.SignedGet(ctx, metadata.ObjectKey)
 	if err != nil {
-		return nil, ErrSpeechFeedbackAcousticUnavailable
+		return nil, err
+	}
+	now := time.Now().UTC()
+	signedURL, err := url.Parse(signed.URL)
+	if err != nil || !strings.EqualFold(signedURL.Scheme, "https") ||
+		signedURL.Host == "" || !signed.ExpiresAt.After(now) ||
+		signed.ExpiresAt.After(now.Add(maxSignedURLTTL)) {
+		return nil, ErrAcousticUnavailable
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, signed.URL, nil)
+	if err != nil {
+		return nil, ErrAcousticUnavailable
 	}
 	response, err := reader.client.Do(request)
 	if err != nil {
@@ -100,26 +102,65 @@ func (reader *speechFeedbackAudioReader) ReadSpeechFeedbackAudio(
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf(
-			"read SpeechFeedback audio: HTTP %d",
-			response.StatusCode,
-		)
+		return nil, fmt.Errorf("read Evaluation audio: HTTP %d", response.StatusCode)
 	}
-	audio, err := io.ReadAll(io.LimitReader(
-		response.Body,
-		maxSpeechFeedbackAudioBytes+1,
-	))
+	audio, err := io.ReadAll(io.LimitReader(response.Body, metadata.Size+1))
 	if err != nil {
 		return nil, err
 	}
-	if len(audio) == 0 || len(audio) > maxSpeechFeedbackAudioBytes {
-		return nil, ErrSpeechFeedbackAcousticUnavailable
+	if int64(len(audio)) != metadata.Size {
+		return nil, ErrAcousticUnavailable
 	}
-	checksum := sha256.Sum256(audio)
-	if hex.EncodeToString(checksum[:]) != expectedChecksum {
-		return nil, ErrSpeechFeedbackAcousticUnavailable
+	digest := sha256.Sum256(audio)
+	if hex.EncodeToString(digest[:]) != metadata.ChecksumSHA256 {
+		return nil, ErrAcousticUnavailable
 	}
 	return audio, nil
 }
 
-var _ SpeechFeedbackAudioReader = (*speechFeedbackAudioReader)(nil)
+func validChecksum(value string) bool {
+	if len(value) != sha256.Size*2 {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil && value == strings.ToLower(value)
+}
+
+func pcm16Mono(wav []byte) ([]byte, error) {
+	if len(wav) < 12 || string(wav[:4]) != "RIFF" || string(wav[8:12]) != "WAVE" {
+		return nil, ErrAcousticUnavailable
+	}
+	var formatFound bool
+	var pcm []byte
+	for offset := 12; offset+8 <= len(wav); {
+		chunkSize := int(binary.LittleEndian.Uint32(wav[offset+4 : offset+8]))
+		start := offset + 8
+		end := start + chunkSize
+		if end > len(wav) {
+			return nil, ErrAcousticUnavailable
+		}
+		switch string(wav[offset : offset+4]) {
+		case "fmt ":
+			if formatFound || chunkSize < 16 ||
+				binary.LittleEndian.Uint16(wav[start:start+2]) != 1 ||
+				binary.LittleEndian.Uint16(wav[start+2:start+4]) != 1 ||
+				binary.LittleEndian.Uint32(wav[start+4:start+8]) != 16_000 ||
+				binary.LittleEndian.Uint16(wav[start+14:start+16]) != 16 {
+				return nil, ErrAcousticUnavailable
+			}
+			formatFound = true
+		case "data":
+			if pcm != nil || chunkSize == 0 {
+				return nil, ErrAcousticUnavailable
+			}
+			pcm = wav[start:end]
+		}
+		offset = end + chunkSize%2
+	}
+	if !formatFound || len(pcm) == 0 || len(pcm)%2 != 0 {
+		return nil, ErrAcousticUnavailable
+	}
+	return pcm, nil
+}
+
+var _ AudioReader = (*ProductionAudioReader)(nil)
