@@ -525,115 +525,6 @@ class _CompletionStep extends StatelessWidget {
   }
 }
 
-class _SectionCompletionSheet extends StatelessWidget {
-  const _SectionCompletionSheet({
-    required this.title,
-    required this.message,
-    required this.primaryLabel,
-    required this.secondaryLabel,
-    required this.onPrimary,
-    required this.onSecondary,
-  });
-
-  final String title;
-  final String message;
-  final String primaryLabel;
-  final String secondaryLabel;
-  final VoidCallback onPrimary;
-  final VoidCallback onSecondary;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 560),
-        child: Material(
-          key: const Key('ielts-section-completion-sheet'),
-          color: SpeakUpDesign.surface,
-          elevation: 12,
-          shadowColor: const Color(0x26000000),
-          borderRadius: BorderRadius.circular(28),
-          clipBehavior: Clip.antiAlias,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Center(
-                  child: Container(
-                    width: 42,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: SpeakUpDesign.border,
-                      borderRadius: BorderRadius.circular(99),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 18),
-                Center(
-                  child: Container(
-                    width: 52,
-                    height: 52,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(color: SpeakUpDesign.ink, width: 2),
-                    ),
-                    child: const Icon(
-                      Icons.check_rounded,
-                      size: 34,
-                      color: SpeakUpDesign.ink,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  title,
-                  textAlign: TextAlign.center,
-                  style: SpeakUpDesign.pageTitle.copyWith(fontSize: 24),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  message,
-                  textAlign: TextAlign.center,
-                  style: SpeakUpDesign.body.copyWith(
-                    color: SpeakUpDesign.secondary,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                FilledButton(
-                  key: const Key('ielts-section-review-action'),
-                  onPressed: onPrimary,
-                  style: FilledButton.styleFrom(
-                    minimumSize: const Size.fromHeight(54),
-                    backgroundColor: SpeakUpDesign.ink,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                  ),
-                  child: Text(primaryLabel),
-                ),
-                const SizedBox(height: 4),
-                TextButton(
-                  key: const Key('ielts-section-list-action'),
-                  onPressed: onSecondary,
-                  style: TextButton.styleFrom(
-                    foregroundColor: SpeakUpDesign.ink,
-                    minimumSize: const Size.fromHeight(44),
-                  ),
-                  child: Text(secondaryLabel),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _MockExitSheet extends StatelessWidget {
   const _MockExitSheet({required this.onContinue, required this.onSaveAndExit});
 
@@ -714,7 +605,7 @@ class _SectionPracticeComplete extends StatelessWidget {
   Widget build(BuildContext context) {
     final part = switch (mode) {
       PracticeMode.part1 => 'Part 1',
-      PracticeMode.part2 => 'Part 2 + Part 3',
+      PracticeMode.part2 => 'Part 2',
       PracticeMode.part3 => 'Part 3',
       PracticeMode.fullMock => 'IELTS Speaking',
       PracticeMode.fullSimulation || PracticeMode.focus => throw StateError(

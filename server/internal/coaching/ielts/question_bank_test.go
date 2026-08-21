@@ -65,7 +65,8 @@ func TestCatalogResolvesEveryPracticeMode(t *testing.T) {
 		context.Background(),
 		QuestionSetSelection{Mode: PracticeModePart2, TopicGroupID: "p23-new-001"},
 	)
-	if err != nil || len(part2.Parts) != 2 ||
+	if err != nil || len(part2.Parts) != 1 ||
+		part2.Parts[0].Part != PracticeModePart2 ||
 		!strings.Contains(part2.Parts[0].CueCard, "You should say:") {
 		t.Fatalf("Part 2 = %#v, error = %v", part2, err)
 	}

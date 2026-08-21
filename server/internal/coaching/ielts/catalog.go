@@ -284,11 +284,11 @@ func (catalog *Catalog) resolveQuestionSet(
 		if selection.Part1SetID != "" || selection.TopicGroupID == "" {
 			return ResolvedQuestionSet{}, ErrPracticeModeInvalid
 		}
-		part2, part3, err := catalog.resolvePart23Group(selection.TopicGroupID)
+		part2, _, err := catalog.resolvePart23Group(selection.TopicGroupID)
 		if err != nil {
 			return ResolvedQuestionSet{}, err
 		}
-		result.Parts = []ResolvedPart{part2, part3}
+		result.Parts = []ResolvedPart{part2}
 	case PracticeModePart3:
 		if selection.Part1SetID != "" || selection.TopicGroupID == "" {
 			return ResolvedQuestionSet{}, ErrPracticeModeInvalid

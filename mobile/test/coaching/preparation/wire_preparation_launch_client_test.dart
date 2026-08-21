@@ -357,7 +357,7 @@ const _ieltsPlanInput = CreatePracticePlanInput(
   sceneVersion: 1,
   selectedRoleIds: <String>['ielts-examiner'],
   practiceOptionId: 'ielts-part-2',
-  maxEffectiveTurns: 7,
+  maxEffectiveTurns: 1,
   ieltsSelection: IeltsPracticeSelection(topicGroupId: 'famous-person'),
   ieltsPreparedAnswers: <IeltsPreparedAnswer>[
     IeltsPreparedAnswer(
@@ -383,7 +383,9 @@ Map<String, Object?> _ieltsPlanJson() {
   );
   response['session_policy'] = <String, Object?>{
     ...contractSessionPolicyJson(),
-    'max_effective_turns': 7,
+    'min_effective_turns': 1,
+    'max_effective_turns': 1,
+    'coverage_checkpoint_turn': 1,
   };
   response['ielts_assignment'] = _ieltsPart2AssignmentJson();
   return response;
@@ -421,19 +423,6 @@ Map<String, Object?> _ieltsPart2AssignmentJson() => <String, Object?>{
           'answer': 'I would like to meet a songwriter I admire.',
           'personalized': true,
         },
-      ],
-    },
-    <String, Object?>{
-      'part': 'PART_3',
-      'source_id': 'famous-person',
-      'topic_title': 'Famous people',
-      'turn_blueprints': <String>[
-        'Why do people become famous?',
-        'Is talent necessary for fame?',
-        'How does fame affect children?',
-        'What responsibilities do famous people have?',
-        'Is it easier to become famous today?',
-        'Would you like to be famous?',
       ],
     },
   ],
