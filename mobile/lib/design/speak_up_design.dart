@@ -2,27 +2,28 @@ import 'package:flutter/material.dart';
 
 /// The single visual source of truth for SpeakUp's mobile surfaces.
 abstract final class SpeakUpDesign {
-  static const canvas = Color(0xFFF8F4EA);
-  static const surface = Color(0xFFFFFDFC);
-  static const surfaceMuted = Color(0xFFEFEEE9);
-  static const ink = Color(0xFF171A11);
-  static const secondary = Color(0xFF686B61);
-  static const tertiary = Color(0xFF92978C);
-  static const border = Color(0xFFE3E0D9);
-  static const primary = Color(0xFFC8DC45);
-  static const primaryMuted = Color(0xFFEEF4C9);
-  static const strongAction = Color(0xFF285F52);
-  static const success = Color(0xFF3A9B85);
-  static const successMuted = Color(0xFFDDEEE8);
-  static const error = Color(0xFFCC421A);
-  static const errorMuted = Color(0xFFFBE4DC);
-  static const accentBlue = Color(0xFFD8E9ED);
-  static const accentBlueStrong = Color(0xFF4E7E89);
-  static const accentLavender = Color(0xFFEADDF1);
-  static const accentLavenderStrong = Color(0xFF7466A8);
-  static const accentPeriwinkle = Color(0xFFDEE3F3);
-  static const accentSage = Color(0xFFE4E9CB);
-  static const accentSageStrong = Color(0xFF71813D);
+  // Professional blue with warm accent - refined and trustworthy
+  static const canvas = Color(0xFFFAFAF9);
+  static const surface = Color(0xFFFFFFFF);
+  static const surfaceMuted = Color(0xFFF5F5F4);
+  static const ink = Color(0xFF1F2937);
+  static const secondary = Color(0xFF6B7280);
+  static const tertiary = Color(0xFF9CA3AF);
+  static const border = Color(0xFFE5E7EB);
+  static const primary = Color(0xFF2D5F7F);
+  static const primaryMuted = Color(0xFFD4E4ED);
+  static const strongAction = Color(0xFF1E4A5F);
+  static const success = Color(0xFF10B981);
+  static const successMuted = Color(0xFFD1FAE5);
+  static const error = Color(0xFFEF4444);
+  static const errorMuted = Color(0xFFFEE2E2);
+  static const accentBlue = Color(0xFFDEEBF0);
+  static const accentBlueStrong = Color(0xFF2D5F7F);
+  static const accentLavender = Color(0xFFEDE9FE);
+  static const accentLavenderStrong = Color(0xFF7C3AED);
+  static const accentPeriwinkle = Color(0xFFE0E7FF);
+  static const accentSage = Color(0xFFFFE5DF);
+  static const accentSageStrong = Color(0xFFFF7C5C);
 
   static const space4 = 4.0;
   static const space8 = 8.0;
