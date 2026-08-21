@@ -1510,6 +1510,56 @@ void main() {
     expect(find.byKey(const Key('open-section-completion')), findsOneWidget);
   });
 
+  testWidgets('Part 1 completion sheet dismisses to reveal the conversation', (
+    tester,
+  ) async {
+    final practice = _IeltsPracticeClient(initialCompleted: 3, turnLimit: 4);
+    final controller = PracticeController(
+      client: practice,
+      recorder: _Recorder(),
+    );
+    addTearDown(controller.dispose);
+    await _activatePractice(
+      controller,
+      practice,
+      _ieltsScene,
+      mode: PracticeMode.part1,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: _MemoryProgressStore(),
+          examinerSpeaker: _ImmediateExaminerSpeaker(),
+        ),
+      ),
+    );
+    await tester.pump();
+    await _answerCurrentShortQuestion(tester, controller);
+
+    expect(
+      find.byKey(const Key('ielts-section-completion-sheet')),
+      findsOneWidget,
+    );
+    expect(find.text('Answer 4'), findsOneWidget);
+
+    await tester.timedDrag(
+      find.byKey(const Key('ielts-part1-completion-drag-region')),
+      const Offset(0, 200),
+      const Duration(milliseconds: 600),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('ielts-section-completion-sheet')),
+      findsNothing,
+    );
+    expect(find.byKey(const Key('ielts-mock-conversation')), findsOneWidget);
+    expect(find.text('Answer 4'), findsOneWidget);
+    expect(find.byKey(const Key('ielts-mock-exit')), findsOneWidget);
+  });
+
   testWidgets('Part 1 opens the shared section review page', (tester) async {
     final practice = _IeltsPracticeClient(initialCompleted: 3, turnLimit: 4);
     final controller = PracticeController(
@@ -1587,6 +1637,16 @@ void main() {
     expect(find.text(_question(9).text), findsNothing);
     expect(find.textContaining('You should say:'), findsNothing);
     expect(find.byKey(const Key('practice-page')), findsNothing);
+
+    await tester.drag(
+      find.byKey(const Key('ielts-part1-transition-drag-region')),
+      const Offset(0, 240),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('ielts-section-completion-sheet')),
+      findsOneWidget,
+    );
 
     await tester.tap(find.text('保存并退出'));
     await tester.pumpAndSettle();
