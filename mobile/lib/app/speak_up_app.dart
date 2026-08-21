@@ -12,6 +12,7 @@ import 'package:speakup/features/agent/conversation/agent_message_image_client.d
 import 'package:speakup/features/agent/conversation/conversation_controller.dart';
 import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/speak_up_shell.dart';
+import 'package:speakup/design/speak_up_components.dart';
 import 'package:speakup/design/speak_up_theme.dart';
 import 'package:speakup/features/coaching/preparation/practice_plan_client_action_controller.dart';
 import 'package:speakup/features/coaching/scenario/scenario_practice.dart';
@@ -105,6 +106,10 @@ class SpeakUpApp extends StatelessWidget {
       title: 'SpeakUp',
       debugShowCheckedModeBanner: false,
       theme: SpeakUpTheme.light,
+      builder: (context, child) => Stack(
+        fit: StackFit.expand,
+        children: [const SpeakUpAmbientBackground(), ?child],
+      ),
       home: controller == null
           ? _AuthenticatedNavigator(
               conversationController: conversationController,

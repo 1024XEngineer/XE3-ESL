@@ -31,21 +31,25 @@ class PlatformNavigationBar extends StatelessWidget {
     super.key,
   });
 
-  static const contentHeight = 52.0;
-  static const minimumBottomInset = 10.0;
+  static const contentHeight = 48.0;
+  static const iosContentHeight = 44.0;
+  static const minimumBottomInset = 8.0;
 
   final List<PlatformNavigationDestination> destinations;
   final int selectedIndex;
   final Future<int> Function(int) onDestinationSelected;
 
-  static double heightFor(BuildContext context) => contentHeight;
+  static double heightFor(BuildContext context) =>
+      defaultTargetPlatform == TargetPlatform.iOS && !kIsWeb
+      ? iosContentHeight
+      : contentHeight;
 
   @override
   Widget build(BuildContext context) {
     if (defaultTargetPlatform == TargetPlatform.iOS && !kIsWeb) {
       return SizedBox(
         key: const Key('primary-navigation'),
-        height: contentHeight + MediaQuery.viewPaddingOf(context).bottom,
+        height: iosContentHeight + MediaQuery.viewPaddingOf(context).bottom,
         child: _NativeIosTabBar(
           destinations: destinations,
           selectedIndex: selectedIndex,

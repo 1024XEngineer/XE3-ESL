@@ -12,6 +12,8 @@ abstract final class SpeakUpDesign {
   static const inkTertiary = Color(0xFF8A94A6);
   static const borderGlass = Color(0xC7FFFFFF);
   static const borderSubtle = Color(0xFFDDE5F0);
+  static const cardShadow = Color(0x122D425E);
+  static const cardDraggedShadow = Color(0x292D425E);
   static const primary = Color(0xFF0D6FD8);
   static const primaryPressed = Color(0xFF095FB9);
   static const primaryMuted = Color(0xFFE6F2FF);

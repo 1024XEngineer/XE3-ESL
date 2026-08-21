@@ -184,7 +184,6 @@ void main() {
       ),
       findsOneWidget,
     );
-    expect(find.byType(BackdropFilter), findsNothing);
     final shellScaffold = tester.widget<Scaffold>(
       find.ancestor(
         of: find.byKey(const Key('primary-navigation')),
@@ -192,6 +191,7 @@ void main() {
       ),
     );
     expect(shellScaffold.extendBody, isFalse);
+    expect(find.byType(BackdropFilter), findsWidgets);
     await _tapPrimaryDestination(
       tester,
       key: 'primary-tab-review',

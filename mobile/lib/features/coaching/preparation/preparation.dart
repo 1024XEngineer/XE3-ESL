@@ -531,10 +531,10 @@ class _PreparationPageState extends State<PreparationPage> {
       },
       child: Scaffold(
         key: const Key('scenes-page'),
-        backgroundColor: PreparationDesign.canvas,
+        backgroundColor: Colors.transparent,
         appBar: widget.showBackButton
             ? AppBar(
-                backgroundColor: PreparationDesign.canvas,
+                backgroundColor: Colors.transparent,
                 surfaceTintColor: Colors.transparent,
                 elevation: 0,
                 scrolledUnderElevation: 0,
@@ -1045,14 +1045,33 @@ class _PracticeHubCarouselState extends State<_PracticeHubCarousel> {
             key: const Key('practice-hub-carousel'),
             controller: _controller,
             allowImplicitScrolling: true,
+            clipBehavior: Clip.none,
             itemCount: pageCount,
             onPageChanged: _handlePageChanged,
-            itemBuilder: (context, page) => Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 6),
-              child: _PracticeHubEntry(
-                item: widget.items[_itemIndexForPage(page)],
-                entryKey: _entryKeyForPage(page),
-              ),
+            itemBuilder: (context, page) => AnimatedBuilder(
+              animation: _controller,
+              builder: (context, _) {
+                final pagePosition =
+                    _controller.hasClients &&
+                        _controller.position.hasContentDimensions
+                    ? _controller.page ?? _controller.initialPage.toDouble()
+                    : _controller.initialPage.toDouble();
+                final displacement = MediaQuery.disableAnimationsOf(context)
+                    ? 0.0
+                    : (pagePosition - page).abs().clamp(0.0, 1.0);
+                return Transform.scale(
+                  key: Key('practice-hub-motion-$page'),
+                  scale: 1 - displacement * 0.025,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    child: _PracticeHubEntry(
+                      item: widget.items[_itemIndexForPage(page)],
+                      entryKey: _entryKeyForPage(page),
+                      displacement: displacement,
+                    ),
+                  ),
+                );
+              },
             ),
           ),
         ),
@@ -1147,105 +1166,124 @@ class _PracticeHubItem {
 }
 
 class _PracticeHubEntry extends StatelessWidget {
-  const _PracticeHubEntry({required this.item, required this.entryKey});
+  const _PracticeHubEntry({
+    required this.item,
+    required this.entryKey,
+    required this.displacement,
+  });
 
   final _PracticeHubItem item;
   final Key entryKey;
+  final double displacement;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      key: entryKey,
-      color: PreparationDesign.surfaceMuted,
-      clipBehavior: Clip.antiAlias,
-      shape: RoundedRectangleBorder(
+    return DecoratedBox(
+      decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(PreparationDesign.radiusHero),
-        side: const BorderSide(color: PreparationDesign.border),
+        boxShadow: [
+          BoxShadow(
+            color: Color.lerp(
+              SpeakUpDesign.cardShadow,
+              SpeakUpDesign.cardDraggedShadow,
+              displacement,
+            )!,
+            blurRadius: 24 + displacement * 12,
+            offset: Offset(0, 8 + displacement * 8),
+          ),
+        ],
       ),
-      child: Semantics(
-        button: true,
-        label: '${item.title}。${item.description}',
-        onTap: item.onPressed,
-        excludeSemantics: true,
-        child: InkWell(
+      child: Material(
+        key: entryKey,
+        color: PreparationDesign.surfaceMuted,
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(PreparationDesign.radiusHero),
+          side: const BorderSide(color: SpeakUpDesign.borderGlass),
+        ),
+        child: Semantics(
+          button: true,
+          label: '${item.title}。${item.description}',
           onTap: item.onPressed,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              Image.asset(
-                item.assetPath,
-                fit: BoxFit.cover,
-                alignment: Alignment.topCenter,
-                errorBuilder: (_, _, _) => ColoredBox(
-                  color: PreparationDesign.surfaceMuted,
-                  child: Icon(
-                    item.fallbackIcon,
-                    color: PreparationDesign.ink,
-                    size: 44,
+          excludeSemantics: true,
+          child: InkWell(
+            onTap: item.onPressed,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Image.asset(
+                  item.assetPath,
+                  fit: BoxFit.cover,
+                  alignment: Alignment.topCenter,
+                  errorBuilder: (_, _, _) => ColoredBox(
+                    color: PreparationDesign.surfaceMuted,
+                    child: Icon(
+                      item.fallbackIcon,
+                      color: PreparationDesign.ink,
+                      size: 44,
+                    ),
                   ),
                 ),
-              ),
-              const DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment(0, -0.15),
-                    end: Alignment.bottomCenter,
-                    colors: [Colors.transparent, Color(0xD9000000)],
+                const DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment(0, -0.15),
+                      end: Alignment.bottomCenter,
+                      colors: [Colors.transparent, Color(0xD9000000)],
+                    ),
                   ),
                 ),
-              ),
-              Positioned(
-                left: 22,
-                right: 22,
-                bottom: 22,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      item.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: PreparationDesign.pageTitle.copyWith(
-                        color: Colors.white,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      item.description,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: PreparationDesign.body.copyWith(
-                        color: Colors.white.withValues(alpha: 0.82),
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Container(
-                      width: double.infinity,
-                      constraints: const BoxConstraints(minHeight: 48),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 12,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.94),
-                        borderRadius: BorderRadius.circular(
-                          PreparationDesign.radiusControl,
-                        ),
-                      ),
-                      child: Text(
-                        '开始练习',
+                Positioned(
+                  left: 22,
+                  right: 22,
+                  bottom: 22,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        item.title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         textAlign: TextAlign.center,
-                        style: PreparationDesign.cardTitle,
+                        style: PreparationDesign.pageTitle.copyWith(
+                          color: Colors.white,
+                        ),
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 6),
+                      Text(
+                        item.description,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: PreparationDesign.body.copyWith(
+                          color: Colors.white.withValues(alpha: 0.82),
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      SizedBox(
+                        width: double.infinity,
+                        height: SpeakUpDesign.primaryActionHeight,
+                        child: SpeakUpGlassSurface(
+                          level: SpeakUpGlassLevel.hero,
+                          borderRadius: SpeakUpDesign.radiusPill,
+                          child: Center(
+                            child: Text(
+                              '开始练习',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              textAlign: TextAlign.center,
+                              style: PreparationDesign.cardTitle,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

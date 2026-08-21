@@ -22,7 +22,7 @@ abstract final class SpeakUpTheme {
     return ThemeData(
       useMaterial3: true,
       colorScheme: scheme,
-      scaffoldBackgroundColor: SpeakUpDesign.canvas,
+      scaffoldBackgroundColor: Colors.transparent,
       canvasColor: SpeakUpDesign.canvas,
       dividerColor: SpeakUpDesign.border,
       disabledColor: SpeakUpDesign.tertiary,
@@ -39,7 +39,7 @@ abstract final class SpeakUpTheme {
         labelMedium: SpeakUpDesign.meta,
       ),
       appBarTheme: const AppBarTheme(
-        backgroundColor: SpeakUpDesign.canvas,
+        backgroundColor: Colors.transparent,
         foregroundColor: SpeakUpDesign.ink,
         surfaceTintColor: Colors.transparent,
         elevation: 0,

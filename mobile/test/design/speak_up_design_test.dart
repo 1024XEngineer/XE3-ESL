@@ -8,7 +8,7 @@ void main() {
   test('theme exposes the shared semantic visual tokens', () {
     final theme = SpeakUpTheme.light;
 
-    expect(theme.scaffoldBackgroundColor, SpeakUpDesign.canvas);
+    expect(theme.scaffoldBackgroundColor, Colors.transparent);
     expect(theme.colorScheme.primary, SpeakUpDesign.primary);
     expect(SpeakUpDesign.primary, SpeakUpDesign.ink);
     expect(theme.progressIndicatorTheme.color, SpeakUpDesign.primary);

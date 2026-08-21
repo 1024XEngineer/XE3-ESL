@@ -47,7 +47,7 @@ class SpeakUpAmbientBackground extends StatelessWidget {
   }
 }
 
-enum SpeakUpGlassLevel { control, floating }
+enum SpeakUpGlassLevel { control, floating, hero }
 
 class SpeakUpGlassSurface extends StatelessWidget {
   const SpeakUpGlassSurface({
@@ -64,6 +64,7 @@ class SpeakUpGlassSurface extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final floating = level == SpeakUpGlassLevel.floating;
+    final hero = level == SpeakUpGlassLevel.hero;
     return DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(borderRadius),
@@ -71,9 +72,9 @@ class SpeakUpGlassSurface extends StatelessWidget {
           BoxShadow(
             color: const Color(
               0xFF2D425E,
-            ).withValues(alpha: floating ? 0.12 : 0.09),
-            blurRadius: floating ? 30 : 18,
-            offset: Offset(0, floating ? 10 : 6),
+            ).withValues(alpha: hero ? 0.18 : (floating ? 0.12 : 0.09)),
+            blurRadius: hero ? 34 : (floating ? 30 : 18),
+            offset: Offset(0, hero ? 12 : (floating ? 10 : 6)),
           ),
         ],
       ),
@@ -81,16 +82,21 @@ class SpeakUpGlassSurface extends StatelessWidget {
         borderRadius: BorderRadius.circular(borderRadius),
         child: BackdropFilter(
           filter: ImageFilter.blur(
-            sigmaX: floating ? 20 : 16,
-            sigmaY: floating ? 20 : 16,
+            sigmaX: hero ? 24 : (floating ? 20 : 16),
+            sigmaY: hero ? 24 : (floating ? 20 : 16),
           ),
           child: DecoratedBox(
             decoration: BoxDecoration(
-              color: floating
+              color: hero
+                  ? const Color(0xE0FFFFFF)
+                  : floating
                   ? SpeakUpDesign.surfaceGlassStrong
                   : SpeakUpDesign.surfaceGlassSoft,
               borderRadius: BorderRadius.circular(borderRadius),
-              border: Border.all(color: SpeakUpDesign.borderGlass),
+              border: Border.all(
+                color: hero ? Colors.white : SpeakUpDesign.borderGlass,
+                width: hero ? 1.4 : 1,
+              ),
             ),
             child: child,
           ),
