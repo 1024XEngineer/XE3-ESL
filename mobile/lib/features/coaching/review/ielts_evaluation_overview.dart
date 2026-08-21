@@ -24,7 +24,7 @@ class IeltsEvaluationOverview extends StatelessWidget {
     return Card(
       key: const Key('ielts-evaluation-overview'),
       elevation: 0,
-      color: SpeakUpDesign.surface,
+      color: SpeakUpDesign.surfaceGlassStrong,
       surfaceTintColor: Colors.transparent,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),

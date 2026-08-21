@@ -329,7 +329,7 @@ class _ReviewHistoryPageState extends State<_ReviewHistoryPage> {
                                 crossAxisCount: 2,
                                 crossAxisSpacing: 12,
                                 mainAxisSpacing: 12,
-                                mainAxisExtent: 128,
+                                mainAxisExtent: 144,
                               ),
                           delegate: SliverChildBuilderDelegate((
                             context,
@@ -338,6 +338,7 @@ class _ReviewHistoryPageState extends State<_ReviewHistoryPage> {
                             final item = items[index];
                             return _ReviewListCard(
                               item: item,
+                              colorIndex: index,
                               primary: index == 0,
                               onTap: () => widget.onOpenDetail(item),
                             );
@@ -417,14 +418,18 @@ class _ReviewFilters extends StatelessWidget {
               label: Text(options[index].$1),
               selected: selected == options[index].$2,
               showCheckmark: false,
-              backgroundColor: SpeakUpDesign.primaryMuted,
-              selectedColor: SpeakUpDesign.primary,
-              side: BorderSide.none,
+              backgroundColor: SpeakUpDesign.surfaceGlassSoft,
+              selectedColor: SpeakUpDesign.primaryMuted,
+              side: BorderSide(
+                color: selected == options[index].$2
+                    ? SpeakUpDesign.primary.withValues(alpha: 0.35)
+                    : SpeakUpDesign.borderGlass,
+              ),
               shape: const StadiumBorder(),
               labelStyle: SpeakUpDesign.label.copyWith(
                 color: selected == options[index].$2
-                    ? SpeakUpDesign.ink
-                    : SpeakUpDesign.ink,
+                    ? SpeakUpDesign.primaryPressed
+                    : SpeakUpDesign.secondary,
               ),
               onSelected: (_) => onSelected(options[index].$2),
             ),
@@ -438,11 +443,13 @@ class _ReviewFilters extends StatelessWidget {
 class _ReviewListCard extends StatelessWidget {
   const _ReviewListCard({
     required this.item,
+    required this.colorIndex,
     required this.primary,
     required this.onTap,
   });
 
   final ReviewHistoryItem item;
+  final int colorIndex;
   final bool primary;
   final VoidCallback onTap;
 
@@ -453,6 +460,7 @@ class _ReviewListCard extends StatelessWidget {
     final status = _statusLabel(item.report);
     final content = _reviewCardContent(item);
     final imagePath = _reviewImage(item);
+    final palette = _reviewCardPalette(colorIndex);
     return Semantics(
       key: primary ? const Key('review-content') : null,
       button: true,
@@ -469,18 +477,34 @@ class _ReviewListCard extends StatelessWidget {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              Image.asset(
-                imagePath,
-                fit: BoxFit.cover,
-                excludeFromSemantics: true,
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: palette,
+                  ),
+                ),
               ),
-              const DecoratedBox(
+              Opacity(
+                opacity: 0.12,
+                child: Image.asset(
+                  imagePath,
+                  fit: BoxFit.cover,
+                  excludeFromSemantics: true,
+                  color: SpeakUpDesign.ink,
+                  colorBlendMode: BlendMode.luminosity,
+                ),
+              ),
+              DecoratedBox(
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
-                    colors: [Colors.transparent, Color(0xB8000000)],
-                    stops: [0.38, 1],
+                    colors: [
+                      Colors.white.withValues(alpha: 0.10),
+                      Colors.white.withValues(alpha: 0.42),
+                    ],
                   ),
                 ),
               ),
@@ -496,7 +520,7 @@ class _ReviewListCard extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: SpeakUpDesign.cardTitle.copyWith(
-                        color: Colors.white,
+                        color: SpeakUpDesign.ink,
                         fontSize: 16,
                       ),
                     ),
@@ -506,7 +530,7 @@ class _ReviewListCard extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: SpeakUpDesign.meta.copyWith(
-                        color: Colors.white.withValues(alpha: 0.82),
+                        color: SpeakUpDesign.secondary,
                       ),
                     ),
                   ],
@@ -519,6 +543,13 @@ class _ReviewListCard extends StatelessWidget {
     );
   }
 }
+
+List<Color> _reviewCardPalette(int index) => const <List<Color>>[
+  [Color(0xFFDDF6FF), Color(0xFFCBEAF5)],
+  [Color(0xFFE1F8EF), Color(0xFFCFF0E3)],
+  [Color(0xFFF0EDFF), Color(0xFFE2DCFF)],
+  [Color(0xFFFFF2D8), Color(0xFFFFE3D5)],
+][index % 4];
 
 ({String title, String? detail}) _reviewCardContent(ReviewHistoryItem item) {
   final report = item.report;

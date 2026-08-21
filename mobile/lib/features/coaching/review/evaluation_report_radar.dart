@@ -37,6 +37,14 @@ Color evaluationScoreBarColor(double? normalizedValue) =>
       EvaluationScoreTone.priority => const Color(0xFF8A2D21),
     };
 
+Color evaluationRadarAccent(int index) => const <Color>[
+  SpeakUpDesign.accentCyan,
+  SpeakUpDesign.primary,
+  SpeakUpDesign.accentViolet,
+  SpeakUpDesign.accentAmber,
+  SpeakUpDesign.accentMint,
+][index % 5];
+
 class EvaluationRadarChart extends StatelessWidget {
   const EvaluationRadarChart({
     required this.axes,
@@ -78,6 +86,7 @@ class EvaluationRadarChart extends StatelessWidget {
                 for (var index = 0; index < axes.length; index++)
                   _RadarAxisLabel(
                     axis: axes[index],
+                    accentColor: evaluationRadarAccent(index),
                     center: center,
                     radius: labelRadius,
                     index: index,
@@ -96,6 +105,7 @@ class EvaluationRadarChart extends StatelessWidget {
 class _RadarAxisLabel extends StatelessWidget {
   const _RadarAxisLabel({
     required this.axis,
+    required this.accentColor,
     required this.center,
     required this.radius,
     required this.index,
@@ -107,6 +117,7 @@ class _RadarAxisLabel extends StatelessWidget {
   static const _height = 64.0;
 
   final EvaluationRadarAxis axis;
+  final Color accentColor;
   final Offset center;
   final double radius;
   final int index;
@@ -153,13 +164,13 @@ class _RadarAxisLabel extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
-                  color: evaluationScoreBackground(axis.normalizedValue),
+                  color: accentColor.withValues(alpha: 0.13),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
                   axis.scoreLabel,
                   style: TextStyle(
-                    color: evaluationScoreForeground(axis.normalizedValue),
+                    color: Color.lerp(accentColor, SpeakUpDesign.ink, 0.28),
                     fontSize: 14,
                     fontWeight: FontWeight.w800,
                   ),
@@ -207,23 +218,32 @@ class EvaluationRadarPainter extends CustomPainter {
         grid,
       );
     }
-    if (values.any((value) => value == null)) return;
     final normalized = values
-        .map((value) => value!.clamp(0.0, 1.0))
+        .map((value) => (value ?? 0).clamp(0.0, 1.0))
         .toList(growable: false);
     final data = _polygon(center, radius, normalized);
+    final radarBounds = Rect.fromCircle(center: center, radius: radius);
+    final radarColors = <Color>[
+      for (var index = 0; index < normalized.length; index++)
+        evaluationRadarAccent(index),
+      evaluationRadarAccent(0),
+    ];
     canvas.drawPath(
       data,
       Paint()
-        ..color = const Color(0xFF1F2937).withValues(alpha: 0.08)
+        ..shader = SweepGradient(
+          colors: [
+            for (final color in radarColors) color.withValues(alpha: 0.16),
+          ],
+        ).createShader(radarBounds)
         ..style = PaintingStyle.fill,
     );
     canvas.drawPath(
       data,
       Paint()
-        ..color = const Color(0xFF111827)
+        ..shader = SweepGradient(colors: radarColors).createShader(radarBounds)
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 2
+        ..strokeWidth = 2.4
         ..strokeCap = StrokeCap.round
         ..strokeJoin = StrokeJoin.round,
     );
@@ -236,7 +256,11 @@ class EvaluationRadarPainter extends CustomPainter {
         scale: normalized[index],
       );
       canvas.drawCircle(point, 3.5, Paint()..color = Colors.white);
-      canvas.drawCircle(point, 2.2, Paint()..color = const Color(0xFF111827));
+      canvas.drawCircle(
+        point,
+        2.2,
+        Paint()..color = evaluationRadarAccent(index),
+      );
     }
   }
 
