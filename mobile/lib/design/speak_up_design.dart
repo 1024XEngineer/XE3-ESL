@@ -37,7 +37,7 @@ abstract final class SpeakUpDesign {
   static const tertiary = inkTertiary;
   static const border = borderSubtle;
   static const strongAction = primaryPressed;
-  static const success = accentMint;
+  static const success = quickActionMint;
   static const successMuted = Color(0xFFE4FAF4);
   static const warning = accentAmber;
   static const accentBlue = Color(0xFFE5FAFF);
@@ -46,7 +46,7 @@ abstract final class SpeakUpDesign {
   static const accentLavenderStrong = accentViolet;
   static const accentPeriwinkle = Color(0xFFEFECFF);
   static const accentSage = Color(0xFFE4FAF4);
-  static const accentSageStrong = accentMint;
+  static const accentSageStrong = quickActionMint;
 
   static const ambientTop = Color(0xFFEEF7FA);
   static const skyTop = Color(0xFFA9D8F1);
