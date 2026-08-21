@@ -151,64 +151,59 @@ void main() {
     },
   );
 
-  testWidgets('IELTS Part 2 English answer enters Part 3 after confirmation', (
-    tester,
-  ) async {
-    final feedback = _practiceFeedback();
-    final client = _Client(feedback);
-    final feedbackController = SpeechFeedbackController(
-      client: client,
-      pollInterval: Duration.zero,
-      maximumPollAttempts: 1,
-    );
-    final snapshot = _practiceSnapshot(
-      feedback.statusUrl,
-      practiceExperience: PracticeExperience.ieltsSpeaking,
-      sceneCategory: SceneCategory.ieltsSpeaking,
-      turnLimit: 6,
-    );
-    final practiceController = PracticeController(
-      client: _PracticeClient(snapshot),
-    );
-    addTearDown(feedbackController.dispose);
-    addTearDown(practiceController.dispose);
-    await _restorePractice(practiceController, snapshot);
+  testWidgets(
+    'IELTS Part 2 English answer keeps feedback behind independent completion',
+    (tester) async {
+      final feedback = _practiceFeedback();
+      final client = _Client(feedback);
+      final feedbackController = SpeechFeedbackController(
+        client: client,
+        pollInterval: Duration.zero,
+        maximumPollAttempts: 1,
+      );
+      final snapshot = _practiceSnapshot(
+        feedback.statusUrl,
+        practiceExperience: PracticeExperience.ieltsSpeaking,
+        sceneCategory: SceneCategory.ieltsSpeaking,
+        turnLimit: 1,
+      );
+      final practiceController = PracticeController(
+        client: _PracticeClient(snapshot),
+      );
+      addTearDown(feedbackController.dispose);
+      addTearDown(practiceController.dispose);
+      await _restorePractice(practiceController, snapshot);
 
-    await tester.pumpWidget(
-      MaterialApp(
-        home: IeltsSpeakingMockPage(
-          controller: practiceController,
-          speechFeedbackController: feedbackController,
-          progressStore: _MemoryIeltsProgressStore(),
+      await tester.pumpWidget(
+        MaterialApp(
+          home: IeltsSpeakingMockPage(
+            controller: practiceController,
+            speechFeedbackController: feedbackController,
+            progressStore: _MemoryIeltsProgressStore(),
+          ),
         ),
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 50));
+      );
+      await tester.pump();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
 
-    expect(client.calls, 1);
-    expect(
-      find.byKey(const Key('ielts-mock-part-2-transition')),
-      findsOneWidget,
-    );
-    await tester.tap(find.byKey(const Key('ielts-part2-continue-part3')));
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const Key('ielts-mock-part-3')), findsOneWidget);
-    expect(find.text('Part 3 · Discussion'), findsOneWidget);
-    expect(
-      find.byKey(const Key('ielts-part2-practice-complete')),
-      findsNothing,
-    );
-    expect(
-      feedbackController.projectionFor(
-        'practice:practice_session_001:practice_turn_001',
-      ),
-      isNotNull,
-    );
-    expect(find.text('评分与纠错'), findsNothing);
-  });
+      expect(client.calls, 1);
+      expect(find.byKey(const Key('ielts-section-completion-sheet')), findsOne);
+      expect(find.text('Part 2 已完成'), findsOne);
+      expect(
+        find.byKey(const Key('ielts-mock-part-2-transition')),
+        findsNothing,
+      );
+      expect(find.byKey(const Key('ielts-part2-continue-part3')), findsNothing);
+      expect(
+        feedbackController.projectionFor(
+          'practice:practice_session_001:practice_turn_001',
+        ),
+        isNotNull,
+      );
+      expect(find.text('评分与纠错'), findsNothing);
+    },
+  );
 
   testWidgets('IELTS keeps a Chinese answer but hides insufficient feedback', (
     tester,
@@ -224,7 +219,7 @@ void main() {
       feedback.statusUrl,
       practiceExperience: PracticeExperience.ieltsSpeaking,
       sceneCategory: SceneCategory.ieltsSpeaking,
-      turnLimit: 6,
+      turnLimit: 1,
     );
     final practiceController = PracticeController(
       client: _PracticeClient(
@@ -253,7 +248,8 @@ void main() {
                 answerText: '然后，黄天宇主要来把这个。',
                 evidenceVersion: 1,
                 effectiveTurns: 1,
-                sessionCompleted: false,
+                sessionCompleted:
+                    snapshot.turnHistory.single.turn.sessionCompleted,
                 audioAssetId: 'audio_asset_001',
                 speechFeedbackStatusUrl: feedback.statusUrl,
               ),
@@ -279,18 +275,10 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
 
-    expect(
-      find.byKey(const Key('ielts-mock-part-2-transition')),
-      findsOneWidget,
-    );
-    await tester.tap(find.byKey(const Key('ielts-part2-continue-part3')));
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const Key('ielts-mock-part-3')), findsOneWidget);
-    expect(
-      find.byKey(const Key('ielts-part2-practice-complete')),
-      findsNothing,
-    );
+    expect(find.byKey(const Key('ielts-section-completion-sheet')), findsOne);
+    expect(find.text('Part 2 已完成'), findsOne);
+    expect(find.byKey(const Key('ielts-mock-part-2-transition')), findsNothing);
+    expect(find.byKey(const Key('ielts-part2-continue-part3')), findsNothing);
     expect(find.textContaining('证据不足'), findsNothing);
     expect(find.byType(SpeechFeedbackDisclosure), findsNothing);
   });
@@ -500,6 +488,7 @@ PracticeSessionSnapshot _practiceSnapshot(
   int turnLimit = 3,
 }) {
   const sessionId = 'practice_session_001';
+  final ielts = practiceExperience == PracticeExperience.ieltsSpeaking;
   const question = PracticeQuestion(
     id: 'practice_question_001',
     sessionId: sessionId,
@@ -510,25 +499,22 @@ PracticeSessionSnapshot _practiceSnapshot(
     planId: 'plan_practice_session_001',
     practiceExperience: practiceExperience,
     sceneCategory: sceneCategory,
-    practiceMode: practiceExperience == PracticeExperience.ieltsSpeaking
-        ? PracticeMode.part2
-        : PracticeMode.fullSimulation,
+    practiceMode: ielts ? PracticeMode.part2 : PracticeMode.fullSimulation,
     capabilities: testPracticeCapabilities,
     sessionVersion: 2,
     completedTurns: 1,
     turnLimit: turnLimit,
-    sessionCompleted: false,
-    ieltsAssignment: practiceExperience == PracticeExperience.ieltsSpeaking
-        ? testIeltsAssignment(
-            mode: PracticeMode.part2,
-            part3QuestionCount: turnLimit - 1,
-          )
+    sessionCompleted: ielts,
+    ieltsAssignment: ielts
+        ? testIeltsAssignment(mode: PracticeMode.part2)
         : null,
-    currentQuestion: const PracticeQuestion(
-      id: 'practice_question_002',
-      sessionId: sessionId,
-      text: 'What happened next?',
-    ),
+    currentQuestion: ielts
+        ? null
+        : const PracticeQuestion(
+            id: 'practice_question_002',
+            sessionId: sessionId,
+            text: 'What happened next?',
+          ),
     turnHistory: [
       PracticeTurnExchange(
         question: question,
@@ -541,7 +527,7 @@ PracticeSessionSnapshot _practiceSnapshot(
           answerText: 'I manage the release.',
           evidenceVersion: 1,
           effectiveTurns: 1,
-          sessionCompleted: false,
+          sessionCompleted: ielts,
           audioAssetId: 'audio_asset_001',
           speechFeedbackStatusUrl: statusUrl,
         ),
