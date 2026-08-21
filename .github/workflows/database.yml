@@ -89,22 +89,39 @@ jobs:
             server/migrations/000001_clean_baseline.down.sql
             server/migrations/000001_clean_baseline.up.sql
           )
+          migration_changes=$(
+            git diff --name-status "$BASE_SHA"...HEAD -- "server/migrations/*.sql"
+          )
           if (( ${#base_migrations[@]} > 2 )) &&
              [[ "${base_migrations[0]:-}" != "${clean_baseline[0]}" ]] &&
              [[ "${base_migrations[1]:-}" != "${clean_baseline[1]}" ]] &&
              [[ "${current_migrations[0]:-}" == "${clean_baseline[0]}" ]] &&
              [[ "${current_migrations[1]:-}" == "${clean_baseline[1]}" ]]; then
+            shared_migrations=$(
+              comm -12 \
+                <(printf '%s\n' "${base_migrations[@]}") \
+                <(printf '%s\n' "${current_migrations[@]}")
+            )
+            if [[ -n "$shared_migrations" ]]; then
+              echo "The clean baseline must fully replace the legacy migration history:"
+              echo "$shared_migrations"
+              exit 1
+            fi
+            invalid_changes=$(
+              printf '%s\n' "$migration_changes" |
+                awk '$1 !~ /^(A|D)$/ { print }'
+            )
             echo "Legacy migration history is being replaced by the clean baseline and its successors."
           else
             invalid_changes=$(
-              git diff --name-status "$BASE_SHA"...HEAD -- "server/migrations/*.sql" |
+              printf '%s\n' "$migration_changes" |
                 awk '$1 !~ /^A/ { print }'
             )
-            if [[ -n "$invalid_changes" ]]; then
-              echo "Merged SQL migrations are append-only:"
-              echo "$invalid_changes"
-              exit 1
-            fi
+          fi
+          if [[ -n "$invalid_changes" ]]; then
+            echo "Migration history policy rejected these changes:"
+            echo "$invalid_changes"
+            exit 1
           fi
 
       - name: Verify explicit migration lifecycle
