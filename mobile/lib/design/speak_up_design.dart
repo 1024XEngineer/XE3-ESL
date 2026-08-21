@@ -13,8 +13,10 @@ abstract final class SpeakUpDesign {
   static const primaryMuted = Color(0xFFF0F0F0);
   static const success = Color(0xFF285443);
   static const successMuted = Color(0xFFEAF3EF);
+  static const warning = Color(0xFFC58000);
   static const error = Color(0xFF8A2D21);
   static const errorMuted = Color(0xFFFFEDE8);
+  static const darkSurface = Color(0xFF1A1A1A);
 
   static const space4 = 4.0;
   static const space8 = 8.0;
