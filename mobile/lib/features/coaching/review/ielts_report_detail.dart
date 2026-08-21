@@ -67,8 +67,7 @@ class _Part1ReportContent extends StatelessWidget {
       children: [
         IeltsPart1DarkOverview(
           report: report,
-          contextLabel:
-              '基于本次 $answeredCount 道已记录回答的阶段性估分，不等同于官方考试成绩。',
+          contextLabel: '基于本次 $answeredCount 道已记录回答的阶段性估分，不等同于官方考试成绩。',
         ),
         const SizedBox(height: SpeakUpDesign.space24),
         Row(
