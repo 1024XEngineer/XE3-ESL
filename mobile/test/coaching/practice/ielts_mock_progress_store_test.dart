@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -71,5 +72,28 @@ void main() {
     ).writeAsString('{not-json');
 
     expect(await store.read('session-a'), isNull);
+  });
+
+  test('migrates the removed Part 3 intro checkpoint into practice', () async {
+    const sessionId = 'session-part-3';
+    await File('${directory.path}/ielts-mock-progress-v1.json').writeAsString(
+      jsonEncode(<String, Object?>{
+        'version': 1,
+        'sessions': <String, Object?>{
+          sessionId: <String, Object?>{
+            'session_id': sessionId,
+            'phase': 'part3Intro',
+            'started_at': '2026-08-21T07:00:00.000Z',
+            'part_2_spoken_seconds': 0,
+            'notes': '',
+          },
+        },
+      }),
+    );
+
+    final restored = await store.read(sessionId);
+
+    expect(restored, isNotNull);
+    expect(restored!.phase, IeltsMockPhase.part3);
   });
 }
