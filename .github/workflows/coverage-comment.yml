@@ -34,12 +34,16 @@ jobs:
                 per_page: 100,
               },
             );
-            if (!currentArtifacts.some(
+            const currentGoAvailable = currentArtifacts.some(
               (artifact) => artifact.name === "go-coverage-server",
-            )) {
-              core.warning("PR run has no Go coverage artifact; comment skipped");
+            );
+            const currentFlutterAvailable = currentArtifacts.some(
+              (artifact) => artifact.name === "flutter-coverage-mobile",
+            );
+            if (!currentGoAvailable && !currentFlutterAvailable) {
+              core.warning("PR run has no coverage artifacts; comment skipped");
               core.setOutput("available", "false");
-              core.setOutput("reason", "current Go coverage artifact is unavailable");
+              core.setOutput("reason", "current coverage artifacts are unavailable");
               return;
             }
 
@@ -93,10 +97,17 @@ jobs:
               },
             );
 
-            let baseline = null;
+            let goBaseline = null;
+            let flutterBaseline = null;
             for (const candidate of runs.filter(
               (item) => item.conclusion === "success",
             )) {
+              if (
+                (!currentGoAvailable || goBaseline) &&
+                (!currentFlutterAvailable || flutterBaseline)
+              ) {
+                break;
+              }
               const artifacts = await github.paginate(
                 github.rest.actions.listWorkflowRunArtifacts,
                 {
@@ -106,25 +117,61 @@ jobs:
                   per_page: 100,
                 },
               );
-              if (artifacts.some(
-                (artifact) => artifact.name === "go-coverage-server",
-              )) {
-                baseline = candidate;
-                break;
+              if (
+                currentGoAvailable &&
+                !goBaseline &&
+                artifacts.some(
+                  (artifact) => artifact.name === "go-coverage-server",
+                )
+              ) {
+                goBaseline = candidate;
+              }
+              if (
+                currentFlutterAvailable &&
+                !flutterBaseline &&
+                artifacts.some(
+                  (artifact) => artifact.name === "flutter-coverage-mobile",
+                )
+              ) {
+                flutterBaseline = candidate;
               }
             }
 
-            if (!baseline) {
+            if (currentGoAvailable && !goBaseline) {
               core.warning(
-                "Base branch has no successful Go coverage artifact; comment skipped",
+                "Base branch has no successful Go coverage artifact; Go comparison omitted",
               );
+            }
+            if (currentFlutterAvailable && !flutterBaseline) {
+              core.warning(
+                "Base branch has no successful Flutter coverage artifact; Flutter comparison omitted",
+              );
+            }
+
+            const goAvailable = currentGoAvailable && Boolean(goBaseline);
+            const flutterAvailable =
+              currentFlutterAvailable && Boolean(flutterBaseline);
+            if (!goAvailable && !flutterAvailable) {
               core.setOutput("available", "false");
-              core.setOutput("reason", "base branch coverage baseline is unavailable");
+              core.setOutput(
+                "reason",
+                "comparable base branch coverage artifacts are unavailable",
+              );
               return;
             }
 
             core.setOutput("available", "true");
-            core.setOutput("baseline_run_id", String(baseline.id));
+            core.setOutput("go_available", String(goAvailable));
+            core.setOutput("flutter_available", String(flutterAvailable));
+            if (goBaseline) {
+              core.setOutput("go_baseline_run_id", String(goBaseline.id));
+            }
+            if (flutterBaseline) {
+              core.setOutput(
+                "flutter_baseline_run_id",
+                String(flutterBaseline.id),
+              );
+            }
             core.setOutput("base_branch", pullRequest.base.ref);
             core.setOutput("pull_request_number", String(pullRequest.number));
 
@@ -135,21 +182,39 @@ jobs:
         run: echo "Coverage comment skipped because ${SKIP_REASON}."
 
       - name: Download current Go coverage
-        if: steps.context.outputs.available == 'true'
+        if: steps.context.outputs.go_available == 'true'
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: go-coverage-server
-          path: coverage/current
+          path: coverage/current/go
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
 
       - name: Download baseline Go coverage
-        if: steps.context.outputs.available == 'true'
+        if: steps.context.outputs.go_available == 'true'
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: go-coverage-server
-          path: coverage/baseline
-          run-id: ${{ steps.context.outputs.baseline_run_id }}
+          path: coverage/baseline/go
+          run-id: ${{ steps.context.outputs.go_baseline_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Download current Flutter coverage
+        if: steps.context.outputs.flutter_available == 'true'
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: flutter-coverage-mobile
+          path: coverage/current/flutter
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Download baseline Flutter coverage
+        if: steps.context.outputs.flutter_available == 'true'
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: flutter-coverage-mobile
+          path: coverage/baseline/flutter
+          run-id: ${{ steps.context.outputs.flutter_baseline_run_id }}
           github-token: ${{ github.token }}
 
       - name: Create or update PR coverage comment
@@ -157,6 +222,8 @@ jobs:
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
           BASE_BRANCH: ${{ steps.context.outputs.base_branch }}
+          FLUTTER_AVAILABLE: ${{ steps.context.outputs.flutter_available }}
+          GO_AVAILABLE: ${{ steps.context.outputs.go_available }}
           PULL_REQUEST_NUMBER: ${{ steps.context.outputs.pull_request_number }}
         with:
           script: |
@@ -167,17 +234,38 @@ jobs:
               "github.com/1024XEngineer/XE3-ESL/server/";
             const maxFiles = 5;
 
-            function displayPath(source) {
+            function displayGoPath(source) {
               if (source.startsWith(modulePrefix)) {
                 return `server/${source.slice(modulePrefix.length)}`;
               }
               return `server/${source}`;
             }
 
-            function readCoverage(profilePath) {
+            function displayFlutterPath(source) {
+              const normalized = source.replaceAll("\\", "/");
+              const mobileMarker = "/mobile/";
+              const mobileOffset = normalized.lastIndexOf(mobileMarker);
+              if (mobileOffset >= 0) {
+                return `mobile/${normalized.slice(
+                  mobileOffset + mobileMarker.length,
+                )}`;
+              }
+              if (normalized.startsWith("mobile/")) return normalized;
+              return `mobile/${normalized}`;
+            }
+
+            function emptyStats() {
+              return { totalUnits: 0, coveredUnits: 0 };
+            }
+
+            function addUnit(stats, units, covered) {
+              stats.totalUnits += units;
+              stats.coveredUnits += covered;
+            }
+
+            function readGoCoverage(profilePath) {
               const files = new Map();
-              let totalStatements = 0;
-              let coveredStatements = 0;
+              const total = emptyStats();
               const content = fs.readFileSync(profilePath, "utf8");
 
               for (const line of content.split(/\r?\n/)) {
@@ -188,29 +276,51 @@ jobs:
                 );
                 if (!match) continue;
 
-                const file = displayPath(match[1]);
+                const file = displayGoPath(match[1]);
                 const statements = Number(match[2]);
                 const hits = Number(match[3]);
                 const covered = hits > 0 ? statements : 0;
-                totalStatements += statements;
-                coveredStatements += covered;
+                addUnit(total, statements, covered);
 
-                const current = files.get(file) ?? {
-                  totalStatements: 0,
-                  coveredStatements: 0,
-                };
-                current.totalStatements += statements;
-                current.coveredStatements += covered;
+                const current = files.get(file) ?? emptyStats();
+                addUnit(current, statements, covered);
                 files.set(file, current);
               }
 
-              return { files, totalStatements, coveredStatements };
+              return { files, total };
+            }
+
+            function readFlutterCoverage(reportPath) {
+              const files = new Map();
+              const total = emptyStats();
+              const content = fs.readFileSync(reportPath, "utf8");
+              let activeFile = null;
+
+              for (const line of content.split(/\r?\n/)) {
+                if (line.startsWith("SF:")) {
+                  activeFile = displayFlutterPath(line.slice(3));
+                  continue;
+                }
+                if (!activeFile || !line.startsWith("DA:")) continue;
+
+                const fields = line.slice(3).split(",");
+                const hits = Number(fields[1]);
+                if (!Number.isFinite(hits)) continue;
+
+                const covered = hits > 0 ? 1 : 0;
+                addUnit(total, 1, covered);
+                const current = files.get(activeFile) ?? emptyStats();
+                addUnit(current, 1, covered);
+                files.set(activeFile, current);
+              }
+
+              return { files, total };
             }
 
             function percent(stats) {
-              return stats.totalStatements === 0
+              return stats.totalUnits === 0
                 ? 0
-                : (stats.coveredStatements / stats.totalStatements) * 100;
+                : (stats.coveredUnits / stats.totalUnits) * 100;
             }
 
             function formatPercent(value) {
@@ -222,49 +332,77 @@ jobs:
               return `${rounded >= 0 ? "+" : ""}${rounded.toFixed(1)}%`;
             }
 
-            const current = readCoverage(
-              path.join("coverage", "current", "coverage.out"),
-            );
-            const baseline = readCoverage(
-              path.join("coverage", "baseline", "coverage.out"),
-            );
-            const currentTotal = percent(current);
-            const baselineTotal = percent(baseline);
-            const totalDelta = currentTotal - baselineTotal;
+            function escapeCell(value) {
+              return value.replaceAll("|", "\\|").replace(/[\r\n]+/g, " ");
+            }
 
             const bodyLines = [
               marker,
-              "## Go coverage",
+              "## Test coverage",
               "",
               "| Scope | Current | Baseline | Delta |",
               "| --- | ---: | ---: | ---: |",
-              `| server | ${formatPercent(currentTotal)} | ` +
-                `${formatPercent(baselineTotal)} | ${formatDelta(totalDelta)} |`,
-              `| **Total** | **${formatPercent(currentTotal)}** | ` +
-                `**${formatPercent(baselineTotal)}** | ` +
-                `**${formatDelta(totalDelta)}** |`,
             ];
 
-            const lowFiles = [];
-            for (const [file, currentFile] of current.files) {
-              const baselineFile = baseline.files.get(file);
-              if (!baselineFile) continue;
+            const scopes = [];
+            if (process.env.GO_AVAILABLE === "true") {
+              scopes.push({
+                name: "server (Go)",
+                current: readGoCoverage(
+                  path.join("coverage", "current", "go", "coverage.out"),
+                ),
+                baseline: readGoCoverage(
+                  path.join("coverage", "baseline", "go", "coverage.out"),
+                ),
+              });
+            }
+            if (process.env.FLUTTER_AVAILABLE === "true") {
+              scopes.push({
+                name: "mobile (Flutter)",
+                current: readFlutterCoverage(
+                  path.join("coverage", "current", "flutter", "lcov.info"),
+                ),
+                baseline: readFlutterCoverage(
+                  path.join("coverage", "baseline", "flutter", "lcov.info"),
+                ),
+              });
+            }
 
-              const currentFilePercent = percent(currentFile);
-              const baselineFilePercent = percent(baselineFile);
-              const delta = currentFilePercent - baselineFilePercent;
-              if (Number(delta.toFixed(1)) < 0) {
-                lowFiles.push({
-                  file,
-                  current: currentFilePercent,
-                  baseline: baselineFilePercent,
-                  delta,
-                });
+            for (const scope of scopes) {
+              const currentTotal = percent(scope.current.total);
+              const baselineTotal = percent(scope.baseline.total);
+              bodyLines.push(
+                `| ${scope.name} | ${formatPercent(currentTotal)} | ` +
+                  `${formatPercent(baselineTotal)} | ` +
+                  `${formatDelta(currentTotal - baselineTotal)} |`,
+              );
+            }
+
+            const lowFiles = [];
+            for (const scope of scopes) {
+              for (const [file, currentFile] of scope.current.files) {
+                const baselineFile = scope.baseline.files.get(file);
+                if (!baselineFile) continue;
+
+                const currentFilePercent = percent(currentFile);
+                const baselineFilePercent = percent(baselineFile);
+                const delta = currentFilePercent - baselineFilePercent;
+                if (Number(delta.toFixed(1)) < 0) {
+                  lowFiles.push({
+                    scope: scope.name,
+                    file,
+                    current: currentFilePercent,
+                    baseline: baselineFilePercent,
+                    delta,
+                  });
+                }
               }
             }
             lowFiles.sort(
               (left, right) =>
-                left.delta - right.delta || left.file.localeCompare(right.file),
+                left.delta - right.delta ||
+                left.scope.localeCompare(right.scope) ||
+                left.file.localeCompare(right.file),
             );
 
             if (lowFiles.length > 0) {
@@ -274,12 +412,13 @@ jobs:
                 "",
                 `Showing up to ${maxFiles} largest file-level regressions.`,
                 "",
-                "| File | Current | Baseline | Delta |",
-                "| --- | ---: | ---: | ---: |",
+                "| Scope | File | Current | Baseline | Delta |",
+                "| --- | --- | ---: | ---: | ---: |",
               );
               for (const file of lowFiles.slice(0, maxFiles)) {
                 bodyLines.push(
-                  `| ${file.file} | ${formatPercent(file.current)} | ` +
+                  `| ${file.scope} | ${escapeCell(file.file)} | ` +
+                    `${formatPercent(file.current)} | ` +
                     `${formatPercent(file.baseline)} | ` +
                     `${formatDelta(file.delta)} |`,
                 );
