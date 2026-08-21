@@ -32,12 +32,18 @@ Android 真机上运行 App。连接多台设备时，可通过
 - applicationId：`com.xengineer.speakup`
 - versionName/versionCode：`0.1.0` / `1`（Release Tag：`v0.1.0`）
 - ABI：仅 `arm64-v8a`
-- staging API：`https://staging-api.speak-up.top`
-- production API：`https://api.speak-up.top`
+- staging API 发布契约：`https://staging-api.speak-up.top`
+- production API 发布契约：`https://api.speak-up.top`
+
+两个域名是首发构建契约；当前仓库没有 DNS 或后端部署就绪证据，解析与服务可用性
+仍待发布 Owner 在分发前单独验收。本仓库只校验构建注入值与契约一致，不声称服务
+已经上线。
 
 Android 使用 `staging`、`production` 两个 product flavor。release 构建根据
 flavor 注入固定 API；传入不一致的 `SPEAKUP_API_BASE_URL` 会在 App 启动前失败，
-未知 release flavor 也不会回落到 localhost。开发构建仍可显式覆盖本地 API。
+未知 Android release flavor 也不会回落到 localhost。未使用 Android flavor 的 iOS
+release 必须显式注入经校验的 HTTPS、非 loopback API；开发构建仍可显式覆盖本地
+API。
 
 ### 正式签名边界
 
@@ -73,10 +79,10 @@ make verify-android-release-staging
 make verify-android-release-production
 ```
 
-校验入口使用 Android SDK 的 `aapt` 和 `apksigner`，检查包名、版本、唯一 ABI、
-APK 签名有效性、拒绝 Android Debug 证书，并检查签名证书 SHA-256 是否与 Owner
-批准值一致，同时输出 APK
-文件 SHA-256。缺少正式私钥时只能运行 fail-closed 守卫，不能用 debug key 生成
+校验入口使用 Android SDK 的 `aapt` 和 `apksigner`，从 `mobile/pubspec.yaml` 读取
+唯一版本来源，并检查包名、版本、唯一 ABI、APK 签名有效性、拒绝 Android Debug
+证书，以及签名证书 SHA-256 是否与 Owner 批准值一致，同时输出 APK 文件
+SHA-256。缺少正式私钥时只能运行 fail-closed 守卫，不能用 debug key 生成
 “正式”APK：
 
 ```shell

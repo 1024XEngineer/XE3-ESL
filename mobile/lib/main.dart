@@ -58,6 +58,7 @@ void main() {
   final apiBaseUri = resolveApiBaseUri(
     flavor: appFlavor,
     isReleaseMode: kReleaseMode,
+    isAndroid: defaultTargetPlatform == TargetPlatform.android,
     explicitBaseUrl: explicitApiBaseUrl,
   );
   final dependencies = createProductionAppDependencies(baseUri: apiBaseUri);

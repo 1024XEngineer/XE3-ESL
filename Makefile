@@ -68,7 +68,7 @@ check-flutter-analyze: check-flutter-format
 check-flutter-test: check-flutter-analyze
 	cd mobile && flutter test --no-pub
 
-check-flutter-coverage: check-flutter-analyze
+check-flutter-coverage: check-flutter-analyze check-android-release-guard
 	cd mobile && flutter test --no-pub --coverage
 
 check-android-release-guard: check-flutter-dependencies

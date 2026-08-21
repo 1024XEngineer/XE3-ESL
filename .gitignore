@@ -4,6 +4,8 @@
 !.env.example
 *.pem
 *.key
+**/*.jks
+**/*.keystore
 **/*.p12
 
 # Operating systems and editors

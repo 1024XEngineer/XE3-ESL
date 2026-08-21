@@ -2,8 +2,8 @@
 
 set -euo pipefail
 
-if [[ "$#" != "1" ]]; then
-  printf 'Usage: SPEAKUP_ANDROID_CERT_SHA256=<fingerprint> %s <apk>\n' "$0" >&2
+if [[ "$#" -lt "1" || "$#" -gt "2" ]]; then
+  printf 'Usage: SPEAKUP_ANDROID_CERT_SHA256=<fingerprint> %s <apk> [pubspec]\n' "$0" >&2
   exit 2
 fi
 
@@ -11,9 +11,14 @@ apk="$1"
 expected_certificate_sha256="${SPEAKUP_ANDROID_CERT_SHA256:-}"
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 repo_dir="$(cd "$script_dir/../.." && pwd)"
+pubspec="${2:-$repo_dir/mobile/pubspec.yaml}"
 
 if [[ ! -f "$apk" ]]; then
   printf 'APK does not exist: %s\n' "$apk" >&2
+  exit 1
+fi
+if [[ ! -f "$pubspec" ]]; then
+  printf 'pubspec does not exist: %s\n' "$pubspec" >&2
   exit 1
 fi
 if [[ -z "$expected_certificate_sha256" ]]; then
@@ -76,23 +81,33 @@ ensure_java_runtime() {
 
 aapt="$(find_android_tool aapt)"
 apksigner="$(find_android_tool apksigner)"
-ensure_java_runtime
 badging="$("$aapt" dump badging "$apk")"
 
 application_id="$(printf '%s\n' "$badging" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")"
 version_code="$(printf '%s\n' "$badging" | sed -n "s/^package: .* versionCode='\([^']*\)'.*/\1/p")"
 version_name="$(printf '%s\n' "$badging" | sed -n "s/^package: .* versionName='\([^']*\)'.*/\1/p")"
 native_code="$(printf '%s\n' "$badging" | sed -n '/^native-code:/p')"
+pubspec_version="$(
+  sed -n -E \
+    "s/^version:[[:space:]]*['\"]?([^'\"[:space:]]+)['\"]?[[:space:]]*$/\1/p" \
+    "$pubspec"
+)"
+if [[ ! "$pubspec_version" =~ ^([^+]+)\+([0-9]+)$ ]]; then
+  printf '%s\n' 'pubspec version must use <versionName>+<versionCode>.' >&2
+  exit 1
+fi
+expected_version_name="${BASH_REMATCH[1]}"
+expected_version_code="${BASH_REMATCH[2]}"
 
 [[ "$application_id" == "com.xengineer.speakup" ]] || {
   printf 'Unexpected applicationId: %s\n' "$application_id" >&2
   exit 1
 }
-[[ "$version_code" == "1" ]] || {
+[[ "$version_code" == "$expected_version_code" ]] || {
   printf 'Unexpected versionCode: %s\n' "$version_code" >&2
   exit 1
 }
-[[ "$version_name" == "0.1.0" ]] || {
+[[ "$version_name" == "$expected_version_name" ]] || {
   printf 'Unexpected versionName: %s\n' "$version_name" >&2
   exit 1
 }
@@ -101,6 +116,7 @@ native_code="$(printf '%s\n' "$badging" | sed -n '/^native-code:/p')"
   exit 1
 }
 
+ensure_java_runtime
 signature_report="$("$apksigner" verify --verbose --print-certs "$apk")"
 if printf '%s\n' "$signature_report" | grep -Eq 'certificate DN:.*CN=Android Debug'; then
   printf '%s\n' 'APK uses an Android debug signing certificate.' >&2
