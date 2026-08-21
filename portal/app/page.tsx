@@ -1,5 +1,5 @@
 import EarlyAccessDialog from "./EarlyAccessDialog";
-import InterviewDemo from "./InterviewDemo";
+import BrandMark from "./BrandMark";
 
 const earlyAccessHref = "#early-access";
 
@@ -51,64 +51,15 @@ const journeyStages = [
   },
 ];
 
-const productFeatures = [
-  {
-    index: "01",
-    kind: "understand" as const,
-    title: "先理解你，不急着开练",
-    copy: "“把岗位 JD 和简历给我。我先确认这轮更可能考什么，再安排准备顺序。”",
-    status: "了解你",
-    href: earlyAccessHref,
-    action: "看老师如何追问",
-  },
-  {
-    index: "02",
-    kind: "practice" as const,
-    title: "先教会你，再邀请实战",
-    copy: "结合 JD 和真实项目，先教回答结构和关键表达，带着跟读，再换成你自己的经历。",
-    status: "教你练",
-    href: earlyAccessHref,
-    action: "看一次口语练习",
-  },
-  {
-    index: "03",
-    kind: "interview" as const,
-    title: "面试官接管真实追问",
-    copy: "进入独立场景后，老师暂时退场，面试官围绕刚才的回答连续深挖。",
-    status: "模拟实战",
-    href: earlyAccessHref,
-    action: "体验面试模拟",
-  },
-  {
-    index: "04",
-    kind: "review" as const,
-    title: "模拟结束，陪你复盘",
-    copy: "回到老师主页，引用刚才的回答指出问题，再陪你把同一道题重新说好。",
-    status: "陪你复盘",
-    href: earlyAccessHref,
-    action: "看老师如何复盘",
-  },
-  {
-    index: "05",
-    kind: "real-world" as const,
-    title: "真实面试回来，继续一起准备",
-    copy: "老师主动询问现实结果，接住命中的题和新出现的问题，自然开始下一轮。",
-    status: "回到现实",
-    href: earlyAccessHref,
-    action: "看看现实如何回来",
-  },
-];
-
 export default function Home() {
   return (
     <main>
       <nav className="site-nav" aria-label="主导航">
         <a className="brand" href="#top" aria-label="SpeakUp 首页">
-          <span className="brand-mark" aria-hidden="true">S</span>
+          <BrandMark />
           <span>SpeakUp</span>
         </a>
         <div className="nav-links">
-          <a href="#demo">怎么陪你</a>
           <a href="#use-cases">适用阶段</a>
           <a href="#memory">长期记忆</a>
         </div>
@@ -131,8 +82,8 @@ export default function Home() {
             <a className="button" href={earlyAccessHref} data-scenario="英文面试">
               告诉 SpeakUp，我要准备什么 <span aria-hidden="true">↗</span>
             </a>
-            <a className="button button-secondary" href="#demo">
-              看它怎么陪我
+            <a className="button button-secondary" href="#use-cases">
+              看看适用阶段
             </a>
           </div>
         </div>
@@ -201,15 +152,6 @@ export default function Home() {
           <span className="floating-chip chip-bottom">长期 Memory 已开启</span>
         </div>
       </header>
-
-      <section className="features-section" id="demo">
-        <div className="section-intro dark-copy">
-          <p className="eyebrow">一次代表性体验 · 后端开发工程师英文面试</p>
-          <h2>从一句“下周有面试”，<br />到面试结束后继续进步。</h2>
-          <p>同一位 SpeakUp 老师贯穿了解、练习、模拟、复盘和真实结果。五个时刻，看懂它如何陪你完成一件真实的事。</p>
-        </div>
-        <InterviewDemo features={productFeatures} />
-      </section>
 
       <section className="journey-section" id="use-cases">
         <div className="section-intro dark-copy">
@@ -303,7 +245,7 @@ export default function Home() {
       <EarlyAccessDialog />
 
       <footer>
-        <a className="brand" href="#top"><span className="brand-mark" aria-hidden="true">S</span><span>SpeakUp</span></a>
+        <a className="brand" href="#top"><BrandMark /><span>SpeakUp</span></a>
         <p>有记忆的 AI Agent 口语老师</p>
         <span>© 2026 SpeakUp</span>
       </footer>

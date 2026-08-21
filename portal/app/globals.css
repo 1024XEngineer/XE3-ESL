@@ -98,16 +98,18 @@ h2 {
 }
 
 .brand-mark {
-  width: 34px;
-  height: 34px;
-  display: grid;
-  place-items: center;
-  border: 2px solid var(--ink);
-  border-radius: 11px;
-  background: var(--dawn);
-  font-family: var(--font-mark);
-  font-size: 19px;
-  font-style: italic;
+  width: 42px;
+  height: 42px;
+  display: block;
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
+.brand-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  transform: scale(1.1);
 }
 
 .nav-links {
@@ -2361,8 +2363,8 @@ footer > span {
   }
 
   .brand-mark {
-    width: 30px;
-    height: 30px;
+    width: 36px;
+    height: 36px;
   }
 
   .hero {

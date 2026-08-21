@@ -2,6 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import Link from "next/link";
+import BrandMark from "../BrandMark";
 
 interface Funnel {
   views: number;
@@ -112,7 +113,7 @@ export default function AdminDashboard() {
       <main className="admin-login">
         <section className="admin-login-panel">
           <Link className="brand" href="/" aria-label="返回 SpeakUp 首页">
-            <span className="brand-mark" aria-hidden="true">S</span>
+            <BrandMark />
             <span>SpeakUp</span>
           </Link>
           <p className="eyebrow">首批体验 · 内部看板</p>
@@ -147,7 +148,7 @@ export default function AdminDashboard() {
     <main className="admin-dashboard">
       <header className="admin-header">
         <Link className="brand" href="/">
-          <span className="brand-mark" aria-hidden="true">S</span>
+          <BrandMark />
           <span>SpeakUp</span>
         </Link>
         <div>
