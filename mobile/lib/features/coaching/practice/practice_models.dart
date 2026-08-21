@@ -379,7 +379,7 @@ enum PracticeSessionLifecycleStatus {
   endedEarly,
 }
 
-enum CompletedPracticeRouteResult { returnToConversation }
+enum CompletedPracticeRouteResult { returnToConversation, returnToTraining }
 
 final class PracticeSessionLifecycle {
   const PracticeSessionLifecycle({

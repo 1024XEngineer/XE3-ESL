@@ -68,10 +68,7 @@ IeltsPracticeAssignment testIeltsAssignment({
     PracticeMode.part1 => <IeltsPracticePartAssignment>[
       _testIeltsPart1(part1QuestionCount),
     ],
-    PracticeMode.part2 => <IeltsPracticePartAssignment>[
-      _testIeltsPart2(),
-      _testIeltsPart3(part3QuestionCount),
-    ],
+    PracticeMode.part2 => <IeltsPracticePartAssignment>[_testIeltsPart2()],
     PracticeMode.part3 => <IeltsPracticePartAssignment>[
       _testIeltsPart3(part3QuestionCount),
     ],

@@ -10,13 +10,17 @@ import 'package:speakup/features/coaching/practice/practice_prompt_speaker.dart'
 import 'package:speakup/features/coaching/practice/question_tip_sheet.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_message_bubble.dart';
+import 'package:speakup/features/coaching/practice/practice_completion_sheet.dart';
 import 'package:speakup/features/coaching/practice/practice_stage.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
 import 'package:speakup/features/coaching/scenario/scenario_assets.dart';
+import 'package:speakup/features/coaching/scene/scene.dart';
 
 typedef ScenarioAsyncAction = Future<void> Function();
 typedef ScenarioAvatarSurfaceBuilder = Widget Function(BuildContext context);
+typedef OpenScenarioPracticeReport =
+    Future<CompletedPracticeRouteResult?> Function(String practiceSessionId);
 
 class ScenarioPracticePage extends StatefulWidget {
   const ScenarioPracticePage({
@@ -28,6 +32,7 @@ class ScenarioPracticePage extends StatefulWidget {
     this.onReplayQuestion,
     this.questionSpeaker,
     this.onPracticeCompleted,
+    this.onOpenReport,
     this.speechFeedbackController,
     this.onExitRequested,
     this.previewMode = false,
@@ -44,6 +49,7 @@ class ScenarioPracticePage extends StatefulWidget {
   final ScenarioAsyncAction? onReplayQuestion;
   final PracticePromptSpeaker? questionSpeaker;
   final Future<bool> Function()? onPracticeCompleted;
+  final OpenScenarioPracticeReport? onOpenReport;
   final SpeechFeedbackController? speechFeedbackController;
   final Future<bool> Function()? onExitRequested;
   final bool previewMode;
@@ -69,12 +75,17 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
   final Map<String, String> _questionTranslations = <String, String>{};
   bool _feedbackRebuildScheduled = false;
   bool _completionInFlight = false;
+  bool _reportRouteActive = false;
   PracticePromptSpeaker? _ownedQuestionSpeaker;
   PracticePromptSpeaker? _ownedTipSpeaker;
   String? _visibleTipQuestionId;
   String? _playingQuestionId;
   String? _questionNarrationErrorId;
   int _questionNarrationGeneration = 0;
+
+  bool get _isInterview =>
+      widget.practiceController.practiceExperience ==
+      PracticeExperience.interview;
 
   @override
   void initState() {
@@ -436,9 +447,7 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
     }
     setState(() => _completionInFlight = false);
     if (completed) {
-      Navigator.of(
-        context,
-      ).pop(CompletedPracticeRouteResult.returnToConversation);
+      Navigator.of(context).pop(CompletedPracticeRouteResult.returnToTraining);
       return;
     }
     ScaffoldMessenger.of(context)
@@ -454,8 +463,12 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('结束练习？'),
-        content: const Text('结束后将保存本次对话并生成练习报告，稍后可在“复盘”中查看。'),
+        title: Text(_isInterview ? '结束面试练习？' : '结束练习？'),
+        content: Text(
+          _isInterview
+              ? '结束后将保存本次回答并生成面试复盘。'
+              : '结束后将保存本次对话并生成练习报告，稍后可在“复盘”中查看。',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -477,12 +490,33 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
       return;
     }
     if (completed) {
-      await _completePractice();
       return;
     }
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(const SnackBar(content: Text('练习暂时无法结束，请稍后重试。')));
+  }
+
+  Future<void> _openCompletedReport() async {
+    final callback = widget.onOpenReport;
+    final sessionId = widget.practiceController.practiceSessionId;
+    if (callback == null ||
+        sessionId == null ||
+        widget.practiceController.recordingState !=
+            PracticeRecordingState.completed ||
+        _reportRouteActive) {
+      return;
+    }
+    _reportRouteActive = true;
+    try {
+      final result = await callback(sessionId);
+      if (mounted &&
+          result == CompletedPracticeRouteResult.returnToConversation) {
+        Navigator.of(context).pop(result);
+      }
+    } finally {
+      _reportRouteActive = false;
+    }
   }
 
   Future<void> _submitText() async {
@@ -609,33 +643,59 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
                     exitButtonKey: const Key('scenario-exit'),
                     onExit: _requestExit,
                   ),
-                  content: _ConversationPanel(
-                    controller: widget.practiceController,
-                    scrollController: _conversationScrollController,
-                    textController: _textController,
-                    textFocusNode: _textFocusNode,
-                    textMode: _textMode,
-                    recordingSeconds: _recordingSeconds,
-                    previewMode: widget.previewMode,
-                    onBeforeStartRecording: _beforeStartRecording,
-                    speechFeedbackController: widget.speechFeedbackController,
-                    playingQuestionId: _playingQuestionId,
-                    narrationErrorQuestionId: _questionNarrationErrorId,
-                    onPlayQuestion: _playQuestion,
-                    onToggleTextMode: _toggleTextMode,
-                    onSubmitText: _submitText,
-                    onTranslateQuestion:
-                        widget.practiceController.canTranslateQuestion &&
-                            widget.practiceController.client
-                                is PracticeQuestionTranslationClient
-                        ? _translateQuestion
-                        : null,
-                    onShowTip: _showQuestionTip,
-                    onHideTip: _hideQuestionTip,
-                    onSpeakTip: _speakQuestionTip,
-                    visibleTipQuestionId: _visibleTipQuestionId,
-                    onPracticeCompleted: _completePractice,
-                    onCompleteRequested: _requestUserControlledCompletion,
+                  content: Stack(
+                    children: [
+                      _ConversationPanel(
+                        controller: widget.practiceController,
+                        scrollController: _conversationScrollController,
+                        textController: _textController,
+                        textFocusNode: _textFocusNode,
+                        textMode: _textMode,
+                        recordingSeconds: _recordingSeconds,
+                        previewMode: widget.previewMode,
+                        onBeforeStartRecording: _beforeStartRecording,
+                        speechFeedbackController:
+                            widget.speechFeedbackController,
+                        playingQuestionId: _playingQuestionId,
+                        narrationErrorQuestionId: _questionNarrationErrorId,
+                        onPlayQuestion: _playQuestion,
+                        onToggleTextMode: _toggleTextMode,
+                        onSubmitText: _submitText,
+                        onTranslateQuestion:
+                            widget.practiceController.canTranslateQuestion &&
+                                widget.practiceController.client
+                                    is PracticeQuestionTranslationClient
+                            ? _translateQuestion
+                            : null,
+                        onShowTip: _showQuestionTip,
+                        onHideTip: _hideQuestionTip,
+                        onSpeakTip: _speakQuestionTip,
+                        visibleTipQuestionId: _visibleTipQuestionId,
+                        onCompleteRequested: _requestUserControlledCompletion,
+                      ),
+                      if (widget.practiceController.recordingState ==
+                          PracticeRecordingState.completed)
+                        Positioned.fill(
+                          child: PracticeCompletionOverlay(
+                            keyPrefix: _isInterview
+                                ? 'interview-completion'
+                                : 'scenario-completion',
+                            title: _isInterview ? '面试练习已完成' : '场景练习已完成',
+                            message: _isInterview
+                                ? '${widget.practiceController.completedTurns} 道回答已保存'
+                                : '${widget.practiceController.completedTurns} 轮对话已保存',
+                            primaryLabel: '查看复盘报告',
+                            secondaryLabel: _isInterview ? '返回面试列表' : '返回场景列表',
+                            onPrimary: widget.onOpenReport == null
+                                ? null
+                                : _openCompletedReport,
+                            onSecondary: _completionInFlight
+                                ? null
+                                : _completePractice,
+                            primaryLoading: _reportRouteActive,
+                          ),
+                        ),
+                    ],
                   ),
                 ),
         ),
@@ -665,7 +725,6 @@ class _ConversationPanel extends StatelessWidget {
     required this.onHideTip,
     required this.onSpeakTip,
     required this.visibleTipQuestionId,
-    required this.onPracticeCompleted,
     required this.onCompleteRequested,
   });
 
@@ -688,7 +747,6 @@ class _ConversationPanel extends StatelessWidget {
   final VoidCallback onHideTip;
   final Future<void> Function() onSpeakTip;
   final String? visibleTipQuestionId;
-  final VoidCallback onPracticeCompleted;
   final VoidCallback onCompleteRequested;
 
   @override
@@ -839,7 +897,6 @@ class _ConversationPanel extends StatelessWidget {
             onBeforeStartRecording: onBeforeStartRecording,
             onToggleTextMode: onToggleTextMode,
             onSubmitText: onSubmitText,
-            onPracticeCompleted: onPracticeCompleted,
           ),
         ],
       ),
@@ -1045,7 +1102,6 @@ class _ScenarioComposer extends StatefulWidget {
     required this.onBeforeStartRecording,
     required this.onToggleTextMode,
     required this.onSubmitText,
-    required this.onPracticeCompleted,
   });
 
   final PracticeController controller;
@@ -1056,7 +1112,6 @@ class _ScenarioComposer extends StatefulWidget {
   final ScenarioAsyncAction? onBeforeStartRecording;
   final VoidCallback onToggleTextMode;
   final VoidCallback onSubmitText;
-  final VoidCallback onPracticeCompleted;
 
   @override
   State<_ScenarioComposer> createState() => _ScenarioComposerState();
@@ -1160,10 +1215,16 @@ class _ScenarioComposerState extends State<_ScenarioComposer> {
                 ? '正在提交最后一轮回答…'
                 : '回答已发送，Agent 正在回复…',
           ),
-          PracticeRecordingState.completed => PracticeComposerAction(
-            label: '练习已结束，报告生成后可在“复盘”中查看。',
-            actionLabel: '返回主聊天',
-            onPressed: widget.onPracticeCompleted,
+          PracticeRecordingState.completed => SizedBox(
+            height: 48,
+            child: Center(
+              child: Text(
+                '练习已完成',
+                style: SpeakUpDesign.body.copyWith(
+                  color: SpeakUpDesign.secondary,
+                ),
+              ),
+            ),
           ),
         },
       ),

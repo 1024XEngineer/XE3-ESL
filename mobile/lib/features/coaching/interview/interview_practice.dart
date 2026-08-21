@@ -14,6 +14,7 @@ import 'package:speakup/features/coaching/practice/question_tip_sheet.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_message_bubble.dart';
 import 'package:speakup/features/coaching/practice/practice_recordings.dart';
+import 'package:speakup/features/coaching/practice/practice_completion_sheet.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
 
@@ -77,6 +78,7 @@ class _InterviewPracticePageState extends State<InterviewPracticePage>
   int _recordingSeconds = 0;
   bool _speechFeedbackRebuildScheduled = false;
   bool _interviewReportRouteActive = false;
+  bool _completionInFlight = false;
   PracticePromptSpeaker? _ownedTipSpeaker;
 
   @override
@@ -234,6 +236,76 @@ class _InterviewPracticePageState extends State<InterviewPracticePage>
     } finally {
       _interviewReportRouteActive = false;
     }
+  }
+
+  Future<void> _requestUserControlledCompletion() async {
+    final controller = widget.practiceController;
+    if (!mounted ||
+        controller == null ||
+        _completionInFlight ||
+        !controller.canCompleteActivePractice) {
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('结束面试练习？'),
+        content: const Text('结束后将保存本次回答并生成面试复盘。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('继续练习'),
+          ),
+          FilledButton(
+            key: const Key('interview-confirm-completion'),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('结束练习'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) {
+      return;
+    }
+    setState(() => _completionInFlight = true);
+    final completed = await controller.completeActivePractice();
+    if (!mounted) {
+      return;
+    }
+    setState(() => _completionInFlight = false);
+    if (!completed) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(content: Text('面试暂时无法结束，请稍后重试。')));
+    }
+  }
+
+  Future<void> _leaveCompletedInterview() async {
+    if (!mounted || _completionInFlight) {
+      return;
+    }
+    setState(() => _completionInFlight = true);
+    final callback = widget.onReturnToConversation;
+    var parked = callback == null;
+    try {
+      if (callback != null) {
+        parked = await callback();
+      }
+    } on Object {
+      parked = false;
+    }
+    if (!mounted) {
+      return;
+    }
+    if (!parked) {
+      setState(() => _completionInFlight = false);
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(content: Text('当前练习正在保存，请稍后再返回。')));
+      return;
+    }
+    _exitApproved = true;
+    Navigator.of(context).pop(CompletedPracticeRouteResult.returnToTraining);
   }
 
   void _syncSpeechFeedbackSources() {
@@ -489,47 +561,89 @@ class _InterviewPracticePageState extends State<InterviewPracticePage>
           title: scene == null || controller == null
               ? const Text('练习')
               : Text(scene.name),
-          actions: controller == null || controller.recordings.isEmpty
+          actions: controller == null
               ? null
               : [
-                  IconButton(
-                    key: const Key('practice-open-history'),
-                    tooltip: '本轮录音',
-                    onPressed:
-                        controller.recordingState == PracticeRecordingState.idle
-                        ? () => _showPracticeRecordings(controller)
-                        : null,
-                    icon: const Icon(Icons.more_horiz_rounded),
-                  ),
+                  if (controller.recordings.isNotEmpty)
+                    IconButton(
+                      key: const Key('practice-open-history'),
+                      tooltip: '本轮录音',
+                      onPressed:
+                          controller.recordingState ==
+                              PracticeRecordingState.idle
+                          ? () => _showPracticeRecordings(controller)
+                          : null,
+                      icon: const Icon(Icons.more_horiz_rounded),
+                    ),
+                  if (controller.completionMode ==
+                          PracticeCompletionMode.userControlled &&
+                      controller.recordingState !=
+                          PracticeRecordingState.completed)
+                    TextButton(
+                      key: const Key('interview-complete-practice'),
+                      onPressed:
+                          controller.canCompleteActivePractice &&
+                              !_completionInFlight
+                          ? _requestUserControlledCompletion
+                          : null,
+                      child: _completionInFlight
+                          ? const SizedBox.square(
+                              dimension: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('结束练习'),
+                    ),
                 ],
         ),
         body: SafeArea(
           child: controller == null || scene == null
               ? const _NoScene()
-              : Column(
+              : Stack(
                   children: [
-                    _InterviewProgress(controller: controller),
-                    Expanded(
-                      child: _SceneConversationMessageList(
-                        controller: controller,
-                        scrollController: _messageScrollController,
-                        previewMode: widget.previewMode,
-                        speechFeedbackController:
-                            widget.speechFeedbackController,
-                        onRepractice: _startSpeechFeedbackRetry,
+                    Column(
+                      children: [
+                        _InterviewProgress(controller: controller),
+                        Expanded(
+                          child: _SceneConversationMessageList(
+                            controller: controller,
+                            scrollController: _messageScrollController,
+                            previewMode: widget.previewMode,
+                            speechFeedbackController:
+                                widget.speechFeedbackController,
+                            onRepractice: _startSpeechFeedbackRetry,
+                          ),
+                        ),
+                        _RecordingPanel(
+                          controller: controller,
+                          textController: _textAnswerController,
+                          textFocusNode: _textAnswerFocusNode,
+                          onSubmitText: _submitTextAnswer,
+                          textMode: _textAnswerMode,
+                          onToggleTextMode: _toggleTextAnswerMode,
+                          recordingSeconds: _recordingSeconds,
+                          onOpenReport: _openInterviewReport,
+                          onShowTip: _showQuestionTip,
+                        ),
+                      ],
+                    ),
+                    if (controller.recordingState ==
+                        PracticeRecordingState.completed)
+                      Positioned.fill(
+                        child: PracticeCompletionOverlay(
+                          keyPrefix: 'interview-completion',
+                          title: '面试练习已完成',
+                          message: '${controller.completedTurns} 道回答已保存',
+                          primaryLabel: '查看复盘报告',
+                          secondaryLabel: '返回面试列表',
+                          onPrimary: widget.onOpenInterviewReport == null
+                              ? null
+                              : _openInterviewReport,
+                          onSecondary: _completionInFlight
+                              ? null
+                              : _leaveCompletedInterview,
+                          primaryLoading: _interviewReportRouteActive,
+                        ),
                       ),
-                    ),
-                    _RecordingPanel(
-                      controller: controller,
-                      textController: _textAnswerController,
-                      textFocusNode: _textAnswerFocusNode,
-                      onSubmitText: _submitTextAnswer,
-                      textMode: _textAnswerMode,
-                      onToggleTextMode: _toggleTextAnswerMode,
-                      recordingSeconds: _recordingSeconds,
-                      onOpenReport: _openInterviewReport,
-                      onShowTip: _showQuestionTip,
-                    ),
                   ],
                 ),
         ),

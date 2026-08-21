@@ -86,8 +86,17 @@ void main() {
     );
     await controller.submitPracticeText('I would like to check in.');
 
+    String? openedReportSessionId;
     await tester.pumpWidget(
-      MaterialApp(home: ScenarioPracticePage(practiceController: controller)),
+      MaterialApp(
+        home: ScenarioPracticePage(
+          practiceController: controller,
+          onOpenReport: (sessionId) async {
+            openedReportSessionId = sessionId;
+            return null;
+          },
+        ),
+      ),
     );
     await tester.pump();
 
@@ -103,6 +112,12 @@ void main() {
 
     expect(controller.recordingState, PracticeRecordingState.completed);
     expect(controller.currentQuestion, isNull);
+    expect(find.text('场景练习已完成'), findsOneWidget);
+    expect(find.text('1 轮对话已保存'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('scenario-completion-primary')));
+    await tester.pump();
+    expect(openedReportSessionId, 'session-open-scenario');
     expect(tester.takeException(), isNull);
   });
 
@@ -126,6 +141,50 @@ void main() {
     expect(find.byKey(const Key('scenario-conversation-history')), findsOne);
     expect(find.byKey(const Key('scenario-record')).hitTestable(), findsOne);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('finishes an interview manually and opens its completion sheet', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final scene = testScenes.first;
+    final controller = PracticeController(
+      client: FakePracticeClient(
+        practiceExperience: scene.experience,
+        sceneCategory: scene.category,
+        completionMode: PracticeCompletionMode.userControlled,
+        turnLimit: 0,
+      ),
+    );
+    addTearDown(controller.dispose);
+    await controller.activateCreatedPractice(
+      scene: scene,
+      sessionId: 'session-open-interview',
+      planId: testPracticePlanId('session-open-interview'),
+      practiceMode: scene.practiceOptions.first.mode,
+      turnLimit: 0,
+      clientOperationId: 'activate-open-interview',
+    );
+    await controller.submitPracticeText('I led the migration project.');
+
+    await tester.pumpWidget(
+      MaterialApp(home: ScenarioPracticePage(practiceController: controller)),
+    );
+
+    await tester.tap(find.byKey(const Key('scenario-complete-practice')));
+    await tester.pumpAndSettle();
+    expect(find.text('结束面试练习？'), findsOneWidget);
+    expect(find.text('结束后将保存本次回答并生成面试复盘。'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('scenario-confirm-completion')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('interview-completion-sheet')), findsOneWidget);
+    expect(find.text('面试练习已完成'), findsOneWidget);
+    expect(find.text('1 道回答已保存'), findsOneWidget);
+    expect(find.text('返回面试列表'), findsOneWidget);
   });
 
   testWidgets('translates a scenario question once and toggles the read aid', (
@@ -397,7 +456,11 @@ void main() {
       );
       expect(find.byType(SpeechFeedbackDisclosure), findsNothing);
       expect(find.text('正在生成评分与纠错…'), findsNothing);
-      expect(find.text('返回主聊天'), findsOneWidget);
+      expect(
+        find.byKey(const Key('scenario-completion-sheet')),
+        findsOneWidget,
+      );
+      expect(find.text('场景练习已完成'), findsOneWidget);
     },
   );
 
@@ -425,7 +488,7 @@ void main() {
         ),
       ),
     );
-    await tester.tap(find.text('返回主聊天'));
+    await tester.tap(find.byKey(const Key('scenario-completion-secondary')));
     await tester.pump();
 
     expect(completionCalls, 1);
