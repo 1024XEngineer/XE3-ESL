@@ -61,6 +61,48 @@ void main() {
     },
   );
 
+  test(
+    'saved Agent interview Plan opens without an Interview Preparation snapshot',
+    () async {
+      final harness = await _Harness.create(
+        savedPlan: contractPlan(includeInterview: false),
+      );
+      addTearDown(harness.dispose);
+
+      expect(await harness.controller.openSavedPlan(contractPlanId), isTrue);
+      expect(harness.controller.openedSavedPlan, isTrue);
+      expect(harness.controller.plan?.id, contractPlanId);
+      expect(harness.controller.candidate, isNull);
+      expect(await harness.controller.startPractice(), isTrue);
+      expect(harness.client.sessionInputs.single.expectedPlanVersion, 1);
+      expect(harness.practice.practicePlanId, contractPlanId);
+    },
+  );
+
+  test(
+    'saved draft Agent interview Plan is confirmed before starting',
+    () async {
+      final harness = await _Harness.create(
+        savedPlan: contractPlan(
+          status: PracticePlanStatus.draft,
+          includeInterview: false,
+        ),
+      );
+      addTearDown(harness.dispose);
+
+      expect(await harness.controller.openSavedPlan(contractPlanId), isTrue);
+      expect(harness.controller.plan?.status, PracticePlanStatus.draft);
+
+      expect(await harness.controller.startPractice(), isTrue);
+
+      expect(harness.client.confirmedPlanVersions, <int>[1]);
+      expect(harness.controller.plan?.status, PracticePlanStatus.ready);
+      expect(harness.controller.plan?.version, 2);
+      expect(harness.client.sessionInputs.single.expectedPlanVersion, 2);
+      expect(harness.practice.practicePlanId, contractPlanId);
+    },
+  );
+
   test('reopening the same saved Plan resumes its parked Session', () async {
     final harness = await _Harness.create();
     addTearDown(harness.dispose);
@@ -175,7 +217,10 @@ final class _Harness {
   final List<String> voiceActivations;
   final List<String> voiceActivationKeys;
 
-  static Future<_Harness> create({int voiceActivationFailures = 0}) async {
+  static Future<_Harness> create({
+    int voiceActivationFailures = 0,
+    PracticePlan? savedPlan,
+  }) async {
     final practice = PracticeController(
       client: FakePracticeClient(
         planId: contractPlanId,
@@ -189,7 +234,7 @@ final class _Harness {
       recordStore: MemoryPracticeLaunchRecordStore(),
     );
     await workspace.activateAccount(contractUserId);
-    final client = _FakeJobPreparationClient();
+    final client = _FakeJobPreparationClient(savedPlan: savedPlan);
     final voiceActivations = <String>[];
     final voiceActivationKeys = <String>[];
     var remainingVoiceActivationFailures = voiceActivationFailures;
@@ -237,6 +282,10 @@ final class _Harness {
 }
 
 final class _FakeJobPreparationClient implements JobPreparationClient {
+  _FakeJobPreparationClient({PracticePlan? savedPlan})
+    : _savedPlan = savedPlan ?? contractPlan(includeInterview: true);
+
+  final PracticePlan _savedPlan;
   final List<InterviewPreparationInput> createdInputs =
       <InterviewPreparationInput>[];
   InterviewResumeFile? createdResume;
@@ -244,6 +293,7 @@ final class _FakeJobPreparationClient implements JobPreparationClient {
   final List<CreatePracticePlanInput> planInputs = <CreatePracticePlanInput>[];
   final List<CreatePreparationSessionInput> sessionInputs =
       <CreatePreparationSessionInput>[];
+  final List<int> confirmedPlanVersions = <int>[];
   List<PracticePlanSummary> plans = <PracticePlanSummary>[];
   final List<String> deletedPlanIds = <String>[];
   Object? deleteFailure;
@@ -293,8 +343,7 @@ final class _FakeJobPreparationClient implements JobPreparationClient {
   }
 
   @override
-  Future<PracticePlan> getPlan(String planId) async =>
-      contractPlan(includeInterview: true);
+  Future<PracticePlan> getPlan(String planId) async => _savedPlan;
 
   @override
   Future<List<PracticePlanSummary>> listPlans({
@@ -334,7 +383,15 @@ final class _FakeJobPreparationClient implements JobPreparationClient {
     required String planId,
     required int expectedVersion,
     required String idempotencyKey,
-  }) async => contractPlan();
+  }) async {
+    confirmedPlanVersions.add(expectedVersion);
+    return contractPlan(
+      status: PracticePlanStatus.ready,
+      version: expectedVersion + 1,
+      sourceThreadId: _savedPlan.sourceThreadId,
+      includeInterview: _savedPlan.preparationSnapshot.interview != null,
+    );
+  }
 
   @override
   Future<void> clearAccountState() async {}
