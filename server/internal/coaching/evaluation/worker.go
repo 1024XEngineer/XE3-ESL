@@ -21,6 +21,27 @@ func (acousticDependencyFailure) StableCategory() string {
 }
 func (acousticDependencyFailure) Retryable() bool { return false }
 
+type processingFailure struct {
+	record  Record
+	failure JobError
+	cause   error
+}
+
+func (failure *processingFailure) Error() string { return failure.cause.Error() }
+func (failure *processingFailure) Unwrap() error { return failure.cause }
+func (failure *processingFailure) EvaluationID() string {
+	return failure.record.ID
+}
+func (failure *processingFailure) EvaluationKind() Kind {
+	return failure.record.Kind
+}
+func (failure *processingFailure) EvaluationAttemptCount() int {
+	return failure.record.AttemptCount
+}
+func (failure *processingFailure) EvaluationJobError() JobError {
+	return failure.failure
+}
+
 type SessionEvaluators interface {
 	EvaluateInterview(context.Context, Record, SessionInputSnapshot, ConfigLineage) (json.RawMessage, error)
 	EvaluateIELTS(context.Context, Record, SessionInputSnapshot, ConfigLineage) (json.RawMessage, error)
@@ -422,6 +443,9 @@ func (worker *Worker) complete(
 
 func (worker *Worker) fail(ctx context.Context, claim Claim, cause error) error {
 	failure := stableJobError(cause)
+	processing := &processingFailure{
+		record: claim.Record, failure: failure, cause: cause,
+	}
 	finalizeContext, cancel := worker.finalizeContext(ctx)
 	defer cancel()
 	err := worker.store.FailClaim(finalizeContext, Failure{
@@ -433,9 +457,9 @@ func (worker *Worker) fail(ctx context.Context, claim Claim, cause error) error 
 		MaxAttempts: maxAttemptsFor(claim.Kind, worker.configuration),
 	})
 	if err != nil {
-		return errors.Join(cause, err)
+		return errors.Join(processing, err)
 	}
-	return cause
+	return processing
 }
 
 func (worker *Worker) finalizeContext(ctx context.Context) (context.Context, context.CancelFunc) {

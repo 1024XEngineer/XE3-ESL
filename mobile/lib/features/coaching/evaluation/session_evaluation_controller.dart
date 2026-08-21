@@ -32,7 +32,11 @@ final class SessionEvaluationController extends ChangeNotifier {
   String? get practiceSessionId => _practiceSessionId;
   String? get errorMessage => _errorMessage;
   bool get isLoading => _isLoading;
-  bool get canRetry => _practiceSessionId != null && !_isLoading;
+  bool get canRetry =>
+      _practiceSessionId != null &&
+      !_isLoading &&
+      _evaluation?.status == SessionEvaluationStatus.failed &&
+      (_evaluation?.failure?.retryable ?? false);
 
   Future<void> load(String practiceSessionId) async {
     final generation = ++_generation;
@@ -76,7 +80,32 @@ final class SessionEvaluationController extends ChangeNotifier {
 
   Future<void> retry() async {
     final sessionId = _practiceSessionId;
-    if (sessionId != null) await load(sessionId);
+    if (sessionId == null || !canRetry) return;
+    final generation = ++_generation;
+    _errorMessage = null;
+    _isLoading = true;
+    notifyListeners();
+    try {
+      final value = await client.retry(sessionId);
+      if (generation != _generation) return;
+      _evaluation = value;
+      if (value.status == SessionEvaluationStatus.ready) {
+        _isLoading = false;
+        notifyListeners();
+        return;
+      }
+    } on SessionEvaluationException catch (error) {
+      if (generation != _generation ||
+          error.kind == SessionEvaluationFailureKind.superseded) {
+        return;
+      }
+      _isLoading = false;
+      _errorMessage = _messageFor(error.kind);
+      notifyListeners();
+      return;
+    }
+    if (generation != _generation) return;
+    await load(sessionId);
   }
 
   void cancel(String practiceSessionId) {

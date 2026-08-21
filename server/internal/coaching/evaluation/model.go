@@ -11,6 +11,7 @@ var (
 	ErrNotFound            = errors.New("evaluation: not found")
 	ErrIdempotencyConflict = errors.New("evaluation: idempotency conflict")
 	ErrAccountUnavailable  = errors.New("evaluation: account unavailable")
+	ErrRetryNotAllowed     = errors.New("evaluation: retry not allowed")
 )
 
 type SceneType string

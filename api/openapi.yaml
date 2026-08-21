@@ -165,6 +165,8 @@ paths:
     $ref: ./modules/evaluation.yaml#/paths/~1v1~1evaluation-reports~1{report_id}
   /v1/practice-sessions/{practice_session_id}/evaluation:
     $ref: ./modules/evaluation.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1evaluation
+  /v1/practice-sessions/{practice_session_id}/evaluation/retry:
+    $ref: ./modules/evaluation.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1evaluation~1retry
   /v1/practice-turns/{turn_id}/evaluation:
     $ref: ./modules/evaluation.yaml#/paths/~1v1~1practice-turns~1{turn_id}~1evaluation
   /v1/agent-messages/{message_id}/evaluation:

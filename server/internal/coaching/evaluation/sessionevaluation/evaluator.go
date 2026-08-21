@@ -735,7 +735,7 @@ const generalSystemPromptV2 = `You are an evidence-bound everyday or workplace E
 
 func (failure providerResponseFailure) Error() string          { return failure.message }
 func (failure providerResponseFailure) StableCategory() string { return "PROVIDER_RESPONSE_INVALID" }
-func (failure providerResponseFailure) Retryable() bool        { return false }
+func (failure providerResponseFailure) Retryable() bool        { return true }
 
 type providerResponseFailure struct{ message string }
 

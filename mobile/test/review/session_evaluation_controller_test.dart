@@ -81,7 +81,7 @@ void main() {
     final client = _EvaluationClient(<SessionEvaluation>[
       _failedEvaluation(),
       _readyEvaluation(EvaluationReportSceneType.interview),
-    ]);
+    ], retryResponse: _evaluation(SessionEvaluationStatus.queued));
     final controller = SessionEvaluationController(
       client: client,
       pollInterval: const Duration(milliseconds: 1),
@@ -100,21 +100,50 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('评分服务暂不可用。'), findsOneWidget);
-    expect(find.text('重新加载'), findsOneWidget);
+    expect(find.text('重新生成报告'), findsOneWidget);
 
-    await tester.tap(find.text('重新加载'));
+    await tester.tap(find.text('重新生成报告'));
     await tester.pumpAndSettle();
 
     expect(client.calls, 2);
+    expect(client.retryCalls, 1);
     expect(find.byKey(const Key('review-detail-page')), findsOneWidget);
+  });
+
+  testWidgets('does not offer retry for a terminal non-retryable failure', (
+    tester,
+  ) async {
+    final controller = SessionEvaluationController(
+      client: _EvaluationClient(<SessionEvaluation>[
+        _failedEvaluation(retryable: false),
+      ]),
+      pollInterval: const Duration(milliseconds: 1),
+      maximumPolls: 1,
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SessionEvaluationPage(
+          practiceSessionId: _sessionId,
+          controller: controller,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('评分服务暂不可用。'), findsOneWidget);
+    expect(find.text('重新生成报告'), findsNothing);
   });
 }
 
 final class _EvaluationClient implements SessionEvaluationClient {
-  _EvaluationClient(this._responses);
+  _EvaluationClient(this._responses, {this.retryResponse});
 
   final List<SessionEvaluation> _responses;
+  final SessionEvaluation? retryResponse;
   int calls = 0;
+  int retryCalls = 0;
 
   @override
   Future<SessionEvaluation> get(String practiceSessionId) async {
@@ -122,6 +151,13 @@ final class _EvaluationClient implements SessionEvaluationClient {
     final index = calls < _responses.length ? calls : _responses.length - 1;
     calls++;
     return _responses[index];
+  }
+
+  @override
+  Future<SessionEvaluation> retry(String practiceSessionId) async {
+    expect(practiceSessionId, _sessionId);
+    retryCalls++;
+    return retryResponse ?? _responses.last;
   }
 
   @override
@@ -156,17 +192,18 @@ SessionEvaluation _readyEvaluation(EvaluationReportSceneType sceneType) =>
       ),
     );
 
-SessionEvaluation _failedEvaluation() => SessionEvaluation(
-  evaluationId: _evaluationId,
-  practiceSessionId: _sessionId,
-  status: SessionEvaluationStatus.failed,
-  updatedAt: _completedAt,
-  failure: const SessionEvaluationFailure(
-    code: 'PROVIDER_UNAVAILABLE',
-    retryable: true,
-    message: '评分服务暂不可用。',
-  ),
-);
+SessionEvaluation _failedEvaluation({bool retryable = true}) =>
+    SessionEvaluation(
+      evaluationId: _evaluationId,
+      practiceSessionId: _sessionId,
+      status: SessionEvaluationStatus.failed,
+      updatedAt: _completedAt,
+      failure: SessionEvaluationFailure(
+        code: 'PROVIDER_UNAVAILABLE',
+        retryable: retryable,
+        message: '评分服务暂不可用。',
+      ),
+    );
 
 const _sessionId = '30000000-0000-4000-8000-000000000003';
 const _evaluationId = '70000000-0000-4000-8000-000000000007';

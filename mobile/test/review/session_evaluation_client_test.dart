@@ -24,7 +24,26 @@ void main() {
 
     expect(result.status, SessionEvaluationStatus.ready);
     expect(transport.uri.path, '/v1/practice-sessions/$_sessionId/evaluation');
+    expect(transport.method, 'GET');
     expect(transport.authorization, 'Bearer sess_session_evaluation_token');
+  });
+
+  test('retries through the actor-owned session evaluation command', () async {
+    final transport = _Transport(
+      IdentityHttpResponse(
+        statusCode: HttpStatus.accepted,
+        body: jsonEncode(_queuedResource()),
+      ),
+    );
+
+    final result = await _client(transport).retry(_sessionId);
+
+    expect(result.status, SessionEvaluationStatus.queued);
+    expect(
+      transport.uri.path,
+      '/v1/practice-sessions/$_sessionId/evaluation/retry',
+    );
+    expect(transport.method, 'POST');
   });
 
   test('rejects invalid session ids before transport', () async {
@@ -87,6 +106,13 @@ Map<String, Object?> _readyResource() {
   };
 }
 
+Map<String, Object?> _queuedResource() {
+  final ready = _readyResource();
+  ready['status'] = 'QUEUED';
+  ready.remove('result');
+  return ready;
+}
+
 WireSessionEvaluationClient _client(IdentityHttpTransport transport) =>
     WireSessionEvaluationClient(
       baseUri: Uri.parse('https://api.speak-up.test'),
@@ -107,6 +133,7 @@ final class _Transport implements IdentityHttpTransport {
 
   final IdentityHttpResponse response;
   late Uri uri;
+  late String method;
   String? authorization;
   int calls = 0;
 
@@ -119,6 +146,7 @@ final class _Transport implements IdentityHttpTransport {
     List<int>? bodyBytes,
   }) async {
     calls++;
+    this.method = method;
     this.uri = uri;
     authorization = headers[HttpHeaders.authorizationHeader];
     return response;

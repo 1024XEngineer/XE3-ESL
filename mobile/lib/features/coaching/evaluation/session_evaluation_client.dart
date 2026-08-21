@@ -32,6 +32,8 @@ final class SessionEvaluationException implements Exception {
 abstract interface class SessionEvaluationClient {
   Future<SessionEvaluation> get(String practiceSessionId);
 
+  Future<SessionEvaluation> retry(String practiceSessionId);
+
   Future<void> clearAccountState();
 }
 
@@ -72,7 +74,17 @@ final class WireSessionEvaluationClient implements SessionEvaluationClient {
   int _accountGeneration = 0;
 
   @override
-  Future<SessionEvaluation> get(String practiceSessionId) async {
+  Future<SessionEvaluation> get(String practiceSessionId) =>
+      _request(practiceSessionId, retry: false);
+
+  @override
+  Future<SessionEvaluation> retry(String practiceSessionId) =>
+      _request(practiceSessionId, retry: true);
+
+  Future<SessionEvaluation> _request(
+    String practiceSessionId, {
+    required bool retry,
+  }) async {
     if (!_uuidPattern.hasMatch(practiceSessionId)) {
       throw const SessionEvaluationException(
         kind: SessionEvaluationFailureKind.invalidRequest,
@@ -80,7 +92,7 @@ final class WireSessionEvaluationClient implements SessionEvaluationClient {
     }
     final generation = _accountGeneration;
     final uri = _baseUri.resolve(
-      '/v1/practice-sessions/${Uri.encodeComponent(practiceSessionId)}/evaluation',
+      '/v1/practice-sessions/${Uri.encodeComponent(practiceSessionId)}/evaluation${retry ? '/retry' : ''}',
     );
     _trustedOrigin.validateResourceUri(uri);
     validateNoSessionCredentialInUri(uri);
@@ -88,7 +100,7 @@ final class WireSessionEvaluationClient implements SessionEvaluationClient {
     try {
       response = await _transport
           .send(
-            method: 'GET',
+            method: retry ? 'POST' : 'GET',
             uri: uri,
             headers: const {HttpHeaders.acceptHeader: 'application/json'},
           )
@@ -123,19 +135,21 @@ final class WireSessionEvaluationClient implements SessionEvaluationClient {
         kind: SessionEvaluationFailureKind.superseded,
       );
     }
+    if (response.statusCode == HttpStatus.ok ||
+        (retry && response.statusCode == HttpStatus.accepted)) {
+      try {
+        return decodeSessionEvaluation(jsonDecode(response.body));
+      } on FormatException catch (_) {
+        throw const SessionEvaluationException(
+          kind: SessionEvaluationFailureKind.invalidResponse,
+        );
+      } on SessionEvaluationDecodeException catch (_) {
+        throw const SessionEvaluationException(
+          kind: SessionEvaluationFailureKind.invalidResponse,
+        );
+      }
+    }
     switch (response.statusCode) {
-      case HttpStatus.ok:
-        try {
-          return decodeSessionEvaluation(jsonDecode(response.body));
-        } on FormatException catch (_) {
-          throw const SessionEvaluationException(
-            kind: SessionEvaluationFailureKind.invalidResponse,
-          );
-        } on SessionEvaluationDecodeException catch (_) {
-          throw const SessionEvaluationException(
-            kind: SessionEvaluationFailureKind.invalidResponse,
-          );
-        }
       case HttpStatus.unauthorized:
         throw const SessionEvaluationException(
           kind: SessionEvaluationFailureKind.authenticationRequired,
