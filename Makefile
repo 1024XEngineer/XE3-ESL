@@ -10,6 +10,7 @@ SHELL := /bin/bash
 	check-flutter-format \
 	check-flutter-analyze \
 	check-flutter-test \
+	check-flutter-coverage \
 	check-go \
 	check-go-coverage \
 	check-go-format \
@@ -30,6 +31,7 @@ help:
 		'SpeakUp quality checks:' \
 		'  make check          Run Flutter, Go, and API checks' \
 		'  make check-flutter  Run Flutter dependency, format, analysis, and test checks' \
+		'  make check-flutter-coverage  Run Flutter checks and write mobile/coverage/lcov.info' \
 		'  make check-go       Run Go format, vet, and test checks' \
 		'  make check-go-coverage  Run Go checks and write server/coverage.out' \
 		'  make check-oss-live Run the real OSS lifecycle test with exported OSS_* variables' \
@@ -56,6 +58,9 @@ check-flutter-analyze: check-flutter-format
 
 check-flutter-test: check-flutter-analyze
 	cd mobile && flutter test --no-pub
+
+check-flutter-coverage: check-flutter-analyze
+	cd mobile && flutter test --no-pub --coverage
 
 check-go: check-go-test
 
