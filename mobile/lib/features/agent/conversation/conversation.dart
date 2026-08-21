@@ -137,7 +137,7 @@ class ConversationPage extends StatefulWidget {
     final width = MediaQuery.sizeOf(context).width;
     final horizontalPadding = width >= 390 ? 20.0 : 16.0;
     final keyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
-    final titleSize = width < 350 ? 27.0 : 30.0;
+    final titleSize = width < 350 ? 27.0 : 29.0;
     final emptyHomeActionGap = (MediaQuery.sizeOf(context).height * 0.325)
         .clamp(180.0, 274.0);
     final composerBottom = keyboardVisible ? 10.0 : restingComposerBottom;
@@ -194,9 +194,9 @@ class ConversationPage extends StatefulWidget {
                                 style: TextStyle(
                                   color: SpeakUpDesign.ink,
                                   fontSize: titleSize,
-                                  fontWeight: FontWeight.w600,
-                                  height: 1.12,
-                                  letterSpacing: -0.8,
+                                  fontWeight: FontWeight.w700,
+                                  height: 1.16,
+                                  letterSpacing: -0.5,
                                 ),
                               ),
                             ],
@@ -336,9 +336,9 @@ class ConversationPage extends StatefulWidget {
                             begin: Alignment.topCenter,
                             end: Alignment.bottomCenter,
                             colors: [
-                              SpeakUpDesign.canvas,
-                              SpeakUpDesign.canvas.withValues(alpha: 0.94),
-                              SpeakUpDesign.canvas.withValues(alpha: 0),
+                              SpeakUpDesign.ambientTop,
+                              SpeakUpDesign.ambientTop.withValues(alpha: 0.94),
+                              SpeakUpDesign.ambientTop.withValues(alpha: 0),
                             ],
                             stops: const [0, 0.7, 1],
                           ),
@@ -710,9 +710,7 @@ class _AgentBackground extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const ExcludeSemantics(
-      child: ColoredBox(color: SpeakUpDesign.canvas),
-    );
+    return const ExcludeSemantics(child: SpeakUpAmbientBackground());
   }
 }
 
@@ -734,22 +732,23 @@ class _AgentTopBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 48,
+      height: SpeakUpDesign.minTapTarget,
       child: Stack(
         alignment: Alignment.center,
         children: [
           Align(
             alignment: Alignment.centerLeft,
-            child: _RoundGlassButton(
+            child: SpeakUpGlassIconButton(
               key: Key(
                 onNavigateBack == null
                     ? 'conversation-menu-button'
                     : 'conversation-route-back-button',
               ),
               tooltip: onNavigateBack == null ? '打开对话菜单' : '返回',
-              icon: onNavigateBack == null
-                  ? Icons.menu_rounded
-                  : Icons.arrow_back_rounded,
+              icon: onNavigateBack == null ? null : Icons.arrow_back_rounded,
+              glyph: onNavigateBack == null
+                  ? const SpeakUpDoubleLineMenuGlyph()
+                  : null,
               onPressed: onNavigateBack ?? onOpenMenu,
             ),
           ),
@@ -784,7 +783,7 @@ class _AgentTopBar extends StatelessWidget {
           if (onNavigateBack == null && onCreateConversation != null)
             Align(
               alignment: Alignment.centerRight,
-              child: _RoundGlassButton(
+              child: SpeakUpGlassIconButton(
                 key: const Key('conversation-create-button'),
                 tooltip: '新对话',
                 icon: Icons.add_rounded,
@@ -810,34 +809,6 @@ class _PracticeUnavailableNotice extends StatelessWidget {
   }
 }
 
-class _RoundGlassButton extends StatelessWidget {
-  const _RoundGlassButton({
-    required this.tooltip,
-    required this.icon,
-    required this.onPressed,
-    super.key,
-  });
-
-  final String tooltip;
-  final IconData icon;
-  final VoidCallback? onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: SpeakUpDesign.surface,
-      shape: const CircleBorder(side: BorderSide(color: SpeakUpDesign.border)),
-      child: IconButton(
-        tooltip: tooltip,
-        onPressed: onPressed,
-        icon: Icon(icon, color: SpeakUpDesign.ink),
-        iconSize: 24,
-        constraints: const BoxConstraints.tightFor(width: 48, height: 48),
-      ),
-    );
-  }
-}
-
 class _Greeting extends StatelessWidget {
   const _Greeting({required this.displayName});
 
@@ -845,11 +816,28 @@ class _Greeting extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      displayName == null ? '你好，今天想练什么？' : '你好，$displayName',
-      style: SpeakUpDesign.sectionTitle.copyWith(
-        color: SpeakUpDesign.secondary,
-        fontWeight: FontWeight.w600,
+    final greeting = displayName == null ? '你好' : '你好，$displayName';
+    return Semantics(
+      header: true,
+      label: greeting,
+      child: ExcludeSemantics(
+        child: ShaderMask(
+          blendMode: BlendMode.srcIn,
+          shaderCallback: (bounds) => const LinearGradient(
+            colors: [SpeakUpDesign.primary, SpeakUpDesign.accentViolet],
+            stops: [0, 0.72],
+          ).createShader(bounds),
+          child: Text(
+            greeting,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 33,
+              fontWeight: FontWeight.w700,
+              height: 1.1,
+              letterSpacing: -1.15,
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -874,18 +862,21 @@ class _QuickActions extends StatelessWidget {
       _QuickActionButton(
         actionKey: const Key('quick-action-create-plan'),
         icon: Icons.work_outline_rounded,
+        iconColor: SpeakUpDesign.quickActionAmber,
         label: '准备模拟面试',
         onPressed: onCreatePlan,
       ),
       _QuickActionButton(
         actionKey: const Key('quick-action-browse-scenes'),
-        icon: Icons.record_voice_over_outlined,
+        icon: Icons.auto_awesome_rounded,
+        iconColor: SpeakUpDesign.quickActionViolet,
         label: '选择口语训练',
         onPressed: onBrowseScenes,
       ),
       _QuickActionButton(
         actionKey: const Key('quick-action-recent-review'),
-        icon: Icons.history_rounded,
+        icon: Icons.bar_chart_rounded,
+        iconColor: SpeakUpDesign.quickActionMint,
         label: '回顾最近练习',
         onPressed: onOpenReview,
       ),
@@ -903,6 +894,7 @@ class _QuickActions extends StatelessWidget {
                 ? null
                 : const Key('quick-action-continue-practice'),
             icon: Icons.play_circle_outline_rounded,
+            iconColor: SpeakUpDesign.primary,
             label: '继续上次练习',
             onPressed: onContinuePractice,
           ),
@@ -920,12 +912,14 @@ class _QuickActionButton extends StatelessWidget {
   const _QuickActionButton({
     this.actionKey,
     required this.icon,
+    required this.iconColor,
     required this.label,
     required this.onPressed,
   });
 
   final Key? actionKey;
   final IconData icon;
+  final Color iconColor;
   final String label;
   final VoidCallback? onPressed;
 
@@ -945,14 +939,14 @@ class _QuickActionButton extends StatelessWidget {
         child: InkWell(
           onTap: onPressed,
           child: Container(
-            constraints: const BoxConstraints(minHeight: 52),
+            constraints: const BoxConstraints(minHeight: 48),
             padding: const EdgeInsets.symmetric(
               horizontal: SpeakUpDesign.space4,
-              vertical: SpeakUpDesign.space8,
+              vertical: SpeakUpDesign.space4,
             ),
             child: Row(
               children: [
-                Icon(icon, size: 24, color: SpeakUpDesign.secondary),
+                Icon(icon, size: SpeakUpDesign.iconState, color: iconColor),
                 const SizedBox(width: SpeakUpDesign.space16),
                 Expanded(
                   child: Text(
@@ -960,7 +954,7 @@ class _QuickActionButton extends StatelessWidget {
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      color: SpeakUpDesign.secondary,
+                      color: SpeakUpDesign.inkSecondary,
                       fontSize: 17,
                       fontWeight: FontWeight.w500,
                       height: 1.25,

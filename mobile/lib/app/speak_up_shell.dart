@@ -84,10 +84,10 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   static const _destinations = [
     PlatformNavigationDestination(
       label: 'SpeakUp',
-      icon: Icons.mic_none_rounded,
-      selectedIcon: Icons.mic_rounded,
-      iosSystemImage: 'waveform.circle',
-      iosSelectedSystemImage: 'waveform.circle.fill',
+      icon: Icons.chat_bubble_outline_rounded,
+      selectedIcon: Icons.chat_bubble_rounded,
+      iosSystemImage: 'bubble.left',
+      iosSelectedSystemImage: 'bubble.left.fill',
       key: Key('primary-tab-agent'),
     ),
     PlatformNavigationDestination(

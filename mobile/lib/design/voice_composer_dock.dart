@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -190,23 +191,35 @@ class ConversationComposerCapsule extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 180),
-      curve: Curves.easeOut,
-      constraints: BoxConstraints(minHeight: minHeight),
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+    return DecoratedBox(
       decoration: BoxDecoration(
-        color: SpeakUpDesign.surface,
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: BorderRadius.circular(SpeakUpDesign.radiusPill),
         boxShadow: const [
           BoxShadow(
-            color: Color(0x14000000),
-            blurRadius: 18,
-            offset: Offset(0, 4),
+            color: Color(0x1F2D425E),
+            blurRadius: 30,
+            offset: Offset(0, 10),
           ),
         ],
       ),
-      child: child,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(SpeakUpDesign.radiusPill),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOut,
+            constraints: BoxConstraints(minHeight: minHeight),
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+            decoration: BoxDecoration(
+              color: SpeakUpDesign.surfaceGlassStrong,
+              borderRadius: BorderRadius.circular(SpeakUpDesign.radiusPill),
+              border: Border.all(color: SpeakUpDesign.borderGlass),
+            ),
+            child: child,
+          ),
+        ),
+      ),
     );
   }
 }

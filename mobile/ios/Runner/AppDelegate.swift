@@ -98,13 +98,30 @@ private final class NativeTabBarView: NSObject, FlutterPlatformView, UITabBarDel
       tabBarItem.tag = index
       return tabBarItem
     }
-    tabBar.tintColor = .label
-    tabBar.unselectedItemTintColor = .secondaryLabel
+    let selectedColor = UIColor(red: 20 / 255, green: 32 / 255, blue: 51 / 255, alpha: 1)
+    let unselectedColor = UIColor(red: 138 / 255, green: 148 / 255, blue: 166 / 255, alpha: 1)
+    tabBar.tintColor = selectedColor
+    tabBar.unselectedItemTintColor = unselectedColor
     let appearance = UITabBarAppearance()
     appearance.configureWithTransparentBackground()
     appearance.backgroundEffect = UIBlurEffect(style: .systemChromeMaterial)
-    appearance.backgroundColor = UIColor.systemBackground.withAlphaComponent(0.56)
-    appearance.shadowColor = UIColor.separator.withAlphaComponent(0.2)
+    appearance.backgroundColor = UIColor.white.withAlphaComponent(0.78)
+    appearance.shadowColor = UIColor(
+      red: 151 / 255,
+      green: 166 / 255,
+      blue: 189 / 255,
+      alpha: 0.16
+    )
+    appearance.stackedLayoutAppearance.normal.iconColor = unselectedColor
+    appearance.stackedLayoutAppearance.normal.titleTextAttributes = [
+      .foregroundColor: unselectedColor,
+      .font: UIFont.systemFont(ofSize: 10, weight: .semibold),
+    ]
+    appearance.stackedLayoutAppearance.selected.iconColor = selectedColor
+    appearance.stackedLayoutAppearance.selected.titleTextAttributes = [
+      .foregroundColor: selectedColor,
+      .font: UIFont.systemFont(ofSize: 10, weight: .semibold),
+    ]
     tabBar.standardAppearance = appearance
     tabBar.scrollEdgeAppearance = appearance
     tabBar.isTranslucent = true

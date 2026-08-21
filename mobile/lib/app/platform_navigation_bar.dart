@@ -31,7 +31,7 @@ class PlatformNavigationBar extends StatelessWidget {
     super.key,
   });
 
-  static const contentHeight = 64.0;
+  static const contentHeight = 52.0;
   static const minimumBottomInset = 10.0;
 
   final List<PlatformNavigationDestination> destinations;

@@ -5,10 +5,10 @@ abstract final class SpeakUpTheme {
   static ThemeData get light {
     const scheme = ColorScheme.light(
       primary: SpeakUpDesign.primary,
-      onPrimary: SpeakUpDesign.ink,
+      onPrimary: Colors.white,
       primaryContainer: SpeakUpDesign.primaryMuted,
       onPrimaryContainer: SpeakUpDesign.ink,
-      secondary: SpeakUpDesign.secondary,
+      secondary: SpeakUpDesign.accentViolet,
       onSecondary: Colors.white,
       error: SpeakUpDesign.error,
       onError: Colors.white,
@@ -59,9 +59,11 @@ abstract final class SpeakUpTheme {
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
-          minimumSize: const Size.fromHeight(SpeakUpDesign.minTapTarget),
+          minimumSize: const Size.fromHeight(
+            SpeakUpDesign.standardControlHeight,
+          ),
           backgroundColor: SpeakUpDesign.primary,
-          foregroundColor: SpeakUpDesign.ink,
+          foregroundColor: Colors.white,
           disabledBackgroundColor: SpeakUpDesign.surfaceMuted,
           disabledForegroundColor: SpeakUpDesign.tertiary,
           padding: const EdgeInsets.symmetric(
@@ -76,7 +78,9 @@ abstract final class SpeakUpTheme {
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
-          minimumSize: const Size.fromHeight(SpeakUpDesign.minTapTarget),
+          minimumSize: const Size.fromHeight(
+            SpeakUpDesign.standardControlHeight,
+          ),
           foregroundColor: SpeakUpDesign.ink,
           side: const BorderSide(color: SpeakUpDesign.border),
           padding: const EdgeInsets.symmetric(

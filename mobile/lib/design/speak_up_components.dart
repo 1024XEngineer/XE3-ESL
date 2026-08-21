@@ -1,5 +1,190 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:speakup/design/speak_up_design.dart';
+
+enum SpeakUpBackgroundVariant { ambient, sky, focus }
+
+class SpeakUpAmbientBackground extends StatelessWidget {
+  const SpeakUpAmbientBackground({
+    this.variant = SpeakUpBackgroundVariant.ambient,
+    super.key,
+  });
+
+  final SpeakUpBackgroundVariant variant;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = switch (variant) {
+      SpeakUpBackgroundVariant.ambient => const [
+        SpeakUpDesign.ambientTop,
+        SpeakUpDesign.canvas,
+        SpeakUpDesign.canvas,
+      ],
+      SpeakUpBackgroundVariant.sky => const [
+        SpeakUpDesign.skyTop,
+        SpeakUpDesign.skyMiddle,
+        SpeakUpDesign.canvas,
+      ],
+      SpeakUpBackgroundVariant.focus => const [
+        SpeakUpDesign.focusTop,
+        SpeakUpDesign.canvas,
+        SpeakUpDesign.canvas,
+      ],
+    };
+    return ExcludeSemantics(
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: colors,
+            stops: const [0, 0.42, 1],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+enum SpeakUpGlassLevel { control, floating }
+
+class SpeakUpGlassSurface extends StatelessWidget {
+  const SpeakUpGlassSurface({
+    required this.child,
+    this.level = SpeakUpGlassLevel.control,
+    this.borderRadius = SpeakUpDesign.radiusControl,
+    super.key,
+  });
+
+  final Widget child;
+  final SpeakUpGlassLevel level;
+  final double borderRadius;
+
+  @override
+  Widget build(BuildContext context) {
+    final floating = level == SpeakUpGlassLevel.floating;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(borderRadius),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(
+              0xFF2D425E,
+            ).withValues(alpha: floating ? 0.12 : 0.09),
+            blurRadius: floating ? 30 : 18,
+            offset: Offset(0, floating ? 10 : 6),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(borderRadius),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(
+            sigmaX: floating ? 20 : 16,
+            sigmaY: floating ? 20 : 16,
+          ),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: floating
+                  ? SpeakUpDesign.surfaceGlassStrong
+                  : SpeakUpDesign.surfaceGlassSoft,
+              borderRadius: BorderRadius.circular(borderRadius),
+              border: Border.all(color: SpeakUpDesign.borderGlass),
+            ),
+            child: child,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class SpeakUpGlassIconButton extends StatelessWidget {
+  const SpeakUpGlassIconButton({
+    required this.tooltip,
+    required this.onPressed,
+    this.icon,
+    this.glyph,
+    super.key,
+  }) : assert(icon != null || glyph != null);
+
+  final String tooltip;
+  final IconData? icon;
+  final Widget? glyph;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      enabled: onPressed != null,
+      label: tooltip,
+      excludeSemantics: true,
+      child: Tooltip(
+        message: tooltip,
+        child: SizedBox.square(
+          dimension: SpeakUpDesign.minTapTarget,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              const SizedBox.square(
+                dimension: 38,
+                child: SpeakUpGlassSurface(
+                  borderRadius: 19,
+                  child: SizedBox.expand(),
+                ),
+              ),
+              Positioned.fill(
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkResponse(
+                    onTap: onPressed,
+                    radius: SpeakUpDesign.minTapTarget / 2,
+                    child:
+                        glyph ??
+                        Icon(
+                          icon,
+                          size: SpeakUpDesign.iconDefault,
+                          color: onPressed == null
+                              ? SpeakUpDesign.tertiary
+                              : SpeakUpDesign.ink,
+                        ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class SpeakUpDoubleLineMenuGlyph extends StatelessWidget {
+  const SpeakUpDoubleLineMenuGlyph({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 20,
+      height: 14,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [_line(18), const SizedBox(height: 4.5), _line(12)],
+      ),
+    );
+  }
+
+  Widget _line(double width) => Container(
+    width: width,
+    height: 1.8,
+    decoration: BoxDecoration(
+      color: SpeakUpDesign.ink,
+      borderRadius: BorderRadius.circular(2),
+    ),
+  );
+}
 
 class SpeakUpWordmark extends StatelessWidget {
   const SpeakUpWordmark({this.height = 28, super.key});
@@ -498,7 +683,8 @@ class _SpeakUpPressableState extends State<SpeakUpPressable> {
 
   @override
   Widget build(BuildContext context) {
-    final reduceMotion = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    final reduceMotion =
+        MediaQuery.maybeOf(context)?.disableAnimations ?? false;
     return Listener(
       onPointerDown: (_) => _setPressed(true),
       onPointerUp: (_) => _setPressed(false),
