@@ -385,6 +385,14 @@ void main() {
 
     await _waitForPreparationTarget(
       tester,
+      target: find.byKey(const Key('ielts-set-detail')),
+      operation: 'open the IELTS Part 1 question set details',
+      timeout: const Duration(seconds: 20),
+    );
+    await _tapPracticeControl(tester, const Key('ielts-set-detail-start'));
+
+    await _waitForPreparationTarget(
+      tester,
       target: find.byKey(const Key('ielts-mock-page')),
       operation: 'create and open the IELTS Part 1 Practice Session',
       timeout: const Duration(seconds: 90),
@@ -419,15 +427,36 @@ void main() {
     );
 
     await tester.tap(find.byKey(const Key('ielts-mock-exit')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'Save & exit'));
+    await _waitForPreparationTarget(
+      tester,
+      target: find.byKey(const Key('ielts-mock-exit-sheet')),
+      operation: 'open the IELTS exit confirmation',
+      timeout: const Duration(seconds: 10),
+    );
+    await _tapPracticeControl(tester, const Key('ielts-mock-save-and-exit'));
+    await _waitForPreparationTarget(
+      tester,
+      target: examHub,
+      operation: 'return to the practice hubs after ending the first session',
+      timeout: const Duration(seconds: 20),
+    );
+    await _scrollPreparationIntoView(tester, examHub);
+    await tester.tap(examHub);
     await _waitForPreparationTarget(
       tester,
       target: questionSet,
-      operation: 'return to IELTS Part 1 after ending the first session',
+      operation: 'reload IELTS Part 1 after ending the first session',
+      timeout: const Duration(seconds: 30),
+    );
+    await _scrollPreparationIntoView(tester, questionSet);
+    await tester.tap(questionSet);
+    await _waitForPreparationTarget(
+      tester,
+      target: find.byKey(const Key('ielts-set-detail')),
+      operation: 'reopen the IELTS Part 1 question set details',
       timeout: const Duration(seconds: 20),
     );
-    await tester.tap(questionSet);
+    await _tapPracticeControl(tester, const Key('ielts-set-detail-start'));
     await _waitUntil(tester, () {
       final currentSessionId =
           dependencies.practiceController.practiceSessionId;
