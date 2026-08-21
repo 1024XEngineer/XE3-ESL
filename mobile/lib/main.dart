@@ -1,6 +1,9 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:speakup/config/app_environment.dart';
 import 'package:speakup/features/agent/audio/agent_audio_player.dart';
 import 'package:speakup/features/agent/composer/composer_controller.dart';
 import 'package:speakup/features/agent/conversation/conversation_controller.dart';
@@ -47,17 +50,17 @@ import 'package:speakup/features/coaching/scenario/scenario_practice_session.dar
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  const apiBaseUrl = String.fromEnvironment(
-    'SPEAKUP_API_BASE_URL',
-    defaultValue: 'http://127.0.0.1:8080',
-  );
+  const explicitApiBaseUrl = String.fromEnvironment('SPEAKUP_API_BASE_URL');
   const avatarEnabled = bool.fromEnvironment(
     'SPEAKUP_AVATAR_ENABLED',
     defaultValue: true,
   );
-  final dependencies = createProductionAppDependencies(
-    baseUri: Uri.parse(apiBaseUrl),
+  final apiBaseUri = resolveApiBaseUri(
+    flavor: appFlavor,
+    isReleaseMode: kReleaseMode,
+    explicitBaseUrl: explicitApiBaseUrl,
   );
+  final dependencies = createProductionAppDependencies(baseUri: apiBaseUri);
   runApp(
     SpeakUpApp(
       authController: dependencies.authController,
