@@ -1436,6 +1436,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     if (_exitApproved || _exitPromptOpen || _exitInFlight || !mounted) {
       return;
     }
+    final exitMode = _mode;
     _exitPromptOpen = true;
     _part2TranscriptionRetryTimer?.cancel();
     _part2TranscriptionRetryTimer = null;
@@ -1493,14 +1494,11 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     if (!mounted) {
       return;
     }
-    final selection = _selection;
-    final shouldReturnToSectionList =
-        selection != null &&
-        _mode != PracticeMode.fullMock &&
-        (result == null || result.action == IeltsPracticeCompletionAction.list);
-    if (shouldReturnToSectionList) {
+    final shouldReturnToIeltsHub =
+        result == null || result.action == IeltsPracticeCompletionAction.list;
+    if (shouldReturnToIeltsHub) {
       widget.ieltsController?.requestNavigation(
-        IeltsPracticeNavigationRequest(mode: _mode),
+        IeltsPracticeNavigationRequest(mode: result?.mode ?? exitMode),
       );
     }
     _exitApproved = true;
