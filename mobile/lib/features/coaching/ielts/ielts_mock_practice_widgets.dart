@@ -460,7 +460,6 @@ class _CompletionStep extends StatelessWidget {
     required this.message,
     required this.buttonLabel,
     required this.onPressed,
-    this.buttonKey = const Key('ielts-mock-continue'),
     super.key,
   });
 
@@ -468,7 +467,6 @@ class _CompletionStep extends StatelessWidget {
   final String message;
   final String buttonLabel;
   final VoidCallback? onPressed;
-  final Key buttonKey;
 
   @override
   Widget build(BuildContext context) {
@@ -503,7 +501,7 @@ class _CompletionStep extends StatelessWidget {
               ),
               const SizedBox(height: 36),
               FilledButton(
-                key: buttonKey,
+                key: const Key('ielts-mock-continue'),
                 onPressed: onPressed,
                 style: FilledButton.styleFrom(
                   minimumSize: const Size.fromHeight(52),
@@ -916,36 +914,6 @@ class _Part2Transition extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-}
-
-class _Part3Intro extends StatelessWidget {
-  const _Part3Intro({
-    required this.topicTitle,
-    required this.cueCardPrompt,
-    required this.ready,
-    required this.onPressed,
-  });
-
-  final String topicTitle;
-  final String? cueCardPrompt;
-  final bool ready;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return _CompletionStep(
-      key: const Key('ielts-part3-topic-intro'),
-      title: ready ? 'Part 3 Ready' : '正在进入 Part 3',
-      message:
-          '${cueCardPrompt == null ? 'Discussion topic' : 'This discussion continues the Part 2 topic'}:\n'
-          '$topicTitle'
-          '${cueCardPrompt == null ? '' : '\n\n$cueCardPrompt'}'
-          '${ready ? '' : '\n\n请先等待 Part 2 作答处理完成。'}',
-      buttonLabel: ready ? 'Start Part 3' : '正在准备第一个问题…',
-      buttonKey: const Key('ielts-part3-start'),
-      onPressed: ready ? onPressed : null,
     );
   }
 }

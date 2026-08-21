@@ -11,7 +11,6 @@ enum IeltsMockPhase {
   part2Preparation,
   part2Speaking,
   part2Complete,
-  part3Intro,
   part3,
   complete,
 }
@@ -93,10 +92,16 @@ final class IeltsMockProgress {
     final part2SpokenSeconds = value['part_2_spoken_seconds'];
     final notes = value['notes'];
     IeltsMockPhase? phase;
-    for (final item in IeltsMockPhase.values) {
-      if (item.name == phaseName) {
-        phase = item;
-        break;
+    if (phaseName == 'part3Intro') {
+      // Migrate checkpoints written before the redundant Part 3 ready page
+      // was removed. The server session remains the source of truth.
+      phase = IeltsMockPhase.part3;
+    } else {
+      for (final item in IeltsMockPhase.values) {
+        if (item.name == phaseName) {
+          phase = item;
+          break;
+        }
       }
     }
     if (sessionId != expectedSessionId ||
