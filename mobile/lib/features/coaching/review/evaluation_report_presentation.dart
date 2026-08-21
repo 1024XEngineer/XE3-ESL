@@ -57,3 +57,33 @@ String evaluationReportTitle(EvaluationReport report) {
       ? '$base · 证据不足'
       : base;
 }
+
+String evaluationReportBadge(EvaluationReport report) =>
+    switch (report.sceneType) {
+      EvaluationReportSceneType.ieltsSpeaking => switch (report.practiceMode) {
+        'PART_1' => 'IELTS Part 1',
+        'PART_2' => 'IELTS Part 2',
+        'PART_3' => 'IELTS Part 3',
+        'FULL_MOCK' => 'IELTS Full Mock',
+        _ => 'IELTS Speaking',
+      },
+      EvaluationReportSceneType.interview => '模拟面试',
+      EvaluationReportSceneType.overseasDailyLife => '日常沟通',
+      EvaluationReportSceneType.overseasWorkplace => '职场沟通',
+    };
+
+String evaluationReportContextLabel(EvaluationReport report) {
+  final answeredCount = report.questions
+      .where((question) => question.answer != null)
+      .length;
+  return switch (report.sceneType) {
+    EvaluationReportSceneType.ieltsSpeaking =>
+      '基于本次 $answeredCount 道已记录回答的阶段性估分，不等同于官方考试成绩。',
+    EvaluationReportSceneType.interview =>
+      '基于本次模拟面试中 $answeredCount 道已记录回答形成的阶段性评估。',
+    EvaluationReportSceneType.overseasDailyLife =>
+      '基于本次 $answeredCount 道已记录回答形成的日常沟通评估。',
+    EvaluationReportSceneType.overseasWorkplace =>
+      '基于本次 $answeredCount 道已记录回答形成的职场沟通评估。',
+  };
+}
