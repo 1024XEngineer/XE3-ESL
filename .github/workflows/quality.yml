@@ -28,6 +28,7 @@ jobs:
       flutter: ${{ steps.scope.outputs.flutter }}
       go: ${{ steps.scope.outputs.go }}
       api: ${{ steps.scope.outputs.api }}
+      portal: ${{ steps.scope.outputs.portal }}
     steps:
       - name: Check out repository history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -49,11 +50,13 @@ jobs:
           flutter=false
           go=false
           api=false
+          portal=false
 
           set_all_checks() {
             flutter=true
             go=true
             api=true
+            portal=true
           }
 
           if [[ "$EVENT_NAME" != "pull_request" || "$BASE_REF" == "main" ]]; then
@@ -83,6 +86,9 @@ jobs:
                 api/*)
                   api=true
                   ;;
+                portal/*)
+                  portal=true
+                  ;;
               esac
             done < "$changed_files"
           fi
@@ -91,6 +97,7 @@ jobs:
             echo "flutter=$flutter"
             echo "go=$go"
             echo "api=$api"
+            echo "portal=$portal"
           } >> "$GITHUB_OUTPUT"
 
   flutter:
@@ -183,6 +190,40 @@ jobs:
 
       - name: Check API contracts
         run: make check-api
+
+  portal:
+    name: Portal
+    needs: changes
+    if: needs.changes.outputs.portal == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: portal
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: portal/package-lock.json
+
+      - name: Install Portal dependencies
+        run: npm ci
+
+      - name: Lint Portal
+        run: npm run lint
+
+      - name: Build and test Portal
+        run: npm test
+
+      - name: Build Portal Docker image
+        run: docker build --tag speakup-portal:ci .
 
   coverage-gate:
     name: Coverage gate
@@ -492,6 +533,7 @@ jobs:
       - flutter
       - go
       - api
+      - portal
       - coverage-gate
       - flutter-coverage-gate
     if: always()
@@ -505,6 +547,8 @@ jobs:
       GO_RESULT: ${{ needs.go.result }}
       API_REQUIRED: ${{ needs.changes.outputs.api }}
       API_RESULT: ${{ needs.api.result }}
+      PORTAL_REQUIRED: ${{ needs.changes.outputs.portal }}
+      PORTAL_RESULT: ${{ needs.portal.result }}
       GO_COVERAGE_RESULT: ${{ needs.coverage-gate.result }}
       FLUTTER_COVERAGE_RESULT: ${{ needs.flutter-coverage-gate.result }}
     steps:
@@ -550,6 +594,7 @@ jobs:
           require_result "Flutter" "$FLUTTER_REQUIRED" "$FLUTTER_RESULT"
           require_result "Go" "$GO_REQUIRED" "$GO_RESULT"
           require_result "API contracts" "$API_REQUIRED" "$API_RESULT"
+          require_result "Portal" "$PORTAL_REQUIRED" "$PORTAL_RESULT"
 
           require_coverage_result() {
             local name=$1
