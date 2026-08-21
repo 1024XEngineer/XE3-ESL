@@ -76,9 +76,75 @@ void main() {
       expect(find.byKey(const Key('job-plan-advanced')), findsNothing);
     },
   );
+
+  testWidgets('wizard previews and starts a saved Agent interview Plan', (
+    tester,
+  ) async {
+    final practice = PracticeController(
+      client: FakePracticeClient(
+        planId: contractPlanId,
+        practiceExperience: PracticeExperience.interview,
+        sceneCategory: SceneCategory.interviewProfessional,
+        turnLimit: 6,
+      ),
+    );
+    final workspace = PracticeWorkspaceController(
+      practiceController: practice,
+      recordStore: MemoryPracticeLaunchRecordStore(),
+    );
+    await workspace.activateAccount(contractUserId);
+    final client = _WizardClient(savedPlanIncludesInterview: false);
+    var started = 0;
+    final controller = JobPreparationController(
+      client: client,
+      workspaceController: workspace,
+      idFactory: (scope) => '$scope-contract-key',
+      voiceActivator:
+          ({required scene, required bootstrap, required clientOperationId}) =>
+              practice.activateCreatedPractice(
+                scene: scene,
+                sessionId: bootstrap.session.id,
+                planId: bootstrap.session.planId,
+                practiceMode: bootstrap.session.practiceMode,
+                turnLimit: bootstrap.maxEffectiveTurns,
+                clientOperationId: clientOperationId,
+              ),
+    );
+    addTearDown(() {
+      controller.dispose();
+      workspace.dispose();
+      practice.dispose();
+    });
+
+    expect(await controller.openSavedPlan(contractPlanId), isTrue);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: JobPreparationWizard(
+          controller: controller,
+          onPracticeStarted: () => started++,
+        ),
+      ),
+    );
+
+    expect(find.byKey(const Key('job-wizard-preview-step')), findsOneWidget);
+    expect(find.text(contractScene.name), findsWidgets);
+    expect(find.byKey(const Key('job-input-field')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('start-job-practice-button')));
+    await tester.pumpAndSettle();
+
+    expect(started, 1);
+    expect(client.preparationCreates, 0);
+    expect(client.planCreates, 0);
+    expect(client.sessionCreates, 1);
+    expect(practice.practicePlanId, contractPlanId);
+  });
 }
 
 final class _WizardClient implements JobPreparationClient {
+  _WizardClient({this.savedPlanIncludesInterview = true});
+
+  final bool savedPlanIncludesInterview;
   int preparationCreates = 0;
   int planCreates = 0;
   int sessionCreates = 0;
@@ -124,7 +190,7 @@ final class _WizardClient implements JobPreparationClient {
 
   @override
   Future<PracticePlan> getPlan(String planId) async =>
-      contractPlan(includeInterview: true);
+      contractPlan(includeInterview: savedPlanIncludesInterview);
 
   @override
   Future<List<PracticePlanSummary>> listPlans({
