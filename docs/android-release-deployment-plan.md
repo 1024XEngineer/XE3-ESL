@@ -198,8 +198,8 @@ Check 严格模式已暂缓，不在本阶段擅自重新启用。
 - Portal OCI 镜像及 digest。
 - Go 后端 OCI 镜像及 digest。
 - Staging APK。
-- 正式签名 Production APK。
-- APK SHA-256。
+- 正式签名并冻结的 Production APK。
+- 两个 APK 各自的 SHA-256。
 - `release-manifest.json`。
 
 发布清单至少包含：
@@ -210,7 +210,8 @@ Check 严格模式已暂缓，不在本阶段擅自重新启用。
   "git_sha": "...",
   "portal_image_digest": "sha256:...",
   "server_image_digest": "sha256:...",
-  "apk_sha256": "...",
+  "staging_apk_sha256": "...",
+  "production_apk_sha256": "...",
   "database_schema_version": "...",
   "quality_run_url": "..."
 }
@@ -233,8 +234,10 @@ Staging 自动部署并验证：
 - Staging APK 完成安装、启动和核心业务链路验收。
 
 Staging APK 与 Production APK 来自同一 commit，但 API 基础地址不同，所以不应
-声称它们是完全相同的二进制文件。Production APK 必须在生产部署后完成签名、
-安装、启动与生产 API 连通性检查，检查通过后才能更新公开下载入口。
+声称它们是完全相同的二进制文件。Production APK 必须在进入 Staging 前完成正式
+签名、计算 SHA-256 并冻结；生产部署不得重新签名或替换该文件。生产部署后只对
+Release manifest 指向的同一 Production APK 完成安装、启动与生产 API 连通性检查，
+检查通过后才能更新公开下载入口。
 
 Production 使用 GitHub Environment：
 
