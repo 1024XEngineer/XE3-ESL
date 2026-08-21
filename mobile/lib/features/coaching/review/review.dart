@@ -710,6 +710,7 @@ class ReviewReportDetailPage extends StatelessWidget {
     final report = item.report;
     final isIeltsReport =
         report.sceneType == EvaluationReportSceneType.ieltsSpeaking;
+    final isPart1Report = isIeltsReport && report.practiceMode == 'PART_1';
     final findings = report.dimensions
         .expand((dimension) => dimension.improvements)
         .toList(growable: false);
@@ -731,16 +732,21 @@ class ReviewReportDetailPage extends StatelessWidget {
         top: false,
         child: ListView(
           key: const Key('review-detail-content'),
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 48),
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 48),
           children: [
-            _ReviewDetailHeader(item: item, showTitle: !isIeltsReport),
+            if (!isPart1Report)
+              _ReviewDetailHeader(
+                item: item,
+                showTitle: !isIeltsReport,
+                showSummary: !isPart1Report,
+              ),
             if (report.scoreability ==
                 EvaluationReportScoreability.insufficient) ...[
               const SizedBox(height: 12),
               const _ReviewStatusNotice(),
             ],
             if (isIeltsReport) ...[
-              const SizedBox(height: 12),
+              if (!isPart1Report) const SizedBox(height: 12),
               IeltsReportDetailContent(report: report),
             ],
             if (!isIeltsReport && report.dimensions.isNotEmpty) ...[
@@ -759,10 +765,15 @@ class ReviewReportDetailPage extends StatelessWidget {
 }
 
 class _ReviewDetailHeader extends StatelessWidget {
-  const _ReviewDetailHeader({required this.item, required this.showTitle});
+  const _ReviewDetailHeader({
+    required this.item,
+    required this.showTitle,
+    this.showSummary = true,
+  });
 
   final ReviewHistoryItem item;
   final bool showTitle;
+  final bool showSummary;
 
   @override
   Widget build(BuildContext context) {
@@ -784,7 +795,7 @@ class _ReviewDetailHeader extends StatelessWidget {
             '${_detailDateLabel(item.completedAt)} · ${_statusLabel(item.report)}',
             style: SpeakUpDesign.meta,
           ),
-          if (summary != null) ...[
+          if (showSummary && summary != null) ...[
             const SizedBox(height: SpeakUpDesign.space12),
             Text(
               summary,

@@ -1015,6 +1015,187 @@ void main() {
     expect(find.text('证据覆盖 87%'), findsOneWidget);
   });
 
+  testWidgets(
+    'Part 1 report shows score and priority actions before collapsed details',
+    (tester) async {
+      const grammarFinding = EvaluationReportFinding(
+        id: 'grammar-priority',
+        message: '第三人称单数和句子结构需要更准确。',
+        suggestion: '使用 it gives，并把断开的句子合并完整。',
+        evidence: <EvaluationReportEvidence>[
+          EvaluationReportEvidence(
+            evidenceRefId: 'grammar-evidence',
+            turnId: 'turn-grammar',
+            startUtf8Byte: 0,
+            endUtf8Byte: 12,
+            originalExcerpt: 'it give me energy',
+          ),
+        ],
+      );
+      const secondaryGrammarFinding = EvaluationReportFinding(
+        id: 'grammar-secondary',
+        message: '这条普通语法建议不应盖过后端指定的优先项。',
+        suggestion: '先处理优先项后再看这条建议。',
+        evidence: <EvaluationReportEvidence>[],
+      );
+      const pronunciationFinding = EvaluationReportFinding(
+        id: 'pronunciation-priority',
+        message: '部分音素影响了表达清晰度。',
+        suggestion: '先慢速重读目标词，再恢复正常语速。',
+        evidence: <EvaluationReportEvidence>[
+          EvaluationReportEvidence(
+            evidenceRefId: 'pronunciation-evidence',
+            turnId: 'turn-pronunciation',
+            startUtf8Byte: 0,
+            endUtf8Byte: 10,
+            originalExcerpt: 'music theory',
+          ),
+        ],
+      );
+      final item = _sceneItem(
+        id: 'review-v2-ielts-part1',
+        sceneType: EvaluationReportSceneType.ieltsSpeaking,
+        scoreability: EvaluationReportScoreability.provisional,
+        practiceMode: 'PART_1',
+        summary: '这段较长的总结不应抢在估分前展示。',
+        dimensions: <EvaluationReportDimension>[
+          _part1Dimension(
+            key: 'FLUENCY_COHERENCE',
+            score: 7.5,
+            improvementMessage: '完整流利性详情',
+          ),
+          _part1Dimension(
+            key: 'LEXICAL_RESOURCE',
+            score: 7,
+            improvementMessage: '完整词汇详情',
+          ),
+          _part1Dimension(
+            key: 'GRAMMATICAL_RANGE_ACCURACY',
+            score: 6.5,
+            improvements: const <EvaluationReportFinding>[
+              secondaryGrammarFinding,
+              grammarFinding,
+            ],
+          ),
+          _part1Dimension(
+            key: 'PRONUNCIATION',
+            score: 6,
+            improvement: pronunciationFinding,
+          ),
+        ],
+        priorityActions: const <EvaluationReportPriorityAction>[
+          EvaluationReportPriorityAction(
+            dimensionKey: 'GRAMMATICAL_RANGE_ACCURACY',
+            findingId: 'grammar-priority',
+          ),
+          EvaluationReportPriorityAction(
+            dimensionKey: 'PRONUNCIATION',
+            findingId: 'pronunciation-priority',
+          ),
+        ],
+      );
+      final controller = ReviewHistoryController(
+        client: _FixedItemsClient(<ReviewHistoryItem>[item]),
+      );
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(home: ReviewPage(historyController: controller)),
+      );
+      await tester.pumpAndSettle();
+      await _expandHistory(tester);
+      await tester.tap(
+        find.byKey(Key('review-history-select-${item.review.id}')),
+      );
+      await tester.pumpAndSettle();
+
+      final darkOverview = find.byKey(const Key('ielts-part1-dark-overview'));
+      expect(darkOverview, findsOneWidget);
+      expect(find.text('基于本次 1 道已记录回答的阶段性估分，不等同于官方考试成绩。'), findsOneWidget);
+      expect(find.byKey(const Key('ielts-evaluation-radar')), findsOneWidget);
+      // Summary is not shown for Part 1 reports (score speaks first).
+      expect(find.text('这段较长的总结不应抢在估分前展示。'), findsNothing);
+      expect(find.text('优先项在前'), findsOneWidget);
+
+      // The server-selected grammar action stays ahead of the lower-scored
+      // pronunciation card, and its exact finding is the visible first item.
+      final grammar = find.byKey(
+        const Key('ielts-part1-dimension-GRAMMATICAL_RANGE_ACCURACY'),
+      );
+      final pronunciation = find.byKey(
+        const Key('ielts-part1-dimension-PRONUNCIATION'),
+      );
+      await tester.ensureVisible(pronunciation);
+      await tester.pumpAndSettle();
+      expect(grammar, findsOneWidget);
+      expect(pronunciation, findsOneWidget);
+      expect(
+        tester.getTopLeft(grammar).dy,
+        lessThan(tester.getTopLeft(pronunciation).dy),
+      );
+      expect(find.text('第三人称单数和句子结构需要更准确。'), findsOneWidget);
+      expect(find.text('使用 it gives，并把断开的句子合并完整。'), findsOneWidget);
+      expect(find.text('这条普通语法建议不应盖过后端指定的优先项。'), findsNothing);
+
+      // Questions disclosure exists and works.
+      final questions = find.byKey(
+        const Key('ielts-report-questions-disclosure'),
+      );
+      await tester.ensureVisible(questions);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('ielts-report-questions-toggle')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(
+        find.text('1. Tell me about your experience.', skipOffstage: false),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('1. Tell me about your experience.'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'Part 1 report renders dimensions with missing findings gracefully',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(800, 2000));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final item = _sceneItem(
+        id: 'review-v2-ielts-part1-no-action',
+        sceneType: EvaluationReportSceneType.ieltsSpeaking,
+        scoreability: EvaluationReportScoreability.provisional,
+        practiceMode: 'PART_1',
+        dimensions: <EvaluationReportDimension>[
+          _part1Dimension(key: 'FLUENCY_COHERENCE', score: 7),
+        ],
+      );
+      final controller = ReviewHistoryController(
+        client: _FixedItemsClient(<ReviewHistoryItem>[item]),
+      );
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(home: ReviewPage(historyController: controller)),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(Key('review-history-select-${item.review.id}')),
+      );
+      await tester.pumpAndSettle();
+
+      final scored = find.byKey(
+        const Key('ielts-part1-dimension-FLUENCY_COHERENCE'),
+      );
+      final unscored = find.byKey(
+        const Key('ielts-part1-dimension-LEXICAL_RESOURCE'),
+      );
+      expect(find.text('从薄弱项开始'), findsOneWidget);
+      expect(
+        tester.getTopLeft(scored).dy,
+        lessThan(tester.getTopLeft(unscored).dy),
+      );
+      expect(find.text('7 / 9'), findsWidgets);
+    },
+  );
+
   testWidgets('profile shows IELTS ability instead of the report narrative', (
     tester,
   ) async {
@@ -1817,6 +1998,7 @@ ReviewHistoryItem _sceneItem({
   required EvaluationReportScoreability scoreability,
   required List<EvaluationReportDimension> dimensions,
   String? practiceMode,
+  String? summary,
   List<EvaluationReportPriorityAction> priorityActions =
       const <EvaluationReportPriorityAction>[],
 }) {
@@ -1845,9 +2027,11 @@ ReviewHistoryItem _sceneItem({
             ? 'FULL_MOCK'
             : 'FULL_SIMULATION'),
     scoreability: scoreability,
-    summary: scoreability == EvaluationReportScoreability.insufficient
-        ? '当前回答不足以形成可靠结论。'
-        : '本次回答已经形成可复盘的文本反馈。',
+    summary:
+        summary ??
+        (scoreability == EvaluationReportScoreability.insufficient
+            ? '当前回答不足以形成可靠结论。'
+            : '本次回答已经形成可复盘的文本反馈。'),
     questions: const <EvaluationReportQuestion>[
       EvaluationReportQuestion(
         id: '40000000-0000-4000-8000-000000000001',
@@ -1869,6 +2053,35 @@ ReviewHistoryItem _sceneItem({
     practiceSessionId: report.practiceSessionId,
     createdAt: createdAt,
     completedAt: completedAt,
+  );
+}
+
+EvaluationReportDimension _part1Dimension({
+  required String key,
+  required double score,
+  EvaluationReportFinding? improvement,
+  List<EvaluationReportFinding>? improvements,
+  String? improvementMessage,
+}) {
+  final finding =
+      improvement ??
+      EvaluationReportFinding(
+        id: '$key-improvement',
+        message: improvementMessage ?? '$key improvement',
+        suggestion: '$key suggestion',
+        evidence: const <EvaluationReportEvidence>[],
+      );
+  return EvaluationReportDimension(
+    key: key,
+    score: score,
+    scale: EvaluationReportScoreScale.ieltsBand,
+    coverage: 1,
+    confidence: 0.8,
+    reasonCodes: const <String>[],
+    evidenceRefIds: const <String>[],
+    strengths: const <EvaluationReportFinding>[],
+    improvements: improvements ?? <EvaluationReportFinding>[finding],
+    recommendedExamples: const <EvaluationReportFinding>[],
   );
 }
 
