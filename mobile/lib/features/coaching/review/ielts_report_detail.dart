@@ -41,8 +41,8 @@ class IeltsReportDetailContent extends StatelessWidget {
   }
 }
 
-/// Part 1 redesigned layout: refined overview card followed by
-/// dimension cards sorted by score (lowest first), then Q&A disclosure.
+/// Part 1 redesigned layout: refined overview card followed by prioritized
+/// dimension cards, then the Q&A disclosure.
 class _Part1ReportContent extends StatelessWidget {
   const _Part1ReportContent({required this.report, required this.dimensions});
 
@@ -54,13 +54,44 @@ class _Part1ReportContent extends StatelessWidget {
     final answeredCount = report.questions
         .where((question) => question.answer != null)
         .length;
-    // Sort dimensions by score ascending so low-score items appear first.
-    final sortedKeys = _criterionKeys.toList()
-      ..sort((left, right) {
-        final leftScore = dimensions[left]?.score ?? 0;
-        final rightScore = dimensions[right]?.score ?? 0;
-        return leftScore.compareTo(rightScore);
-      });
+    final priorityFindingIds = <String, List<String>>{};
+    final priorityKeys = <String>[];
+    for (final action in report.priorityActions) {
+      if (!dimensions.containsKey(action.dimensionKey) ||
+          !_criterionLabels.containsKey(action.dimensionKey)) {
+        continue;
+      }
+      final findingIds = priorityFindingIds.putIfAbsent(
+        action.dimensionKey,
+        () => <String>[],
+      );
+      findingIds.add(action.findingId);
+      if (!priorityKeys.contains(action.dimensionKey)) {
+        priorityKeys.add(action.dimensionKey);
+      }
+    }
+    final remainingKeys =
+        _criterionKeys
+            .where((key) => !priorityFindingIds.containsKey(key))
+            .toList()
+          ..sort((left, right) {
+            final leftScore = dimensions[left]?.score;
+            final rightScore = dimensions[right]?.score;
+            if (leftScore == null && rightScore == null) {
+              return _criterionKeys
+                  .indexOf(left)
+                  .compareTo(_criterionKeys.indexOf(right));
+            }
+            if (leftScore == null) return 1;
+            if (rightScore == null) return -1;
+            final scoreOrder = leftScore.compareTo(rightScore);
+            return scoreOrder != 0
+                ? scoreOrder
+                : _criterionKeys
+                      .indexOf(left)
+                      .compareTo(_criterionKeys.indexOf(right));
+          });
+    final sortedKeys = <String>[...priorityKeys, ...remainingKeys];
     return Column(
       key: const Key('ielts-part1-report-content'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -78,7 +109,7 @@ class _Part1ReportContent extends StatelessWidget {
             ),
             const Spacer(),
             Text(
-              '从薄弱项开始',
+              priorityKeys.isEmpty ? '从薄弱项开始' : '优先项在前',
               style: SpeakUpDesign.meta.copyWith(
                 color: SpeakUpDesign.secondary,
                 fontSize: 12,
@@ -92,6 +123,7 @@ class _Part1ReportContent extends StatelessWidget {
             key: Key('ielts-part1-dimension-$key'),
             dimension: dimensions[key],
             label: _criterionLabels[key]!,
+            priorityFindingIds: priorityFindingIds[key] ?? const <String>[],
           ),
           const SizedBox(height: SpeakUpDesign.space12),
         ],
@@ -108,11 +140,13 @@ class _DimensionCard extends StatefulWidget {
   const _DimensionCard({
     required this.dimension,
     required this.label,
+    this.priorityFindingIds = const <String>[],
     super.key,
   });
 
   final EvaluationReportDimension? dimension;
   final String label;
+  final List<String> priorityFindingIds;
 
   @override
   State<_DimensionCard> createState() => _DimensionCardState();
@@ -125,10 +159,27 @@ class _DimensionCardState extends State<_DimensionCard> {
   Widget build(BuildContext context) {
     final value = widget.dimension;
     final score = value?.score;
-    final findings = value == null
+    final allFindings = value == null
         ? const <EvaluationReportFinding>[]
         : <EvaluationReportFinding>[...value.strengths, ...value.improvements];
-    final suggestions = _suggestions(value);
+    final findingsById = <String, EvaluationReportFinding>{
+      for (final finding in allFindings) finding.id: finding,
+    };
+    final prioritizedFindings = <EvaluationReportFinding>[
+      for (final id in widget.priorityFindingIds)
+        if (findingsById[id] != null) findingsById[id]!,
+    ];
+    final prioritizedIds = prioritizedFindings
+        .map((finding) => finding.id)
+        .toSet();
+    final findings = <EvaluationReportFinding>[
+      ...prioritizedFindings,
+      ...allFindings.where((finding) => !prioritizedIds.contains(finding.id)),
+    ];
+    final suggestions = _suggestions(
+      value,
+      priorityFindingIds: widget.priorityFindingIds,
+    );
     final firstFinding = findings.firstOrNull;
     final firstSuggestion = suggestions.firstOrNull;
     final hasMore = findings.length > 1 || suggestions.length > 1;
@@ -571,12 +622,23 @@ class _FindingEvidence extends StatelessWidget {
   );
 }
 
-List<String> _suggestions(EvaluationReportDimension? dimension) {
+List<String> _suggestions(
+  EvaluationReportDimension? dimension, {
+  List<String> priorityFindingIds = const <String>[],
+}) {
   if (dimension == null) return const [];
+  final improvementsById = <String, EvaluationReportFinding>{
+    for (final finding in dimension.improvements) finding.id: finding,
+  };
+  final prioritizedIds = priorityFindingIds.toSet();
   final seen = <String>{};
   final result = <String>[];
   for (final finding in <EvaluationReportFinding>[
-    ...dimension.improvements,
+    for (final id in priorityFindingIds)
+      if (improvementsById[id] != null) improvementsById[id]!,
+    ...dimension.improvements.where(
+      (finding) => !prioritizedIds.contains(finding.id),
+    ),
     ...dimension.recommendedExamples,
   ]) {
     final suggestion = (finding.suggestion ?? finding.message).trim();

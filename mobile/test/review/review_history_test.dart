@@ -1032,6 +1032,12 @@ void main() {
           ),
         ],
       );
+      const secondaryGrammarFinding = EvaluationReportFinding(
+        id: 'grammar-secondary',
+        message: '这条普通语法建议不应盖过后端指定的优先项。',
+        suggestion: '先处理优先项后再看这条建议。',
+        evidence: <EvaluationReportEvidence>[],
+      );
       const pronunciationFinding = EvaluationReportFinding(
         id: 'pronunciation-priority',
         message: '部分音素影响了表达清晰度。',
@@ -1066,7 +1072,10 @@ void main() {
           _part1Dimension(
             key: 'GRAMMATICAL_RANGE_ACCURACY',
             score: 6.5,
-            improvement: grammarFinding,
+            improvements: const <EvaluationReportFinding>[
+              secondaryGrammarFinding,
+              grammarFinding,
+            ],
           ),
           _part1Dimension(
             key: 'PRONUNCIATION',
@@ -1106,23 +1115,27 @@ void main() {
       expect(find.byKey(const Key('ielts-evaluation-radar')), findsOneWidget);
       // Summary is not shown for Part 1 reports (score speaks first).
       expect(find.text('这段较长的总结不应抢在估分前展示。'), findsNothing);
+      expect(find.text('优先项在前'), findsOneWidget);
 
-      // Dimension cards are sorted by score ascending; pronunciation (6)
-      // should appear before fluency (7.5).
+      // The server-selected grammar action stays ahead of the lower-scored
+      // pronunciation card, and its exact finding is the visible first item.
+      final grammar = find.byKey(
+        const Key('ielts-part1-dimension-GRAMMATICAL_RANGE_ACCURACY'),
+      );
       final pronunciation = find.byKey(
         const Key('ielts-part1-dimension-PRONUNCIATION'),
       );
-      final fluency = find.byKey(
-        const Key('ielts-part1-dimension-FLUENCY_COHERENCE'),
-      );
       await tester.ensureVisible(pronunciation);
       await tester.pumpAndSettle();
+      expect(grammar, findsOneWidget);
       expect(pronunciation, findsOneWidget);
-      expect(fluency, findsOneWidget);
       expect(
-        tester.getTopLeft(pronunciation).dy,
-        lessThan(tester.getTopLeft(fluency).dy),
+        tester.getTopLeft(grammar).dy,
+        lessThan(tester.getTopLeft(pronunciation).dy),
       );
+      expect(find.text('第三人称单数和句子结构需要更准确。'), findsOneWidget);
+      expect(find.text('使用 it gives，并把断开的句子合并完整。'), findsOneWidget);
+      expect(find.text('这条普通语法建议不应盖过后端指定的优先项。'), findsNothing);
 
       // Questions disclosure exists and works.
       final questions = find.byKey(
@@ -1143,6 +1156,8 @@ void main() {
   testWidgets(
     'Part 1 report renders dimensions with missing findings gracefully',
     (tester) async {
+      await tester.binding.setSurfaceSize(const Size(800, 2000));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
       final item = _sceneItem(
         id: 'review-v2-ielts-part1-no-action',
         sceneType: EvaluationReportSceneType.ieltsSpeaking,
@@ -1166,9 +1181,16 @@ void main() {
       );
       await tester.pumpAndSettle();
 
+      final scored = find.byKey(
+        const Key('ielts-part1-dimension-FLUENCY_COHERENCE'),
+      );
+      final unscored = find.byKey(
+        const Key('ielts-part1-dimension-LEXICAL_RESOURCE'),
+      );
+      expect(find.text('从薄弱项开始'), findsOneWidget);
       expect(
-        find.byKey(const Key('ielts-part1-dimension-FLUENCY_COHERENCE')),
-        findsOneWidget,
+        tester.getTopLeft(scored).dy,
+        lessThan(tester.getTopLeft(unscored).dy),
       );
       expect(find.text('7 / 9'), findsWidgets);
     },
@@ -2038,6 +2060,7 @@ EvaluationReportDimension _part1Dimension({
   required String key,
   required double score,
   EvaluationReportFinding? improvement,
+  List<EvaluationReportFinding>? improvements,
   String? improvementMessage,
 }) {
   final finding =
@@ -2057,7 +2080,7 @@ EvaluationReportDimension _part1Dimension({
     reasonCodes: const <String>[],
     evidenceRefIds: const <String>[],
     strengths: const <EvaluationReportFinding>[],
-    improvements: <EvaluationReportFinding>[finding],
+    improvements: improvements ?? <EvaluationReportFinding>[finding],
     recommendedExamples: const <EvaluationReportFinding>[],
   );
 }
