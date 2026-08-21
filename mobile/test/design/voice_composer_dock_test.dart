@@ -4,7 +4,7 @@ import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/voice_composer_dock.dart';
 
 void main() {
-  testWidgets('composer capsule uses a white surface with an outer shadow', (
+  testWidgets('composer capsule uses a glass surface with an outer shadow', (
     tester,
   ) async {
     const capsuleKey = Key('composer-capsule');
@@ -27,12 +27,22 @@ void main() {
       ),
     );
     final decoration = capsule.decoration! as BoxDecoration;
+    final outerSurface = tester.widget<DecoratedBox>(
+      find
+          .descendant(
+            of: find.byKey(capsuleKey),
+            matching: find.byType(DecoratedBox),
+          )
+          .first,
+    );
+    final outerDecoration = outerSurface.decoration as BoxDecoration;
 
-    expect(decoration.color, SpeakUpDesign.surface);
-    expect(decoration.border, isNull);
-    expect(decoration.boxShadow, hasLength(1));
-    expect(decoration.boxShadow!.single.color, const Color(0x14000000));
-    expect(decoration.boxShadow!.single.blurRadius, 18);
-    expect(decoration.boxShadow!.single.offset, const Offset(0, 4));
+    expect(decoration.color, SpeakUpDesign.surfaceGlassStrong);
+    expect((decoration.border as Border).top.color, SpeakUpDesign.borderGlass);
+    expect(decoration.boxShadow, isNull);
+    expect(outerDecoration.boxShadow, hasLength(1));
+    expect(outerDecoration.boxShadow!.single.color, const Color(0x1F2D425E));
+    expect(outerDecoration.boxShadow!.single.blurRadius, 30);
+    expect(outerDecoration.boxShadow!.single.offset, const Offset(0, 10));
   });
 }

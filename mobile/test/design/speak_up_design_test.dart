@@ -10,7 +10,7 @@ void main() {
 
     expect(theme.scaffoldBackgroundColor, Colors.transparent);
     expect(theme.colorScheme.primary, SpeakUpDesign.primary);
-    expect(SpeakUpDesign.primary, SpeakUpDesign.ink);
+    expect(SpeakUpDesign.primary, isNot(SpeakUpDesign.ink));
     expect(theme.progressIndicatorTheme.color, SpeakUpDesign.primary);
     expect(theme.cardTheme.color, SpeakUpDesign.surface);
     expect(

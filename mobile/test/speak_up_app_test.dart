@@ -28,7 +28,10 @@ void main() {
     final navigation = find.byKey(const Key('primary-navigation'));
 
     expect(
-      find.descendant(of: navigation, matching: find.byIcon(Icons.mic_rounded)),
+      find.descendant(
+        of: navigation,
+        matching: find.byIcon(Icons.chat_bubble_rounded),
+      ),
       findsOneWidget,
     );
     expect(
@@ -44,7 +47,7 @@ void main() {
     expect(
       find.descendant(
         of: navigation,
-        matching: find.byIcon(Icons.mic_none_rounded),
+        matching: find.byIcon(Icons.chat_bubble_outline_rounded),
       ),
       findsOneWidget,
     );
@@ -70,8 +73,8 @@ void main() {
         final items = parameters['items']! as List<Object?>;
         expect(items[0], <String, String>{
           'label': 'SpeakUp',
-          'systemImage': 'waveform.circle',
-          'selectedSystemImage': 'waveform.circle.fill',
+          'systemImage': 'bubble.left',
+          'selectedSystemImage': 'bubble.left.fill',
         });
         expect(items[2], <String, String>{
           'label': '复盘',
@@ -90,7 +93,7 @@ void main() {
     await tester.pumpWidget(const SpeakUpApp.preview());
 
     expect(find.byKey(const Key('agent-home-page')), findsOneWidget);
-    expect(find.text('你好，今天想练什么？'), findsOneWidget);
+    expect(find.text('你好'), findsOneWidget);
     expect(find.text('Hi, 智'), findsNothing);
     expect(find.byKey(const Key('quick-action-create-plan')), findsOneWidget);
     expect(
@@ -134,10 +137,13 @@ void main() {
     final navigation = find.byKey(const Key('primary-navigation'));
     expect(navigation, findsOneWidget);
     expect(
-      find.descendant(of: navigation, matching: find.byIcon(Icons.mic_rounded)),
+      find.descendant(
+        of: navigation,
+        matching: find.byIcon(Icons.chat_bubble_rounded),
+      ),
       findsOneWidget,
     );
-    expect(find.byType(BackdropFilter), findsNothing);
+    expect(find.byType(BackdropFilter), findsWidgets);
     final composerRect = tester.getRect(
       find.byKey(const Key('agent-composer-surface')),
     );
@@ -316,7 +322,7 @@ void main() {
     );
 
     expect(find.byKey(const Key('no-focused-conversation-home')), findsNothing);
-    expect(find.text('你好，今天想练什么？'), findsOneWidget);
+    expect(find.text('你好'), findsOneWidget);
     await _openAgentTextInput(tester);
     final composer = find.byKey(const Key('agent-composer-field'));
     expect(tester.widget<TextField>(composer).enabled, isTrue);
