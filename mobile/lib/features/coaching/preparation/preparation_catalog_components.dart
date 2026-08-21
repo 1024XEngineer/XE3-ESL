@@ -52,94 +52,98 @@ class PreparationFeaturedScene extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                Image.asset(
-                  assetPath,
-                  fit: BoxFit.cover,
-                  alignment: Alignment.topCenter,
-                  errorBuilder: (_, _, _) => ColoredBox(color: color),
-                ),
-                ColoredBox(color: color.withValues(alpha: 0.64)),
-                Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      Row(
-                        children: [
-                          Container(
-                            width: 32,
-                            height: 32,
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.18),
-                              shape: BoxShape.circle,
-                            ),
-                            child: Icon(icon, color: foregroundColor, size: 19),
-                          ),
-                          const SizedBox(width: 10),
-                          Text(
-                            eyebrow,
-                            style: PreparationDesign.label.copyWith(
-                              color: foregroundColor.withValues(alpha: 0.86),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: PreparationDesign.sectionTitle.copyWith(
-                          color: foregroundColor,
-                          fontSize: 22,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        description,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: PreparationDesign.label.copyWith(
-                          color: foregroundColor.withValues(alpha: 0.86),
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Container(
-                          constraints: const BoxConstraints(minHeight: 36),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 14,
-                            vertical: 8,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.92),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                actionLabel,
-                                style: PreparationDesign.label.copyWith(
-                                  color: PreparationDesign.ink,
-                                ),
-                              ),
-                              const SizedBox(width: 6),
-                              const Icon(
-                                Icons.arrow_forward_rounded,
-                                color: PreparationDesign.ink,
-                                size: 17,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
+                  Image.asset(
+                    assetPath,
+                    fit: BoxFit.cover,
+                    alignment: Alignment.topCenter,
+                    errorBuilder: (_, _, _) => ColoredBox(color: color),
                   ),
-                ),
+                  ColoredBox(color: color.withValues(alpha: 0.64)),
+                  Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              width: 32,
+                              height: 32,
+                              decoration: BoxDecoration(
+                                color: Colors.white.withValues(alpha: 0.18),
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(
+                                icon,
+                                color: foregroundColor,
+                                size: 19,
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              eyebrow,
+                              style: PreparationDesign.label.copyWith(
+                                color: foregroundColor.withValues(alpha: 0.86),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: PreparationDesign.sectionTitle.copyWith(
+                            color: foregroundColor,
+                            fontSize: 22,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          description,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: PreparationDesign.label.copyWith(
+                            color: foregroundColor.withValues(alpha: 0.86),
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Container(
+                            constraints: const BoxConstraints(minHeight: 36),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 8,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.92),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  actionLabel,
+                                  style: PreparationDesign.label.copyWith(
+                                    color: PreparationDesign.ink,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                const Icon(
+                                  Icons.arrow_forward_rounded,
+                                  color: PreparationDesign.ink,
+                                  size: 17,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ],
               ),
             ),
