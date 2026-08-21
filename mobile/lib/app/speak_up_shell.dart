@@ -451,6 +451,9 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       } else if (mounted &&
           result == CompletedPracticeRouteResult.returnToConversation) {
         setState(() => _selectedIndex = 0);
+      } else if (mounted &&
+          result == CompletedPracticeRouteResult.returnToTraining) {
+        setState(() => _selectedIndex = 1);
       }
     } finally {
       _practiceRouteInFlight = false;

@@ -16,6 +16,7 @@ import 'package:speakup/features/coaching/ielts/ielts_preparation_controller.dar
 import 'package:speakup/features/coaching/practice/practice_prompt_speaker.dart';
 import 'package:speakup/features/coaching/ielts/ielts_mock_progress_store.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
+import 'package:speakup/features/coaching/practice/practice_completion_sheet.dart';
 import 'package:speakup/features/coaching/practice/practice_message_bubble.dart';
 import 'package:speakup/features/coaching/practice/practice_stage.dart';
 import 'package:speakup/features/coaching/practice/question_tip_sheet.dart';
@@ -855,9 +856,6 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
         if (completed >= _partEnd(IeltsSpeakingPart.part2)) {
           complete(PracticeMode.part2);
         }
-        if (completed >= widget.controller.turnLimit) {
-          complete(PracticeMode.part3);
-        }
       case PracticeMode.part3:
         if (completed >= widget.controller.turnLimit) {
           complete(PracticeMode.part3);
@@ -1561,9 +1559,12 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     final showCompletionPage = complete && !keepCompletedConversation;
     final completionSheet = _completionSheet(progress);
     final stagePhase = complete && keepCompletedConversation
-        ? (_mode == PracticeMode.part1
-              ? IeltsMockPhase.part1
-              : IeltsMockPhase.part3)
+        ? switch (_mode) {
+            PracticeMode.part1 => IeltsMockPhase.part1,
+            PracticeMode.part2 => IeltsMockPhase.part2Speaking,
+            PracticeMode.part3 => IeltsMockPhase.part3,
+            _ => progress.phase,
+          }
         : _mode == PracticeMode.fullMock &&
               progress.phase == IeltsMockPhase.part1Complete
         ? IeltsMockPhase.part1
@@ -1615,19 +1616,8 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
                             _buildRecorderDock(),
                         ],
                       ),
-                      if (completionSheet != null) ...[
-                        const Positioned.fill(
-                          child: ModalBarrier(
-                            dismissible: false,
-                            color: Color(0x14000000),
-                            semanticsLabel: '练习完成',
-                          ),
-                        ),
-                        Align(
-                          alignment: Alignment.bottomCenter,
-                          child: completionSheet,
-                        ),
-                      ],
+                      if (completionSheet != null)
+                        Positioned.fill(child: completionSheet),
                     ],
                   ),
                 ),
@@ -1682,12 +1672,18 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   Widget? _completionSheet(IeltsMockProgress progress) {
     if (_showCompletionSheet ||
         _keepsSectionCompletionInConversation(progress)) {
-      return _SectionCompletionSheet(
+      return PracticeCompletionOverlay(
+        keyPrefix: 'ielts-${_mode.name}-completion',
+        sheetKey: const Key('ielts-section-completion-sheet'),
+        primaryKey: const Key('ielts-section-review-action'),
+        secondaryKey: const Key('ielts-section-list-action'),
         title: _completionTitle,
         message: '${widget.controller.completedTurns} 道回答已保存',
         primaryLabel: switch (_mode) {
           PracticeMode.fullMock => '查看报告状态',
-          PracticeMode.part1 || PracticeMode.part3 => '查看复盘报告',
+          PracticeMode.part1 ||
+          PracticeMode.part2 ||
+          PracticeMode.part3 => '查看复盘报告',
           _ => '查看专项复盘',
         },
         secondaryLabel: _mode == PracticeMode.fullMock ? '返回训练' : '返回题单',
@@ -1699,7 +1695,11 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       return null;
     }
     if (progress.phase == IeltsMockPhase.part1Complete) {
-      return _SectionCompletionSheet(
+      return PracticeCompletionOverlay(
+        keyPrefix: 'ielts-part1-transition',
+        sheetKey: const Key('ielts-section-completion-sheet'),
+        primaryKey: const Key('ielts-section-review-action'),
+        secondaryKey: const Key('ielts-section-list-action'),
         title: 'Part 1 已完成',
         message: '$_part1Total 道回答已保存',
         primaryLabel: '进入 Part 2',
@@ -1709,7 +1709,11 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       );
     }
     if (progress.phase == IeltsMockPhase.part2Complete && _part2TurnConfirmed) {
-      return _SectionCompletionSheet(
+      return PracticeCompletionOverlay(
+        keyPrefix: 'ielts-part2-transition',
+        sheetKey: const Key('ielts-section-completion-sheet'),
+        primaryKey: const Key('ielts-section-review-action'),
+        secondaryKey: const Key('ielts-section-list-action'),
         title: 'Part 2 已完成',
         message: '$_part2Total 道回答已保存',
         primaryLabel: '继续 Part 3',
@@ -1722,13 +1726,15 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   }
 
   bool _keepsSectionCompletionInConversation(IeltsMockProgress progress) {
-    return (_mode == PracticeMode.part1 || _mode == PracticeMode.part3) &&
+    return (_mode == PracticeMode.part1 ||
+            _mode == PracticeMode.part2 ||
+            _mode == PracticeMode.part3) &&
         progress.phase == IeltsMockPhase.complete;
   }
 
   String get _completionTitle => switch (_mode) {
     PracticeMode.part1 => 'Part 1 已完成',
-    PracticeMode.part2 => 'Part 2 + Part 3 已完成',
+    PracticeMode.part2 => 'Part 2 已完成',
     PracticeMode.part3 => 'Part 3 已完成',
     PracticeMode.fullMock => '口语模考已完成',
     PracticeMode.fullSimulation ||
@@ -1745,6 +1751,15 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
         sectionStart: _partStart(IeltsSpeakingPart.part1),
       );
     }
+    if (_mode == PracticeMode.part2) {
+      return _conversationPhase(
+        key: const Key('ielts-mock-part-2'),
+        partLabel: 'Part 2 · Long Turn',
+        completed: _part2Total,
+        total: _part2Total,
+        sectionStart: _partStart(IeltsSpeakingPart.part2),
+      );
+    }
     return _conversationPhase(
       key: const Key('ielts-mock-part-3'),
       partLabel: 'Part 3 · Discussion',
@@ -1755,7 +1770,9 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   }
 
   void _openCompletedReview() {
-    if (_mode == PracticeMode.part1 || _mode == PracticeMode.part3) {
+    if (_mode == PracticeMode.part1 ||
+        _mode == PracticeMode.part2 ||
+        _mode == PracticeMode.part3) {
       unawaited(_openSectionReview());
       return;
     }
@@ -1776,9 +1793,10 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
             answerCount: widget.controller.completedTurns,
             title: switch (_mode) {
               PracticeMode.part1 => 'Part 1 专项复盘',
+              PracticeMode.part2 => 'Part 2 专项复盘',
               PracticeMode.part3 => 'Part 3 专项复盘',
               _ => throw StateError(
-                'Only Part 1 and Part 3 use the section review page.',
+                'Only standalone IELTS parts use the section review page.',
               ),
             },
           ),
@@ -1786,6 +1804,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       );
       if (mounted &&
           (widget.controller.practiceMode == PracticeMode.part1 ||
+              widget.controller.practiceMode == PracticeMode.part2 ||
               widget.controller.practiceMode == PracticeMode.part3)) {
         await _finishSection(IeltsPracticeCompletionAction.list);
       }

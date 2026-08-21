@@ -60,6 +60,7 @@ class ScenarioPracticeSession extends StatelessWidget {
     required this.practiceController,
     required this.avatarControllerFactory,
     this.onPracticeCompleted,
+    this.onOpenReport,
     this.speechFeedbackController,
     this.onExitRequested,
     super.key,
@@ -68,6 +69,7 @@ class ScenarioPracticeSession extends StatelessWidget {
   final PracticeController practiceController;
   final AvatarControllerFactory avatarControllerFactory;
   final Future<bool> Function()? onPracticeCompleted;
+  final OpenScenarioPracticeReport? onOpenReport;
   final SpeechFeedbackController? speechFeedbackController;
   final Future<bool> Function()? onExitRequested;
 
@@ -86,6 +88,7 @@ class ScenarioPracticeSession extends StatelessWidget {
         onBeforeSubmitText: avatar.interruptForUserTurn,
         onReplayQuestion: avatar.onReplayQuestion,
         onPracticeCompleted: onPracticeCompleted,
+        onOpenReport: onOpenReport,
         speechFeedbackController: speechFeedbackController,
         replayLoading: avatar.replayLoading,
         replayPlaying: avatar.replayPlaying,

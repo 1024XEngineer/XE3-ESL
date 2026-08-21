@@ -505,7 +505,7 @@ class _CompletionStep extends StatelessWidget {
                 onPressed: onPressed,
                 style: FilledButton.styleFrom(
                   minimumSize: const Size.fromHeight(52),
-                  backgroundColor: SpeakUpDesign.strongAction,
+                  backgroundColor: SpeakUpDesign.ink,
                   foregroundColor: Colors.white,
                 ),
                 child: Row(
@@ -518,115 +518,6 @@ class _CompletionStep extends StatelessWidget {
                 ),
               ),
             ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SectionCompletionSheet extends StatelessWidget {
-  const _SectionCompletionSheet({
-    required this.title,
-    required this.message,
-    required this.primaryLabel,
-    required this.secondaryLabel,
-    required this.onPrimary,
-    required this.onSecondary,
-  });
-
-  final String title;
-  final String message;
-  final String primaryLabel;
-  final String secondaryLabel;
-  final VoidCallback onPrimary;
-  final VoidCallback onSecondary;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 560),
-        child: Material(
-          key: const Key('ielts-section-completion-sheet'),
-          color: SpeakUpDesign.surface,
-          elevation: 12,
-          shadowColor: const Color(0x26000000),
-          borderRadius: BorderRadius.circular(28),
-          clipBehavior: Clip.antiAlias,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Center(
-                  child: Container(
-                    width: 42,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: SpeakUpDesign.border,
-                      borderRadius: BorderRadius.circular(99),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 18),
-                Center(
-                  child: Container(
-                    width: 52,
-                    height: 52,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(color: SpeakUpDesign.strongAction, width: 2),
-                    ),
-                    child: const Icon(
-                      Icons.check_rounded,
-                      size: 34,
-                      color: SpeakUpDesign.ink,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  title,
-                  textAlign: TextAlign.center,
-                  style: SpeakUpDesign.pageTitle.copyWith(fontSize: 24),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  message,
-                  textAlign: TextAlign.center,
-                  style: SpeakUpDesign.body.copyWith(
-                    color: SpeakUpDesign.secondary,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                FilledButton(
-                  key: const Key('ielts-section-review-action'),
-                  onPressed: onPrimary,
-                  style: FilledButton.styleFrom(
-                    minimumSize: const Size.fromHeight(54),
-                    backgroundColor: SpeakUpDesign.strongAction,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                  ),
-                  child: Text(primaryLabel),
-                ),
-                const SizedBox(height: 4),
-                TextButton(
-                  key: const Key('ielts-section-list-action'),
-                  onPressed: onSecondary,
-                  style: TextButton.styleFrom(
-                    foregroundColor: SpeakUpDesign.ink,
-                    minimumSize: const Size.fromHeight(44),
-                  ),
-                  child: Text(secondaryLabel),
-                ),
-              ],
-            ),
           ),
         ),
       ),
@@ -679,7 +570,7 @@ class _MockExitSheet extends StatelessWidget {
                   onPressed: onSaveAndExit,
                   style: FilledButton.styleFrom(
                     minimumSize: const Size.fromHeight(54),
-                    backgroundColor: SpeakUpDesign.strongAction,
+                    backgroundColor: SpeakUpDesign.ink,
                     foregroundColor: Colors.white,
                   ),
                   child: const Text('保存并退出'),
@@ -714,7 +605,7 @@ class _SectionPracticeComplete extends StatelessWidget {
   Widget build(BuildContext context) {
     final part = switch (mode) {
       PracticeMode.part1 => 'Part 1',
-      PracticeMode.part2 => 'Part 2 + Part 3',
+      PracticeMode.part2 => 'Part 2',
       PracticeMode.part3 => 'Part 3',
       PracticeMode.fullMock => 'IELTS Speaking',
       PracticeMode.fullSimulation || PracticeMode.focus => throw StateError(
@@ -874,7 +765,7 @@ class _Part2Transition extends StatelessWidget {
                       onPressed: onRetry,
                       style: FilledButton.styleFrom(
                         minimumSize: const Size.fromHeight(54),
-                        backgroundColor: SpeakUpDesign.strongAction,
+                        backgroundColor: SpeakUpDesign.ink,
                         foregroundColor: Colors.white,
                       ),
                       child: Text(retryingConfirmation ? '重试提交' : '重试识别'),
@@ -896,7 +787,7 @@ class _Part2Transition extends StatelessWidget {
                   onPressed: onContinue,
                   style: FilledButton.styleFrom(
                     minimumSize: const Size.fromHeight(54),
-                    backgroundColor: SpeakUpDesign.strongAction,
+                    backgroundColor: SpeakUpDesign.ink,
                     foregroundColor: Colors.white,
                   ),
                   child: const Text('继续 Part 3 →'),
@@ -964,7 +855,7 @@ class _Part2Intro extends StatelessWidget {
                   onPressed: narrationReady ? onPressed : null,
                   style: FilledButton.styleFrom(
                     minimumSize: const Size.fromHeight(58),
-                    backgroundColor: SpeakUpDesign.strongAction,
+                    backgroundColor: SpeakUpDesign.ink,
                     foregroundColor: Colors.white,
                   ),
                   child: Text(
@@ -1133,7 +1024,7 @@ class _Part2LongTurn extends StatelessWidget {
                       onPressed: busy ? null : onPressed,
                       style: FilledButton.styleFrom(
                         minimumSize: const Size.fromHeight(52),
-                        backgroundColor: SpeakUpDesign.strongAction,
+                        backgroundColor: SpeakUpDesign.ink,
                         foregroundColor: Colors.white,
                       ),
                       child: const Text('结束作答 →'),
@@ -1171,7 +1062,7 @@ class _Part2LongTurn extends StatelessWidget {
                           : onRerecord,
                       style: FilledButton.styleFrom(
                         minimumSize: const Size.fromHeight(52),
-                        backgroundColor: SpeakUpDesign.strongAction,
+                        backgroundColor: SpeakUpDesign.ink,
                         foregroundColor: Colors.white,
                       ),
                       child: Text(
@@ -1238,7 +1129,7 @@ class _Part2LongTurn extends StatelessWidget {
                     onPressed: busy ? null : onPressed,
                     style: FilledButton.styleFrom(
                       minimumSize: const Size.fromHeight(52),
-                      backgroundColor: SpeakUpDesign.strongAction,
+                      backgroundColor: SpeakUpDesign.ink,
                       foregroundColor: Colors.white,
                     ),
                     child: const Text('提前开始作答 →'),
@@ -1277,7 +1168,7 @@ class _Part2RecordingStatus extends StatelessWidget {
       PracticeRecordingState.submitting => '正在进入下一环节…',
       _ => '等待录音',
     };
-    final color = recording ? SpeakUpDesign.strongAction : SpeakUpDesign.secondary;
+    final color = recording ? SpeakUpDesign.ink : SpeakUpDesign.secondary;
 
     return Row(
       key: const Key('ielts-part2-recording-status'),
@@ -1316,7 +1207,7 @@ class _CueCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: SpeakUpDesign.surface,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: SpeakUpDesign.strongAction, width: 2),
+        border: Border.all(color: SpeakUpDesign.ink, width: 2),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1418,7 +1309,7 @@ class _MockComplete extends StatelessWidget {
             onPressed: onPressed,
             style: FilledButton.styleFrom(
               minimumSize: const Size.fromHeight(58),
-              backgroundColor: SpeakUpDesign.strongAction,
+              backgroundColor: SpeakUpDesign.ink,
               foregroundColor: Colors.white,
             ),
             child: const Text('返回训练'),

@@ -309,7 +309,7 @@ void main() {
     'Part 2 section hides the Cue Card after formal recording starts',
     (tester) async {
       final now = DateTime.utc(2026, 8, 4, 8);
-      final practice = _IeltsPracticeClient(initialCompleted: 0, turnLimit: 6);
+      final practice = _IeltsPracticeClient(initialCompleted: 0, turnLimit: 1);
       final controller = PracticeController(
         client: practice,
         recorder: _Recorder(),
@@ -367,7 +367,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     final now = DateTime.utc(2026, 8, 4, 9);
     final startGate = Completer<void>();
-    final practice = _IeltsPracticeClient(initialCompleted: 0, turnLimit: 6);
+    final practice = _IeltsPracticeClient(initialCompleted: 0, turnLimit: 1);
     final recorder = _Recorder()..startGate = startGate;
     final controller = PracticeController(client: practice, recorder: recorder);
     final store = _MemoryProgressStore(
@@ -1755,44 +1755,47 @@ void main() {
     expect(find.byKey(const Key('open-section')), findsOneWidget);
   });
 
-  testWidgets(
-    'restored Part 2 completion asks before entering its bound Part 3',
-    (tester) async {
-      final practice = _IeltsPracticeClient(initialCompleted: 1, turnLimit: 6);
-      final controller = PracticeController(
-        client: practice,
-        recorder: _Recorder(),
-      );
-      addTearDown(controller.dispose);
-      await _activatePractice(
-        controller,
-        practice,
-        _ieltsScene,
-        mode: PracticeMode.part2,
-      );
+  testWidgets('restored Part 2 completion opens its independent review', (
+    tester,
+  ) async {
+    final practice = _IeltsPracticeClient(initialCompleted: 1, turnLimit: 1);
+    final controller = PracticeController(
+      client: practice,
+      recorder: _Recorder(),
+    );
+    addTearDown(controller.dispose);
+    await _activatePractice(
+      controller,
+      practice,
+      _ieltsScene,
+      mode: PracticeMode.part2,
+    );
 
-      await tester.pumpWidget(
-        MaterialApp(
-          home: IeltsSpeakingMockPage(
-            controller: controller,
-            progressStore: _MemoryProgressStore(),
-            examinerSpeaker: _ImmediateExaminerSpeaker(),
-          ),
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: _MemoryProgressStore(),
+          examinerSpeaker: _ImmediateExaminerSpeaker(),
         ),
-      );
-      await tester.pump();
+      ),
+    );
+    await tester.pump();
 
-      expect(
-        find.byKey(const Key('ielts-mock-part-2-transition')),
-        findsOneWidget,
-      );
-      await tester.tap(find.byKey(const Key('ielts-part2-continue-part3')));
-      await tester.pump();
-      expect(find.byKey(const Key('ielts-mock-part-3')), findsOneWidget);
-      expect(find.text('Part 3 · Discussion'), findsOneWidget);
-      expect(find.text('继续对应 Part 3'), findsNothing);
-    },
-  );
+    expect(find.text('Part 2 已完成'), findsOneWidget);
+    expect(find.text('查看复盘报告'), findsOneWidget);
+    expect(find.text('继续 Part 3'), findsNothing);
+
+    await tester.tap(find.byKey(const Key('ielts-section-review-action')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 220));
+
+    expect(find.text('Part 2 专项复盘'), findsOneWidget);
+    expect(
+      find.byKey(const Key('section-review-loading-page')),
+      findsOneWidget,
+    );
+  });
 
   testWidgets(
     'Part 2 completion can be parked and resumed before entering Part 3',
@@ -2019,7 +2022,7 @@ void main() {
       ),
       (
         mode: PracticeMode.part2,
-        turnLimit: 6,
+        turnLimit: 1,
         expected: const Key('ielts-mock-part-2-intro'),
       ),
       (

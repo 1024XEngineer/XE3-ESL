@@ -356,15 +356,21 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
   Future<CompletedPracticeRouteResult?> _openInterviewReport(
     InterviewPracticeCompletion completion,
   ) {
+    return _openSessionReport(completion.practiceSessionId);
+  }
+
+  Future<CompletedPracticeRouteResult?> _openSessionReport(
+    String practiceSessionId,
+  ) {
     final navigator = _navigatorKey.currentState;
     final reportController = widget.sessionEvaluationController;
     if (navigator == null || reportController == null) {
-      throw StateError('Interview report route is not configured.');
+      throw StateError('Practice report route is not configured.');
     }
     return navigator.push<CompletedPracticeRouteResult>(
       MaterialPageRoute<CompletedPracticeRouteResult>(
         builder: (_) => SessionEvaluationPage(
-          practiceSessionId: completion.practiceSessionId,
+          practiceSessionId: practiceSessionId,
           controller: reportController,
         ),
       ),
@@ -501,6 +507,9 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
           practiceController: _practiceController,
           avatarControllerFactory: factory,
           onPracticeCompleted: launchController?.parkCurrentPractice,
+          onOpenReport: widget.sessionEvaluationController == null
+              ? null
+              : _openSessionReport,
           speechFeedbackController: widget.speechFeedbackController,
           onExitRequested: launchController?.parkCurrentPractice,
         );
@@ -510,6 +519,9 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
         practiceController: _practiceController,
         questionSpeaker: _practiceController.promptSpeaker,
         onPracticeCompleted: launchController?.parkCurrentPractice,
+        onOpenReport: widget.sessionEvaluationController == null
+            ? null
+            : _openSessionReport,
         speechFeedbackController: widget.speechFeedbackController,
         onExitRequested: launchController?.parkCurrentPractice,
       );

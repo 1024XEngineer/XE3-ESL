@@ -38,19 +38,16 @@ void main() {
 
     expect(snapshot.practiceExperience, PracticeExperience.ieltsSpeaking);
     expect(snapshot.practiceMode, PracticeMode.part2);
-    expect(snapshot.turnLimit, 3);
+    expect(snapshot.turnLimit, 1);
     expect(
       snapshot.ieltsAssignment?.parts.map((part) => part.part),
-      const <IeltsSpeakingPart>[
-        IeltsSpeakingPart.part2,
-        IeltsSpeakingPart.part3,
-      ],
+      const <IeltsSpeakingPart>[IeltsSpeakingPart.part2],
     );
     expect(
       snapshot.ieltsAssignment?.part(IeltsSpeakingPart.part2)?.cueCard,
       'Describe a useful skill you learned.',
     );
-    expect(snapshot.ieltsAssignment?.turnBlueprints, hasLength(3));
+    expect(snapshot.ieltsAssignment?.turnBlueprints, hasLength(1));
     transport.expectDone();
   });
 
@@ -60,7 +57,7 @@ void main() {
       final invalidStates = <Map<String, Object?>>[
         _ieltsPart2SessionJson()..remove('ielts_assignment'),
         _ieltsPart2SessionJson()..['practice_mode'] = 'PART_3',
-        _ieltsPart2SessionJson()..['turn_limit'] = 4,
+        _ieltsPart2SessionJson()..['turn_limit'] = 2,
         _sessionJson()..['ielts_assignment'] = _ieltsPart2AssignmentJson(),
       ];
 
@@ -1140,7 +1137,7 @@ Map<String, Object?> _ieltsPart2SessionJson() => <String, Object?>{
   'practice_experience': 'IELTS_SPEAKING',
   'scene_category': 'IELTS_SPEAKING',
   'practice_mode': 'PART_2',
-  'turn_limit': 3,
+  'turn_limit': 1,
   'ielts_assignment': _ieltsPart2AssignmentJson(),
 };
 
@@ -1155,15 +1152,6 @@ Map<String, Object?> _ieltsPart2AssignmentJson() => <String, Object?>{
       'topic_title': 'Learning skills',
       'cue_card': 'Describe a useful skill you learned.',
       'turn_blueprints': <String>['Describe a useful skill you learned.'],
-    },
-    <String, Object?>{
-      'part': 'PART_3',
-      'source_id': 'topic-group-test',
-      'topic_title': 'Learning skills',
-      'turn_blueprints': <String>[
-        'Why do people learn new skills?',
-        'Should employers support learning?',
-      ],
     },
   ],
 };
