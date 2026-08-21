@@ -1630,7 +1630,7 @@ void main() {
     },
   );
 
-  testWidgets('save and exit returns from an in-progress full mock', (
+  testWidgets('save and exit returns an in-progress full mock to IELTS', (
     tester,
   ) async {
     final practice = _IeltsPracticeClient(initialCompleted: 0);
@@ -1638,7 +1638,11 @@ void main() {
       client: practice,
       recorder: _Recorder(),
     );
+    final preparation = IeltsPreparationController(
+      client: _UnusedQuestionBankClient(),
+    );
     addTearDown(controller.dispose);
+    addTearDown(preparation.dispose);
     await _activatePractice(controller, practice, _ieltsScene);
     var parkCalls = 0;
 
@@ -1653,9 +1657,10 @@ void main() {
                   builder: (_) => IeltsSpeakingMockPage(
                     controller: controller,
                     progressStore: _MemoryProgressStore(),
+                    ieltsController: preparation,
                     onExitRequested: () async {
                       parkCalls++;
-                      return true;
+                      return controller.parkPractice();
                     },
                   ),
                 ),
@@ -1684,6 +1689,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(parkCalls, 1);
+    expect(controller.practiceSessionId, isNull);
+    expect(preparation.takeNavigationRequest()?.mode, PracticeMode.fullMock);
     expect(find.byKey(const Key('open-mock')), findsOneWidget);
     expect(find.byKey(const Key('ielts-mock-page')), findsNothing);
   });
