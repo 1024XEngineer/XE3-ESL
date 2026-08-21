@@ -11,7 +11,7 @@
 
 - `app/`：门户首页、报名弹窗、运营后台和 API 路由
 - `lib/`、`db/`、`drizzle/`：报名、埋点、鉴权和数据持久化
-- `worker/`、`build/`、`.openai/`：vinext、Cloudflare 和 Sites 运行配置
+- `worker/`：vinext 与 Cloudflare 本地构建运行配置
 - `deploy/`、`Dockerfile`：独立部署配置
 - `public/assets/portal-shots/`：门户运行时实际引用的图片
 - `tests/`：门户专属构建和接口测试
