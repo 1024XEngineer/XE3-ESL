@@ -143,6 +143,61 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('returns the report navigation result to the training shell', (
+    tester,
+  ) async {
+    final scene = testScene(
+      id: 'completed-open-practice',
+      experience: PracticeExperience.lifeAndTravel,
+      category: SceneCategory.lifeTravel,
+      name: 'Completed travel practice',
+    );
+    final controller = PracticeController(
+      client: FakePracticeClient(
+        practiceExperience: scene.experience,
+        sceneCategory: scene.category,
+        completionMode: PracticeCompletionMode.userControlled,
+        turnLimit: 0,
+      ),
+    );
+    addTearDown(controller.dispose);
+    await controller.activateCreatedPractice(
+      scene: scene,
+      sessionId: 'session-completed-scenario',
+      planId: testPracticePlanId('session-completed-scenario'),
+      practiceMode: scene.practiceOptions.first.mode,
+      turnLimit: 0,
+      clientOperationId: 'activate-completed-scenario',
+    );
+    await controller.submitPracticeText('I would like to check in.');
+    await controller.completeActivePractice();
+
+    final navigatorKey = GlobalKey<NavigatorState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: navigatorKey,
+        home: const Scaffold(body: Text('Training root')),
+      ),
+    );
+    final routeResult = navigatorKey.currentState!
+        .push<CompletedPracticeRouteResult>(
+          MaterialPageRoute<CompletedPracticeRouteResult>(
+            builder: (_) => ScenarioPracticePage(
+              practiceController: controller,
+              onOpenReport: (_) async =>
+                  CompletedPracticeRouteResult.returnToTraining,
+            ),
+          ),
+        );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('scenario-completion-primary')));
+    await tester.pumpAndSettle();
+
+    expect(await routeResult, CompletedPracticeRouteResult.returnToTraining);
+    expect(find.text('Training root'), findsOneWidget);
+  });
+
   testWidgets('finishes an interview manually and opens its completion sheet', (
     tester,
   ) async {

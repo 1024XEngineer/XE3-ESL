@@ -510,8 +510,7 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
     _reportRouteActive = true;
     try {
       final result = await callback(sessionId);
-      if (mounted &&
-          result == CompletedPracticeRouteResult.returnToConversation) {
+      if (mounted && result != null) {
         Navigator.of(context).pop(result);
       }
     } finally {

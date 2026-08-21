@@ -229,8 +229,7 @@ class _InterviewPracticePageState extends State<InterviewPracticePage>
           ),
         ),
       );
-      if (mounted &&
-          result == CompletedPracticeRouteResult.returnToConversation) {
+      if (mounted && result != null) {
         Navigator.of(context).pop(result);
       }
     } finally {
