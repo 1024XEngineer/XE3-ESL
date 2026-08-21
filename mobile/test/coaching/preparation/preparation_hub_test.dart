@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import '../../support/scene_fixtures.dart';
+import '../../support/preparation_contract_fixtures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/design/speak_up_design.dart';
@@ -11,6 +14,14 @@ import 'package:speakup/features/coaching/ielts/ielts_question_bank_client.dart'
 import 'package:speakup/features/coaching/ielts/ielts_preparation_controller.dart';
 import 'package:speakup/features/coaching/ielts/ielts_catalog.dart';
 import 'package:speakup/features/coaching/ielts/ielts_set_detail.dart';
+import 'package:speakup/features/coaching/practice/practice_client.dart';
+import 'package:speakup/features/coaching/practice/practice_controller.dart';
+import 'package:speakup/features/coaching/preparation/practice_launch_record_store.dart';
+import 'package:speakup/features/coaching/preparation/practice_workspace_controller.dart';
+import 'package:speakup/features/coaching/preparation/preparation_launch_client.dart';
+import 'package:speakup/features/coaching/preparation/preparation_launch_controller.dart';
+import 'package:speakup/features/coaching/preparation/preparation_launch_models.dart';
+import 'package:speakup/features/coaching/preparation/preparation_models.dart';
 
 void main() {
   testWidgets('shows exactly the four product-level practice entries', (
@@ -120,6 +131,144 @@ void main() {
 
     expect(find.byKey(const Key('ielts-browser-search')), findsOneWidget);
     expect(find.byKey(const Key('ielts-question-bank-retry')), findsNothing);
+  });
+
+  testWidgets('IELTS launch completion keeps the IELTS parent page', (
+    tester,
+  ) async {
+    final controller = PreparationController(client: _HubFixtureClient());
+    final ieltsController = IeltsPreparationController(
+      client: _HubQuestionBankClient(),
+    );
+    final practiceController = PracticeController(client: FakePracticeClient());
+    final workspaceController = PracticeWorkspaceController(
+      practiceController: practiceController,
+      recordStore: MemoryPracticeLaunchRecordStore(),
+    );
+    await workspaceController.activateAccount(contractUserId);
+    final launchController = PreparationLaunchController(
+      client: _HubLaunchClient(),
+      workspaceController: workspaceController,
+      voiceActivator:
+          ({
+            required scene,
+            required bootstrap,
+            required clientOperationId,
+          }) async {},
+    );
+    final practiceOpened = Completer<void>();
+    final practiceClosed = Completer<void>();
+    addTearDown(controller.dispose);
+    addTearDown(ieltsController.dispose);
+    addTearDown(launchController.dispose);
+    addTearDown(workspaceController.dispose);
+    addTearDown(practiceController.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PreparationPage(
+          preparationController: controller,
+          ieltsController: ieltsController,
+          practiceController: practiceController,
+          launchController: launchController,
+          onPracticeStarted: () async {
+            practiceOpened.complete();
+            await practiceClosed.future;
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _openModule(tester, const Key('practice-hub-exam'));
+
+    await tester.tap(find.byKey(const Key('ielts-mode-full')));
+    await tester.pump();
+    await practiceOpened.future;
+    ieltsController.requestNavigation(
+      const IeltsPracticeNavigationRequest(mode: PracticeMode.fullMock),
+    );
+    await tester.pump();
+    practiceClosed.complete();
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('practice-hub-title-ielts')), findsOneWidget);
+    expect(find.byKey(const Key('ielts-mode-full')), findsOneWidget);
+    expect(find.byKey(const Key('practice-hub-carousel')), findsNothing);
+  });
+
+  testWidgets('scenario launch completion keeps its product parent page', (
+    tester,
+  ) async {
+    final controller = PreparationController(client: _HubFixtureClient());
+    final practiceController = PracticeController(client: FakePracticeClient());
+    final workspaceController = PracticeWorkspaceController(
+      practiceController: practiceController,
+      recordStore: MemoryPracticeLaunchRecordStore(),
+    );
+    await workspaceController.activateAccount(contractUserId);
+    final launchController = PreparationLaunchController(
+      client: _HubLaunchClient(),
+      workspaceController: workspaceController,
+      voiceActivator:
+          ({
+            required scene,
+            required bootstrap,
+            required clientOperationId,
+          }) async {},
+    );
+    final practiceOpened = Completer<void>();
+    final practiceClosed = Completer<void>();
+    addTearDown(controller.dispose);
+    addTearDown(launchController.dispose);
+    addTearDown(workspaceController.dispose);
+    addTearDown(practiceController.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PreparationPage(
+          preparationController: controller,
+          practiceController: practiceController,
+          launchController: launchController,
+          onPracticeStarted: () async {
+            practiceOpened.complete();
+            await practiceClosed.future;
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _openModule(tester, const Key('practice-hub-workplace'));
+
+    final workplaceScene = find.byKey(
+      const Key('catalog-scene-scn_workplace_progress_risk_update'),
+    );
+    await tester.ensureVisible(workplaceScene);
+    await tester.pumpAndSettle();
+    await tester.tap(workplaceScene.hitTestable());
+    await tester.pump(const Duration(seconds: 1));
+    expect(
+      practiceOpened.isCompleted,
+      isTrue,
+      reason:
+          'scene=${controller.selectedScene?.id}, '
+          'detail=${controller.detail?.id}, '
+          'role=${controller.selectedRole?.id}, '
+          'option=${controller.selectedOption?.id}, '
+          'catalogError=${controller.errorMessage}, '
+          'launchError=${launchController.errorMessage}',
+    );
+    practiceClosed.complete();
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('practice-hub-title-workplace')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('catalog-scene-scn_workplace_progress_risk_update')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('practice-hub-carousel')), findsNothing);
   });
 
   testWidgets('opens the English interview module from the hub', (
@@ -627,9 +776,8 @@ Future<void> _showModule(WidgetTester tester, Key key) async {
 
 final class _HubFixtureClient implements SceneClient {
   @override
-  Future<SceneDefinition> getScene(String sceneId) {
-    throw UnimplementedError('The hub test does not open scene details.');
-  }
+  Future<SceneDefinition> getScene(String sceneId) async =>
+      _hubScenes.singleWhere((scene) => scene.id == sceneId);
 
   @override
   Future<List<SceneDefinition>> listScenes() async => _hubScenes;
@@ -638,6 +786,34 @@ final class _HubFixtureClient implements SceneClient {
   Future<List<RoleDefinition>> listRoles(String sceneId) {
     throw UnimplementedError('The hub test does not open scene details.');
   }
+}
+
+final class _HubLaunchClient implements PreparationLaunchClient {
+  @override
+  Future<PracticePlan> createPlan({
+    required CreatePracticePlanInput input,
+    required String idempotencyKey,
+  }) async => contractPlan();
+
+  @override
+  Future<PreparationPracticeBootstrap> createSession({
+    required PracticePlan plan,
+    required CreatePreparationSessionInput input,
+    required String idempotencyKey,
+  }) async => contractBootstrap(plan);
+
+  @override
+  Future<PracticePlan> getPlan(String planId) async => contractPlan();
+
+  @override
+  Future<PracticePlan> confirmPlan({
+    required String planId,
+    required int expectedVersion,
+    required String idempotencyKey,
+  }) async => contractPlan();
+
+  @override
+  Future<void> clearAccountState() async {}
 }
 
 final class _HubQuestionBankClient implements IeltsQuestionBankClient {
@@ -752,6 +928,21 @@ final _hubScenes = <SceneDefinition>[
     name: '进度与风险汇报',
     prompt: _hubPrompt('向直属领导汇报进展、风险和支持请求。'),
     version: 1,
+    practiceOptions: [
+      testPracticeOption(
+        id: 'option_workplace_full',
+        sceneId: 'scn_workplace_progress_risk_update',
+        mode: PracticeMode.fullSimulation,
+        displayName: '完整练习',
+      ),
+      testPracticeOption(
+        id: 'option_workplace_focus',
+        sceneId: 'scn_workplace_progress_risk_update',
+        mode: PracticeMode.focus,
+        displayName: '专项练习',
+        roleId: 'role-scn_workplace_progress_risk_update',
+      ),
+    ],
   ),
   testScene(
     id: 'scn_travel_hotel_checkin',

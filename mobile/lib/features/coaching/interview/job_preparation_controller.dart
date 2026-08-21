@@ -61,6 +61,7 @@ final class JobPreparationController extends ChangeNotifier {
   String? _regeneratePreparationKey;
   String? _confirmPreparationKey;
   String? _planKey;
+  String? _savedPlanConfirmationKey;
   String? _sessionKey;
   String? _voiceKey;
   String? _workspaceKey;
@@ -153,17 +154,21 @@ final class JobPreparationController extends ChangeNotifier {
       final plan = await client.getPlan(planId);
       _requireCurrent(operationEpoch, _input);
       final interview = plan.preparationSnapshot.interview;
-      if (plan.status != PracticePlanStatus.ready ||
+      final openableStatus =
+          plan.status == PracticePlanStatus.ready ||
+          (plan.status == PracticePlanStatus.draft && interview == null);
+      if (!openableStatus ||
           plan.sceneSelection.scene.experience !=
-              PracticeExperience.interview ||
-          interview == null) {
+              PracticeExperience.interview) {
         throw const JobPreparationException(
           kind: JobPreparationFailureKind.invalidResponse,
           stage: JobPreparationOperationStage.plan,
         );
       }
-      _input = interview.input;
-      _candidate = interview.candidate;
+      if (interview != null) {
+        _input = interview.input;
+        _candidate = interview.candidate;
+      }
       _plan = plan;
       _openedSavedPlan = true;
       _errorMessage = null;
@@ -445,7 +450,7 @@ final class JobPreparationController extends ChangeNotifier {
   }
 
   Future<bool> startPractice() async {
-    final plan = _plan;
+    var plan = _plan;
     if (_disposed || isBusy || plan == null) return false;
     final operationEpoch = _epoch;
     var workspaceOperationId = _workspaceLease?.operationId;
@@ -494,6 +499,29 @@ final class JobPreparationController extends ChangeNotifier {
       }
       _workspaceLease = lease;
       _requireCurrent(operationEpoch, _input);
+      if (plan.status == PracticePlanStatus.draft) {
+        final confirmedPlan = await client.confirmPlan(
+          planId: plan.id,
+          expectedVersion: plan.version,
+          idempotencyKey: _savedPlanConfirmationKey ??= _newId(
+            'interview-plan-confirmation',
+          ),
+        );
+        _requireCurrent(operationEpoch, _input);
+        if (confirmedPlan.id != plan.id ||
+            confirmedPlan.version != plan.version + 1 ||
+            confirmedPlan.status != PracticePlanStatus.ready ||
+            confirmedPlan.sceneSelection.scene.experience !=
+                PracticeExperience.interview) {
+          throw const JobPreparationException(
+            kind: JobPreparationFailureKind.conflict,
+            stage: JobPreparationOperationStage.session,
+            retryable: true,
+          );
+        }
+        plan = confirmedPlan;
+        _plan = confirmedPlan;
+      }
       final bootstrap =
           _bootstrap ??
           await client.createSession(
@@ -634,6 +662,7 @@ final class JobPreparationController extends ChangeNotifier {
     _regeneratePreparationKey = null;
     _confirmPreparationKey = null;
     _planKey = null;
+    _savedPlanConfirmationKey = null;
     _sessionKey = null;
     _voiceKey = null;
     _workspaceKey = null;

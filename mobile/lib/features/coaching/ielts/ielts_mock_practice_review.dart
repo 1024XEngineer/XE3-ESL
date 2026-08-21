@@ -1,16 +1,21 @@
 part of 'ielts_mock_practice.dart';
 
-class _Part1ReviewPage extends StatefulWidget {
-  const _Part1ReviewPage({required this.controller, required this.answerCount});
+class _SectionReviewPage extends StatefulWidget {
+  const _SectionReviewPage({
+    required this.controller,
+    required this.answerCount,
+    required this.title,
+  });
 
   final SessionEvaluationController? controller;
   final int answerCount;
+  final String title;
 
   @override
-  State<_Part1ReviewPage> createState() => _Part1ReviewPageState();
+  State<_SectionReviewPage> createState() => _SectionReviewPageState();
 }
 
-class _Part1ReviewPageState extends State<_Part1ReviewPage> {
+class _SectionReviewPageState extends State<_SectionReviewPage> {
   EvaluationReport? _report;
 
   @override
@@ -21,7 +26,7 @@ class _Part1ReviewPageState extends State<_Part1ReviewPage> {
   }
 
   @override
-  void didUpdateWidget(covariant _Part1ReviewPage oldWidget) {
+  void didUpdateWidget(covariant _SectionReviewPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.controller == widget.controller) return;
     oldWidget.controller?.removeListener(_handleStatusChanged);
@@ -74,8 +79,8 @@ class _Part1ReviewPageState extends State<_Part1ReviewPage> {
         status == SessionEvaluationStatus.failed ||
         controller?.errorMessage != null && controller?.isLoading != true;
     return Scaffold(
-      key: const Key('part1-review-loading-page'),
-      appBar: AppBar(title: const Text('Part 1 专项复盘')),
+      key: const Key('section-review-loading-page'),
+      appBar: AppBar(title: Text(widget.title)),
       body: SafeArea(
         top: false,
         child: Center(
@@ -84,14 +89,14 @@ class _Part1ReviewPageState extends State<_Part1ReviewPage> {
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 460),
               child: failed
-                  ? _Part1ReviewFailure(
+                  ? _SectionReviewFailure(
                       message: controller?.errorMessage ?? '本次复盘暂时无法生成。',
                       canRetry: controller?.canRetry == true,
                       onRetry: controller == null
                           ? null
                           : () => unawaited(controller.retry()),
                     )
-                  : _Part1ReviewLoading(answerCount: widget.answerCount),
+                  : _SectionReviewLoading(answerCount: widget.answerCount),
             ),
           ),
         ),
@@ -100,16 +105,16 @@ class _Part1ReviewPageState extends State<_Part1ReviewPage> {
   }
 }
 
-class _Part1ReviewLoading extends StatefulWidget {
-  const _Part1ReviewLoading({required this.answerCount});
+class _SectionReviewLoading extends StatefulWidget {
+  const _SectionReviewLoading({required this.answerCount});
 
   final int answerCount;
 
   @override
-  State<_Part1ReviewLoading> createState() => _Part1ReviewLoadingState();
+  State<_SectionReviewLoading> createState() => _SectionReviewLoadingState();
 }
 
-class _Part1ReviewLoadingState extends State<_Part1ReviewLoading>
+class _SectionReviewLoadingState extends State<_SectionReviewLoading>
     with SingleTickerProviderStateMixin {
   late final AnimationController _animation = AnimationController(
     vsync: this,
@@ -132,7 +137,7 @@ class _Part1ReviewLoadingState extends State<_Part1ReviewLoading>
           builder: (context, _) {
             final pulse = (math.sin(_animation.value * math.pi * 2) + 1) / 2;
             return SizedBox(
-              key: const Key('part1-review-loading-animation'),
+              key: const Key('section-review-loading-animation'),
               width: 184,
               height: 184,
               child: Stack(
@@ -270,8 +275,8 @@ class _LoadingConnector extends StatelessWidget {
   }
 }
 
-class _Part1ReviewFailure extends StatelessWidget {
-  const _Part1ReviewFailure({
+class _SectionReviewFailure extends StatelessWidget {
+  const _SectionReviewFailure({
     required this.message,
     required this.canRetry,
     required this.onRetry,

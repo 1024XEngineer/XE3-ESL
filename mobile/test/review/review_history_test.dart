@@ -10,6 +10,7 @@ import 'package:speakup/features/agent/conversation/agent_client.dart';
 import 'package:speakup/features/agent/conversation/conversation_controller.dart';
 import 'package:speakup/app/speak_up_shell.dart';
 import 'package:speakup/features/coaching/evaluation/evaluation_report.dart';
+import 'package:speakup/features/coaching/review/evaluation_report_detail_page.dart';
 import 'package:speakup/features/coaching/review/review.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
@@ -525,11 +526,14 @@ void main() {
         find.byKey(const Key('review-history-select-$_newerId')),
       );
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('review-detail-page')), findsOneWidget);
-      expect(find.text('summary-91'), findsOneWidget);
-      expect(find.text('summary-78'), findsNothing);
+      expect(
+        find.byKey(const Key('evaluation-report-detail-page')),
+        findsOneWidget,
+      );
+      expect(find.text('focus-91'), findsWidgets);
+      expect(find.text('focus-78'), findsNothing);
 
-      await tester.tap(find.byKey(const Key('review-detail-back')));
+      await tester.tap(find.byKey(const Key('evaluation-report-detail-back')));
       await tester.pumpAndSettle();
       await _ensureHistoryVisible(
         tester,
@@ -539,11 +543,14 @@ void main() {
         find.byKey(const Key('review-history-select-$_olderId')),
       );
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('review-detail-page')), findsOneWidget);
-      expect(find.text('summary-78'), findsOneWidget);
-      expect(find.text('summary-91'), findsNothing);
+      expect(
+        find.byKey(const Key('evaluation-report-detail-page')),
+        findsOneWidget,
+      );
+      expect(find.text('focus-78'), findsWidgets);
+      expect(find.text('focus-91'), findsNothing);
 
-      await tester.tap(find.byKey(const Key('review-detail-back')));
+      await tester.tap(find.byKey(const Key('evaluation-report-detail-back')));
       await tester.pumpAndSettle();
       await _ensureHistoryVisible(
         tester,
@@ -759,11 +766,14 @@ void main() {
     );
     await tester.tap(find.byKey(const Key('review-history-select-$_newerId')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('review-detail-page')), findsOneWidget);
-    expect(find.text('summary-91'), findsOneWidget);
-    expect(find.text('summary-78'), findsNothing);
+    expect(
+      find.byKey(const Key('evaluation-report-detail-page')),
+      findsOneWidget,
+    );
+    expect(find.text('focus-91'), findsWidgets);
+    expect(find.text('focus-78'), findsNothing);
 
-    await tester.tap(find.byKey(const Key('review-detail-back')));
+    await tester.tap(find.byKey(const Key('evaluation-report-detail-back')));
     await tester.pumpAndSettle();
     await _ensureHistoryVisible(
       tester,
@@ -772,10 +782,16 @@ void main() {
     await tester.tap(find.byKey(const Key('review-history-select-$_olderId')));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('review-detail-page')), findsOneWidget);
-    expect(find.byKey(const Key('review-detail-title')), findsOneWidget);
-    expect(find.text('summary-91'), findsNothing);
-    expect(find.text('summary-78'), findsOneWidget);
+    expect(
+      find.byKey(const Key('evaluation-report-detail-page')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('evaluation-report-detail-title')),
+      findsOneWidget,
+    );
+    expect(find.text('focus-91'), findsNothing);
+    expect(find.text('focus-78'), findsWidgets);
   });
 
   testWidgets('one history item opens a dedicated detail page', (tester) async {
@@ -792,7 +808,10 @@ void main() {
     await _expandHistory(tester);
 
     expect(find.byKey(Key('review-history-${item.review.id}')), findsOneWidget);
-    expect(find.byKey(const Key('review-detail-page')), findsNothing);
+    expect(
+      find.byKey(const Key('evaluation-report-detail-page')),
+      findsNothing,
+    );
     expect(find.text(item.review.summary), findsNothing);
     expect(
       tester
@@ -806,15 +825,24 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('review-detail-page')), findsOneWidget);
-    expect(find.byKey(const Key('review-detail-summary')), findsOneWidget);
-    expect(find.byKey(const Key('review-detail-dimensions')), findsOneWidget);
-    expect(find.text(item.review.summary), findsOneWidget);
+    expect(
+      find.byKey(const Key('evaluation-report-detail-page')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('evaluation-report-overview')), findsOneWidget);
+    expect(
+      find.byKey(const Key('evaluation-report-dimensions')),
+      findsOneWidget,
+    );
+    expect(find.text(item.review.summary), findsNothing);
 
-    await tester.tap(find.byKey(const Key('review-detail-back')));
+    await tester.tap(find.byKey(const Key('evaluation-report-detail-back')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('review-history-list')), findsOneWidget);
-    expect(find.byKey(const Key('review-detail-page')), findsNothing);
+    expect(
+      find.byKey(const Key('evaluation-report-detail-page')),
+      findsNothing,
+    );
   });
 
   testWidgets('canonical report renders dimensions and priority improvements', (
@@ -893,23 +921,18 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('面试复盘'), findsOneWidget);
-    expect(find.byKey(const Key('review-detail-dimensions')), findsOneWidget);
-    expect(find.text('回答结构'), findsOneWidget);
-    expect(find.text('82 / 100'), findsOneWidget);
-    expect(find.byKey(const Key('review-detail-feedback')), findsOneWidget);
-    expect(find.text('下一步先练'), findsOneWidget);
-    expect(find.text('I responsible for the migration.'), findsOneWidget);
     expect(
-      find.text('建议：I was responsible for the migration.'),
+      find.byKey(const Key('evaluation-report-dimensions')),
       findsOneWidget,
     );
-    expect(find.text('查看其余 1 条建议'), findsOneWidget);
-    expect(find.text('Name the time saved after the migration.'), findsNothing);
-    await tester.tap(find.text('查看其余 1 条建议'));
-    await tester.pumpAndSettle();
+    expect(find.text('回答结构'), findsOneWidget);
+    expect(find.text('82 / 100'), findsOneWidget);
+    expect(find.text('优先项在前'), findsOneWidget);
+    expect(find.text('I responsible for the migration.'), findsOneWidget);
+    expect(find.text('I was responsible for the migration.'), findsOneWidget);
     expect(find.text('Add one measurable outcome.'), findsOneWidget);
     expect(
-      find.text('建议：Name the time saved after the migration.'),
+      find.text('Name the time saved after the migration.'),
       findsOneWidget,
     );
     expect(find.textContaining('面试复盘 ·'), findsNothing);
@@ -989,26 +1012,30 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('review-detail-status-notice')), findsNothing);
-    expect(find.text('题目与作答'), findsOneWidget);
     expect(
-      find.textContaining('Tell me about your experience.'),
-      findsOneWidget,
+      find.byKey(const Key('evaluation-report-insufficient-notice')),
+      findsNothing,
     );
+    expect(find.text('题目与作答（1）'), findsOneWidget);
     expect(find.text('7.5 / 9'), findsOneWidget);
-    expect(find.byKey(const Key('ielts-evaluation-radar')), findsOneWidget);
-    expect(find.text('每一项的依据与建议'), findsOneWidget);
+    expect(find.byKey(const Key('evaluation-report-radar')), findsOneWidget);
+    expect(find.text('分项详情与建议'), findsOneWidget);
     for (final key in const <String>[
       'FLUENCY_COHERENCE',
       'LEXICAL_RESOURCE',
       'GRAMMATICAL_RANGE_ACCURACY',
       'PRONUNCIATION',
     ]) {
-      expect(find.byKey(Key('ielts-criterion-$key')), findsOneWidget);
+      expect(
+        find.byKey(Key('evaluation-report-dimension-$key')),
+        findsOneWidget,
+      );
     }
     expect(
       tester
-          .widget<Text>(find.byKey(const Key('ielts-evaluation-overall-score')))
+          .widget<Text>(
+            find.byKey(const Key('evaluation-report-overall-score')),
+          )
           .data,
       '6',
     );
@@ -1109,10 +1136,10 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      final darkOverview = find.byKey(const Key('ielts-part1-dark-overview'));
+      final darkOverview = find.byKey(const Key('evaluation-report-overview'));
       expect(darkOverview, findsOneWidget);
       expect(find.text('基于本次 1 道已记录回答的阶段性估分，不等同于官方考试成绩。'), findsOneWidget);
-      expect(find.byKey(const Key('ielts-evaluation-radar')), findsOneWidget);
+      expect(find.byKey(const Key('evaluation-report-radar')), findsOneWidget);
       // Summary is not shown for Part 1 reports (score speaks first).
       expect(find.text('这段较长的总结不应抢在估分前展示。'), findsNothing);
       expect(find.text('优先项在前'), findsOneWidget);
@@ -1120,10 +1147,10 @@ void main() {
       // The server-selected grammar action stays ahead of the lower-scored
       // pronunciation card, and its exact finding is the visible first item.
       final grammar = find.byKey(
-        const Key('ielts-part1-dimension-GRAMMATICAL_RANGE_ACCURACY'),
+        const Key('evaluation-report-dimension-GRAMMATICAL_RANGE_ACCURACY'),
       );
       final pronunciation = find.byKey(
-        const Key('ielts-part1-dimension-PRONUNCIATION'),
+        const Key('evaluation-report-dimension-PRONUNCIATION'),
       );
       await tester.ensureVisible(pronunciation);
       await tester.pumpAndSettle();
@@ -1139,11 +1166,13 @@ void main() {
 
       // Questions disclosure exists and works.
       final questions = find.byKey(
-        const Key('ielts-report-questions-disclosure'),
+        const Key('evaluation-report-questions-disclosure'),
       );
       await tester.ensureVisible(questions);
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('ielts-report-questions-toggle')));
+      await tester.tap(
+        find.byKey(const Key('evaluation-report-questions-toggle')),
+      );
       await tester.pumpAndSettle();
       await tester.ensureVisible(
         find.text('1. Tell me about your experience.', skipOffstage: false),
@@ -1182,10 +1211,10 @@ void main() {
       await tester.pumpAndSettle();
 
       final scored = find.byKey(
-        const Key('ielts-part1-dimension-FLUENCY_COHERENCE'),
+        const Key('evaluation-report-dimension-FLUENCY_COHERENCE'),
       );
       final unscored = find.byKey(
-        const Key('ielts-part1-dimension-LEXICAL_RESOURCE'),
+        const Key('evaluation-report-dimension-LEXICAL_RESOURCE'),
       );
       expect(find.text('从薄弱项开始'), findsOneWidget);
       expect(
@@ -1240,11 +1269,13 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('当前 IELTS 能力'), findsOneWidget);
-    expect(find.byKey(const Key('ielts-evaluation-radar')), findsOneWidget);
+    expect(find.byKey(const Key('evaluation-profile-radar')), findsOneWidget);
     expect(find.text('本次回答已经形成可复盘的文本反馈。'), findsNothing);
     expect(
       tester
-          .widget<Text>(find.byKey(const Key('ielts-evaluation-overall-score')))
+          .widget<Text>(
+            find.byKey(const Key('evaluation-profile-overall-score')),
+          )
           .data,
       '4',
     );
@@ -1293,17 +1324,17 @@ void main() {
     );
 
     expect(find.byKey(const Key('review-detail-summary')), findsNothing);
-    expect(find.textContaining('/ 100'), findsNWidgets(4));
+    expect(find.textContaining('/ 100'), findsNWidgets(5));
     expect(
       find.text('The response advances the communication goal.'),
       findsOneWidget,
     );
     expect(
-      find.byKey(const Key('review-dimension-TASK_ACHIEVEMENT')),
+      find.byKey(const Key('evaluation-report-dimension-TASK_ACHIEVEMENT')),
       findsOneWidget,
     );
     expect(
-      find.byKey(const Key('review-dimension-CLARITY_COHERENCE')),
+      find.byKey(const Key('evaluation-report-dimension-CLARITY_COHERENCE')),
       findsOneWidget,
     );
   });
@@ -1364,7 +1395,10 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('review-detail-page')), findsOneWidget);
+      expect(
+        find.byKey(const Key('evaluation-report-detail-page')),
+        findsOneWidget,
+      );
       expect(find.text(testCase.reportTitle), findsWidgets);
 
       await tester.pumpWidget(const SizedBox.shrink());
@@ -1474,8 +1508,10 @@ void main() {
     expect(find.text('本次暂不评分'), findsOneWidget);
     expect(find.textContaining('有效证据不足'), findsOneWidget);
     expect(find.textContaining('0 / 100'), findsNothing);
-    expect(find.byKey(const Key('review-detail-dimensions')), findsOneWidget);
-    expect(find.byKey(const Key('review-detail-feedback')), findsNothing);
+    expect(
+      find.byKey(const Key('evaluation-report-dimensions')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('history card exposes one consolidated semantics node', (
@@ -1540,7 +1576,10 @@ void main() {
     }
     expect(find.textContaining('7月26日'), findsOneWidget);
     expect(find.textContaining('7月17日'), findsOneWidget);
-    expect(find.byKey(const Key('review-detail-page')), findsNothing);
+    expect(
+      find.byKey(const Key('evaluation-report-detail-page')),
+      findsNothing,
+    );
     expect(find.text(items.first.review.summary), findsNothing);
     expect(tester.takeException(), isNull);
   });
@@ -1612,25 +1651,22 @@ void main() {
       find.byKey(Key('review-history-select-${last.review.id}')),
     );
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('review-detail-page')), findsOneWidget);
+    expect(
+      find.byKey(const Key('evaluation-report-detail-page')),
+      findsOneWidget,
+    );
     final detailScrollable = find.descendant(
-      of: find.byKey(const Key('review-detail-content')),
+      of: find.byKey(const Key('evaluation-report-detail-scroll')),
       matching: find.byType(Scrollable),
     );
     await tester.scrollUntilVisible(
-      find.byKey(const Key('review-detail-summary')),
-      300,
-      scrollable: detailScrollable,
-    );
-    expect(find.text(longSummary), findsOneWidget);
-
-    await tester.scrollUntilVisible(
-      find.byKey(const Key('review-detail-feedback')),
+      find.byKey(const Key('evaluation-report-dimension-INTERVIEW_STRUCTURE')),
       300,
       scrollable: detailScrollable,
     );
     await tester.pumpAndSettle();
-    expect(find.text(longFocus), findsOneWidget);
+    expect(find.text(longSummary), findsNothing);
+    expect(find.text(longFocus), findsWidgets);
     expect(tester.takeException(), isNull);
   });
 }

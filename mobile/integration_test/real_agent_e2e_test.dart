@@ -712,7 +712,7 @@ Future<void> _registerOrSignIn(
   await tester.enterText(find.byType(TextFormField).at(1), password);
   await _tapAuthSubmit(tester, '登录');
   if (requireFocusedConversation) {
-    await _ensureFocusedConversation(tester);
+    await _ensureWritableConversation(tester);
   } else {
     await _waitUntil(
       tester,
@@ -1152,7 +1152,7 @@ Future<bool> _signedInAccountMatches(
     return false;
   }
   await _tapPrimaryTab(tester, 0);
-  await _ensureFocusedConversation(tester);
+  await _ensureWritableConversation(tester);
   return true;
 }
 
@@ -1180,23 +1180,22 @@ bool _composerIsReady(WidgetTester tester) {
   return tester.widget<TextField>(composer).enabled == true;
 }
 
-Future<void> _ensureFocusedConversation(WidgetTester tester) async {
-  final createConversation = find.byKey(
-    const Key('no-focused-create-conversation'),
-  );
+Future<void> _ensureWritableConversation(WidgetTester tester) async {
+  final showTextComposer = find.byKey(const Key('agent-show-text-composer'));
   await _waitUntil(
     tester,
     () =>
         find.byKey(const Key('agent-home-page')).evaluate().isNotEmpty &&
         (_composerIsReady(tester) ||
-            createConversation.hitTestable().evaluate().length == 1),
+            showTextComposer.hitTestable().evaluate().length == 1),
     const Duration(seconds: 20),
   );
   if (_composerIsReady(tester)) {
     return;
   }
 
-  await tester.tap(createConversation);
+  await tester.tap(showTextComposer);
+  await tester.pump();
   await _waitUntil(
     tester,
     () => _composerIsReady(tester),

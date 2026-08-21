@@ -91,6 +91,57 @@ func TestEphemeralTranscriptionStreamsBeforeFinishWithoutVoicePersistence(
 	}
 }
 
+func TestDurableAgentVoiceStreamsBeforeFinishAndPersistsRecognizedAudio(
+	t *testing.T,
+) {
+	recognizer := newEphemeralTestRecognizer()
+	legacy := &voiceInputHTTPApplication{}
+	server := httptest.NewServer(newEphemeralHTTPTestRouter(
+		t, recognizer, &ephemeralThreadReader{}, legacy, time.Second,
+	))
+	defer server.Close()
+
+	connection := dialAgentVoiceDraft(
+		t, server.URL, ephemeralTestThreadID, "Bearer voice-token-a",
+	)
+	defer connection.Close()
+	writeEphemeralStart(t, connection, "durable-voice-1", 16_000)
+	if started := readEphemeralEvent(t, connection); started.Type != "transcription.started" {
+		t.Fatalf("started event = %#v", started)
+	}
+	pcm := make([]byte, 3_200)
+	if err := connection.WriteMessage(websocket.BinaryMessage, pcm); err != nil {
+		t.Fatalf("write PCM: %v", err)
+	}
+	// No finish frame has been sent: this update proves Agent voice reuses the
+	// live PCM recognizer instead of buffering the complete recording first.
+	updated := readEphemeralEvent(t, connection)
+	assertEphemeralTranscriptEvent(
+		t, updated, "transcription.updated", "partial transcript", false,
+	)
+	if err := connection.WriteJSON(map[string]string{"type": "finish"}); err != nil {
+		t.Fatalf("write finish: %v", err)
+	}
+	finalUpdate := readEphemeralEvent(t, connection)
+	assertEphemeralTranscriptEvent(
+		t, finalUpdate, "transcription.updated", "completed transcript", true,
+	)
+	if ready := readEphemeralEvent(t, connection); ready.Type != "draft.ready" {
+		t.Fatalf("ready event = %#v", ready)
+	}
+	if legacy.recognizedCalls != 1 || legacy.uploadBytes != 44+len(pcm) ||
+		legacy.result.Transcript != "completed transcript" ||
+		recognizer.Calls() != 1 {
+		t.Fatalf(
+			"durable calls = %d bytes = %d result = %#v recognizer calls = %d",
+			legacy.recognizedCalls,
+			legacy.uploadBytes,
+			legacy.result,
+			recognizer.Calls(),
+		)
+	}
+}
+
 func TestEphemeralTranscriptionRejectsAuthenticationOwnershipAndProtocol(
 	t *testing.T,
 ) {
@@ -405,6 +456,28 @@ func ephemeralWebSocketEndpoint(baseURL string, threadID string) string {
 		"/voice-transcriptions/realtime"
 }
 
+func dialAgentVoiceDraft(
+	t *testing.T,
+	baseURL string,
+	threadID string,
+	token string,
+) *websocket.Conn {
+	t.Helper()
+	header := http.Header{"Authorization": []string{token}}
+	endpoint := "ws" + strings.TrimPrefix(baseURL, "http") +
+		"/v1/agent-threads/" + threadID + "/voice-drafts/realtime"
+	connection, response, err := (&websocket.Dialer{
+		Subprotocols: []string{voiceInputWebSocketProtocol},
+	}).Dial(endpoint, header)
+	if err != nil {
+		if response != nil {
+			t.Fatalf("dial status = %d: %v", response.StatusCode, err)
+		}
+		t.Fatalf("dial durable Agent voice: %v", err)
+	}
+	return connection
+}
+
 func writeEphemeralStart(
 	t *testing.T,
 	connection *websocket.Conn,
@@ -513,6 +586,7 @@ func newEphemeralHTTPTestRouter(
 		legacyHandler, legacyErr := NewHandler(
 			legacy,
 			threads,
+			recognizer,
 			readTimeout,
 			renderer,
 		)
@@ -553,7 +627,9 @@ type failingEphemeralRecognizer struct{}
 
 type voiceInputHTTPApplication struct {
 	streamCalls          int
+	recognizedCalls      int
 	uploadBytes          int
+	result               agentvoice.TranscriptionResult
 	confirmCalls         int
 	deleteCandidateCalls int
 }
@@ -566,6 +642,32 @@ func (application *voiceInputHTTPApplication) UploadStream(
 ) (agentvoice.Draft, error) {
 	application.streamCalls++
 	return agentvoice.Draft{}, errors.New("unexpected durable upload")
+}
+
+func (application *voiceInputHTTPApplication) UploadRecognized(
+	_ context.Context,
+	_ requestcontext.Actor,
+	request agentvoice.UploadRequest,
+	result agentvoice.TranscriptionResult,
+) (agentvoice.Draft, error) {
+	application.recognizedCalls++
+	payload, err := io.ReadAll(request.Audio)
+	if err != nil {
+		return agentvoice.Draft{}, err
+	}
+	application.uploadBytes = len(payload)
+	application.result = result
+	now := time.Now().UTC()
+	return agentvoice.Draft{
+		ID:      "20000000-0000-4000-8000-000000000002",
+		OwnerID: "user-a", ThreadID: request.ThreadID,
+		ContentType: request.ContentType, Size: int64(len(payload)),
+		Duration: 100 * time.Millisecond, SampleRate: 16_000,
+		Status: agentvoice.StatusReady, ASRAttempt: 1, Version: 1,
+		ASRRequestID: result.ID, ASRProvider: result.Provider,
+		ASRModel: result.Model, Transcript: result.Transcript,
+		ExpiresAt: now.Add(time.Hour), CreatedAt: now, UpdatedAt: now,
+	}, nil
 }
 
 func (*voiceInputHTTPApplication) GetDraft(

@@ -24,6 +24,15 @@ import 'package:speakup/features/coaching/preparation/preparation_models.dart';
 
 enum _PracticeHub { interview, ielts, workplace, life }
 
+_PracticeHub? _practiceHubForExperience(PracticeExperience? experience) =>
+    switch (experience) {
+      PracticeExperience.interview => _PracticeHub.interview,
+      PracticeExperience.ieltsSpeaking => _PracticeHub.ielts,
+      PracticeExperience.workplace => _PracticeHub.workplace,
+      PracticeExperience.lifeAndTravel => _PracticeHub.life,
+      null => null,
+    };
+
 enum ExistingPracticeAction { continuePractice, replace }
 
 typedef PracticeStartedCallback = FutureOr<void> Function();
@@ -300,6 +309,7 @@ class _PreparationPageState extends State<PreparationPage> {
       scenarioContext: scenarioContext,
     );
     if (started && mounted) {
+      final returnHub = _practiceHubForExperience(scene.experience);
       final bootstrap = launch.bootstrap;
       if (bootstrap != null && ieltsSelection != null) {
         await widget.ieltsController?.beginSession(
@@ -314,7 +324,7 @@ class _PreparationPageState extends State<PreparationPage> {
       }
       catalog.showSceneList();
       setState(() {
-        _selectedHub = null;
+        _selectedHub = returnHub;
         _launchingIeltsSelection = null;
       });
     }
@@ -324,6 +334,9 @@ class _PreparationPageState extends State<PreparationPage> {
     final started = await widget.launchController?.retry() ?? false;
     if (started && mounted) {
       final catalog = widget.preparationController;
+      final returnHub = _practiceHubForExperience(
+        catalog?.selectedScene?.experience,
+      );
       final bootstrap = widget.launchController?.bootstrap;
       final selection = _launchingIeltsSelection;
       if (catalog != null && bootstrap != null && selection != null) {
@@ -342,7 +355,7 @@ class _PreparationPageState extends State<PreparationPage> {
       }
       catalog?.showSceneList();
       setState(() {
-        _selectedHub = null;
+        _selectedHub = returnHub;
         _launchingIeltsSelection = null;
       });
     }
@@ -453,6 +466,11 @@ class _PreparationPageState extends State<PreparationPage> {
   Future<void> _continueCurrentPractice() async {
     final launch = widget.launchController;
     if (launch?.hasResumablePractice ?? false) {
+      final returnHub = _practiceHubForExperience(
+        PracticeExperience.fromWireValue(
+          launch?.resumablePracticeExperience ?? '',
+        ),
+      );
       final resumed = await launch!.resumeCurrentPractice();
       if (resumed && mounted) {
         await widget.onPracticeStarted?.call();
@@ -460,7 +478,7 @@ class _PreparationPageState extends State<PreparationPage> {
           return;
         }
         widget.preparationController?.showSceneList();
-        setState(() => _selectedHub = null);
+        setState(() => _selectedHub = returnHub);
       }
       return;
     }

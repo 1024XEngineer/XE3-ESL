@@ -120,6 +120,7 @@ func newDraftHTTPRouter(t *testing.T, application *draftHTTPApplication) http.Ha
 	handler, err := NewHandler(
 		application,
 		draftHTTPThreadReader{},
+		nil,
 		time.Second,
 		httpresponse.NewRenderer(func() string { return "corr_voice_draft" }),
 	)
@@ -158,6 +159,15 @@ func (application *draftHTTPApplication) UploadStream(
 	requestcontext.Actor,
 	agentvoice.UploadRequest,
 	agentvoice.TranscriptionObserver,
+) (agentvoice.Draft, error) {
+	return application.draft, nil
+}
+
+func (application *draftHTTPApplication) UploadRecognized(
+	context.Context,
+	requestcontext.Actor,
+	agentvoice.UploadRequest,
+	agentvoice.TranscriptionResult,
 ) (agentvoice.Draft, error) {
 	return application.draft, nil
 }

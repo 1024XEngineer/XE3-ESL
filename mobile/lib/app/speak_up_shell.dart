@@ -250,9 +250,14 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
 
   Future<void> _openInterviewPlan(String planId) async {
     final controller = widget.jobPreparationController;
-    if (controller == null ||
-        !await controller.openSavedPlan(planId) ||
-        !mounted) {
+    if (controller == null) {
+      _showMockNotice('岗位准备流程尚未连接');
+      return;
+    }
+    final opened = await controller.openSavedPlan(planId);
+    if (!mounted) return;
+    if (!opened) {
+      _showMockNotice(controller.errorMessage ?? '暂时无法打开这场模拟面试。');
       return;
     }
     Navigator.of(context).pushNamed(AppRoutes.jobPreparation);
