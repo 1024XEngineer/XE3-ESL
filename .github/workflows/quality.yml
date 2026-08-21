@@ -261,9 +261,7 @@ jobs:
               (workflow) => workflow.name === "Quality",
             );
             if (!qualityWorkflow) {
-              core.warning("Unable to find the Quality workflow; coverage gate skipped");
-              core.setOutput("available", "false");
-              return;
+              throw new Error("Unable to find the Quality workflow");
             }
 
             const runs = await github.paginate(
@@ -301,21 +299,13 @@ jobs:
             }
 
             if (!baseline) {
-              core.warning(
-                "No successful Quality run has a Go coverage artifact; coverage gate skipped",
+              throw new Error(
+                "No successful Quality run has a Go coverage artifact",
               );
-              core.setOutput("available", "false");
-              return;
             }
 
             core.setOutput("run_id", String(baseline.id));
             core.setOutput("available", "true");
-
-      - name: Explain missing coverage baseline
-        if: steps.baseline.outputs.available != 'true'
-        run: >-
-          echo "Coverage gate skipped because the base branch has no Go
-          coverage artifact baseline yet."
 
       - name: Download baseline Go coverage
         if: steps.baseline.outputs.available == 'true'
@@ -413,9 +403,7 @@ jobs:
               (workflow) => workflow.name === "Quality",
             );
             if (!qualityWorkflow) {
-              core.warning("Unable to find the Quality workflow; Flutter coverage gate skipped");
-              core.setOutput("available", "false");
-              return;
+              throw new Error("Unable to find the Quality workflow");
             }
 
             const runs = await github.paginate(
@@ -453,21 +441,13 @@ jobs:
             }
 
             if (!baseline) {
-              core.warning(
-                "No successful Quality run has a Flutter coverage artifact; coverage gate skipped",
+              throw new Error(
+                "No successful Quality run has a Flutter coverage artifact",
               );
-              core.setOutput("available", "false");
-              return;
             }
 
             core.setOutput("run_id", String(baseline.id));
             core.setOutput("available", "true");
-
-      - name: Explain missing Flutter coverage baseline
-        if: steps.baseline.outputs.available != 'true'
-        run: >-
-          echo "Flutter coverage gate skipped because the base branch has no
-          Flutter coverage artifact baseline yet."
 
       - name: Download baseline Flutter coverage
         if: steps.baseline.outputs.available == 'true'
