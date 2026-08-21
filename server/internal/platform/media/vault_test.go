@@ -147,17 +147,22 @@ func TestTemporaryAudioVaultEnforcesCapacityAndExpiry(t *testing.T) {
 
 	deadline := time.Now().Add(time.Second)
 	for {
-		_, err := vault.Source(actor, first.ID)
-		if errors.Is(err, ErrTemporaryAudioNotFound) {
+		vault.mu.Lock()
+		_, exists := vault.entries[first.ID]
+		vault.mu.Unlock()
+		if !exists {
 			break
-		}
-		if err != nil {
-			t.Fatalf("source before expiry: %v", err)
 		}
 		if time.Now().After(deadline) {
 			t.Fatal("temporary audio was not reaped")
 		}
 		time.Sleep(time.Millisecond)
+	}
+	if _, err := vault.Source(actor, first.ID); !errors.Is(
+		err,
+		ErrTemporaryAudioNotFound,
+	) {
+		t.Fatalf("source after expiry error = %v", err)
 	}
 	if _, err := vault.Capture(
 		context.Background(),
