@@ -477,6 +477,7 @@ func buildIdentityAgentComposition(
 		voiceHTTP, voiceHTTPErr := agentvoicehttp.NewHandler(
 			voiceInput,
 			agentService,
+			realtimeRecognizer,
 			voiceConfigurations[0].AgentVoice.ReadTimeout,
 			errorRenderer,
 		)

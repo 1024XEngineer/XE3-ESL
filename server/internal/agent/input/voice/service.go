@@ -59,7 +59,7 @@ func (service *Service) Upload(
 	actor requestcontext.Actor,
 	request UploadRequest,
 ) (Draft, error) {
-	return service.upload(ctx, actor, request, nil)
+	return service.upload(ctx, actor, request, nil, nil)
 }
 
 func (service *Service) UploadStream(
@@ -71,7 +71,21 @@ func (service *Service) UploadStream(
 	if observer == nil {
 		return Draft{}, ErrInvalidRequest
 	}
-	return service.upload(ctx, actor, request, observer)
+	return service.upload(ctx, actor, request, observer, nil)
+}
+
+// UploadRecognized persists audio that was transcribed while it arrived. The
+// provider result becomes the durable Draft result without a second ASR pass.
+func (service *Service) UploadRecognized(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	request UploadRequest,
+	result TranscriptionResult,
+) (Draft, error) {
+	if !ValidTranscription(result) {
+		return Draft{}, ErrInvalidRequest
+	}
+	return service.upload(ctx, actor, request, nil, &result)
 }
 
 func (service *Service) upload(
@@ -79,6 +93,7 @@ func (service *Service) upload(
 	actor requestcontext.Actor,
 	request UploadRequest,
 	observer TranscriptionObserver,
+	recognized *TranscriptionResult,
 ) (Draft, error) {
 	if ctx == nil || !actor.Valid() || !ValidUUID(request.ThreadID) ||
 		!validIdempotencyKey(request.IdempotencyKey) || request.Audio == nil {
@@ -133,6 +148,17 @@ func (service *Service) upload(
 	}
 	if !acquired {
 		return claim.Draft, nil
+	}
+	if recognized != nil {
+		persistContext, cancel := runPersistenceContext(ctx)
+		defer cancel()
+		return service.repository.CompleteTranscription(
+			persistContext,
+			claim.Draft.OwnerID,
+			claim.Draft.ID,
+			claim.FencingToken,
+			*recognized,
+		)
 	}
 	return service.transcribeClaim(ctx, claim, audio, observer)
 }
