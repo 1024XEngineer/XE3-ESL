@@ -1,5 +1,6 @@
 import EarlyAccessDialog from "./EarlyAccessDialog";
 import BrandMark from "./BrandMark";
+import PracticeShowcase from "./PracticeShowcase";
 
 const earlyAccessHref = "#early-access";
 
@@ -15,41 +16,6 @@ const flowingTasks = [
 ];
 
 const flowingTaskLoop = `${flowingTasks.join(" · ")} · ${flowingTasks.join(" · ")} · `;
-
-const journeyStages = [
-  {
-    index: "01",
-    stage: "考出去",
-    type: "雅思口语",
-    copy: "“陪我练一次 IELTS Part 2，重点看我能不能讲满两分钟。”",
-    action: "准备下一次口语考试",
-    href: earlyAccessHref,
-  },
-  {
-    index: "02",
-    stage: "面进去",
-    type: "英文面试",
-    copy: "“我下周面试后端开发工程师，想练系统设计和技术取舍。”",
-    action: "准备下一场面试",
-    href: earlyAccessHref,
-  },
-  {
-    index: "03",
-    stage: "适应好",
-    type: "海外日常",
-    copy: "“明天要去医院，我怕听不懂医生的追问。”",
-    action: "说一件马上要办的事",
-    href: earlyAccessHref,
-  },
-  {
-    index: "04",
-    stage: "发展好",
-    type: "国际职场",
-    copy: "“我要向海外客户解释项目延期，但不能承诺新的日期。”",
-    action: "准备下一次工作沟通",
-    href: earlyAccessHref,
-  },
-];
 
 export default function Home() {
   return (
@@ -125,9 +91,9 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="hero-product" aria-label="SpeakUp 后端开发工程师模拟面试示例">
+        <div className="hero-product" aria-label="SpeakUp 根据目标准备后端开发英文面试练习示例">
           <div className="hero-product-copy">
-            <span className="demo-label">老师主动了解 · 后端开发面试</span>
+            <span className="demo-label">一句话开始 · 后端开发面试</span>
             <p className="demo-question">我下周要面试后端开发工程师，想提前练一下。</p>
             <div className="voice-answer">
               <span className="voice-icon" aria-hidden="true">●</span>
@@ -136,45 +102,24 @@ export default function Home() {
               </div>
               <span>0:16</span>
             </div>
-            <p className="demo-answer">可以。把岗位 JD 和简历发给我，我先看看这轮更可能考什么，再和你一起准备。</p>
+            <p className="demo-answer">可以。先选你最想练的方向，我会为你准备一场贴近真实面试的英文练习。</p>
             <div className="instant-feedback">
-              <span>接下来</span>
-              <p><strong>了解岗位与经历</strong> → 给建议 → 教表达 → 邀请模拟</p>
+              <span>已为你准备好</span>
+              <p><strong>项目经历深挖</strong> · 你是候选人，AI 是英文技术面试官</p>
             </div>
           </div>
           <div className="hero-phone">
             <img
-              src="/assets/portal-shots/portal-interview-start.jpg"
-              alt="SpeakUp 为后端开发工程师生成四轮一对一模拟面试计划"
+              src="/assets/portal-shots/portal-interview-practice.png"
+              alt="SpeakUp 根据后端开发面试目标准备项目经历深挖练习"
             />
           </div>
-          <span className="floating-chip chip-top">会主动追问</span>
-          <span className="floating-chip chip-bottom">长期 Memory 已开启</span>
+          <span className="floating-chip chip-top">按目标生成练习</span>
+          <span className="floating-chip chip-bottom">准备好就开练</span>
         </div>
       </header>
 
-      <section className="journey-section" id="use-cases">
-        <div className="section-intro dark-copy">
-          <p className="eyebrow">不只是一场面试</p>
-          <h2>
-            <span className="journey-title-line">考出去、面进去，</span>
-            <span className="journey-title-line">适应好，再到真正发展好。</span>
-          </h2>
-          <p>场景会变，陪你的老师不变。直接说出眼前要面对的事，SpeakUp 会用已经了解的你继续准备。</p>
-        </div>
-        <div className="journey-grid" aria-label="SpeakUp 覆盖的四类真实英语任务">
-          {journeyStages.map((item) => (
-            <article className="journey-card" key={item.type}>
-              <div className="journey-meta"><span>{item.index}</span><em>{item.stage}</em></div>
-              <h3>{item.type}</h3>
-              <p>{item.copy}</p>
-              <a href={item.href} data-scenario={item.type}>
-                {item.action} <span aria-hidden="true">↗</span>
-              </a>
-            </article>
-          ))}
-        </div>
-      </section>
+      <PracticeShowcase />
 
       <section className="context-section" id="memory">
         <div className="context-shot">
@@ -207,28 +152,6 @@ export default function Home() {
               <div><strong>现实带回来的结果</strong><small>哪些题命中了，哪些新问题需要补进下一轮。</small></div>
             </li>
           </ul>
-        </div>
-      </section>
-
-      <section className="outcome-section" id="real-world">
-        <div className="outcome-copy">
-          <p className="eyebrow">现实回来，学习继续</p>
-          <h2>真正发生过的事，<br />会改变下一次怎么练。</h2>
-          <p>练习不是关掉页面就结束。把真实沟通的结果告诉老师，它会庆祝已经发生的进步，也把遗漏的问题补进新的计划。</p>
-        </div>
-        <div className="outcome-dialogue" aria-label="用户把真实面试结果带回给 SpeakUp">
-          <div className="dialogue-message user-message">
-            <small>你 · 面试结束后</small>
-            <p>老师，你压中 Kafka 了！但数据库迁移这题没练到。</p>
-          </div>
-          <div className="dialogue-message agent-message">
-            <small>SpeakUp</small>
-            <p>太好了，之前的练习有成效。趁记忆还清楚，我们把没练到的题还原一下，再补进下一轮。</p>
-          </div>
-          <div className="dialogue-memory">
-            <span>已带回 Memory</span>
-            <strong>数据库迁移 · 真实面试新问题</strong>
-          </div>
         </div>
       </section>
 
