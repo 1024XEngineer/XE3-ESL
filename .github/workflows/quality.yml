@@ -143,6 +143,25 @@ jobs:
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18-bookworm@sha256:1961f96e6029a02c3812d7cb329a3b03a3ac2bb067058dec17b0f5596aca9296
+        env:
+          POSTGRES_DB: xe3_esl
+          POSTGRES_USER: xe3_esl
+          POSTGRES_PASSWORD: ci-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready --username=xe3_esl --dbname=xe3_esl"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+          --health-start-period 5s
+    env:
+      DATABASE_URL: postgres://xe3_esl:ci-only-password@127.0.0.1:5432/xe3_esl?sslmode=disable
+      MIGRATION_ENV: test
+      TEST_DATABASE_URL: postgres://xe3_esl:ci-only-password@127.0.0.1:5432/xe3_esl?sslmode=disable
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
