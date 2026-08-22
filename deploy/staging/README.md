@@ -35,6 +35,7 @@ and server environment are externally injected and are not committed.
 ## Prerequisites
 
 - Bash, `jq`, `curl`, Docker Engine, and Docker Compose with `up --wait` support.
+- `flock`, plus either `sha256sum` or `shasum`, on the deployment host.
 - Nginx with the HTTP SSL, proxy, and Basic Auth modules.
 - A certificate whose SANs cover both Staging hostnames.
 - A populated htpasswd file and a real Staging Server environment file.
@@ -66,7 +67,27 @@ install -d -m 0750 /etc/speakup
 install -m 0600 staging.env.example /etc/speakup/staging.env
 install -m 0600 /secure/source/staging-server.env \
   /etc/speakup/staging-server.env
+install -d -o root -g root -m 0700 /run/lock/xe3-speakup-staging
 ```
+
+Run the contract as the same UID that owns all deployment inputs (normally
+`root` on the server). `staging.env`, the Server environment, and htpasswd file
+must be regular, non-symlink files owned by that UID with mode `0400` or
+`0600`. The TLS private key may be a regular file or Certbot's stable
+`live/.../privkey.pem` symlink; its resolved target must be regular, non-empty,
+owned by that UID, and mode `0400` or `0600`. The public certificate must be
+non-empty, owned by that UID, and not group- or world-writable. The ACME webroot
+must be a non-symlink directory owned by that UID with mode `0700`, `0750`, or
+`0755`. Validation checks these properties before a Docker pull, migration,
+container update, or shutdown. Keep the stable `live/` paths so Certbot renewal
+can advance their archive targets; never pin an `archive/.../privkeyN.pem`
+generation.
+
+The dedicated lock directory is mandatory and must be recreated at boot when
+`/run` is volatile. The deployment script never creates this directory and
+fails closed if it is missing, a symlink, owned by another UID, or group/world
+writable. Only the lock file inside that already-private directory may be
+created by the script.
 
 Before public verification, create A records for both selected hostnames (and
 AAAA records only when the host is intentionally IPv6-reachable) and point them
@@ -88,33 +109,53 @@ repository. Do not add HTTP Basic Auth to the API host: the Staging APK uses its
   --env-file /etc/speakup/staging.env
 ```
 
-Validation fails on a missing or malformed manifest, a mutable or placeholder
-image reference, a missing configuration value, an empty Server environment
-file, or an invalid Compose model. It does not pull images or contact the
-application providers.
+Validation accepts only the canonical v1 Release Candidate manifest with its
+exact key set; missing, unknown, or multiple JSON documents fail closed. It
+also fails on a malformed manifest, mutable or placeholder image reference,
+missing configuration value, invalid private input, or invalid Compose model.
+It does not pull images or contact the application providers.
 
 ## 3. Deploy the immutable Staging images
 
 ```sh
 ./deploy/staging/manage.sh deploy \
   --manifest /opt/speakup/releases/v0.1.1/release-manifest.json \
-  --env-file /etc/speakup/staging.env
+  --env-file /etc/speakup/staging.env \
+  --receipt /opt/speakup/releases/v0.1.1/staging-deployment-receipt.json
 ```
 
 The command performs the following fail-closed sequence:
 
 1. validate the manifest, external configuration, Compose model, and Nginx
-   template;
-2. pull the pinned PostgreSQL, Portal, and Server images;
-3. start only PostgreSQL and wait for its health check;
-4. run `/usr/local/bin/speakup-migrate up` in a one-shot container;
-5. only after migration succeeds, update Portal and Server and wait for their
-   container health checks;
-6. verify Portal `/`, Server `/health`, and Server `/readyz` over loopback.
+   template, and require a new receipt path;
+2. acquire the exclusive
+   `/run/lock/xe3-speakup-staging/deploy.lock` lock shared by `deploy` and
+   `down` (the test harness alone overrides this path);
+3. pull the pinned PostgreSQL, Portal, and Server images;
+4. start only PostgreSQL with `--pull never` and wait for its health check;
+5. run `/usr/local/bin/speakup-migrate up` with `--pull never`, then run
+   `speakup-migrate version` and require the sole output to be exactly
+   `version=N dirty=false`, with `N` equal to `database_schema_version` in the
+   manifest;
+6. only after that exact schema check, update Portal and Server with
+   `--pull never` and wait for their container health checks;
+7. verify the exact project service set, running container identity and health,
+   pinned `Config.Image`, inspectable Linux/amd64 image and release OCI labels,
+   loopback ports, networks, internal database isolation, Staging volumes, the
+   live schema, Portal `/`, Server `/health`, and Server `/readyz`;
+8. atomically create the new receipt without overwriting any existing path.
+
+The receipt binds the manifest SHA-256, release version, Git SHA, schema,
+Portal and Server image digests, exact container IDs, and UTC deployment time.
+It contains no credentials. Its parent directory must already exist, be owned
+by the executing UID, and have mode `0700`, `0750`, or `0755`.
 
 If migration fails, the command exits before the Portal or Server update. A
-failed application health check is also an explicit deployment failure; this
-Issue does not add Production promotion or automatic rollback behavior.
+dirty or mismatched schema, invalid runtime, or failed application health check
+also prevents the receipt. Schema migrations are not automatically reversed:
+rolling an application image back across an unknown schema boundary is unsafe,
+so recovery requires the reviewed database restore or migration procedure for
+that release. This contract does not add Production promotion.
 
 ## 4. Render and install the Nginx configuration
 
@@ -158,6 +199,11 @@ business routes continue to enforce the application's Bearer authentication.
 Public HTTPS checks require DNS, certificate, and firewall setup that remain
 external to this repository.
 
+`verify` never pulls an image. It first verifies the exact runtime project,
+services, image digests and OCI labels, networks, ports, and volumes; it then
+runs the migration image with `--pull never` to confirm the live schema before
+checking the three loopback endpoints.
+
 ## 6. Stop or clean up Staging
 
 ```sh
@@ -173,6 +219,9 @@ reload Nginx if the public Staging entry points should also disappear. Volume
 deletion is intentionally not automated; inspect and back up these explicitly
 Staging-scoped volumes before deleting them by name.
 
+`down` uses the same exclusive lock as `deploy` and fails rather than running
+unlocked or concurrently with a release.
+
 ## Reproducible contract checks
 
 ```sh
@@ -180,10 +229,12 @@ make check-staging-deploy
 make check-staging-nginx
 ```
 
-The first command checks manifest and environment failure paths, the resolved
-Compose isolation model, endpoint verification, and the rule that a migration
-failure cannot switch applications. The second renders a temporary TLS config
-and runs `nginx -t` in a pinned Docker Official Nginx image.
+The first command checks private input ownership/modes and symlink rejection,
+lock conflicts, manifest and configuration failures, the resolved Compose
+isolation model, strict schema parsing, runtime identity and resources,
+no-pull verification, endpoint checks, and atomic no-clobber receipts. The
+second renders a temporary TLS config and runs `nginx -t` in a pinned Docker
+Official Nginx image.
 
 ## Official references
 
