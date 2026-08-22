@@ -73,7 +73,95 @@ cron 只执行由 `root` 安装到 `/usr/local/sbin/` 的固定副本，避免�
 用户修改工作目录后获得 root 执行权限。续期脚本发生变更时，需要重新执行
 上述 `install` 命令。
 
-## 4. 验证
+## 4. 安装 SQLite 定时备份
+
+备份任务使用 SQLite Online Backup API 读取活动数据库，不直接复制正在写入的
+`portal.sqlite`。源 Docker volume 在一次性备份容器中只读挂载；完整备份先写入
+`.partial-*` 目录，完成 SQLite `integrity_check`、大小和 SHA-256 复核后才原子发布。
+
+运行备份前，先确认当前 Portal 镜像已包含
+`/app/ops/portal-sqlite-backup.mjs`。安装固定脚本和 systemd units：
+
+```sh
+install -o root -g root -m 0755 \
+  deploy/xe3-portal-sqlite-backup \
+  /usr/local/sbin/xe3-portal-sqlite-backup
+install -o root -g root -m 0644 \
+  deploy/xe3-portal-sqlite-backup.service \
+  deploy/xe3-portal-sqlite-backup.timer \
+  deploy/xe3-portal-sqlite-restore-check.service \
+  /etc/systemd/system/
+install -d -o root -g root -m 0755 /etc/speakup
+if [ ! -e /etc/speakup/portal-backup.env ]; then
+  install -o root -g root -m 0600 \
+    deploy/portal-backup.env.example \
+    /etc/speakup/portal-backup.env
+fi
+```
+
+`/etc/speakup/portal-backup.env` 不读取或包含 `portal.env` 的后台密码。启用前必须
+显式填写以下非 Secret 配置，空值会使任务失败：
+
+- `PORTAL_BACKUP_CONTAINER`：正式 Portal 容器名。
+- `PORTAL_BACKUP_SOURCE_VOLUME`：挂载到容器 `/app/.wrangler` 的数据卷名。
+- `PORTAL_BACKUP_IMAGE`：当前 Portal 镜像的本地 `sha256:...` image ID，或已拉取的
+  `repository@sha256:...`；禁止使用可变 Tag。该镜像必须与运行中容器完全一致。
+- `PORTAL_BACKUP_DEPLOYMENT_VERSION`：当前部署 manifest 中的明确版本或 revision。
+- `PORTAL_BACKUP_RETENTION_DAYS`：经业务确认的本机成品保留天数，不提供默认值。
+- `PORTAL_BACKUP_MAX_AGE_SECONDS`：经运维确认的新鲜度上限，不提供默认值。
+
+systemd units 会在启动命令中把备份根目录固定为
+`/var/lib/speakup/portal-backups`；环境文件不能覆盖该路径。
+
+本地 image ID 可只读查询，不需要打开容器环境变量：
+
+```sh
+docker container inspect --format '{{.Image}}' xe3-speakup-portal
+```
+
+先手动执行一次备份和隔离恢复检查，二者都成功后再启用每日 timer：
+
+```sh
+systemctl daemon-reload
+systemctl start xe3-portal-sqlite-backup.service
+systemctl start xe3-portal-sqlite-restore-check.service
+systemctl enable --now xe3-portal-sqlite-backup.timer
+```
+
+每个成品目录均为 `0700`，数据库、校验和和 `metadata.json` 均为 `0600`。元数据记录
+生成时间、来源 volume、部署版本、字节数和 SHA-256。恢复检查只读挂载备份目录，
+把最新成品复制到一次性匿名 Docker volume 后复核 SHA-256 和
+`PRAGMA integrity_check`；`--rm` 会在检查结束后移除该匿名 volume。
+
+查看 timer、最近结果和诊断日志：
+
+```sh
+systemctl list-timers xe3-portal-sqlite-backup.timer
+systemctl status xe3-portal-sqlite-backup.service
+systemctl status xe3-portal-sqlite-restore-check.service
+journalctl -u xe3-portal-sqlite-backup.service --since today
+journalctl -u xe3-portal-sqlite-restore-check.service --since today
+```
+
+禁用定时任务不会删除任何备份：
+
+```sh
+systemctl disable --now xe3-portal-sqlite-backup.timer
+```
+
+任何源卷/镜像/部署不一致、备份中断、元数据损坏、SHA-256 不一致、SQLite 完整性
+错误或备份过期都会返回非零状态。可正常捕获的失败会清理本次临时目录；进程被强制
+终止等无法执行清理的中断可能留下 `.partial-*`，它们不计为成功备份，也不会被保留
+策略删除。保留策略只删除命名和元数据均有效且超过显式保留天数的已完成目录。
+异地副本的目标、凭证和保留策略不属于此配置。
+
+实现依据：SQLite 官方 [Online Backup API](https://www.sqlite.org/backup.html)、
+Node.js 官方 [`sqlite.backup`](https://nodejs.org/api/sqlite.html#sqlitebackupsourceDb-path-options)、
+Docker 官方 [Volumes](https://docs.docker.com/engine/storage/volumes/)，以及 systemd 官方
+[`systemd.timer`](https://www.freedesktop.org/software/systemd/man/latest/systemd.timer.html)
+和 [`systemd.service`](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html)。
+
+## 5. 验证
 
 ```sh
 docker compose -f deploy/compose.yaml ps
