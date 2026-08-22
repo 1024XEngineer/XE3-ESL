@@ -58,6 +58,17 @@ assert_response_header() {
   }
 }
 
+assert_curl_succeeds() {
+  local description=$1
+  shift
+
+  curl --fail --show-error "$@" || {
+    printf 'failed HTTP check: %s\n' "$description" >&2
+    docker logs "$runtime_container" >&2
+    exit 1
+  }
+}
+
 mkdir -p "$temporary_directory/acme"
 mkdir -p "$temporary_directory/logs"
 mkdir -p "$temporary_directory/public/downloads/android/v0.1.0"
@@ -164,8 +175,11 @@ if grep -Eq '__PRODUCTION_[A-Z_]+__' "$rendered_configuration"; then
 fi
 
 docker run --rm \
-  --volume "$temporary_directory:$temporary_directory:ro" \
+  --volume "$temporary_directory/acme:$temporary_directory/acme:ro" \
+  --volume "$temporary_directory/fullchain.pem:$temporary_directory/fullchain.pem:ro" \
+  --volume "$temporary_directory/privkey.pem:$temporary_directory/privkey.pem:ro" \
   --volume "$temporary_directory/logs:/etc/nginx/logs" \
+  --volume "$temporary_directory/public:$temporary_directory/public:ro" \
   --volume "$rendered_configuration:/etc/nginx/conf.d/default.conf:ro" \
   "$nginx_image" \
   nginx -t
@@ -196,8 +210,11 @@ docker run --detach \
   --name "$runtime_container" \
   --publish 127.0.0.1::80 \
   --publish 127.0.0.1::443 \
-  --volume "$temporary_directory:$temporary_directory:ro" \
+  --volume "$temporary_directory/acme:$temporary_directory/acme:ro" \
+  --volume "$temporary_directory/fullchain.pem:$temporary_directory/fullchain.pem:ro" \
+  --volume "$temporary_directory/privkey.pem:$temporary_directory/privkey.pem:ro" \
   --volume "$temporary_directory/logs:/etc/nginx/logs" \
+  --volume "$temporary_directory/public:$temporary_directory/public:ro" \
   --volume "$rendered_configuration:/etc/nginx/conf.d/default.conf:ro" \
   --volume "$upstream_configuration:/etc/nginx/conf.d/upstream-stub.conf:ro" \
   "$nginx_image" \
@@ -264,8 +281,7 @@ done
 
 current_headers="$temporary_directory/current-release.headers"
 current_body="$temporary_directory/current-release.json"
-curl \
-  --fail \
+assert_curl_succeeds 'current release metadata request' \
   --insecure \
   --silent \
   --dump-header "$current_headers" \
@@ -279,8 +295,7 @@ cmp \
   "$temporary_directory/public/downloads/android/release.json"
 
 version_headers="$temporary_directory/version-release.headers"
-curl \
-  --fail \
+assert_curl_succeeds 'versioned release metadata request' \
   --insecure \
   --silent \
   --dump-header "$version_headers" \
@@ -291,8 +306,7 @@ assert_response_header "$version_headers" \
   'Cache-Control: public, max-age=31536000, immutable'
 
 checksum_body="$temporary_directory/downloaded.sha256"
-curl \
-  --fail \
+assert_curl_succeeds 'checksum download request' \
   --insecure \
   --silent \
   --output "$checksum_body" \
@@ -304,8 +318,7 @@ cmp \
 
 apk_headers="$temporary_directory/apk.headers"
 apk_body="$temporary_directory/downloaded.apk"
-curl \
-  --fail \
+assert_curl_succeeds 'APK HEAD request' \
   --head \
   --insecure \
   --silent \
@@ -318,8 +331,7 @@ assert_response_header "$apk_headers" \
 assert_response_header "$apk_headers" \
   'Cache-Control: public, max-age=31536000, immutable'
 assert_response_header "$apk_headers" "Content-Length: $apk_size"
-curl \
-  --fail \
+assert_curl_succeeds 'APK download request' \
   --insecure \
   --silent \
   --output "$apk_body" \
@@ -363,8 +375,7 @@ api_download_status=$(curl \
 }
 
 api_headers="$temporary_directory/api.headers"
-curl \
-  --fail \
+assert_curl_succeeds 'API proxy request' \
   --http1.1 \
   --insecure \
   --silent \
