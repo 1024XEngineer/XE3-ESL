@@ -1,0 +1,11 @@
+[Unit]
+Description=Run SpeakUp TLS renewal twice daily
+
+[Timer]
+OnCalendar=*-*-* 03,15:17:00
+RandomizedDelaySec=30m
+Persistent=true
+Unit=xe3-speakup-tls-renew.service
+
+[Install]
+WantedBy=timers.target

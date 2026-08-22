@@ -49,6 +49,7 @@ require_private_file() {
   local file=$2
   local mode
 
+  [[ ! -L "$file" ]] || fail "$description must not be a symbolic link: $file"
   require_regular_file "$description" "$file"
   if mode=$(stat -c '%a' -- "$file" 2>/dev/null); then
     :
@@ -64,6 +65,48 @@ require_private_file() {
       fail "$description must have mode 0400 or 0600: $file"
       ;;
   esac
+}
+
+require_private_tls_key() {
+  local description=$1
+  local file=$2
+  local target=$file
+  local mode owner current_uid
+
+  if [[ -L "$file" ]]; then
+    require_command realpath
+    target=$(realpath "$file" 2>/dev/null) ||
+      fail "cannot resolve $description symbolic link: $file"
+  fi
+
+  [[ ! -L "$target" ]] || fail "$description does not resolve to a regular file: $file"
+  require_regular_file "$description" "$target"
+
+  if mode=$(stat -c '%a' -- "$target" 2>/dev/null); then
+    :
+  elif mode=$(stat -f '%Lp' "$target" 2>/dev/null); then
+    :
+  else
+    fail "cannot inspect permissions for $description: $file"
+  fi
+  case "$mode" in
+    400 | 600)
+      ;;
+    *)
+      fail "$description target must have mode 0400 or 0600: $file"
+      ;;
+  esac
+
+  if owner=$(stat -c '%u' -- "$target" 2>/dev/null); then
+    :
+  elif owner=$(stat -f '%u' "$target" 2>/dev/null); then
+    :
+  else
+    fail "cannot inspect owner for $description: $file"
+  fi
+  current_uid=$(id -u) || fail "cannot determine the current user for $description"
+  [[ "$owner" == "$current_uid" ]] ||
+    fail "$description target must be owned by the current user: $file"
 }
 
 allowed_configuration_key() {
@@ -223,7 +266,7 @@ validate_configuration() {
 
   require_private_file "server environment file" "$PRODUCTION_SERVER_ENV_FILE"
   require_regular_file "TLS certificate" "$PRODUCTION_TLS_CERTIFICATE"
-  require_private_file "TLS certificate key" "$PRODUCTION_TLS_CERTIFICATE_KEY"
+  require_private_tls_key "TLS certificate key" "$PRODUCTION_TLS_CERTIFICATE_KEY"
   [[ -d "$PRODUCTION_ACME_ROOT" ]] ||
     fail "ACME root directory does not exist: $PRODUCTION_ACME_ROOT"
 }

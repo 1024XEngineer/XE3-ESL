@@ -36,7 +36,8 @@ and server environment are externally injected and are not committed.
 
 - Bash, `jq`, `curl`, Docker Engine, and Docker Compose with `up --wait` support.
 - Nginx with the HTTP SSL, proxy, and Basic Auth modules.
-- A certificate whose SANs cover both Staging hostnames.
+- A certificate whose SANs are exactly both Staging hostnames, issued and
+  verified through [`deploy/tls/`](../tls/README.md).
 - A populated htpasswd file and a real Staging Server environment file.
 - Registry credentials with read access to the two GHCR images.
 
@@ -72,6 +73,11 @@ Before public verification, create A records for both selected hostnames (and
 AAAA records only when the host is intentionally IPv6-reachable) and point them
 to the Staging host. IP addresses stay in the DNS/operations system, not this
 repository.
+
+The TLS lifecycle contract first renders a port-80-only bootstrap include and
+then issues the exact Staging lineage. Populate this deployment environment with
+the same live certificate paths derived from `TLS_CERTBOT_CONFIG_ROOT`; do not
+create a second Certbot account or certificate root for this stack.
 
 `STAGING_POSTGRES_PASSWORD` accepts URL-safe characters and must contain at
 least 24 characters. A suitable value can be generated with

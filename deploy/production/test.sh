@@ -89,6 +89,8 @@ write_manifest "$temporary_directory/release-manifest.json"
 
 real_docker="$(command -v docker)"
 readonly real_docker
+real_stat="$(command -v stat)"
+readonly real_stat
 cat > "$temporary_directory/fake-bin/docker" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -231,12 +233,27 @@ cat > "$temporary_directory/fake-bin/sleep" <<'EOF'
 #!/usr/bin/env bash
 exit 0
 EOF
+cat > "$temporary_directory/fake-bin/stat" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${TEST_TLS_KEY_OWNER_MISMATCH:-0}" == 1 ]]; then
+  case "${1:-}:${2:-}" in
+    -c:%u | -f:%u)
+      printf '%s\n' 999999
+      exit 0
+      ;;
+  esac
+fi
+exec "$TEST_REAL_STAT" "$@"
+EOF
 chmod +x \
   "$temporary_directory/fake-bin/docker" \
   "$temporary_directory/fake-bin/curl" \
-  "$temporary_directory/fake-bin/sleep"
+  "$temporary_directory/fake-bin/sleep" \
+  "$temporary_directory/fake-bin/stat"
 
 export TEST_REAL_DOCKER="$real_docker"
+export TEST_REAL_STAT="$real_stat"
 export PATH="$temporary_directory/fake-bin:$PATH"
 
 bash -n "$manage" "$0"
@@ -392,6 +409,21 @@ expect_failure "world-readable Server environment" \
     --manifest "$temporary_directory/release-manifest.json" \
     --env-file "$temporary_directory/insecure-server-config.env"
 
+ln -s "$temporary_directory/server.env" "$temporary_directory/server-link.env"
+write_environment \
+  "$temporary_directory/server-link-config.env" \
+  "$temporary_directory/server-link.env"
+expect_failure "symbolic-link Server environment" \
+  "$manage" validate \
+    --manifest "$temporary_directory/release-manifest.json" \
+    --env-file "$temporary_directory/server-link-config.env"
+
+ln -s "$temporary_directory/production.env" "$temporary_directory/production-link.env"
+expect_failure "symbolic-link Production environment" \
+  "$manage" validate \
+    --manifest "$temporary_directory/release-manifest.json" \
+    --env-file "$temporary_directory/production-link.env"
+
 write_environment \
   "$temporary_directory/missing-certificate.env" \
   "$temporary_directory/server.env" \
@@ -431,6 +463,55 @@ expect_failure "world-readable TLS certificate key" \
   "$manage" validate \
     --manifest "$temporary_directory/release-manifest.json" \
     --env-file "$temporary_directory/insecure-key.env"
+
+mkdir -p \
+  "$temporary_directory/certbot/archive/speak-up.top" \
+  "$temporary_directory/certbot/live/speak-up.top"
+cp \
+  "$temporary_directory/privkey.pem" \
+  "$temporary_directory/certbot/archive/speak-up.top/privkey1.pem"
+chmod 0600 "$temporary_directory/certbot/archive/speak-up.top/privkey1.pem"
+ln -s \
+  ../../archive/speak-up.top/privkey1.pem \
+  "$temporary_directory/certbot/live/speak-up.top/privkey.pem"
+write_environment \
+  "$temporary_directory/symlink-key.env" \
+  "$temporary_directory/server.env" \
+  "$temporary_directory/fullchain.pem" \
+  "$temporary_directory/certbot/live/speak-up.top/privkey.pem"
+"$manage" validate \
+  --manifest "$temporary_directory/release-manifest.json" \
+  --env-file "$temporary_directory/symlink-key.env" \
+  > "$temporary_directory/symlink-key.out"
+grep -Fq 'validated=true' "$temporary_directory/symlink-key.out" ||
+  fail "stable Certbot live private-key symbolic link was not accepted"
+
+chmod 0644 "$temporary_directory/certbot/archive/speak-up.top/privkey1.pem"
+expect_failure "world-readable TLS certificate key target" \
+  "$manage" validate \
+    --manifest "$temporary_directory/release-manifest.json" \
+    --env-file "$temporary_directory/symlink-key.env"
+chmod 0600 "$temporary_directory/certbot/archive/speak-up.top/privkey1.pem"
+
+expect_failure "TLS certificate key target owned by another user" \
+  env \
+    TEST_TLS_KEY_OWNER_MISMATCH=1 \
+  "$manage" validate \
+    --manifest "$temporary_directory/release-manifest.json" \
+    --env-file "$temporary_directory/symlink-key.env"
+
+ln -s \
+  ../../archive/speak-up.top/missing.pem \
+  "$temporary_directory/certbot/live/speak-up.top/missing.pem"
+write_environment \
+  "$temporary_directory/dangling-key.env" \
+  "$temporary_directory/server.env" \
+  "$temporary_directory/fullchain.pem" \
+  "$temporary_directory/certbot/live/speak-up.top/missing.pem"
+expect_failure "dangling TLS certificate key symbolic link" \
+  "$manage" validate \
+    --manifest "$temporary_directory/release-manifest.json" \
+    --env-file "$temporary_directory/dangling-key.env"
 
 "$manage" render-nginx \
   --env-file "$temporary_directory/production.env" \

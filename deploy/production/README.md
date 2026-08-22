@@ -35,7 +35,8 @@ release. Its one-time creation belongs to the audited server bootstrap.
 - The external Server edge network exists with an audited, non-conflicting
   subnet and fixed gateway.
 - A non-empty Server environment file outside the repository.
-- A TLS certificate/key covering the selected Portal, redirect, and API hosts.
+- The existing `speak-up.top` certificate lineage safely expanded to the exact
+  Portal, redirect, and API SAN set through [`deploy/tls/`](../tls/README.md).
 - A populated ACME web root.
 - Registry read access for the manifest's Portal and Server image digests.
 
@@ -54,6 +55,18 @@ install -m 0600 deploy/production/production.env.example \
 install -m 0600 /secure/source/production-server.env \
   /etc/speakup/production-server.env
 ```
+
+Preserve the existing Production Certbot configuration and webroot. The TLS
+lifecycle contract adds only an `api.speak-up.top` bootstrap vhost, expands the
+existing `speak-up.top` lineage with the same webroot, and validates the exact
+three-name certificate before this deployment template may use it. The
+certificate paths here must stay aligned with `TLS_CERTBOT_CONFIG_ROOT`.
+Keep the private-key setting on Certbot's stable
+`live/speak-up.top/privkey.pem` symbolic link: validation resolves the current
+archive target and requires that target to be a non-empty regular file owned by
+the invoking user with mode `0400` or `0600`. Renewal therefore does not require
+an environment-file edit. Other secret files remain regular-file-only and may
+not be symbolic links.
 
 `PRODUCTION_POSTGRES_PASSWORD` is restricted to at least 24 URL-safe
 characters because it is inserted into a PostgreSQL URL. `PORTAL_ADMIN_PASSWORD`
