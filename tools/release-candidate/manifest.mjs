@@ -18,6 +18,13 @@ const sha256Pattern = /^[0-9a-f]{64}$/;
 const imageDigestPattern = /^sha256:[0-9a-f]{64}$/;
 const gitShaPattern = /^[0-9a-f]{40}$/;
 const versionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+const applicationIdPattern =
+  /^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$/;
+const androidReleaseContract = {
+  application_id: "com.xengineer.speakup",
+  minimum_android_api: 24,
+  abis: ["arm64-v8a"],
+};
 const imagePattern =
   /^ghcr\.io\/[a-z0-9]+(?:[._-][a-z0-9]+)*\/[a-z0-9]+(?:[._/-][a-z0-9]+)*$/;
 const repositoryPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -84,8 +91,48 @@ function apkArtifact(filePath, expectedName, name) {
   }
   return {
     file: expectedName,
+    size_bytes: status.size,
     sha256: createHash("sha256").update(readFileSync(resolved)).digest("hex"),
   };
+}
+
+function androidApkMetadata(input, prefix) {
+  const applicationId = matches(
+    required(input, `${prefix}_APK_APPLICATION_ID`),
+    applicationIdPattern,
+    `${prefix}_APK_APPLICATION_ID`,
+  );
+  const minimumAndroidApi = Number(
+    required(input, `${prefix}_APK_MINIMUM_ANDROID_API`),
+  );
+  if (!Number.isSafeInteger(minimumAndroidApi) || minimumAndroidApi < 1) {
+    throw new Error(`${prefix}_APK_MINIMUM_ANDROID_API must be a positive integer`);
+  }
+  const abis = required(input, `${prefix}_APK_ABIS`).split(",");
+  const supportedAbis = new Set(["armeabi-v7a", "arm64-v8a", "x86", "x86_64"]);
+  if (
+    abis.some((abi) => !supportedAbis.has(abi)) ||
+    new Set(abis).size !== abis.length
+  ) {
+    throw new Error(`${prefix}_APK_ABIS has an invalid value`);
+  }
+  return {
+    application_id: applicationId,
+    minimum_android_api: minimumAndroidApi,
+    abis,
+  };
+}
+
+function matchingAndroidApkMetadata(input) {
+  const staging = androidApkMetadata(input, "STAGING");
+  const production = androidApkMetadata(input, "PRODUCTION");
+  if (JSON.stringify(staging) !== JSON.stringify(production)) {
+    throw new Error("Staging and Production APK metadata do not match");
+  }
+  if (JSON.stringify(production) !== JSON.stringify(androidReleaseContract)) {
+    throw new Error("Android APK metadata does not match the release contract");
+  }
+  return production;
 }
 
 export function createReleaseManifest(input, metadata) {
@@ -115,6 +162,7 @@ export function createReleaseManifest(input, metadata) {
     `speakup-v${version}-production-arm64.apk`,
     "PRODUCTION_APK_PATH",
   );
+  const androidMetadata = matchingAndroidApkMetadata(input);
 
   return {
     manifest_version: 1,
@@ -136,7 +184,9 @@ export function createReleaseManifest(input, metadata) {
     staging_apk_file: stagingApk.file,
     staging_apk_sha256: stagingApk.sha256,
     production_apk_file: productionApk.file,
+    production_apk_size_bytes: productionApk.size_bytes,
     production_apk_sha256: productionApk.sha256,
+    ...androidMetadata,
     apk_certificate_sha256: certificateSha256(
       required(input, "APK_CERTIFICATE_SHA256"),
     ),

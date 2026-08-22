@@ -58,6 +58,12 @@ function validManifestFixture() {
       SERVER_IMAGE_DIGEST: `sha256:${"b".repeat(64)}`,
       STAGING_APK_PATH: stagingApk,
       PRODUCTION_APK_PATH: productionApk,
+      STAGING_APK_APPLICATION_ID: "com.xengineer.speakup",
+      STAGING_APK_MINIMUM_ANDROID_API: "24",
+      STAGING_APK_ABIS: "arm64-v8a",
+      PRODUCTION_APK_APPLICATION_ID: "com.xengineer.speakup",
+      PRODUCTION_APK_MINIMUM_ANDROID_API: "24",
+      PRODUCTION_APK_ABIS: "arm64-v8a",
       APK_CERTIFICATE_SHA256: "c".repeat(64),
       GITHUB_REPOSITORY: "1024XEngineer/XE3-ESL",
       QUALITY_RUN_URL: "https://github.com/1024XEngineer/XE3-ESL/actions/runs/1",
@@ -274,6 +280,13 @@ test("derives the manifest from validated build artifacts", () => {
   );
   assert.equal(manifest.database_schema_version, 7);
   assert.equal(manifest.portal_image_digest, input.PORTAL_IMAGE_DIGEST);
+  assert.equal(
+    manifest.production_apk_size_bytes,
+    Buffer.byteLength("production apk"),
+  );
+  assert.equal(manifest.application_id, "com.xengineer.speakup");
+  assert.equal(manifest.minimum_android_api, 24);
+  assert.deepEqual(manifest.abis, ["arm64-v8a"]);
 });
 
 test("writes the validated manifest atomically through the CLI", () => {
@@ -382,4 +395,55 @@ test("rejects invalid APKs, image references, digests, and quality run URLs", ()
     ),
     /QUALITY_RUN_URL has an invalid value/,
   );
+});
+
+test("rejects missing, invalid, or inconsistent Android APK metadata", () => {
+  const { input, metadata } = validManifestFixture();
+  assert.throws(
+    () => createReleaseManifest(
+      { ...input, PRODUCTION_APK_APPLICATION_ID: "" },
+      metadata,
+    ),
+    /PRODUCTION_APK_APPLICATION_ID is required/,
+  );
+  assert.throws(
+    () => createReleaseManifest(
+      { ...input, PRODUCTION_APK_MINIMUM_ANDROID_API: "0" },
+      metadata,
+    ),
+    /must be a positive integer/,
+  );
+  assert.throws(
+    () => createReleaseManifest(
+      { ...input, PRODUCTION_APK_ABIS: "arm64-v8a,arm64-v8a" },
+      metadata,
+    ),
+    /PRODUCTION_APK_ABIS has an invalid value/,
+  );
+  assert.throws(
+    () => createReleaseManifest(
+      { ...input, STAGING_APK_APPLICATION_ID: "com.xengineer.staging" },
+      metadata,
+    ),
+    /Staging and Production APK metadata do not match/,
+  );
+  for (const forged of [
+    {
+      STAGING_APK_APPLICATION_ID: "com.example.fake",
+      PRODUCTION_APK_APPLICATION_ID: "com.example.fake",
+    },
+    {
+      STAGING_APK_MINIMUM_ANDROID_API: "25",
+      PRODUCTION_APK_MINIMUM_ANDROID_API: "25",
+    },
+    {
+      STAGING_APK_ABIS: "x86",
+      PRODUCTION_APK_ABIS: "x86",
+    },
+  ]) {
+    assert.throws(
+      () => createReleaseManifest({ ...input, ...forged }, metadata),
+      /Android APK metadata does not match the release contract/,
+    );
+  }
 });

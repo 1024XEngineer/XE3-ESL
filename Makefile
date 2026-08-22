@@ -251,6 +251,7 @@ check-api-contracts: check-api-dependencies
 	cd api && npm run check
 
 check-release-candidate:
+	./tools/android-release/verify.test.sh
 	node --test tools/release-candidate/*.test.mjs
 
 check-staging-deploy:
