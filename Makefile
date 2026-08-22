@@ -23,6 +23,7 @@ SHELL := /bin/bash
 	check-api \
 	check-api-dependencies \
 	check-api-contracts \
+	check-release-candidate \
 	dev-android \
 	dev-ios-simulator \
 	build-android-release-staging \
@@ -44,6 +45,7 @@ help:
 		'  make check-kodo-live Run the real Kodo lifecycle test with exported QINIU_* variables' \
 		'  make check-resume-ocr-live Run the PaddleOCR hosted API test with an explicit PDF' \
 		'  make check-api      Validate OpenAPI, JSON Schema, and contract fixtures' \
+		'  make check-release-candidate  Validate release metadata and manifest tooling' \
 		'  make dev-android    Start the backend and run the App on an Android device' \
 		'  make dev-ios-simulator  Start the backend on an iOS Simulator' \
 		'  make build-android-release-staging  Build the signed staging arm64 APK' \
@@ -243,6 +245,9 @@ check-api-dependencies:
 
 check-api-contracts: check-api-dependencies
 	cd api && npm run check
+
+check-release-candidate:
+	node --test tools/release-candidate/*.test.mjs
 
 dev-android:
 	./tools/android-dev/run.sh
