@@ -212,6 +212,10 @@ Check 严格模式已暂缓，不在本阶段擅自重新启用。
   "server_image_digest": "sha256:...",
   "staging_apk_sha256": "...",
   "production_apk_sha256": "...",
+  "production_apk_size_bytes": 12345678,
+  "application_id": "com.xengineer.speakup",
+  "minimum_android_api": 24,
+  "abis": ["arm64-v8a"],
   "database_schema_version": "...",
   "quality_run_url": "..."
 }

@@ -86,6 +86,7 @@ badging="$("$aapt" dump badging "$apk")"
 application_id="$(printf '%s\n' "$badging" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")"
 version_code="$(printf '%s\n' "$badging" | sed -n "s/^package: .* versionCode='\([^']*\)'.*/\1/p")"
 version_name="$(printf '%s\n' "$badging" | sed -n "s/^package: .* versionName='\([^']*\)'.*/\1/p")"
+minimum_android_api="$(printf '%s\n' "$badging" | sed -n "s/^sdkVersion:'\([^']*\)'.*/\1/p")"
 native_code="$(printf '%s\n' "$badging" | sed -n '/^native-code:/p')"
 pubspec_version="$(
   sed -n -E \
@@ -109,6 +110,10 @@ expected_version_code="${BASH_REMATCH[2]}"
 }
 [[ "$version_name" == "$expected_version_name" ]] || {
   printf 'Unexpected versionName: %s\n' "$version_name" >&2
+  exit 1
+}
+[[ "$minimum_android_api" == "24" ]] || {
+  printf 'Unexpected minimum Android API: %s\n' "$minimum_android_api" >&2
   exit 1
 }
 [[ "$native_code" == "native-code: 'arm64-v8a'" ]] || {
@@ -149,6 +154,7 @@ printf '%s\n' \
   "applicationId=$application_id" \
   "versionName=$version_name" \
   "versionCode=$version_code" \
+  "minimumAndroidApi=$minimum_android_api" \
   'abi=arm64-v8a' \
   'signature=verified' \
   "certificateSha256=$certificate_sha256" \

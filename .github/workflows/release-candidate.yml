@@ -314,6 +314,7 @@ jobs:
           path: ${{ runner.temp }}/release-apks
 
       - name: Reverify downloaded Android artifacts
+        id: apk_metadata
         env:
           APK_CERTIFICATE_FILE: ${{ runner.temp }}/release-apks/apk-certificate-sha256.txt
           VERSION: ${{ needs.metadata.outputs.version }}
@@ -325,16 +326,53 @@ jobs:
             cd "$RUNNER_TEMP/release-apks"
             sha256sum --check SHA256SUMS
           )
-          ./tools/android-release/verify.sh \
-            "$RUNNER_TEMP/release-apks/speakup-v$VERSION-staging-arm64.apk"
-          ./tools/android-release/verify.sh \
-            "$RUNNER_TEMP/release-apks/speakup-v$VERSION-production-arm64.apk"
+          staging_report="$(
+            ./tools/android-release/verify.sh \
+              "$RUNNER_TEMP/release-apks/speakup-v$VERSION-staging-arm64.apk"
+          )"
+          production_report="$(
+            ./tools/android-release/verify.sh \
+              "$RUNNER_TEMP/release-apks/speakup-v$VERSION-production-arm64.apk"
+          )"
+
+          report_value() {
+            local report=$1
+            local key=$2
+            local value
+            value="$(sed -n "s/^${key}=//p" <<< "$report")"
+            if [[ -z "$value" || "$value" == *$'\n'* ]]; then
+              printf 'APK verification report has invalid %s.\n' "$key" >&2
+              return 1
+            fi
+            printf '%s\n' "$value"
+          }
+
+          {
+            printf 'staging_application_id=%s\n' \
+              "$(report_value "$staging_report" applicationId)"
+            printf 'staging_minimum_android_api=%s\n' \
+              "$(report_value "$staging_report" minimumAndroidApi)"
+            printf 'staging_abis=%s\n' \
+              "$(report_value "$staging_report" abi)"
+            printf 'production_application_id=%s\n' \
+              "$(report_value "$production_report" applicationId)"
+            printf 'production_minimum_android_api=%s\n' \
+              "$(report_value "$production_report" minimumAndroidApi)"
+            printf 'production_abis=%s\n' \
+              "$(report_value "$production_report" abi)"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Generate manifest from immutable build outputs
         env:
           APK_CERTIFICATE_FILE: ${{ runner.temp }}/release-apks/apk-certificate-sha256.txt
           PORTAL_IMAGE_DIGEST: ${{ needs.images.outputs.portal_digest }}
           SERVER_IMAGE_DIGEST: ${{ needs.images.outputs.server_digest }}
+          STAGING_APK_APPLICATION_ID: ${{ steps.apk_metadata.outputs.staging_application_id }}
+          STAGING_APK_MINIMUM_ANDROID_API: ${{ steps.apk_metadata.outputs.staging_minimum_android_api }}
+          STAGING_APK_ABIS: ${{ steps.apk_metadata.outputs.staging_abis }}
+          PRODUCTION_APK_APPLICATION_ID: ${{ steps.apk_metadata.outputs.production_application_id }}
+          PRODUCTION_APK_MINIMUM_ANDROID_API: ${{ steps.apk_metadata.outputs.production_minimum_android_api }}
+          PRODUCTION_APK_ABIS: ${{ steps.apk_metadata.outputs.production_abis }}
           QUALITY_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           VERSION: ${{ needs.metadata.outputs.version }}
         run: |
