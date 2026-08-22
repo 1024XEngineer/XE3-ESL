@@ -1,4 +1,9 @@
-# SpeakUp Portal 生产部署
+# SpeakUp Portal legacy 生产部署
+
+> 本目录只保留现网 Portal-only 启动和 SQLite 备份的历史说明。新的 Release
+> Candidate 禁止执行本目录的源码 `up --build`；请使用仓库根目录
+> `deploy/production/` 的不可变制品契约。该契约当前只有只读校验入口，正式切换必须
+> 等生产备份、migration 与回滚编排完成审核。
 
 本目录用于把 `prototype/` 作为独立的外部 Live Demo 部署到
 `speak-up.top`。正式 Flutter 客户端和 Go 服务不依赖此部署。
@@ -170,7 +175,7 @@ curl --fail --location https://speak-up.top/
 /usr/local/nginx/sbin/nginx -t
 ```
 
-更新代码后，在 `/opt/xe3-speakup-portal/` 重新执行：
+以下旧命令仅用于识别历史部署方式，禁止用于新的 Release Candidate：
 
 ```sh
 docker compose -f deploy/compose.yaml up -d --build

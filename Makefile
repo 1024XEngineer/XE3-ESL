@@ -24,6 +24,8 @@ SHELL := /bin/bash
 	check-api-dependencies \
 	check-api-contracts \
 	check-release-candidate \
+	check-production-deploy \
+	check-production-nginx \
 	check-staging-deploy \
 	check-staging-nginx \
 	dev-android \
@@ -48,6 +50,8 @@ help:
 		'  make check-resume-ocr-live Run the PaddleOCR hosted API test with an explicit PDF' \
 		'  make check-api      Validate OpenAPI, JSON Schema, and contract fixtures' \
 		'  make check-release-candidate  Validate release metadata and manifest tooling' \
+		'  make check-production-deploy  Validate the immutable Production contract' \
+		'  make check-production-nginx  Run nginx -t against the Production template' \
 		'  make check-staging-deploy  Validate the immutable Staging deployment contract' \
 		'  make check-staging-nginx  Run nginx -t against the rendered Staging template' \
 		'  make dev-android    Start the backend and run the App on an Android device' \
@@ -253,6 +257,12 @@ check-api-contracts: check-api-dependencies
 check-release-candidate:
 	./tools/android-release/verify.test.sh
 	node --test tools/release-candidate/*.test.mjs
+
+check-production-deploy:
+	./deploy/production/test.sh
+
+check-production-nginx:
+	./deploy/production/test-nginx.sh
 
 check-staging-deploy:
 	./deploy/staging/test.sh
