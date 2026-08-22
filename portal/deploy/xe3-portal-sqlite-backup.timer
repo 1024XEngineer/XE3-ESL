@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the SpeakUp Portal SQLite backup daily
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+Unit=xe3-portal-sqlite-backup.service
+
+[Install]
+WantedBy=timers.target

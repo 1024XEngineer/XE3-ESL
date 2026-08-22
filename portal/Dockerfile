@@ -18,6 +18,7 @@ WORKDIR /app
 COPY --from=build --chown=node:node /app/package.json /app/package-lock.json ./
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
+COPY --from=build /app/ops/portal-sqlite-backup.mjs ./ops/portal-sqlite-backup.mjs
 
 RUN mkdir -p .wrangler && chown node:node .wrangler
 
