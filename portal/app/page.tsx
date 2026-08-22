@@ -1,177 +1,90 @@
-import EarlyAccessDialog from "./EarlyAccessDialog";
+import Link from "next/link";
 import BrandMark from "./BrandMark";
-import PracticeShowcase from "./PracticeShowcase";
 
-const earlyAccessHref = "#early-access";
-
-const flowingTasks = [
-  "我下周有一场英文面试",
-  "明天要第一次独自去医院",
-  "我要向海外客户汇报项目",
-  "帮我准备 IELTS Part 2",
-  "我要参加第一次全英文会议",
-  "帮我和房东说明维修问题",
-  "下周要做一次英文产品演示",
-  "我要准备海外大学课堂发言",
+const steps = [
+  { number: "01", title: "说清楚你要面对什么", copy: "英文面试、工作汇报、考试或生活沟通——从下一件真实发生的事开始。" },
+  { number: "02", title: "围绕目标反复开口", copy: "SpeakUp 组织针对性练习、模拟对话并给出反馈，不让准备停在背答案。" },
+  { number: "03", title: "把进展带到下一次", copy: "你的目标、经历和卡点会成为后续练习的上下文，让每一轮真正接得上。" },
 ];
 
-const flowingTaskLoop = `${flowingTasks.join(" · ")} · ${flowingTasks.join(" · ")} · `;
+const releasePromises = [
+  ["唯一官方下载", "APK 就绪前不放空链接、临时二维码或未经核验的文件。"],
+  ["制品信息完整", "版本、发布时间、兼容范围、文件大小与 ABI 会随 APK 一起公开。"],
+  ["可以独立验证", "APK 文件 SHA-256 与签名证书 SHA-256 分开提供。"],
+];
+
+const faqs = [
+  ["现在可以下载 Android 版吗？", "还不可以。首个正式 APK 正在准备，完成正式签名和生产验证后才会开放入口。"],
+  ["为什么现在不先放一个测试包？", "公开下载页只承载可追溯的正式制品，避免测试包、临时链接和正式版本混在一起。"],
+  ["开放下载时会提供什么？", "会同时提供版本、系统要求、文件大小、ABI、文件 SHA-256、签名证书 SHA-256、安装说明与更新记录。"],
+];
 
 export default function Home() {
   return (
-    <main>
-      <nav className="site-nav" aria-label="主导航">
-        <a className="brand" href="#top" aria-label="SpeakUp 首页">
-          <BrandMark />
-          <span>SpeakUp</span>
-        </a>
-        <div className="nav-links">
-          <a href="#use-cases">适用阶段</a>
-          <a href="#memory">长期记忆</a>
-        </div>
-        <a className="button button-small" href={earlyAccessHref} data-scenario="英文面试">
-          申请体验
-        </a>
+    <main className="release-site" id="top">
+      <nav className="site-nav release-nav" aria-label="主导航">
+        <a className="brand" href="#top" aria-label="SpeakUp 首页"><BrandMark /><span>SpeakUp</span></a>
+        <div className="nav-links"><a href="#method">怎么练</a><a href="#download">Android 发布</a></div>
+        <Link className="button button-small" href="/download/android">查看下载状态</Link>
       </nav>
 
-      <header className="hero" id="top">
-        <div className="hero-copy">
-          <h1>
-            <span className="headline-muted">下一场重要的英文沟通，</span>
-            <br />
-            先和 SpeakUp 练一遍。
-          </h1>
-          <p className="hero-subtitle">
-            一个有记忆、越用越懂你的 AI 口语老师。
-          </p>
-          <div className="button-group">
-            <a className="button" href={earlyAccessHref} data-scenario="英文面试">
-              告诉 SpeakUp，我要准备什么 <span aria-hidden="true">↗</span>
-            </a>
-            <a className="button button-secondary" href="#use-cases">
-              看看适用阶段
-            </a>
+      <header className="release-hero">
+        <div className="release-hero-copy">
+          <p className="eyebrow">有记忆的 AI 口语老师</p>
+          <h1>下一场重要的英文沟通，先和 SpeakUp 练一遍。</h1>
+          <p className="release-hero-subtitle">围绕你真正要面对的任务，准备、开口、复盘。不是背一套标准答案，而是把自己的经历练成说得出口的表达。</p>
+          <div className="release-actions">
+            <Link className="button" href="/download/android">查看 Android 发布状态 <span aria-hidden="true">↗</span></Link>
+            <span className="release-status"><i aria-hidden="true" />首个 APK 正在准备</span>
           </div>
         </div>
 
-        <div
-          className="scenario-flow"
-          role="img"
-          aria-label={`可以告诉 SpeakUp 的真实任务：${flowingTasks.join("；")}`}
-        >
-          <div className="scenario-flow-stage" aria-hidden="true">
-            <svg viewBox="0 0 1200 240" preserveAspectRatio="xMidYMid meet">
-              <defs>
-                <path
-                  id="scenario-flow-input-path"
-                  d="M -40 196 C 180 208 330 190 470 158 C 610 126 720 102 840 108 C 980 116 1100 82 1240 48"
-                />
-              </defs>
-
-              <text className="scenario-flow-copy scenario-flow-copy-muted scenario-flow-copy-motion">
-                <textPath href="#scenario-flow-input-path" startOffset="-50%">
-                  {flowingTaskLoop}
-                  <animate attributeName="startOffset" from="-50%" to="0%" dur="2.2s" repeatCount="indefinite" />
-                </textPath>
-              </text>
-              <text className="scenario-flow-copy scenario-flow-copy-muted scenario-flow-copy-static">
-                <textPath href="#scenario-flow-input-path" startOffset="4%">
-                  {flowingTaskLoop}
-                </textPath>
-              </text>
-            </svg>
-
-            <div className="scenario-flow-agent">
-              <span className="scenario-flow-listener">
-                <span className="scenario-flow-wave">
-                  <i /><i /><i /><i /><i /><i /><i /><i /><i />
-                </span>
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <div className="hero-product" aria-label="SpeakUp 根据目标准备后端开发英文面试练习示例">
-          <div className="hero-product-copy">
-            <span className="demo-label">一句话开始 · 后端开发面试</span>
-            <p className="demo-question">我下周要面试后端开发工程师，想提前练一下。</p>
-            <div className="voice-answer">
-              <span className="voice-icon" aria-hidden="true">●</span>
-              <div className="voice-bars" aria-hidden="true">
-                <i /><i /><i /><i /><i /><i /><i /><i />
-              </div>
-              <span>0:16</span>
-            </div>
-            <p className="demo-answer">可以。先选你最想练的方向，我会为你准备一场贴近真实面试的英文练习。</p>
-            <div className="instant-feedback">
-              <span>已为你准备好</span>
-              <p><strong>项目经历深挖</strong> · 你是候选人，AI 是英文技术面试官</p>
-            </div>
-          </div>
-          <div className="hero-phone">
-            <img
-              src="/assets/portal-shots/portal-interview-practice.png"
-              alt="SpeakUp 根据后端开发面试目标准备项目经历深挖练习"
-            />
-          </div>
-          <span className="floating-chip chip-top">按目标生成练习</span>
-          <span className="floating-chip chip-bottom">准备好就开练</span>
-        </div>
+        <figure className="release-product">
+          <span className="release-product-label">真实产品界面 · 英文面试</span>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/assets/portal-shots/portal-interview-practice.png" alt="SpeakUp 根据后端开发面试目标准备项目经历深挖练习" width="884" height="1832" />
+          <figcaption><strong>从一句真实需求开始</strong><span>按目标准备练习，准备好就直接开口。</span></figcaption>
+        </figure>
       </header>
 
-      <PracticeShowcase />
+      <section className="release-method" id="method" aria-labelledby="method-title">
+        <div className="release-section-heading"><p className="eyebrow">怎么练</p><h2 id="method-title">把“我要学英语”，变成下一次具体的准备。</h2></div>
+        <ol className="release-steps">
+          {steps.map((step) => <li key={step.number}><span>{step.number}</span><h3>{step.title}</h3><p>{step.copy}</p></li>)}
+        </ol>
+      </section>
 
-      <section className="context-section" id="memory">
-        <div className="context-shot">
-          <div className="context-shot-frame">
-            <img
-              src="/assets/portal-shots/portal-memory-chat.jpg"
-              alt="SpeakUp Memory 记录用户目标、真实项目、能力变化与下一轮重点"
-            />
-          </div>
+      <section className="release-memory" aria-labelledby="memory-title">
+        <div><p className="eyebrow eyebrow-light">长期记忆</p><h2 id="memory-title">这次练习里发生的事，下一次还记得。</h2></div>
+        <dl>
+          <div><dt>你的目标</dt><dd>下一次重要沟通是什么，想进入怎样的团队。</dd></div>
+          <div><dt>你的真实经历</dt><dd>做过哪些项目，哪些故事能成为表达素材。</dd></div>
+          <div><dt>你的能力变化</dt><dd>哪些问题反复卡住，哪些表达已经更自然。</dd></div>
+        </dl>
+      </section>
+
+      <section className="release-download" id="download" aria-labelledby="download-title">
+        <div className="release-download-copy">
+          <p className="eyebrow">Android 官方发布</p><h2 id="download-title">下载要直接，制品也要说得清楚。</h2>
+          <p>当前没有可公开下载和验证的正式 APK。页面先把发布规则讲明白，制品完成后再把唯一入口放出来。</p>
+          <Link className="button" href="/download/android">查看完整发布状态 <span aria-hidden="true">↗</span></Link>
         </div>
-        <div className="context-copy">
-          <p className="eyebrow eyebrow-light">越用越懂你</p>
-          <h2>每一次练习，<br />都留给下一次。</h2>
-          <p>SpeakUp 记住的不只是聊天记录，而是那些会改变下一轮教学的真实信息。</p>
-          <ul className="context-list">
-            <li>
-              <span>01</span>
-              <div><strong>你的目标</strong><small>想进入怎样的团队，下一次重要沟通是什么。</small></div>
-            </li>
-            <li>
-              <span>02</span>
-              <div><strong>你的真实经历</strong><small>做过哪些项目，哪些故事可以成为你的表达素材。</small></div>
-            </li>
-            <li>
-              <span>03</span>
-              <div><strong>你的能力变化</strong><small>哪些问题反复卡住，哪些表达已经真正变得自然。</small></div>
-            </li>
-            <li>
-              <span>04</span>
-              <div><strong>现实带回来的结果</strong><small>哪些题命中了，哪些新问题需要补进下一轮。</small></div>
-            </li>
-          </ul>
+        <dl className="release-promises">{releasePromises.map(([title, copy]) => <div key={title}><dt>{title}</dt><dd>{copy}</dd></div>)}</dl>
+      </section>
+
+      <section className="release-faq" aria-labelledby="faq-title">
+        <div className="release-section-heading release-section-heading-small"><p className="eyebrow">常见问题</p><h2 id="faq-title">下载前，先把关键问题讲明白。</h2></div>
+        <div className="release-faq-list">
+          {faqs.map(([question, answer]) => <details key={question}><summary>{question}<span aria-hidden="true">＋</span></summary><p>{answer}</p></details>)}
         </div>
       </section>
 
-      <section className="final-cta">
-        <p className="eyebrow eyebrow-light">从下一件必须说清楚的事开始</p>
-        <h2>告诉 SpeakUp，<br />接下来要面对什么。</h2>
-        <p>可以是一场雅思口语考试、英文面试，也可以是海外生活和工作里马上要发生的关键沟通。</p>
-        <div className="button-group">
-          <a className="button" href={earlyAccessHref} data-scenario="英文面试">开始一次任务准备 ↗</a>
-          <a className="button button-dark-secondary" href="#top">回到顶部</a>
-        </div>
+      <section className="release-final" aria-labelledby="final-title">
+        <div><p className="eyebrow">Android 版本准备中</p><h2 id="final-title">准备完成后，只从这里下载。</h2></div>
+        <Link className="button" href="/download/android">前往 Android 下载页 <span aria-hidden="true">↗</span></Link>
       </section>
 
-      <EarlyAccessDialog />
-
-      <footer>
-        <a className="brand" href="#top"><BrandMark /><span>SpeakUp</span></a>
-        <p>有记忆的 AI Agent 口语老师</p>
-        <span>© 2026 SpeakUp</span>
-      </footer>
+      <footer><a className="brand" href="#top"><BrandMark /><span>SpeakUp</span></a><p>为真实世界准备英文表达。</p><span>© 2026 SpeakUp</span></footer>
     </main>
   );
 }
