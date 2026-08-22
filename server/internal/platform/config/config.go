@@ -8,6 +8,8 @@ import (
 type Config struct {
 	Host               string
 	Port               string
+	MetricsHost        string
+	MetricsPort        string
 	LogLevel           string
 	DatabaseURL        string
 	TrustedProxyCIDRs  []string
@@ -18,6 +20,8 @@ func Load() Config {
 	return Config{
 		Host:               valueOrDefault("SERVER_HOST", "0.0.0.0"),
 		Port:               valueOrDefault("SERVER_PORT", "8080"),
+		MetricsHost:        valueOrDefault("METRICS_HOST", "127.0.0.1"),
+		MetricsPort:        valueOrDefault("METRICS_PORT", "9090"),
 		LogLevel:           valueOrDefault("LOG_LEVEL", "info"),
 		DatabaseURL:        os.Getenv("DATABASE_URL"),
 		TrustedProxyCIDRs:  splitCommaSeparated(os.Getenv("TRUSTED_PROXY_CIDRS")),
@@ -40,6 +44,10 @@ func splitCommaSeparated(value string) []string {
 }
 
 func (c Config) Address() string { return c.Host + ":" + c.Port }
+
+func (c Config) MetricsAddress() string {
+	return c.MetricsHost + ":" + c.MetricsPort
+}
 
 func valueOrDefault(key, fallback string) string {
 	if value := os.Getenv(key); value != "" {

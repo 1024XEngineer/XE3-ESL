@@ -36,6 +36,11 @@ const (
 	voiceASRFinalizationTimeMargin = 15 * time.Second
 )
 
+type httpServerResult struct {
+	name string
+	err  error
+}
+
 func main() {
 	os.Exit(run())
 }
@@ -551,7 +556,7 @@ func run() int {
 		evaluationWorkers.Run(ctx)
 	}()
 
-	router := app.NewRouterWithReadinessAndRoutes(
+	router, metricsHandler := app.NewObservableRouterWithReadinessAndRoutes(
 		logger,
 		databasePool,
 		[]app.RouteRegistrar{
@@ -570,18 +575,40 @@ func run() int {
 		Handler:           router,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
+	metricsServer := &http.Server{
+		Addr:              cfg.MetricsAddress(),
+		Handler:           metricsHandler,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
 
-	serverErrors := make(chan error, 1)
+	serverErrors := make(chan httpServerResult, 2)
 	go func() {
 		logger.Info("server started", slog.String("address", cfg.Address()))
-		serverErrors <- server.ListenAndServe()
+		serverErrors <- httpServerResult{
+			name: "application",
+			err:  server.ListenAndServe(),
+		}
+	}()
+	go func() {
+		logger.Info(
+			"metrics server started",
+			slog.String("address", cfg.MetricsAddress()),
+		)
+		serverErrors <- httpServerResult{
+			name: "metrics",
+			err:  metricsServer.ListenAndServe(),
+		}
 	}()
 
 	exitCode := 0
 	select {
-	case err := <-serverErrors:
-		if !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("server stopped unexpectedly", slog.Any("error", err))
+	case result := <-serverErrors:
+		if !errors.Is(result.err, http.ErrServerClosed) {
+			logger.Error(
+				"server stopped unexpectedly",
+				slog.String("server", result.name),
+				slog.Any("error", result.err),
+			)
 			exitCode = 1
 		}
 	case <-ctx.Done():
@@ -593,6 +620,13 @@ func run() int {
 	defer cancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		logger.Error("graceful shutdown failed", slog.Any("error", err))
+		exitCode = 1
+	}
+	if err := metricsServer.Shutdown(shutdownCtx); err != nil {
+		logger.Error(
+			"metrics server graceful shutdown failed",
+			slog.Any("error", err),
+		)
 		exitCode = 1
 	}
 	if mediaCleanupDone != nil {

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/apperror"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpobservability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpresponse"
 )
 
@@ -33,7 +35,8 @@ type ReadinessChecker interface {
 const readinessTimeout = 2 * time.Second
 
 func NewRouter(logger *slog.Logger, modules ...Module) *gin.Engine {
-	return newRouter(logger, nil, nil, modules...)
+	router, _ := newRouter(logger, nil, nil, modules...)
+	return router
 }
 
 func NewRouterWithReadiness(
@@ -41,7 +44,8 @@ func NewRouterWithReadiness(
 	readiness ReadinessChecker,
 	modules ...Module,
 ) *gin.Engine {
-	return newRouter(logger, readiness, nil, modules...)
+	router, _ := newRouter(logger, readiness, nil, modules...)
+	return router
 }
 
 // NewRouterWithReadinessAndRoutes mounts infrastructure route registrars
@@ -52,6 +56,18 @@ func NewRouterWithReadinessAndRoutes(
 	routes []RouteRegistrar,
 	modules ...Module,
 ) *gin.Engine {
+	router, _ := newRouter(logger, readiness, routes, modules...)
+	return router
+}
+
+// NewObservableRouterWithReadinessAndRoutes returns the public application
+// router and a separate handler for the internal metrics listener.
+func NewObservableRouterWithReadinessAndRoutes(
+	logger *slog.Logger,
+	readiness ReadinessChecker,
+	routes []RouteRegistrar,
+	modules ...Module,
+) (*gin.Engine, http.Handler) {
 	return newRouter(logger, readiness, routes, modules...)
 }
 
@@ -60,10 +76,11 @@ func newRouter(
 	readiness ReadinessChecker,
 	routes []RouteRegistrar,
 	modules ...Module,
-) *gin.Engine {
+) (*gin.Engine, http.Handler) {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
-	router.Use(gin.Recovery(), requestLogger(logger))
+	observer := httpobservability.New(logger)
+	router.Use(observer.Middleware(), gin.RecoveryWithWriter(io.Discard))
 	errorRenderer := httpresponse.NewRenderer(nil)
 
 	moduleNames := make([]string, 0, len(modules))
@@ -114,7 +131,7 @@ func newRouter(
 		))
 	})
 
-	return router
+	return router, observer.MetricsHandler()
 }
 
 func writeUnavailableReadiness(c *gin.Context) {
@@ -124,17 +141,4 @@ func writeUnavailableReadiness(c *gin.Context) {
 			"database": "unavailable",
 		},
 	})
-}
-
-func requestLogger(logger *slog.Logger) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		startedAt := time.Now()
-		c.Next()
-		logger.InfoContext(c.Request.Context(), "http request",
-			slog.String("method", c.Request.Method),
-			slog.String("path", c.Request.URL.Path),
-			slog.Int("status", c.Writer.Status()),
-			slog.Duration("duration", time.Since(startedAt)),
-		)
-	}
 }
