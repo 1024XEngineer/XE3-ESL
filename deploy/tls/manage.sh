@@ -259,7 +259,6 @@ validate_prepared_certbot_image() {
   local digest_found=false
 
   inspect_output=$(docker image inspect \
-    --platform "$certbot_platform" \
     --format '{{println .Os}}{{println .Architecture}}{{range .RepoDigests}}{{println .}}{{end}}' \
     "$certbot_image" 2>/dev/null) ||
     fail "the fixed Certbot image is not prepared; run prepare-image"

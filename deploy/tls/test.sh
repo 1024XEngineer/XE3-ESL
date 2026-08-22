@@ -207,8 +207,7 @@ case "${1:-}" in
     ;;
   image)
     [[ "${2:-}" == inspect && -f "$FAKE_DOCKER_IMAGE_STATE" ]] || exit 1
-    [[ "${3:-}" == --platform && "${4:-}" == linux/amd64 &&
-      "${5:-}" == --format && "${7:-}" == "$FAKE_CERTBOT_IMAGE" && $# == 7 ]] || exit 2
+    [[ "${3:-}" == --format && "${5:-}" == "$FAKE_CERTBOT_IMAGE" && $# == 5 ]] || exit 2
     printf "%s\n" \
       "${FAKE_DOCKER_IMAGE_OS:-linux}" \
       "${FAKE_DOCKER_IMAGE_ARCHITECTURE:-amd64}" \
