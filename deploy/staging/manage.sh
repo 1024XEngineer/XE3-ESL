@@ -79,6 +79,160 @@ path_identity() {
   printf '%s\n' "$identity"
 }
 
+path_lstat_mode() {
+  local path=$1
+  local mode
+
+  if mode=$(stat -c '%a' -- "$path" 2>/dev/null); then
+    :
+  elif mode=$(stat -f '%Lp' "$path" 2>/dev/null); then
+    :
+  else
+    return 1
+  fi
+  printf '%s\n' "$mode"
+}
+
+path_lstat_owner() {
+  local path=$1
+  local owner
+
+  if owner=$(stat -c '%u' -- "$path" 2>/dev/null); then
+    :
+  elif owner=$(stat -f '%u' "$path" 2>/dev/null); then
+    :
+  else
+    return 1
+  fi
+  printf '%s\n' "$owner"
+}
+
+path_lstat_identity() {
+  local path=$1
+  local identity
+
+  if identity=$(stat -c '%i' -- "$path" 2>/dev/null); then
+    :
+  elif identity=$(stat -f '%i' "$path" 2>/dev/null); then
+    :
+  else
+    return 1
+  fi
+  printf '%s\n' "$identity"
+}
+
+safe_ancestor_mode() {
+  local mode=$1
+  local permissions
+
+  [[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+  permissions=${mode: -3}
+  if [[ "${permissions:1:1}" != [2367] &&
+    "${permissions:2:1}" != [2367] ]]; then
+    return 0
+  fi
+
+  # A root/current-UID sticky directory such as /tmp cannot have an existing
+  # child replaced by another UID. Other group/world-writable ancestors are
+  # unsafe for deployment inputs.
+  [[ ${#mode} -eq 4 && "${mode:0:1}" == [1357] ]]
+}
+
+require_safe_path_ancestors() {
+  local description=$1
+  local path=$2
+  local parent remaining component current=/ owner mode identity
+  local -a components
+
+  valid_absolute_path "$path" ||
+    fail "$description must use a safe absolute path: $path"
+  parent=$(path_parent "$path")
+  remaining=${parent#/}
+  IFS='/' read -r -a components <<< "$remaining"
+
+  for component in "" "${components[@]}"; do
+    if [[ -n "$component" ]]; then
+      if [[ "$current" == / ]]; then
+        current="/$component"
+      else
+        current="$current/$component"
+      fi
+    fi
+    [[ ! -L "$current" ]] ||
+      fail "$description has a symbolic-link ancestor: $current"
+    identity=$(path_lstat_identity "$current") ||
+      fail "cannot inspect identity for $description ancestor: $current"
+    [[ -d "$current" && -x "$current" ]] ||
+      fail "$description ancestor is not a searchable directory: $current"
+    owner=$(path_lstat_owner "$current") ||
+      fail "cannot inspect owner for $description ancestor: $current"
+    [[ "$owner" == 0 || "$owner" == "$(id -u)" ]] ||
+      fail "$description ancestor has an untrusted owner: $current"
+    mode=$(path_lstat_mode "$current") ||
+      fail "cannot inspect permissions for $description ancestor: $current"
+    safe_ancestor_mode "$mode" ||
+      fail "$description ancestor has unsafe permissions: $current"
+    [[ ! -L "$current" &&
+      "$(path_lstat_identity "$current")" == "$identity" ]] ||
+      fail "$description ancestor changed during validation: $current"
+  done
+}
+
+normalize_absolute_path() {
+  local path=$1
+  local component normalized=
+  local -a components stack
+
+  [[ "$path" == /* && "$path" =~ ^/[A-Za-z0-9._/-]+$ ]] || return 1
+  IFS='/' read -r -a components <<< "$path"
+  for component in "${components[@]}"; do
+    case "$component" in
+      "" | .)
+        ;;
+      ..)
+        ((${#stack[@]} > 0)) || return 1
+        unset "stack[$((${#stack[@]} - 1))]"
+        ;;
+      *)
+        stack+=("$component")
+        ;;
+    esac
+  done
+  for component in "${stack[@]}"; do
+    normalized="$normalized/$component"
+  done
+  printf '%s\n' "${normalized:-/}"
+}
+
+resolve_allowed_final_symlink() {
+  local description=$1
+  local file=$2
+  local link_target resolved
+
+  require_safe_path_ancestors "$description" "$file"
+  if [[ ! -L "$file" ]]; then
+    printf '%s\n' "$file"
+    return
+  fi
+
+  link_target=$(readlink "$file") ||
+    fail "cannot read $description symbolic link: $file"
+  if [[ "$link_target" == /* ]]; then
+    resolved=$(normalize_absolute_path "$link_target") ||
+      fail "$description symbolic-link target is unsafe: $file"
+  else
+    resolved=$(normalize_absolute_path \
+      "$(path_parent "$file")/$link_target") ||
+      fail "$description symbolic-link target is unsafe: $file"
+  fi
+  require_safe_path_ancestors "$description target" "$resolved"
+  [[ ! -L "$resolved" ]] ||
+    fail "$description symbolic-link target must not be another link: $resolved"
+  [[ -L "$file" && "$(readlink "$file")" == "$link_target" ]] ||
+    fail "$description symbolic link changed during validation: $file"
+  printf '%s\n' "$resolved"
+}
+
 require_current_owner() {
   local description=$1
   local path=$2
@@ -104,6 +258,7 @@ require_private_file() {
   local file=$2
   local mode
 
+  require_safe_path_ancestors "$description" "$file"
   [[ ! -L "$file" ]] || fail "$description must not be a symbolic link: $file"
   require_regular_file "$description" "$file"
   require_current_owner "$description" "$file"
@@ -121,14 +276,16 @@ require_private_file() {
 require_private_key_file() {
   local description=$1
   local file=$2
+  local target
   local mode
 
-  # Certbot's stable live/privkey.pem path is a symlink. All checks below use
-  # dereferencing stat and therefore apply to its current archive target.
-  require_regular_file "$description" "$file"
-  require_current_owner "$description target" "$file"
-  mode=$(path_mode "$file") ||
-    fail "cannot inspect permissions for $description target: $file"
+  # Only TLS inputs permit a final Certbot live/*.pem symlink. The declared
+  # path, resolved archive target, and both ancestor chains are validated.
+  target=$(resolve_allowed_final_symlink "$description" "$file")
+  require_regular_file "$description" "$target"
+  require_current_owner "$description target" "$target"
+  mode=$(path_mode "$target") ||
+    fail "cannot inspect permissions for $description target: $target"
   case "$mode" in
     400 | 600)
       ;;
@@ -140,12 +297,14 @@ require_private_key_file() {
 
 require_public_certificate() {
   local file=$1
+  local target
   local mode
 
-  require_regular_file "TLS certificate" "$file"
-  require_current_owner "TLS certificate" "$file"
-  mode=$(path_mode "$file") ||
-    fail "cannot inspect permissions for TLS certificate: $file"
+  target=$(resolve_allowed_final_symlink "TLS certificate" "$file")
+  require_regular_file "TLS certificate" "$target"
+  require_current_owner "TLS certificate target" "$target"
+  mode=$(path_mode "$target") ||
+    fail "cannot inspect permissions for TLS certificate target: $target"
   case "$mode" in
     400 | 440 | 444 | 600 | 640 | 644)
       ;;
@@ -161,6 +320,7 @@ require_owned_directory() {
   local allowed_modes=$3
   local mode
 
+  require_safe_path_ancestors "$description" "$directory"
   [[ ! -L "$directory" ]] ||
     fail "$description must not be a symbolic link: $directory"
   [[ -d "$directory" ]] || fail "$description does not exist: $directory"

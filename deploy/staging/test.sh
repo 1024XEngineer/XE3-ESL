@@ -77,6 +77,7 @@ write_manifest() {
 }
 
 temporary_directory=$(mktemp -d)
+temporary_directory=$(cd "$temporary_directory" && pwd -P)
 readonly temporary_directory
 trap 'rm -rf "$temporary_directory"' EXIT
 
@@ -220,6 +221,17 @@ expect_failure "symbolic-link Staging environment" \
     --manifest "$temporary_directory/release-manifest.json" \
     --env-file "$temporary_directory/symlink-staging.env"
 
+mkdir "$temporary_directory/staging-env-ancestor-target"
+cp "$temporary_directory/staging.env" \
+  "$temporary_directory/staging-env-ancestor-target/staging.env"
+chmod 0600 "$temporary_directory/staging-env-ancestor-target/staging.env"
+ln -s "$temporary_directory/staging-env-ancestor-target" \
+  "$temporary_directory/staging-env-ancestor-link"
+expect_failure "Staging environment with a symbolic-link ancestor" \
+  "$manage" validate \
+    --manifest "$temporary_directory/release-manifest.json" \
+    --env-file "$temporary_directory/staging-env-ancestor-link/staging.env"
+
 cp "$temporary_directory/server.env" "$temporary_directory/insecure-server.env"
 chmod 0644 "$temporary_directory/insecure-server.env"
 write_environment "$temporary_directory/insecure-server-config.env" \
@@ -236,6 +248,77 @@ expect_failure "symbolic-link Server environment" \
   "$manage" validate \
     --manifest "$temporary_directory/release-manifest.json" \
     --env-file "$temporary_directory/server-link-config.env"
+
+mkdir -p \
+  "$temporary_directory/input-ancestor-target/nested/acme" \
+  "$temporary_directory/unsafe-input-ancestor/nested"
+cp "$temporary_directory/server.env" \
+  "$temporary_directory/fullchain.pem" \
+  "$temporary_directory/privkey.pem" \
+  "$temporary_directory/staging.htpasswd" \
+  "$temporary_directory/input-ancestor-target/nested/"
+chmod 0600 \
+  "$temporary_directory/input-ancestor-target/nested/server.env" \
+  "$temporary_directory/input-ancestor-target/nested/privkey.pem" \
+  "$temporary_directory/input-ancestor-target/nested/staging.htpasswd"
+ln -s "$temporary_directory/input-ancestor-target" \
+  "$temporary_directory/input-ancestor-link"
+
+write_environment "$temporary_directory/server-ancestor-link.env" \
+  "$temporary_directory/input-ancestor-link/nested/server.env"
+expect_failure "Server environment with a symbolic-link ancestor" \
+  "$manage" validate \
+    --manifest "$temporary_directory/release-manifest.json" \
+    --env-file "$temporary_directory/server-ancestor-link.env"
+
+write_environment "$temporary_directory/certificate-ancestor-link.env" \
+  "$temporary_directory/server.env" \
+  "$temporary_directory/input-ancestor-link/nested/fullchain.pem"
+expect_failure "TLS certificate with a symbolic-link ancestor" \
+  "$manage" validate \
+    --manifest "$temporary_directory/release-manifest.json" \
+    --env-file "$temporary_directory/certificate-ancestor-link.env"
+
+write_environment "$temporary_directory/key-ancestor-link.env" \
+  "$temporary_directory/server.env" \
+  "$temporary_directory/fullchain.pem" \
+  "$temporary_directory/input-ancestor-link/nested/privkey.pem"
+expect_failure "TLS private key with a symbolic-link ancestor" \
+  "$manage" validate \
+    --manifest "$temporary_directory/release-manifest.json" \
+    --env-file "$temporary_directory/key-ancestor-link.env"
+
+write_environment "$temporary_directory/htpasswd-ancestor-link.env" \
+  "$temporary_directory/server.env" \
+  "$temporary_directory/fullchain.pem" \
+  "$temporary_directory/privkey.pem" \
+  "$temporary_directory/input-ancestor-link/nested/staging.htpasswd"
+expect_failure "htpasswd with a symbolic-link ancestor" \
+  "$manage" validate \
+    --manifest "$temporary_directory/release-manifest.json" \
+    --env-file "$temporary_directory/htpasswd-ancestor-link.env"
+
+write_environment "$temporary_directory/acme-ancestor-link.env" \
+  "$temporary_directory/server.env" \
+  "$temporary_directory/fullchain.pem" \
+  "$temporary_directory/privkey.pem" \
+  "$temporary_directory/staging.htpasswd" \
+  "$temporary_directory/input-ancestor-link/nested/acme"
+expect_failure "ACME root with a symbolic-link ancestor" \
+  "$manage" validate \
+    --manifest "$temporary_directory/release-manifest.json" \
+    --env-file "$temporary_directory/acme-ancestor-link.env"
+
+chmod 0777 "$temporary_directory/unsafe-input-ancestor"
+cp "$temporary_directory/server.env" \
+  "$temporary_directory/unsafe-input-ancestor/nested/server.env"
+chmod 0600 "$temporary_directory/unsafe-input-ancestor/nested/server.env"
+write_environment "$temporary_directory/unsafe-server-ancestor.env" \
+  "$temporary_directory/unsafe-input-ancestor/nested/server.env"
+expect_failure "Server environment with an unsafe writable ancestor" \
+  "$manage" validate \
+    --manifest "$temporary_directory/release-manifest.json" \
+    --env-file "$temporary_directory/unsafe-server-ancestor.env"
 
 cp "$temporary_directory/privkey.pem" "$temporary_directory/insecure-key.pem"
 chmod 0644 "$temporary_directory/insecure-key.pem"
@@ -259,6 +342,30 @@ write_environment "$temporary_directory/key-link.env" \
   > "$temporary_directory/key-link-validate.out"
 grep -Fq 'validated=true' "$temporary_directory/key-link-validate.out" ||
   fail "valid Certbot-style TLS private-key symlink was rejected"
+
+mkdir -p \
+  "$temporary_directory/certbot/live/staging.speak-up.top" \
+  "$temporary_directory/certbot/archive/staging.speak-up.top"
+cp "$temporary_directory/fullchain.pem" \
+  "$temporary_directory/certbot/archive/staging.speak-up.top/fullchain1.pem"
+cp "$temporary_directory/privkey.pem" \
+  "$temporary_directory/certbot/archive/staging.speak-up.top/privkey1.pem"
+chmod 0600 \
+  "$temporary_directory/certbot/archive/staging.speak-up.top/privkey1.pem"
+ln -s ../../archive/staging.speak-up.top/fullchain1.pem \
+  "$temporary_directory/certbot/live/staging.speak-up.top/fullchain.pem"
+ln -s ../../archive/staging.speak-up.top/privkey1.pem \
+  "$temporary_directory/certbot/live/staging.speak-up.top/privkey.pem"
+write_environment "$temporary_directory/certbot-links.env" \
+  "$temporary_directory/server.env" \
+  "$temporary_directory/certbot/live/staging.speak-up.top/fullchain.pem" \
+  "$temporary_directory/certbot/live/staging.speak-up.top/privkey.pem"
+"$manage" validate \
+  --manifest "$temporary_directory/release-manifest.json" \
+  --env-file "$temporary_directory/certbot-links.env" \
+  > "$temporary_directory/certbot-links.out"
+grep -Fq 'validated=true' "$temporary_directory/certbot-links.out" ||
+  fail "valid Certbot live/archive links were rejected"
 
 ln -s "$temporary_directory/not-there-key.pem" \
   "$temporary_directory/broken-key-link.pem"
@@ -395,7 +502,7 @@ done
 expect_failure "TLS private-key symlink target owned by another UID" \
   env \
     TEST_REAL_STAT="$real_stat" \
-    TEST_WRONG_OWNER_PATH="$temporary_directory/key-link.pem" \
+    TEST_WRONG_OWNER_PATH="$temporary_directory/privkey.pem" \
     PATH="$temporary_directory/fake-owner-bin:$PATH" \
   "$manage" validate \
     --manifest "$temporary_directory/release-manifest.json" \
@@ -1062,6 +1169,22 @@ expect_failure "symbolic-link deployment lock directory" env \
     --env-file "$temporary_directory/staging.env"
 [[ ! -e "$temporary_directory/real-lock-directory/deploy.lock" ]] ||
   fail "deployment followed a symbolic-link lock directory"
+
+mkdir -p "$temporary_directory/real-lock-ancestor/nested"
+chmod 0700 \
+  "$temporary_directory/real-lock-ancestor" \
+  "$temporary_directory/real-lock-ancestor/nested"
+ln -s "$temporary_directory/real-lock-ancestor" \
+  "$temporary_directory/symlink-lock-ancestor"
+expect_failure "deployment lock with a symbolic-link ancestor" env \
+  COMMAND_LOG="$temporary_directory/symlink-lock-ancestor.log" \
+  PATH="$fake_path" \
+  SPEAKUP_STAGING_LOCK_FILE="$temporary_directory/symlink-lock-ancestor/nested/deploy.lock" \
+  "$manage" down \
+    --manifest "$temporary_directory/release-manifest.json" \
+    --env-file "$temporary_directory/staging.env"
+[[ ! -e "$temporary_directory/real-lock-ancestor/nested/deploy.lock" ]] ||
+  fail "deployment followed a symbolic-link lock ancestor"
 
 mkdir "$temporary_directory/race-lock-directory"
 chmod 0700 "$temporary_directory/race-lock-directory"

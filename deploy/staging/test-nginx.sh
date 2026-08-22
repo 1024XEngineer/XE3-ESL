@@ -16,6 +16,7 @@ command -v openssl >/dev/null 2>&1 || {
 }
 
 temporary_directory=$(mktemp -d)
+temporary_directory=$(cd "$temporary_directory" && pwd -P)
 readonly temporary_directory
 trap 'rm -rf "$temporary_directory"' EXIT
 

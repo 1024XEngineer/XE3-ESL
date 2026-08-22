@@ -83,6 +83,14 @@ container update, or shutdown. Keep the stable `live/` paths so Certbot renewal
 can advance their archive targets; never pin an `archive/.../privkeyN.pem`
 generation.
 
+Every ancestor of these paths must be a real directory owned by `root` or the
+execution UID and must not be group- or world-writable. A sticky directory
+owned by one of those UIDs (for example `/tmp`) is the only writable-ancestor
+exception. Only the final TLS certificate and private-key components may be
+Certbot `live/*.pem` symlinks; their resolved `archive/` targets and target
+ancestors are checked under the same boundary. Any other symbolic-link path
+component fails closed.
+
 The dedicated lock directory is mandatory and must be recreated at boot when
 `/run` is volatile. The deployment script never creates this directory and
 fails closed if it is missing, a symlink, owned by another UID, or group/world
