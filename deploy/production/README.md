@@ -107,13 +107,14 @@ release_sha="$(git rev-parse --verify 'HEAD^{commit}')"
   --output-dir "$release_dir/images"
 ```
 
-Portal and Server are each built twice without cache for `linux/amd64`. The
-command publishes its output directory only after both repeated image digests
-match. `offline-image-bundle.json` records the exact repositories, digests,
-archive sizes and SHA-256 values, plus the Buildx metadata files. Archive
-checksums protect transport; deployment identity remains the complete
+Portal and Server are each built once without cache for `linux/amd64` from the
+exact clean commit. `offline-image-bundle.json` records the repositories,
+digests, archive sizes and SHA-256 values, plus the Buildx metadata files.
+Archive checksums protect transport; deployment identity remains the complete
 `repository@sha256:digest` recorded in the release manifest generated from this
-bundle.
+bundle. Vinext intentionally generates per-build security material, so this
+contract verifies and preserves the exact immutable artifacts rather than
+claiming byte-for-byte reproducibility from a separate rebuild.
 
 Generate the manifest through the single fail-closed offline wrapper. It
 snapshots and verifies both APKs, consumes the verifier reports rather than

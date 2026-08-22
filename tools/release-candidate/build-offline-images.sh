@@ -75,11 +75,7 @@ cleanup() {
         "$temporary_directory/$portal_archive_file" \
         "$temporary_directory/$server_archive_file" \
         "$temporary_directory/$portal_metadata_file" \
-        "$temporary_directory/$server_metadata_file" \
-        "$temporary_directory/.portal-verification.tar" \
-        "$temporary_directory/.portal-verification-metadata.json" \
-        "$temporary_directory/.server-verification.tar" \
-        "$temporary_directory/.server-verification-metadata.json" || status=1
+        "$temporary_directory/$server_metadata_file" || status=1
       rmdir "$temporary_directory" || status=1
     else
       status=1
@@ -209,6 +205,15 @@ run_image_build() {
   local repository=$2
   local archive=$3
   local metadata=$4
+  local -a build_arguments=(
+    --build-arg "SOURCE_DATE_EPOCH=$source_date_epoch"
+  )
+
+  if [[ "$repository" == "$portal_repository" ]]; then
+    build_arguments+=(
+      --build-arg "NEXT_DEPLOYMENT_ID=$git_sha"
+    )
+  fi
 
   SOURCE_DATE_EPOCH="$source_date_epoch" docker buildx build \
     --file "$context/Dockerfile" \
@@ -217,7 +222,7 @@ run_image_build() {
     --no-cache \
     --provenance=false \
     --sbom=false \
-    --build-arg "SOURCE_DATE_EPOCH=$source_date_epoch" \
+    "${build_arguments[@]}" \
     --label "org.opencontainers.image.source=$source_url" \
     --label "org.opencontainers.image.revision=$git_sha" \
     --label "org.opencontainers.image.version=$version" \
@@ -227,7 +232,7 @@ run_image_build() {
     "$context"
 }
 
-build_reproducible_image() {
+build_verified_image() {
   local name=$1
   local context=$2
   local repository=$3
@@ -236,38 +241,26 @@ build_reproducible_image() {
   local result_variable=$6
   local archive="$temporary_directory/$archive_file"
   local metadata="$temporary_directory/$metadata_file"
-  local verification_archive="$temporary_directory/.$name-verification.tar"
-  local verification_metadata="$temporary_directory/.$name-verification-metadata.json"
-  local first_digest second_digest
+  local digest
 
   run_image_build "$context" "$repository" "$archive" "$metadata"
-  first_digest="$(metadata_digest "$metadata")"
-  run_image_build \
-    "$context" \
-    "$repository" \
-    "$verification_archive" \
-    "$verification_metadata"
-  second_digest="$(metadata_digest "$verification_metadata")"
-  [[ "$first_digest" == "$second_digest" ]] ||
-    fail "$name image builds produced different containerimage.digest values"
-  [[ -s "$archive" && -s "$metadata" &&
-    -s "$verification_archive" && -s "$verification_metadata" ]] ||
+  digest="$(metadata_digest "$metadata")"
+  [[ -s "$archive" && -s "$metadata" ]] ||
     fail "$name image build did not produce every required file"
 
-  rm -f "$verification_archive" "$verification_metadata"
-  printf -v "$result_variable" '%s' "$first_digest"
+  printf -v "$result_variable" '%s' "$digest"
 }
 
 portal_digest=''
 server_digest=''
-build_reproducible_image \
+build_verified_image \
   portal \
   "$repository_root/portal" \
   "$portal_repository" \
   "$portal_archive_file" \
   "$portal_metadata_file" \
   portal_digest
-build_reproducible_image \
+build_verified_image \
   server \
   "$repository_root/server" \
   "$server_repository" \

@@ -85,7 +85,8 @@ pull=false
 no_cache=false
 provenance=false
 sbom=false
-build_arg=''
+source_date_epoch_build_arg=''
+deployment_id_build_arg=''
 source_label=''
 revision_label=''
 version_label=''
@@ -101,7 +102,21 @@ while (($# > 0)); do
       case "$1" in
         --file) [[ -z "$file" ]] || fail 'duplicate --file'; file=$2 ;;
         --platform) [[ -z "$platform" ]] || fail 'duplicate --platform'; platform=$2 ;;
-        --build-arg) [[ -z "$build_arg" ]] || fail 'duplicate --build-arg'; build_arg=$2 ;;
+        --build-arg)
+          case "$2" in
+            SOURCE_DATE_EPOCH=*)
+              [[ -z "$source_date_epoch_build_arg" ]] ||
+                fail 'duplicate SOURCE_DATE_EPOCH build argument'
+              source_date_epoch_build_arg=$2
+              ;;
+            NEXT_DEPLOYMENT_ID=*)
+              [[ -z "$deployment_id_build_arg" ]] ||
+                fail 'duplicate NEXT_DEPLOYMENT_ID build argument'
+              deployment_id_build_arg=$2
+              ;;
+            *) fail "unexpected build argument: $2" ;;
+          esac
+          ;;
         --label)
           case "$2" in
             org.opencontainers.image.source=*)
@@ -161,7 +176,8 @@ done
 [[ "$pull" == true && "$no_cache" == true &&
   "$provenance" == true && "$sbom" == true ]] ||
   fail 'pull/no-cache/provenance/sbom flags are incomplete'
-[[ "$build_arg" == "SOURCE_DATE_EPOCH=$FAKE_EXPECTED_EPOCH" ]] ||
+[[ "$source_date_epoch_build_arg" == \
+  "SOURCE_DATE_EPOCH=$FAKE_EXPECTED_EPOCH" ]] ||
   fail 'SOURCE_DATE_EPOCH build argument is incorrect'
 [[ "${SOURCE_DATE_EPOCH:-}" == "$FAKE_EXPECTED_EPOCH" ]] ||
   fail 'SOURCE_DATE_EPOCH environment is incorrect'
@@ -183,10 +199,15 @@ case "$tag" in
   "ghcr.io/1024xengineer/xe3-esl-portal:$FAKE_EXPECTED_VERSION")
     name=portal
     digest="sha256:$(printf 'a%.0s' {1..64})"
+    [[ "$deployment_id_build_arg" == \
+      "NEXT_DEPLOYMENT_ID=$FAKE_EXPECTED_SHA" ]] ||
+      fail 'Portal deployment ID build argument is incorrect'
     ;;
   "ghcr.io/1024xengineer/xe3-esl-server:$FAKE_EXPECTED_VERSION")
     name=server
     digest="sha256:$(printf 'b%.0s' {1..64})"
+    [[ -z "$deployment_id_build_arg" ]] ||
+      fail 'Server must not receive the Portal deployment ID build argument'
     ;;
   *) fail "unexpected image tag: $tag" ;;
 esac
@@ -206,9 +227,9 @@ printf '%s\t%s\t%s\t%s\n' \
 if [[ "${FAKE_DOCKER_MODE:-success}" == failure && "$count" == 2 ]]; then
   exit 70
 fi
-if [[ "${FAKE_DOCKER_MODE:-success}" == mismatch &&
-  "$name" == portal && "$count" == 2 ]]; then
-  digest="sha256:$(printf 'c%.0s' {1..64})"
+if [[ "${FAKE_DOCKER_MODE:-success}" == invalid-metadata &&
+  "$count" == 1 ]]; then
+  digest='invalid'
 fi
 
 printf 'fake docker archive: %s build %s\n' "$tag" "$count" >"$archive"
@@ -315,24 +336,24 @@ expect_failure \
   --output-dir "$inside_repository_output"
 [[ ! -e "$fake_counter" ]] || fail 'in-worktree output invoked Docker'
 
-digest_mismatch_output="$artifacts_parent/digest-mismatch"
+invalid_metadata_output="$artifacts_parent/invalid-metadata"
 expect_failure \
-  'repeated build digest mismatch' \
-  mismatch \
-  "$digest_mismatch_output" \
+  'invalid Docker metadata digest' \
+  invalid-metadata \
+  "$invalid_metadata_output" \
   --version "$version" \
   --git-sha "$head_sha" \
-  --output-dir "$digest_mismatch_output"
+  --output-dir "$invalid_metadata_output"
 if [[ ! -f "$fake_counter" ]]; then
   cat "$temporary_directory/failure-$failure_number.log" >&2
-  fail 'digest mismatch did not invoke Docker'
+  fail 'invalid metadata did not invoke Docker'
 fi
-[[ "$(<"$fake_counter")" == 2 ]] ||
-  fail 'digest mismatch did not stop after the second Portal build'
+[[ "$(<"$fake_counter")" == 1 ]] ||
+  fail 'invalid metadata did not stop after the Portal build'
 
 build_failure_output="$artifacts_parent/build-failure"
 expect_failure \
-  'second Docker build failure' \
+  'Server Docker build failure' \
   failure \
   "$build_failure_output" \
   --version "$version" \
@@ -356,10 +377,10 @@ run_build \
 [[ "$(<"$success_log")" == \
   "offline_image_bundle=$success_output/offline-image-bundle.json" ]] ||
   fail 'success output did not identify the published bundle manifest'
-[[ "$(<"$fake_counter")" == 4 ]] ||
-  fail 'success did not build Portal and Server exactly twice each'
-[[ "$(wc -l <"$fake_log" | tr -d '[:space:]')" == 4 ]] ||
-  fail 'fake Docker did not record exactly four buildx invocations'
+[[ "$(<"$fake_counter")" == 2 ]] ||
+  fail 'success did not build Portal and Server exactly once each'
+[[ "$(wc -l <"$fake_log" | tr -d '[:space:]')" == 2 ]] ||
+  fail 'fake Docker did not record exactly two buildx invocations'
 
 node - \
   "$success_output" \
