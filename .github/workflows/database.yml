@@ -19,6 +19,7 @@ on:
       - ".env.example"
       - "compose.yaml"
       - "server/**"
+  workflow_call:
 
 permissions:
   contents: read

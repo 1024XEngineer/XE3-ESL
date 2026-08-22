@@ -11,6 +11,7 @@ SHELL := /bin/bash
 	check-flutter-analyze \
 	check-flutter-test \
 	check-flutter-coverage \
+	check-android-release-guard \
 	check-go \
 	check-go-coverage \
 	check-go-format \
@@ -22,8 +23,13 @@ SHELL := /bin/bash
 	check-api \
 	check-api-dependencies \
 	check-api-contracts \
+	check-release-candidate \
 	dev-android \
 	dev-ios-simulator \
+	build-android-release-staging \
+	build-android-release-production \
+	verify-android-release-staging \
+	verify-android-release-production \
 	test-ios-simulator-scenes
 
 help:
@@ -32,20 +38,25 @@ help:
 		'  make check          Run Flutter, Go, and API checks' \
 		'  make check-flutter  Run Flutter dependency, format, analysis, and test checks' \
 		'  make check-flutter-coverage  Run Flutter checks and write mobile/coverage/lcov.info' \
+		'  make check-android-release-guard  Verify release signing fails closed' \
 		'  make check-go       Run Go format, vet, and test checks' \
 		'  make check-go-coverage  Run Go checks and write server/coverage.out' \
 		'  make check-oss-live Run the real OSS lifecycle test with exported OSS_* variables' \
 		'  make check-kodo-live Run the real Kodo lifecycle test with exported QINIU_* variables' \
 		'  make check-resume-ocr-live Run the PaddleOCR hosted API test with an explicit PDF' \
 		'  make check-api      Validate OpenAPI, JSON Schema, and contract fixtures' \
+		'  make check-release-candidate  Validate release metadata and manifest tooling' \
 		'  make dev-android    Start the backend and run the App on an Android device' \
-		'  make dev-ios-simulator  Start the backend on an iOS Simulator'
+		'  make dev-ios-simulator  Start the backend on an iOS Simulator' \
+		'  make build-android-release-staging  Build the signed staging arm64 APK' \
+		'  make build-android-release-production  Build the signed production arm64 APK'
 	@printf '%s\n' \
+		'  make verify-android-release-{staging,production}  Verify a release APK' \
 		'  make test-ios-simulator-scenes  Verify real scene and IELTS launch flows on an iOS Simulator'
 
 check: check-flutter check-go check-api
 
-check-flutter: check-flutter-test
+check-flutter: check-flutter-test check-android-release-guard
 
 check-flutter-dependencies:
 	cd mobile && flutter pub get --enforce-lockfile
@@ -59,8 +70,27 @@ check-flutter-analyze: check-flutter-format
 check-flutter-test: check-flutter-analyze
 	cd mobile && flutter test --no-pub
 
-check-flutter-coverage: check-flutter-analyze
+check-flutter-coverage: check-flutter-analyze check-android-release-guard
 	cd mobile && flutter test --no-pub --coverage
+
+check-android-release-guard: check-flutter-dependencies
+	@set -euo pipefail; \
+	output_file="$$(mktemp)"; \
+	trap 'rm -f "$$output_file"' EXIT; \
+	if cd mobile && env \
+		-u SPEAKUP_ANDROID_KEYSTORE_PATH \
+		-u SPEAKUP_ANDROID_KEY_ALIAS \
+		-u SPEAKUP_ANDROID_STORE_PASSWORD \
+		-u SPEAKUP_ANDROID_KEY_PASSWORD \
+		flutter build apk --release --flavor production \
+			--target-platform android-arm64 >"$$output_file" 2>&1; then \
+		printf '%s\n' 'Release build unexpectedly succeeded without signing secrets.' >&2; \
+		exit 1; \
+	fi; \
+	if ! grep -Fq 'Missing Android release signing environment variables' "$$output_file"; then \
+		printf '%s\n' 'Release build failed before the signing guard was reached.' >&2; \
+		exit 1; \
+	fi
 
 check-go: check-go-test
 
@@ -78,8 +108,35 @@ check-go-vet: check-go-format
 check-go-test: check-go-vet
 	cd server && go test -count=1 ./...
 
+# discipline: Coverage gates use executed/not-executed statements, so merge
+# repeated cross-package counters by OR before publishing the profile.
 check-go-coverage: check-go-vet
-	cd server && go test -count=1 -covermode=atomic -coverprofile=coverage.out ./...
+	@set -euo pipefail; \
+	cd server; \
+	cover_packages="$$(go list ./... | awk ' \
+		index($$0, "/server/test/") == 0 { \
+			if (count++ > 0) printf ","; \
+			printf "%s", $$0; \
+		} \
+	')"; \
+	go test -count=1 -covermode=atomic \
+		-coverpkg="$$cover_packages" \
+		-coverprofile=coverage.raw.out ./... 2>&1 | \
+		sed -E 's/(coverage: [^[:space:]]+ of statements) in .*/\1/'; \
+	{ \
+		printf '%s\n' 'mode: atomic'; \
+		awk ' \
+		NR > 1 { \
+			statements[$$1] = $$2; \
+			if ($$3 > 0) covered[$$1] = 1; \
+		} \
+		END { \
+			for (block in statements) \
+				print block, statements[block], covered[block] + 0; \
+		} \
+		' coverage.raw.out | LC_ALL=C sort; \
+	} > coverage.out; \
+	rm coverage.raw.out
 	cd server && go tool cover -func=coverage.out > coverage.txt && tail -n 1 coverage.txt
 
 check-oss-live:
@@ -189,11 +246,48 @@ check-api-dependencies:
 check-api-contracts: check-api-dependencies
 	cd api && npm run check
 
+check-release-candidate:
+	node --test tools/release-candidate/*.test.mjs
+
 dev-android:
 	./tools/android-dev/run.sh
 
 dev-ios-simulator:
 	./tools/ios-simulator-dev/run.sh
+
+build-android-release-staging:
+	@test -n "$${SPEAKUP_ANDROID_CERT_SHA256:-}" || { \
+		printf '%s\n' 'SPEAKUP_ANDROID_CERT_SHA256 is required.' >&2; \
+		exit 1; \
+	}
+	cd mobile && flutter build apk \
+		--release \
+		--flavor staging \
+		--target-platform android-arm64 \
+		--dart-define=SPEAKUP_API_BASE_URL=https://staging-api.speak-up.top
+	./tools/android-release/verify.sh \
+		mobile/build/app/outputs/flutter-apk/app-staging-release.apk
+
+build-android-release-production:
+	@test -n "$${SPEAKUP_ANDROID_CERT_SHA256:-}" || { \
+		printf '%s\n' 'SPEAKUP_ANDROID_CERT_SHA256 is required.' >&2; \
+		exit 1; \
+	}
+	cd mobile && flutter build apk \
+		--release \
+		--flavor production \
+		--target-platform android-arm64 \
+		--dart-define=SPEAKUP_API_BASE_URL=https://api.speak-up.top
+	./tools/android-release/verify.sh \
+		mobile/build/app/outputs/flutter-apk/app-production-release.apk
+
+verify-android-release-staging:
+	./tools/android-release/verify.sh \
+		mobile/build/app/outputs/flutter-apk/app-staging-release.apk
+
+verify-android-release-production:
+	./tools/android-release/verify.sh \
+		mobile/build/app/outputs/flutter-apk/app-production-release.apk
 
 test-ios-simulator-scenes:
 	./tools/ios-simulator-dev/run.sh test \

@@ -516,6 +516,19 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('场景练习已完成'), findsOneWidget);
+
+      await tester.timedDrag(
+        find.byKey(const Key('scenario-completion-drag-region')),
+        const Offset(0, 200),
+        const Duration(milliseconds: 600),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('scenario-completion-sheet')), findsNothing);
+      expect(
+        find.byKey(const Key('scenario-conversation-history')),
+        findsOneWidget,
+      );
     },
   );
 

@@ -158,6 +158,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   int _observedCompletedTurns = 0;
   bool _preserveCompletedConversation = false;
   bool _showCompletionSheet = false;
+  bool _completionSheetDismissed = false;
   bool _openingReadyReport = false;
 
   IeltsPracticeSelection? get _selection {
@@ -265,6 +266,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       _observedCompletedTurns = widget.controller.completedTurns;
       _preserveCompletedConversation = false;
       _showCompletionSheet = false;
+      _completionSheetDismissed = false;
       _openingReadyReport = false;
       _questionNarrationGeneration++;
       _autoNarratedQuestionId = null;
@@ -520,6 +522,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       _observedCompletedTurns = 0;
       _preserveCompletedConversation = false;
       _showCompletionSheet = false;
+      _completionSheetDismissed = false;
       setState(() {});
       return;
     }
@@ -536,6 +539,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     if (justCompletedSession) {
       _preserveCompletedConversation = true;
       _showCompletionSheet = true;
+      _completionSheetDismissed = false;
     }
     if (_visibleTipQuestionId != widget.controller.currentQuestion?.id) {
       _visibleTipQuestionId = null;
@@ -1670,8 +1674,9 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   };
 
   Widget? _completionSheet(IeltsMockProgress progress) {
-    if (_showCompletionSheet ||
-        _keepsSectionCompletionInConversation(progress)) {
+    if (!_completionSheetDismissed &&
+        (_showCompletionSheet ||
+            _keepsSectionCompletionInConversation(progress))) {
       return PracticeCompletionOverlay(
         keyPrefix: 'ielts-${_mode.name}-completion',
         sheetKey: const Key('ielts-section-completion-sheet'),
@@ -1689,6 +1694,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
         secondaryLabel: _mode == PracticeMode.fullMock ? '返回训练' : '返回题单',
         onPrimary: _openCompletedReview,
         onSecondary: _leaveCompletedPractice,
+        onDismissed: _dismissCompletionSheet,
       );
     }
     if (_mode != PracticeMode.fullMock) {
@@ -1696,6 +1702,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     }
     if (progress.phase == IeltsMockPhase.part1Complete) {
       return PracticeCompletionOverlay(
+        dismissible: false,
         keyPrefix: 'ielts-part1-transition',
         sheetKey: const Key('ielts-section-completion-sheet'),
         primaryKey: const Key('ielts-section-review-action'),
@@ -1710,6 +1717,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     }
     if (progress.phase == IeltsMockPhase.part2Complete && _part2TurnConfirmed) {
       return PracticeCompletionOverlay(
+        dismissible: false,
         keyPrefix: 'ielts-part2-transition',
         sheetKey: const Key('ielts-section-completion-sheet'),
         primaryKey: const Key('ielts-section-review-action'),
@@ -1849,6 +1857,16 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       return;
     }
     unawaited(_finishSection(IeltsPracticeCompletionAction.list));
+  }
+
+  void _dismissCompletionSheet() {
+    if (!mounted || _completionSheetDismissed) {
+      return;
+    }
+    setState(() {
+      _completionSheetDismissed = true;
+      _showCompletionSheet = false;
+    });
   }
 
   bool _usesShortAnswerRecorder(IeltsMockPhase phase) =>

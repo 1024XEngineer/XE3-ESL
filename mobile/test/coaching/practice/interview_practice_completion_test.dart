@@ -65,6 +65,10 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('面试练习已完成'), findsOneWidget);
       expect(find.text('1 道回答已保存'), findsOneWidget);
+      expect(
+        find.byKey(const Key('interview-completion-drag-region')),
+        findsOneWidget,
+      );
 
       await tester.tap(find.byKey(const Key('interview-completion-primary')));
       await tester.pumpAndSettle();

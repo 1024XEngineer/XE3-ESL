@@ -127,6 +127,7 @@ print "启动 SpeakUp；按 q 退出，修改代码后按 r 热重载。"
 cd "$mobile_dir"
 flutter build apk \
   --debug \
+  --flavor staging \
   --target-platform android-arm64 \
   --dart-define="SPEAKUP_API_BASE_URL=$base_url" \
   "$@"
@@ -134,7 +135,7 @@ adb -s "$device_id" install \
   --no-streaming \
   -t \
   -r \
-  "$mobile_dir/build/app/outputs/flutter-apk/app-debug.apk"
+  "$mobile_dir/build/app/outputs/flutter-apk/app-staging-debug.apk"
 adb -s "$device_id" shell am start \
   -S \
   -n com.xengineer.speakup/.MainActivity
