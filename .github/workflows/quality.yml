@@ -30,6 +30,7 @@ jobs:
       go: ${{ steps.scope.outputs.go }}
       api: ${{ steps.scope.outputs.api }}
       portal: ${{ steps.scope.outputs.portal }}
+      deploy: ${{ steps.scope.outputs.deploy }}
     steps:
       - name: Check out repository history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -52,12 +53,14 @@ jobs:
           go=false
           api=false
           portal=false
+          deploy=false
 
           set_all_checks() {
             flutter=true
             go=true
             api=true
             portal=true
+            deploy=true
           }
 
           if [[ "$EVENT_NAME" != "pull_request" || "$BASE_REF" == "main" ]]; then
@@ -93,6 +96,9 @@ jobs:
                 portal/*)
                   portal=true
                   ;;
+                deploy/*)
+                  deploy=true
+                  ;;
               esac
             done < "$changed_files"
           fi
@@ -102,6 +108,7 @@ jobs:
             echo "go=$go"
             echo "api=$api"
             echo "portal=$portal"
+            echo "deploy=$deploy"
           } >> "$GITHUB_OUTPUT"
 
       - name: Set up Node.js
@@ -255,6 +262,24 @@ jobs:
 
       - name: Build Portal Docker image
         run: docker build --tag speakup-portal:ci .
+
+  deploy:
+    name: Staging deploy contract
+    needs: changes
+    if: needs.changes.outputs.deploy == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate Staging deployment contract
+        run: make check-staging-deploy
+
+      - name: Validate rendered Nginx configuration
+        run: make check-staging-nginx
 
   coverage-gate:
     name: Coverage gate
@@ -545,6 +570,7 @@ jobs:
       - go
       - api
       - portal
+      - deploy
       - coverage-gate
       - flutter-coverage-gate
     if: always()
@@ -560,6 +586,8 @@ jobs:
       API_RESULT: ${{ needs.api.result }}
       PORTAL_REQUIRED: ${{ needs.changes.outputs.portal }}
       PORTAL_RESULT: ${{ needs.portal.result }}
+      DEPLOY_REQUIRED: ${{ needs.changes.outputs.deploy }}
+      DEPLOY_RESULT: ${{ needs.deploy.result }}
       GO_COVERAGE_RESULT: ${{ needs.coverage-gate.result }}
       FLUTTER_COVERAGE_RESULT: ${{ needs.flutter-coverage-gate.result }}
     steps:
@@ -606,6 +634,7 @@ jobs:
           require_result "Go" "$GO_REQUIRED" "$GO_RESULT"
           require_result "API contracts" "$API_REQUIRED" "$API_RESULT"
           require_result "Portal" "$PORTAL_REQUIRED" "$PORTAL_RESULT"
+          require_result "Staging deploy" "$DEPLOY_REQUIRED" "$DEPLOY_RESULT"
 
           require_coverage_result() {
             local name=$1
