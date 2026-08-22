@@ -1,0 +1,193 @@
+map $http_upgrade $speakup_production_connection_upgrade {
+    default upgrade;
+    '' close;
+}
+
+limit_req_zone $binary_remote_addr zone=speakup_portal_events:10m rate=30r/m;
+limit_req_zone $binary_remote_addr zone=speakup_portal_waitlist:10m rate=5r/m;
+limit_req_zone $binary_remote_addr zone=speakup_portal_admin:10m rate=5r/m;
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name __PRODUCTION_PORTAL_HOST__;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root __PRODUCTION_ACME_ROOT__;
+        default_type text/plain;
+    }
+
+    location / {
+        return 301 https://__PRODUCTION_PORTAL_HOST__$request_uri;
+    }
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name __PRODUCTION_API_HOST__;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root __PRODUCTION_ACME_ROOT__;
+        default_type text/plain;
+    }
+
+    location / {
+        return 301 https://__PRODUCTION_API_HOST__$request_uri;
+    }
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name __PRODUCTION_PORTAL_REDIRECT_HOST__;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root __PRODUCTION_ACME_ROOT__;
+        default_type text/plain;
+    }
+
+    location / {
+        return 301 https://__PRODUCTION_PORTAL_HOST__$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name __PRODUCTION_PORTAL_REDIRECT_HOST__;
+
+    ssl_certificate __PRODUCTION_TLS_CERTIFICATE__;
+    ssl_certificate_key __PRODUCTION_TLS_CERTIFICATE_KEY__;
+
+    return 301 https://__PRODUCTION_PORTAL_HOST__$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name __PRODUCTION_PORTAL_HOST__;
+
+    ssl_certificate __PRODUCTION_TLS_CERTIFICATE__;
+    ssl_certificate_key __PRODUCTION_TLS_CERTIFICATE_KEY__;
+
+    access_log logs/xe3-speakup-production-portal.access.log;
+    error_log logs/xe3-speakup-production-portal.error.log warn;
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+    limit_req_status 429;
+
+    location = /metrics {
+        return 404;
+    }
+
+    location = /pages {
+        return 404;
+    }
+
+    location ^~ /pages/ {
+        return 404;
+    }
+
+    location = /tests {
+        return 404;
+    }
+
+    location ^~ /tests/ {
+        return 404;
+    }
+
+    location = /WISPR-FLOW-DESIGN-preview.html {
+        return 404;
+    }
+
+    location = /WISPR-FLOW-DESIGN.md {
+        return 404;
+    }
+
+    location = /api/events {
+        client_max_body_size 16k;
+        limit_req zone=speakup_portal_events burst=10 nodelay;
+
+        proxy_pass http://127.0.0.1:18082;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 15s;
+    }
+
+    location = /api/waitlist {
+        client_max_body_size 16k;
+        limit_req zone=speakup_portal_waitlist burst=3 nodelay;
+
+        proxy_pass http://127.0.0.1:18082;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 15s;
+    }
+
+    location ^~ /api/admin/ {
+        client_max_body_size 1k;
+        limit_req zone=speakup_portal_admin burst=3 nodelay;
+
+        proxy_pass http://127.0.0.1:18082;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 15s;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:18082;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name __PRODUCTION_API_HOST__;
+
+    ssl_certificate __PRODUCTION_TLS_CERTIFICATE__;
+    ssl_certificate_key __PRODUCTION_TLS_CERTIFICATE_KEY__;
+
+    access_log logs/xe3-speakup-production-api.access.log;
+    error_log logs/xe3-speakup-production-api.error.log warn;
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy no-referrer always;
+    client_max_body_size 12m;
+
+    location = /metrics {
+        return 404;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:18083;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $speakup_production_connection_upgrade;
+        proxy_read_timeout 180s;
+    }
+}

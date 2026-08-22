@@ -264,7 +264,7 @@ jobs:
         run: docker build --tag speakup-portal:ci .
 
   deploy:
-    name: Staging deploy contract
+    name: Deployment contracts
     needs: changes
     if: needs.changes.outputs.deploy == 'true'
     runs-on: ubuntu-24.04
@@ -280,6 +280,12 @@ jobs:
 
       - name: Validate rendered Nginx configuration
         run: make check-staging-nginx
+
+      - name: Validate Production deployment contract
+        run: make check-production-deploy
+
+      - name: Validate rendered Production Nginx configuration
+        run: make check-production-nginx
 
   coverage-gate:
     name: Coverage gate
@@ -634,7 +640,7 @@ jobs:
           require_result "Go" "$GO_REQUIRED" "$GO_RESULT"
           require_result "API contracts" "$API_REQUIRED" "$API_RESULT"
           require_result "Portal" "$PORTAL_REQUIRED" "$PORTAL_RESULT"
-          require_result "Staging deploy" "$DEPLOY_REQUIRED" "$DEPLOY_RESULT"
+          require_result "Deployment contracts" "$DEPLOY_REQUIRED" "$DEPLOY_RESULT"
 
           require_coverage_result() {
             local name=$1
