@@ -220,6 +220,30 @@ Check 严格模式已暂缓，不在本阶段擅自重新启用。
 镜像可使用语义版本标签方便识别，但部署必须引用 digest，不能引用可变
 `latest`。
 
+Android 正式签名采用以下已确认边界：
+
+- GitHub Environment 固定为 `android-release-signing`。
+- Required reviewer 为 `Lq0412`；当前单人发布阶段允许本人审核，未来增加独立
+  发布负责人后再启用禁止自审。
+- 正式签名证书 Owner 为 `Lq0412`。
+- 证书与密码均保存两份：团队密码管理器一份、离线加密备份一份，不能只保存在
+  GitHub Secret。
+- keystore 只以 `SPEAKUP_ANDROID_KEYSTORE_BASE64` Environment Secret 注入临时
+  Runner；构建结束后删除，不进入 Artifact、日志或仓库。
+
+首次运行前，管理员必须先创建该 Environment，将 Deployment branches and tags
+设为 Selected branches and tags、Tag pattern 设为 `v*.*.*`，并配置 Required
+reviewer；随后才能添加以下 Environment Secrets：
+
+- `SPEAKUP_ANDROID_KEYSTORE_BASE64`
+- `SPEAKUP_ANDROID_KEY_ALIAS`
+- `SPEAKUP_ANDROID_STORE_PASSWORD`
+- `SPEAKUP_ANDROID_KEY_PASSWORD`
+- `SPEAKUP_ANDROID_CERT_SHA256`
+
+正式 Tag 还需要单独的 Tag ruleset 禁止更新和删除。Workflow 会严格校验 Tag
+格式及其 commit 是否位于 `main`，但 Workflow 本身不能阻止有权限的人移动 Tag。
+
 ### 7.3 Staging 与 Production Deploy
 
 Deploy Workflow 接收确定的 `version` 和 `environment`，读取 Release manifest
@@ -509,11 +533,8 @@ Portal 报名和访问事件继续使用独立 SQLite。它与产品核心业务
 16. 建立日志轮转、HTTP/第三方 API/业务指标、基础看板与告警。
 17. 建立旧 App API 兼容窗口、最低支持版本和 Android hotfix 流程。
 
-## 16. 实施前待确认
+## 16. 后续阶段仍待确认
 
-- Android 正式 application ID 是否继续使用当前值。
-- 首次公开 versionName 与 versionCode。
-- 正式签名证书的 Account Owner 与双重备份位置。
 - Android Developer Console 使用个人或组织账号，以及 package name 注册负责人。
 - Staging 使用独立子域名还是仅内部可达的预览入口。
 - Production 审批人及应急替代审批人。
