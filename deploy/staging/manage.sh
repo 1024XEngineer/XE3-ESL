@@ -31,6 +31,28 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || fail "$1 is required"
 }
 
+require_owned_public_directory() {
+  local description=$1
+  local directory=$2
+  local owner mode
+
+  [[ ! -L "$directory" && -d "$directory" ]] ||
+    fail "$description must be a real directory: $directory"
+  if owner=$(stat -c '%u' -- "$directory" 2>/dev/null); then
+    mode=$(stat -c '%a' -- "$directory") ||
+      fail "cannot inspect permissions for $description: $directory"
+  elif owner=$(stat -f '%u' "$directory" 2>/dev/null); then
+    mode=$(stat -f '%Lp' "$directory") ||
+      fail "cannot inspect permissions for $description: $directory"
+  else
+    fail "cannot inspect ownership for $description: $directory"
+  fi
+  [[ "$owner" == "$(id -u)" ]] ||
+    fail "$description must be owned by the current user: $directory"
+  (( (8#$mode & 0022) == 0 )) ||
+    fail "$description cannot be group or world writable: $directory"
+}
+
 allowed_configuration_key() {
   case "$1" in
     STAGING_POSTGRES_DB | \
@@ -43,7 +65,8 @@ allowed_configuration_key() {
       STAGING_TLS_CERTIFICATE | \
       STAGING_TLS_CERTIFICATE_KEY | \
       STAGING_HTPASSWD_FILE | \
-      STAGING_ACME_ROOT)
+      STAGING_ACME_ROOT | \
+      STAGING_PUBLIC_ROOT)
       return 0
       ;;
     *)
@@ -70,7 +93,8 @@ load_configuration() {
     STAGING_TLS_CERTIFICATE \
     STAGING_TLS_CERTIFICATE_KEY \
     STAGING_HTPASSWD_FILE \
-    STAGING_ACME_ROOT
+    STAGING_ACME_ROOT \
+    STAGING_PUBLIC_ROOT
 
   while IFS= read -r line || [[ -n "$line" ]]; do
     line=${line%$'\r'}
@@ -132,6 +156,7 @@ validate_configuration() {
     STAGING_TLS_CERTIFICATE_KEY
     STAGING_HTPASSWD_FILE
     STAGING_ACME_ROOT
+    STAGING_PUBLIC_ROOT
   )
   for name in "${required[@]}"; do
     require_value "$name"
@@ -158,12 +183,21 @@ validate_configuration() {
     STAGING_TLS_CERTIFICATE \
     STAGING_TLS_CERTIFICATE_KEY \
     STAGING_HTPASSWD_FILE \
-    STAGING_ACME_ROOT; do
+    STAGING_ACME_ROOT \
+    STAGING_PUBLIC_ROOT; do
     valid_absolute_path "${!name}" || fail "$name must be a safe absolute path"
   done
 
   [[ -s "$STAGING_SERVER_ENV_FILE" ]] ||
     fail "server environment file is missing or empty: $STAGING_SERVER_ENV_FILE"
+  require_owned_public_directory "STAGING_PUBLIC_ROOT" "$STAGING_PUBLIC_ROOT"
+  for name in \
+    "$STAGING_PUBLIC_ROOT/downloads" \
+    "$STAGING_PUBLIC_ROOT/downloads/android"; do
+    if [[ -e "$name" || -L "$name" ]]; then
+      require_owned_public_directory "Staging public download directory" "$name"
+    fi
+  done
 }
 
 validate_manifest() {
@@ -235,6 +269,7 @@ render_nginx() {
     -e "s|__STAGING_TLS_CERTIFICATE_KEY__|$STAGING_TLS_CERTIFICATE_KEY|g" \
     -e "s|__STAGING_HTPASSWD_FILE__|$STAGING_HTPASSWD_FILE|g" \
     -e "s|__STAGING_ACME_ROOT__|$STAGING_ACME_ROOT|g" \
+    -e "s|__STAGING_PUBLIC_ROOT__|$STAGING_PUBLIC_ROOT|g" \
     "$nginx_template" >"$temporary"; then
     rm -f "$temporary"
     fail "failed to render Nginx template"

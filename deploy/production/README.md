@@ -38,6 +38,8 @@ release. Its one-time creation belongs to the audited server bootstrap.
 - A TLS certificate/key covering the selected Portal, redirect, and API hosts.
 - A populated ACME web root.
 - Registry read access for the manifest's Portal and Server image digests.
+- A real, current-UID-owned `PRODUCTION_PUBLIC_ROOT` that is not group- or
+  world-writable.
 
 Do not copy local `.env` defaults into Production and do not commit any filled
 environment file. The Server environment file contains real provider
@@ -53,6 +55,7 @@ install -m 0600 deploy/production/production.env.example \
   /etc/speakup/production.env
 install -m 0600 /secure/source/production-server.env \
   /etc/speakup/production-server.env
+install -d -m 0755 /var/www/speakup-production-public
 ```
 
 `PRODUCTION_POSTGRES_PASSWORD` is restricted to at least 24 URL-safe
@@ -95,8 +98,16 @@ containers or networks.
 Rendering only writes the requested file. It never installs or reloads Nginx.
 The template preserves Portal request limits, canonical-host redirect, API
 Bearer authentication, WebSocket upgrade headers, ACME challenges, and exact
-`/metrics` denial. APK static delivery is intentionally absent until its own
-versioned publication contract is reviewed.
+`/metrics` denial. It serves only the strict versioned Android APK, checksum,
+and metadata routes from `PRODUCTION_PUBLIC_ROOT`; current metadata is not
+cached, versioned files are immutable, and unknown or directory paths return
+`404`. The API host returns `404` for the complete Android download namespace.
+
+Nginx rendering does not publish or activate an APK. Build, validate, publish,
+activate, and roll back that separate state with the
+[Android publication contract](../android-download/README.md). Publish a new
+version without activation first; switch the current metadata only after the
+Production smoke checks pass.
 
 Install this vhost in place of the legacy Portal vhost; do not load both at the
 same time. The rate-limit zones and public hostnames intentionally have one
@@ -125,6 +136,7 @@ this directory yet.
 ## Reproducible checks
 
 ```sh
+make check-android-download
 make check-production-deploy
 make check-production-nginx
 ```
