@@ -6,6 +6,7 @@ readonly staging_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly manage="$staging_directory/manage.sh"
 readonly nginx_image="nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de"
 readonly container_fixture_directory="/tmp/staging-nginx-test"
+readonly container_htpasswd_file="/etc/nginx/staging.htpasswd"
 readonly runtime_container="xe3-staging-nginx-test-${PPID}-$$"
 
 cleanup() {
@@ -30,6 +31,17 @@ assert_response_header() {
   }
 }
 
+assert_curl_succeeds() {
+  local description=$1
+  shift
+
+  curl --fail --show-error "$@" || {
+    printf 'failed HTTP check: %s\n' "$description" >&2
+    docker logs "$runtime_container" >&2
+    exit 1
+  }
+}
+
 command -v docker >/dev/null 2>&1 || {
   printf '%s\n' 'docker is required for the Nginx configuration check' >&2
   exit 1
@@ -48,6 +60,7 @@ mkdir -p "$temporary_directory/acme" \
 printf '%s\n' 'TEXT_GENERATION_PROVIDER=test-fixture' >"$temporary_directory/server.env"
 password_hash=$(openssl passwd -apr1 'test-password')
 printf 'staging:%s\n' "$password_hash" >"$temporary_directory/staging.htpasswd"
+chmod 0644 "$temporary_directory/staging.htpasswd"
 printf '%s\n' 'signed-production-apk-fixture' > \
   "$temporary_directory/public/downloads/android/v0.1.0/speakup-v0.1.0-production-arm64.apk"
 apk_sha=$(sha256sum \
@@ -101,7 +114,7 @@ printf '%s\n' \
   'STAGING_API_HOST=staging-api.speak-up.top' \
   "STAGING_TLS_CERTIFICATE=$container_fixture_directory/fullchain.pem" \
   "STAGING_TLS_CERTIFICATE_KEY=$container_fixture_directory/privkey.pem" \
-  "STAGING_HTPASSWD_FILE=$container_fixture_directory/staging.htpasswd" \
+  "STAGING_HTPASSWD_FILE=$container_htpasswd_file" \
   "STAGING_ACME_ROOT=$container_fixture_directory/acme" \
   "STAGING_PUBLIC_ROOT=$temporary_directory/public" \
   >"$temporary_directory/staging.env"
@@ -126,6 +139,7 @@ assert_contains 'location ^~ /downloads/android/'
 
 docker run --rm \
   --volume "$temporary_directory:$container_fixture_directory:ro" \
+  --volume "$temporary_directory/staging.htpasswd:$container_htpasswd_file:ro" \
   --volume "$temporary_directory/public:$temporary_directory/public:ro" \
   --volume "$temporary_directory/default.conf:/etc/nginx/conf.d/default.conf:ro" \
   "$nginx_image" \
@@ -146,6 +160,7 @@ docker run --detach \
   --name "$runtime_container" \
   --publish 127.0.0.1::443 \
   --volume "$temporary_directory:$container_fixture_directory:ro" \
+  --volume "$temporary_directory/staging.htpasswd:$container_htpasswd_file:ro" \
   --volume "$temporary_directory/public:$temporary_directory/public:ro" \
   --volume "$temporary_directory/default.conf:/etc/nginx/conf.d/default.conf:ro" \
   --volume "$temporary_directory/upstream.conf:/etc/nginx/conf.d/upstream.conf:ro" \
@@ -193,8 +208,7 @@ unauthenticated_status=$(curl \
 }
 
 current_headers="$temporary_directory/current.headers"
-curl \
-  --fail \
+assert_curl_succeeds 'authenticated current release metadata request' \
   --insecure \
   --silent \
   --user 'staging:test-password' \
@@ -206,8 +220,7 @@ assert_response_header "$current_headers" 'Content-Type: application/json'
 assert_response_header "$current_headers" 'Cache-Control: no-store'
 
 version_headers="$temporary_directory/version.headers"
-curl \
-  --fail \
+assert_curl_succeeds 'authenticated versioned release metadata request' \
   --insecure \
   --silent \
   --user 'staging:test-password' \
@@ -219,8 +232,7 @@ assert_response_header "$version_headers" \
   'Cache-Control: public, max-age=31536000, immutable'
 
 checksum_body="$temporary_directory/downloaded.sha256"
-curl \
-  --fail \
+assert_curl_succeeds 'authenticated checksum download request' \
   --insecure \
   --silent \
   --user 'staging:test-password' \
@@ -233,8 +245,7 @@ cmp \
 
 apk_headers="$temporary_directory/apk.headers"
 apk_body="$temporary_directory/downloaded.apk"
-curl \
-  --fail \
+assert_curl_succeeds 'authenticated APK HEAD request' \
   --head \
   --insecure \
   --silent \
@@ -248,8 +259,7 @@ assert_response_header "$apk_headers" \
 assert_response_header "$apk_headers" \
   'Cache-Control: public, max-age=31536000, immutable'
 assert_response_header "$apk_headers" "Content-Length: $apk_size"
-curl \
-  --fail \
+assert_curl_succeeds 'authenticated APK download request' \
   --insecure \
   --silent \
   --user 'staging:test-password' \
