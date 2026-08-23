@@ -14,7 +14,9 @@ printf '%s\n' 'name: speakup' 'version: 0.1.0+1' > "$temporary_directory/pubspec
 
 cat > "$fake_bin/apksigner" <<EOF
 #!/usr/bin/env bash
-printf '%s\n' 'Signer #1 certificate SHA-256 digest: $certificate_sha256'
+printf '%s\n' \
+  'Signer #1 certificate SHA-256 digest: $certificate_sha256' \
+  'Signer (minSdkVersion=24, maxSdkVersion=2147483647) certificate SHA-256 digest: $certificate_sha256'
 EOF
 cat > "$fake_bin/java" <<'EOF'
 #!/usr/bin/env bash
@@ -64,5 +66,26 @@ if PATH="$fake_bin:$PATH" \
   exit 1
 fi
 grep -Fq 'Unexpected minimum Android API: 23' "$temporary_directory/rejected.out"
+
+write_aapt 24
+cat > "$fake_bin/apksigner" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' \
+  'Signer #1 certificate SHA-256 digest: $certificate_sha256' \
+  'Signer (minSdkVersion=24, maxSdkVersion=2147483647) certificate SHA-256 digest: dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
+EOF
+chmod +x "$fake_bin/apksigner"
+if PATH="$fake_bin:$PATH" \
+  SPEAKUP_ANDROID_CERT_SHA256="$certificate_sha256" \
+  "$script_directory/verify.sh" \
+    "$temporary_directory/speakup.apk" \
+    "$temporary_directory/pubspec.yaml" \
+    > "$temporary_directory/multiple-signers.out" 2>&1; then
+  printf '%s\n' 'APK with multiple signer certificates was accepted.' >&2
+  exit 1
+fi
+grep -Fq \
+  'APK signer certificate output is missing or contains multiple certificates.' \
+  "$temporary_directory/multiple-signers.out"
 
 printf '%s\n' 'Android release verifier tests passed'
