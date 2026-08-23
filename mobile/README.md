@@ -30,7 +30,7 @@ Android 真机上运行 App。连接多台设备时，可通过
 首发网站分发基线为：
 
 - applicationId：`com.xengineer.speakup`
-- versionName/versionCode：`0.1.1` / `2`（Release Tag：`v0.1.1`）
+- versionName/versionCode：`0.1.2` / `3`（Release Tag：`v0.1.2`）
 - ABI：仅 `arm64-v8a`
 - staging API 发布契约：`https://staging-api.speak-up.top`
 - production API 发布契约：`https://api.speak-up.top`
