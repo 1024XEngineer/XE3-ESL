@@ -31,6 +31,7 @@ jobs:
       api: ${{ steps.scope.outputs.api }}
       portal: ${{ steps.scope.outputs.portal }}
       deploy: ${{ steps.scope.outputs.deploy }}
+      android_release: ${{ steps.scope.outputs.android_release }}
     steps:
       - name: Check out repository history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -54,6 +55,7 @@ jobs:
           api=false
           portal=false
           deploy=false
+          android_release=false
 
           set_all_checks() {
             flutter=true
@@ -63,8 +65,15 @@ jobs:
             deploy=true
           }
 
-          if [[ "$EVENT_NAME" != "pull_request" || "$BASE_REF" == "main" ]]; then
+          if [[ "$EVENT_NAME" == "workflow_call" ]]; then
+            # Release Candidate runs the protected real-APK job downstream.
             set_all_checks
+          elif [[ "$EVENT_NAME" != "pull_request" ]]; then
+            set_all_checks
+            android_release=true
+          elif [[ "$BASE_REF" == "main" ]]; then
+            set_all_checks
+            android_release=true
           else
             git cat-file -e "${BASE_SHA}^{commit}"
             git cat-file -e "${HEAD_SHA}^{commit}"
@@ -78,14 +87,19 @@ jobs:
             while IFS= read -r -d '' file; do
               printf 'Changed file: %q\n' "$file"
               case "$file" in
-                Makefile|.github/workflows/quality.yml|.github/workflows/database.yml|.github/workflows/coverage-comment.yml)
+                Makefile|.github/workflows/quality.yml|.github/workflows/release-candidate.yml)
                   set_all_checks
+                  android_release=true
                   ;;
-                .github/workflows/release-candidate.yml|tools/release-candidate/*)
+                .github/workflows/database.yml|.github/workflows/coverage-comment.yml|tools/release-candidate/*)
                   set_all_checks
                   ;;
                 tools/android-download/*)
                   deploy=true
+                  ;;
+                mobile/android/*|mobile/pubspec.yaml|mobile/pubspec.lock|tools/android-release/*)
+                  flutter=true
+                  android_release=true
                   ;;
                 mobile/*)
                   flutter=true
@@ -112,6 +126,7 @@ jobs:
             echo "api=$api"
             echo "portal=$portal"
             echo "deploy=$deploy"
+            echo "android_release=$android_release"
           } >> "$GITHUB_OUTPUT"
 
       - name: Set up Node.js
@@ -158,6 +173,86 @@ jobs:
           path: mobile/coverage/lcov.info
           if-no-files-found: error
           retention-days: 14
+
+  android-release:
+    name: Android release signing fixture
+    needs: changes
+    if: needs.changes.outputs.android_release == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: "3.44.6"
+          channel: stable
+
+      - name: Restore Pub package cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.pub-cache
+          key: ${{ runner.os }}-pub-flutter-3.44.6-${{ hashFiles('mobile/pubspec.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-pub-flutter-3.44.6-
+
+      - name: Prepare disposable release signing fixture
+        run: |
+          set -euo pipefail
+          umask 077
+          signing_directory="$RUNNER_TEMP/android-release-fixture"
+          keystore_path="$signing_directory/release.jks"
+          install -d -m 700 "$signing_directory"
+          keytool -genkeypair \
+            -noprompt \
+            -storetype JKS \
+            -keystore "$keystore_path" \
+            -storepass fixture-password \
+            -keypass fixture-password \
+            -alias speakup-release \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 3650 \
+            -dname "CN=SpeakUp CI Fixture,O=XE3,C=CN" \
+            >/dev/null 2>&1
+          certificate_sha256="$(
+            keytool \
+              -J-Duser.language=en \
+              -J-Duser.country=US \
+              -list \
+              -v \
+              -keystore "$keystore_path" \
+              -alias speakup-release \
+              -storepass fixture-password |
+              sed -n 's/^[[:space:]]*SHA256: //p' |
+              head -n 1 |
+              tr '[:upper:]' '[:lower:]' |
+              tr -d '[:space:]:'
+          )"
+          [[ "$certificate_sha256" =~ ^[0-9a-f]{64}$ ]]
+          {
+            echo "SPEAKUP_ANDROID_KEYSTORE_PATH=$keystore_path"
+            echo "SPEAKUP_ANDROID_KEY_ALIAS=speakup-release"
+            echo "SPEAKUP_ANDROID_STORE_PASSWORD=fixture-password"
+            echo "SPEAKUP_ANDROID_KEY_PASSWORD=fixture-password"
+            echo "SPEAKUP_ANDROID_CERT_SHA256=$certificate_sha256"
+          } >> "$GITHUB_ENV"
+
+      - name: Build and verify both explicitly signed APKs
+        run: |
+          set -euo pipefail
+          make build-android-release-staging
+          make build-android-release-production
+
+      - name: Remove disposable release signing fixture
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/android-release-fixture/release.jks"
+          rmdir "$RUNNER_TEMP/android-release-fixture" 2>/dev/null || true
 
   go:
     name: Go
@@ -620,6 +715,7 @@ jobs:
     needs:
       - changes
       - flutter
+      - android-release
       - go
       - api
       - portal
@@ -633,6 +729,8 @@ jobs:
       CHANGES_RESULT: ${{ needs.changes.result }}
       FLUTTER_REQUIRED: ${{ needs.changes.outputs.flutter }}
       FLUTTER_RESULT: ${{ needs.flutter.result }}
+      ANDROID_RELEASE_REQUIRED: ${{ needs.changes.outputs.android_release }}
+      ANDROID_RELEASE_RESULT: ${{ needs.android-release.result }}
       GO_REQUIRED: ${{ needs.changes.outputs.go }}
       GO_RESULT: ${{ needs.go.result }}
       API_REQUIRED: ${{ needs.changes.outputs.api }}
@@ -684,6 +782,10 @@ jobs:
           }
 
           require_result "Flutter" "$FLUTTER_REQUIRED" "$FLUTTER_RESULT"
+          require_result \
+            "Android release signing fixture" \
+            "$ANDROID_RELEASE_REQUIRED" \
+            "$ANDROID_RELEASE_RESULT"
           require_result "Go" "$GO_REQUIRED" "$GO_RESULT"
           require_result "API contracts" "$API_REQUIRED" "$API_RESULT"
           require_result "Portal" "$PORTAL_REQUIRED" "$PORTAL_RESULT"

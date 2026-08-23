@@ -129,10 +129,11 @@ if printf '%s\n' "$signature_report" | grep -Eq 'certificate DN:.*CN=Android Deb
 fi
 certificate_sha256="$(
   printf '%s\n' "$signature_report" |
-    sed -n 's/^Signer #1 certificate SHA-256 digest: //p' |
-    head -n 1 |
+    sed -n -E \
+      's/^.*certificate SHA-256 digest:[[:space:]]*([0-9A-Fa-f:]+)[[:space:]]*$/\1/p' |
     tr '[:upper:]' '[:lower:]' |
-    tr -d '[:space:]:'
+    sed 's/[[:space:]:]//g' |
+    LC_ALL=C sort -u
 )"
 expected_certificate_sha256="$(
   printf '%s' "$expected_certificate_sha256" |
@@ -144,8 +145,20 @@ expected_certificate_sha256="$(
   printf '%s\n' 'SPEAKUP_ANDROID_CERT_SHA256 must contain 64 hexadecimal digits.' >&2
   exit 1
 }
+[[ "$certificate_sha256" =~ ^[0-9a-f]{64}$ ]] || {
+  printf '%s\n' \
+    'APK signer certificate output is missing or contains multiple certificates.' >&2
+  printf 'Observed signer certificate SHA-256 values: %s\n' \
+    "${certificate_sha256:-<none>}" >&2
+  printf 'apksigner: %s\n' "$apksigner" >&2
+  "$apksigner" --version >&2 2>/dev/null || true
+  printf '%s\n' "$signature_report" |
+    sed -n '/certificate SHA-256 digest:/p' >&2
+  exit 1
+}
 [[ "$certificate_sha256" == "$expected_certificate_sha256" ]] || {
   printf '%s\n' 'APK signing certificate SHA-256 does not match the approved certificate.' >&2
+  printf 'Observed signer certificate SHA-256: %s\n' "$certificate_sha256" >&2
   exit 1
 }
 

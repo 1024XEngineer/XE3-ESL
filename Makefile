@@ -93,20 +93,55 @@ check-android-release-guard: check-flutter-dependencies
 	@set -euo pipefail; \
 	output_file="$$(mktemp)"; \
 	trap 'rm -f "$$output_file"' EXIT; \
-	if cd mobile && env \
-		-u SPEAKUP_ANDROID_KEYSTORE_PATH \
-		-u SPEAKUP_ANDROID_KEY_ALIAS \
-		-u SPEAKUP_ANDROID_STORE_PASSWORD \
-		-u SPEAKUP_ANDROID_KEY_PASSWORD \
-		flutter build apk --release --flavor production \
-			--target-platform android-arm64 >"$$output_file" 2>&1; then \
-		printf '%s\n' 'Release build unexpectedly succeeded without signing secrets.' >&2; \
+	if ( \
+		cd mobile && \
+		env -u SPEAKUP_ANDROID_EXTERNAL_SIGNING \
+			flutter build apk --release --flavor production \
+				--target-platform android-arm64 \
+	) >"$$output_file" 2>&1; then \
+		printf '%s\n' 'Release build bypassed the explicit signing pipeline.' >&2; \
 		exit 1; \
 	fi; \
-	if ! grep -Fq 'Missing Android release signing environment variables' "$$output_file"; then \
+	if ! grep -Fq 'Android release APKs must use the explicit Makefile signing targets.' "$$output_file"; then \
 		printf '%s\n' 'Release build failed before the signing guard was reached.' >&2; \
+		cat "$$output_file" >&2; \
 		exit 1; \
-	fi
+	fi; \
+	gradle_java_home="$${JAVA_HOME:-$$( \
+		flutter config --machine | \
+			sed -n 's/^[[:space:]]*"jdk-dir": "\([^"]*\)".*/\1/p' \
+	)}"; \
+	if [[ ! -x "$$gradle_java_home/bin/java" ]]; then \
+		printf '%s\n' 'Cannot locate the JDK configured for Flutter.' >&2; \
+		exit 1; \
+	fi; \
+	for task in \
+		app:assembleStaging \
+		app:assembleProduction \
+		app:bundleStaging \
+		app:bundleProduction; do \
+		: >"$$output_file"; \
+		if ( \
+			cd mobile/android && \
+			env -u SPEAKUP_ANDROID_EXTERNAL_SIGNING \
+				JAVA_HOME="$$gradle_java_home" \
+				PATH="$$gradle_java_home/bin:$$PATH" \
+				./gradlew --dry-run "$$task" \
+		) >"$$output_file" 2>&1; then \
+			printf 'Gradle task bypassed the explicit signing pipeline: %s\n' \
+				"$$task" >&2; \
+			exit 1; \
+		fi; \
+		if ! grep -Fq \
+			'Android release APKs must use the explicit Makefile signing targets.' \
+			"$$output_file"; then \
+			printf 'Gradle task failed before the signing guard: %s\n' \
+				"$$task" >&2; \
+			cat "$$output_file" >&2; \
+			exit 1; \
+		fi; \
+	done
+	./tools/android-release/sign.test.sh
 
 check-go: check-go-test
 
@@ -264,6 +299,7 @@ check-api-contracts: check-api-dependencies
 
 check-release-candidate:
 	./tools/android-release/verify-keystore.test.sh
+	./tools/android-release/sign.test.sh
 	./tools/android-release/verify.test.sh
 	node --test tools/release-candidate/*.test.mjs
 
@@ -303,28 +339,28 @@ dev-ios-simulator:
 	./tools/ios-simulator-dev/run.sh
 
 build-android-release-staging:
-	@test -n "$${SPEAKUP_ANDROID_CERT_SHA256:-}" || { \
-		printf '%s\n' 'SPEAKUP_ANDROID_CERT_SHA256 is required.' >&2; \
-		exit 1; \
-	}
-	cd mobile && flutter build apk \
+	./tools/android-release/verify-keystore.sh \
+		"$${SPEAKUP_ANDROID_KEYSTORE_PATH:-}"
+	cd mobile && SPEAKUP_ANDROID_EXTERNAL_SIGNING=true flutter build apk \
 		--release \
 		--flavor staging \
 		--target-platform android-arm64 \
 		--dart-define=SPEAKUP_API_BASE_URL=https://staging-api.speak-up.top
+	./tools/android-release/sign.sh \
+		mobile/build/app/outputs/flutter-apk/app-staging-release.apk
 	./tools/android-release/verify.sh \
 		mobile/build/app/outputs/flutter-apk/app-staging-release.apk
 
 build-android-release-production:
-	@test -n "$${SPEAKUP_ANDROID_CERT_SHA256:-}" || { \
-		printf '%s\n' 'SPEAKUP_ANDROID_CERT_SHA256 is required.' >&2; \
-		exit 1; \
-	}
-	cd mobile && flutter build apk \
+	./tools/android-release/verify-keystore.sh \
+		"$${SPEAKUP_ANDROID_KEYSTORE_PATH:-}"
+	cd mobile && SPEAKUP_ANDROID_EXTERNAL_SIGNING=true flutter build apk \
 		--release \
 		--flavor production \
 		--target-platform android-arm64 \
 		--dart-define=SPEAKUP_API_BASE_URL=https://api.speak-up.top
+	./tools/android-release/sign.sh \
+		mobile/build/app/outputs/flutter-apk/app-production-release.apk
 	./tools/android-release/verify.sh \
 		mobile/build/app/outputs/flutter-apk/app-production-release.apk
 
