@@ -1,0 +1,9 @@
+services:
+  postgres:
+    pull_policy: never
+  migrate:
+    pull_policy: never
+  server:
+    pull_policy: never
+  portal:
+    pull_policy: never
