@@ -25,6 +25,7 @@ SHELL := /bin/bash
 	check-api-contracts \
 	check-release-candidate \
 	check-production-backup \
+	check-offline-release \
 	check-android-download \
 	check-tls-lifecycle \
 	check-production-deploy \
@@ -54,6 +55,7 @@ help:
 		'  make check-api      Validate OpenAPI, JSON Schema, and contract fixtures' \
 		'  make check-release-candidate  Validate release metadata and manifest tooling' \
 		'  make check-production-backup  Exercise PostgreSQL backup and isolated restore' \
+		'  make check-offline-release  Validate offline image build/load contracts' \
 		'  make check-android-download  Validate the public Android bundle and publish contract' \
 		'  make check-tls-lifecycle  Validate TLS issuance and renewal contracts' \
 		'  make check-production-deploy  Validate the immutable Production contract' \
@@ -267,6 +269,12 @@ check-release-candidate:
 
 check-production-backup:
 	./deploy/production/test-backup.sh
+
+check-offline-release:
+	./tools/release-candidate/build-offline-images.test.sh
+	./deploy/production/test-offline-images.sh
+	./deploy/production/test-offline-images-docker.sh
+	./deploy/production/test-offline-compose.sh
 
 check-android-download:
 	node --test tools/android-download/*.test.mjs

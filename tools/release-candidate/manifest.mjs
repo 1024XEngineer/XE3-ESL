@@ -2,9 +2,13 @@
 
 import { createHash } from "node:crypto";
 import {
+  closeSync,
+  linkSync,
+  lstatSync,
   mkdtempSync,
+  openSync,
+  readSync,
   readFileSync,
-  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -12,6 +16,7 @@ import {
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { readArguments } from "./cli.mjs";
 import { collectReleaseMetadata } from "./metadata.mjs";
 
 const sha256Pattern = /^[0-9a-f]{64}$/;
@@ -28,6 +33,36 @@ const androidReleaseContract = {
 const imagePattern =
   /^ghcr\.io\/[a-z0-9]+(?:[._-][a-z0-9]+)*\/[a-z0-9]+(?:[._/-][a-z0-9]+)*$/;
 const repositoryPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const offlineBundleKeys = [
+  "bundle_version",
+  "git_sha",
+  "images",
+  "platform",
+  "source_date_epoch",
+  "version",
+];
+const offlineImageKeys = [
+  "archive_file",
+  "archive_sha256",
+  "archive_size_bytes",
+  "build_metadata_file",
+  "build_metadata_sha256",
+  "digest",
+  "name",
+  "repository",
+];
+const offlineImages = [
+  {
+    name: "portal",
+    repository: "ghcr.io/1024xengineer/xe3-esl-portal",
+    environmentPrefix: "PORTAL",
+  },
+  {
+    name: "server",
+    repository: "ghcr.io/1024xengineer/xe3-esl-server",
+    environmentPrefix: "SERVER",
+  },
+];
 
 function required(input, name) {
   const value = input[name]?.trim();
@@ -96,6 +131,165 @@ function apkArtifact(filePath, expectedName, name) {
   };
 }
 
+function verifyApkHash(input, prefix, artifact) {
+  const name = `${prefix}_APK_VERIFIED_SHA256`;
+  if (!Object.hasOwn(input, name)) return;
+  const expected = nonzeroSha(required(input, name), sha256Pattern, name);
+  if (artifact.sha256 !== expected) {
+    throw new Error(`${name} does not match the APK file`);
+  }
+}
+
+function exactObject(value, expectedKeys, name) {
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(expectedKeys)
+  ) {
+    throw new Error(`${name} must contain the exact field set`);
+  }
+  return value;
+}
+
+function nonemptyRegularFile(file, name) {
+  let status;
+  try {
+    status = lstatSync(file);
+  } catch {
+    throw new Error(`${name} must be a non-empty regular file`);
+  }
+  if (status.isSymbolicLink() || !status.isFile() || status.size < 1) {
+    throw new Error(`${name} must be a non-empty regular file`);
+  }
+  return status;
+}
+
+function sha256File(file) {
+  const descriptor = openSync(file, "r");
+  const hash = createHash("sha256");
+  const buffer = Buffer.allocUnsafe(1024 * 1024);
+  try {
+    for (;;) {
+      const bytesRead = readSync(descriptor, buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      hash.update(buffer.subarray(0, bytesRead));
+    }
+  } finally {
+    closeSync(descriptor);
+  }
+  return hash.digest("hex");
+}
+
+function readJson(file, name) {
+  try {
+    return JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    throw new Error(`${name} must contain valid JSON`);
+  }
+}
+
+export function offlineBundleImageInput(filePath, releaseMetadata) {
+  const bundlePath = path.resolve(filePath);
+  nonemptyRegularFile(bundlePath, "offline bundle");
+  const bundle = exactObject(
+    readJson(bundlePath, "offline bundle"),
+    offlineBundleKeys,
+    "offline bundle",
+  );
+  if (bundle.bundle_version !== 1) {
+    throw new Error("offline bundle version must be 1");
+  }
+  const bundleVersion = matches(bundle.version, versionPattern, "offline bundle version");
+  if (bundleVersion !== releaseMetadata.version) {
+    throw new Error("offline bundle version does not match release metadata");
+  }
+  const bundleGitSha = nonzeroSha(
+    bundle.git_sha,
+    gitShaPattern,
+    "offline bundle git_sha",
+  );
+  if (bundleGitSha !== releaseMetadata.git_sha) {
+    throw new Error("offline bundle git_sha does not match release metadata");
+  }
+  if (
+    !Number.isSafeInteger(bundle.source_date_epoch) ||
+    bundle.source_date_epoch < 1
+  ) {
+    throw new Error("offline bundle source_date_epoch must be a positive integer");
+  }
+  if (bundle.platform !== "linux/amd64") {
+    throw new Error("offline bundle platform must be linux/amd64");
+  }
+  if (!Array.isArray(bundle.images) || bundle.images.length !== offlineImages.length) {
+    throw new Error("offline bundle must contain ordered portal and server images");
+  }
+
+  const bundleDirectory = path.dirname(bundlePath);
+  const imageInput = {};
+  for (const [index, expected] of offlineImages.entries()) {
+    const image = exactObject(
+      bundle.images[index],
+      offlineImageKeys,
+      `offline ${expected.name} image`,
+    );
+    if (image.name !== expected.name || image.repository !== expected.repository) {
+      throw new Error(`offline ${expected.name} image identity is invalid`);
+    }
+    const digest = nonzeroSha(
+      image.digest,
+      imageDigestPattern,
+      `offline ${expected.name} image digest`,
+    );
+    const archiveFile =
+      `speakup-${expected.name}-v${bundleVersion}-linux-amd64.tar`;
+    const metadataFile =
+      `speakup-${expected.name}-v${bundleVersion}-linux-amd64-build-metadata.json`;
+    if (
+      image.archive_file !== archiveFile ||
+      image.build_metadata_file !== metadataFile
+    ) {
+      throw new Error(`offline ${expected.name} image file names are invalid`);
+    }
+    if (!Number.isSafeInteger(image.archive_size_bytes) || image.archive_size_bytes < 1) {
+      throw new Error(`offline ${expected.name} archive size is invalid`);
+    }
+    const archiveSha256 = nonzeroSha(
+      image.archive_sha256,
+      sha256Pattern,
+      `offline ${expected.name} archive SHA-256`,
+    );
+    const metadataSha256 = nonzeroSha(
+      image.build_metadata_sha256,
+      sha256Pattern,
+      `offline ${expected.name} metadata SHA-256`,
+    );
+    const archivePath = path.join(bundleDirectory, archiveFile);
+    const metadataPath = path.join(bundleDirectory, metadataFile);
+    const archiveStatus = nonemptyRegularFile(
+      archivePath,
+      `offline ${expected.name} archive`,
+    );
+    nonemptyRegularFile(metadataPath, `offline ${expected.name} metadata`);
+    if (archiveStatus.size !== image.archive_size_bytes) {
+      throw new Error(`offline ${expected.name} archive size does not match`);
+    }
+    if (sha256File(archivePath) !== archiveSha256) {
+      throw new Error(`offline ${expected.name} archive SHA-256 does not match`);
+    }
+    if (sha256File(metadataPath) !== metadataSha256) {
+      throw new Error(`offline ${expected.name} metadata SHA-256 does not match`);
+    }
+    const buildMetadata = readJson(metadataPath, `offline ${expected.name} metadata`);
+    if (buildMetadata?.["containerimage.digest"] !== digest) {
+      throw new Error(`offline ${expected.name} metadata digest does not match`);
+    }
+    imageInput[`${expected.environmentPrefix}_IMAGE`] = expected.repository;
+    imageInput[`${expected.environmentPrefix}_IMAGE_DIGEST`] = digest;
+  }
+  return imageInput;
+}
+
 function androidApkMetadata(input, prefix) {
   const applicationId = matches(
     required(input, `${prefix}_APK_APPLICATION_ID`),
@@ -162,6 +356,8 @@ export function createReleaseManifest(input, metadata) {
     `speakup-v${version}-production-arm64.apk`,
     "PRODUCTION_APK_PATH",
   );
+  verifyApkHash(input, "STAGING", stagingApk);
+  verifyApkHash(input, "PRODUCTION", productionApk);
   const androidMetadata = matchingAndroidApkMetadata(input);
 
   return {
@@ -198,24 +394,43 @@ export function createReleaseManifest(input, metadata) {
   };
 }
 
-function readArguments(arguments_) {
-  const values = {};
-  for (let index = 0; index < arguments_.length; index += 2) {
-    const flag = arguments_[index];
-    const value = arguments_[index + 1];
-    if (!flag?.startsWith("--") || value === undefined) {
-      throw new Error(
-        "Usage: manifest.mjs --tag <vX.Y.Z> --main-ref <ref> " +
-          "--staging-apk <file> --production-apk <file> --output <file>",
-      );
+export function writeReleaseManifest(outputInput, manifest) {
+  const output = path.resolve(outputInput);
+  const temporaryDirectory = mkdtempSync(`${output}.tmp-`);
+  const temporaryOutput = path.join(temporaryDirectory, "release-manifest.json");
+  try {
+    writeFileSync(temporaryOutput, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+    try {
+      linkSync(temporaryOutput, output);
+    } catch (error) {
+      if (error?.code === "EEXIST") {
+        throw new Error(`output already exists: ${output}`);
+      }
+      throw error;
     }
-    values[flag.slice(2)] = value;
+  } finally {
+    rmSync(temporaryDirectory, { force: true, recursive: true });
   }
-  return values;
 }
 
 function main() {
-  const arguments_ = readArguments(process.argv.slice(2));
+  const usage =
+    "Usage: manifest.mjs --tag <vX.Y.Z> --main-ref <ref> " +
+    "--staging-apk <file> --production-apk <file> --output <file> " +
+    "[--repo <path>] [--tag-remote <name>]";
+  const arguments_ = readArguments(
+    process.argv.slice(2),
+    [
+      "tag",
+      "main-ref",
+      "staging-apk",
+      "production-apk",
+      "output",
+      "repo",
+      "tag-remote",
+    ],
+    usage,
+  );
   for (const name of ["tag", "main-ref", "staging-apk", "production-apk", "output"]) {
     if (!arguments_[name]) throw new Error(`--${name} is required`);
   }
@@ -224,6 +439,7 @@ function main() {
     repoDir,
     tag: arguments_.tag,
     mainRef: arguments_["main-ref"],
+    tagRemote: arguments_["tag-remote"] ?? "origin",
   });
   const manifest = createReleaseManifest(
     {
@@ -233,15 +449,7 @@ function main() {
     },
     metadata,
   );
-  const output = path.resolve(arguments_.output);
-  const temporaryDirectory = mkdtempSync(`${output}.tmp-`);
-  const temporaryOutput = path.join(temporaryDirectory, "release-manifest.json");
-  try {
-    writeFileSync(temporaryOutput, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-    renameSync(temporaryOutput, output);
-  } finally {
-    rmSync(temporaryDirectory, { force: true, recursive: true });
-  }
+  writeReleaseManifest(arguments_.output, manifest);
 }
 
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
