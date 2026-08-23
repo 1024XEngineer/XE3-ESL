@@ -14,7 +14,9 @@ val releaseSigningVariableNames = listOf(
 val releaseBuildRequested = gradle.startParameter.taskNames.any {
     it.contains("release", ignoreCase = true)
 }
-val releaseSigningValues = releaseSigningVariableNames.associateWith(System::getenv)
+val releaseSigningValues = releaseSigningVariableNames.associateWith {
+    providers.environmentVariable(it).orNull
+}
 val missingReleaseSigningVariables = releaseSigningValues
     .filterValues { it.isNullOrBlank() }
     .keys

@@ -259,6 +259,7 @@ check-api-contracts: check-api-dependencies
 	cd api && npm run check
 
 check-release-candidate:
+	./tools/android-release/verify-keystore.test.sh
 	./tools/android-release/verify.test.sh
 	node --test tools/release-candidate/*.test.mjs
 

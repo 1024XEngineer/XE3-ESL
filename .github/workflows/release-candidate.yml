@@ -188,6 +188,9 @@ jobs:
       - name: Prepare protected release keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.SPEAKUP_ANDROID_KEYSTORE_BASE64 }}
+          SPEAKUP_ANDROID_KEY_ALIAS: ${{ secrets.SPEAKUP_ANDROID_KEY_ALIAS }}
+          SPEAKUP_ANDROID_STORE_PASSWORD: ${{ secrets.SPEAKUP_ANDROID_STORE_PASSWORD }}
+          SPEAKUP_ANDROID_CERT_SHA256: ${{ secrets.SPEAKUP_ANDROID_CERT_SHA256 }}
         run: |
           set -euo pipefail
           if [[ -z "$KEYSTORE_BASE64" ]]; then
@@ -203,6 +206,7 @@ jobs:
             exit 1
           fi
           chmod 600 "$keystore_path"
+          ./tools/android-release/verify-keystore.sh "$keystore_path"
           echo "SPEAKUP_ANDROID_KEYSTORE_PATH=$keystore_path" >> "$GITHUB_ENV"
 
       - name: Build signed Staging and Production APKs
