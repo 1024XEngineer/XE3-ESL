@@ -35,6 +35,18 @@ assert_contains() {
   }
 }
 
+assert_pcre_capture_name_lengths() {
+  local match name
+
+  while IFS= read -r match; do
+    name=${match:3:${#match}-4}
+    ((${#name} <= 32)) || {
+      printf 'PCRE capture name exceeds 32 characters: %s\n' "$name" >&2
+      exit 1
+    }
+  done < <(grep -oE '\(\?<[^>]+>' "$rendered_configuration" || true)
+}
+
 assert_count() {
   local expected=$1
   local wanted=$2
@@ -139,6 +151,8 @@ chmod 600 "$temporary_directory/production.env"
   --env-file "$temporary_directory/production.env" \
   --output "$rendered_configuration" \
   >/dev/null
+
+assert_pcre_capture_name_lengths
 
 assert_count 'server_name speak-up.top;' 2
 assert_count 'server_name api.speak-up.top;' 2

@@ -22,6 +22,18 @@ assert_contains() {
   }
 }
 
+assert_pcre_capture_name_lengths() {
+  local match name
+
+  while IFS= read -r match; do
+    name=${match:3:${#match}-4}
+    ((${#name} <= 32)) || {
+      printf 'PCRE capture name exceeds 32 characters: %s\n' "$name" >&2
+      exit 1
+    }
+  done < <(grep -oE '\(\?<[^>]+>' "$temporary_directory/default.conf" || true)
+}
+
 assert_response_header() {
   local response_file=$1
   local expected=$2
@@ -123,6 +135,8 @@ printf '%s\n' \
   --env-file "$temporary_directory/staging.env" \
   --output "$temporary_directory/default.conf" \
   >/dev/null
+
+assert_pcre_capture_name_lengths
 
 assert_contains "root $temporary_directory/public;"
 assert_contains 'default_type application/vnd.android.package-archive;'
