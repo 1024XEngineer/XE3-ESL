@@ -58,6 +58,7 @@ func NewIdentityAndAgentModules(
 	trustedProxyHeader string,
 	modelProviders AgentModelProviders,
 	runConfiguration agentrun.Configuration,
+	runRuntimeConfiguration AgentRunRuntimeConfiguration,
 	voiceConfigurations ...RuntimeAudioConfiguration,
 ) (*identity.Module, RouteRegistrar, error) {
 	if len(voiceConfigurations) == 1 &&
@@ -73,6 +74,7 @@ func NewIdentityAndAgentModules(
 		trustedProxyHeader,
 		modelProviders,
 		runConfiguration,
+		runRuntimeConfiguration,
 		nil,
 		nil,
 		nil,
@@ -113,6 +115,7 @@ func buildIdentityAgentComposition(
 	trustedProxyHeader string,
 	modelProviders AgentModelProviders,
 	runConfiguration agentrun.Configuration,
+	runRuntimeConfiguration AgentRunRuntimeConfiguration,
 	summaryNotifier interface{ Notify() },
 	imageConfiguration *AgentImageConfiguration,
 	resumeConfiguration *InterviewResumeConfiguration,
@@ -250,7 +253,10 @@ func buildIdentityAgentComposition(
 		return nil, err
 	}
 	// 4. 装配 Agent Run Service。
-	toolOptions, err := agentRunServiceOptions(productionTools)
+	toolOptions, err := agentRunServiceOptions(
+		productionTools,
+		runRuntimeConfiguration,
+	)
 	if err != nil {
 		return nil, err
 	}
