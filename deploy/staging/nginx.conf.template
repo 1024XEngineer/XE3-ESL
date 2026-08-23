@@ -28,8 +28,8 @@ server {
     ssl_certificate __STAGING_TLS_CERTIFICATE__;
     ssl_certificate_key __STAGING_TLS_CERTIFICATE_KEY__;
 
-    access_log /var/log/nginx/xe3-speakup-staging-portal.access.log;
-    error_log /var/log/nginx/xe3-speakup-staging-portal.error.log warn;
+    access_log logs/xe3-speakup-staging-portal.access.log;
+    error_log logs/xe3-speakup-staging-portal.error.log warn;
 
     auth_basic "SpeakUp Staging";
     auth_basic_user_file __STAGING_HTPASSWD_FILE__;
@@ -62,8 +62,8 @@ server {
     ssl_certificate __STAGING_TLS_CERTIFICATE__;
     ssl_certificate_key __STAGING_TLS_CERTIFICATE_KEY__;
 
-    access_log /var/log/nginx/xe3-speakup-staging-api.access.log;
-    error_log /var/log/nginx/xe3-speakup-staging-api.error.log warn;
+    access_log logs/xe3-speakup-staging-api.access.log;
+    error_log logs/xe3-speakup-staging-api.error.log warn;
 
     add_header X-Content-Type-Options nosniff always;
     add_header Referrer-Policy no-referrer always;
