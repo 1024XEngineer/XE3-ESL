@@ -247,7 +247,7 @@ func (observer *recordingTranscriptionObserver) Updates() []protocol.Transcripti
 func TestRealtimeEndpointDerivesFromDashScopeHTTPBase(t *testing.T) {
 	t.Parallel()
 	got := realtimeASREndpoint("https://dashscope.aliyuncs.com/api/v1")
-	if got != "wss://dashscope.aliyuncs.com/api-ws/v1/inference/?heartbeat=true" {
+	if got != "wss://dashscope.aliyuncs.com/api-ws/v1/inference?heartbeat=true" {
 		t.Fatalf("endpoint = %q", got)
 	}
 }
