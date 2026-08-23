@@ -210,7 +210,7 @@ jobs:
           ./tools/android-release/verify-keystore.sh "$keystore_path"
           echo "SPEAKUP_ANDROID_KEYSTORE_PATH=$keystore_path" >> "$GITHUB_ENV"
 
-      - name: Build signed Staging and Production APKs
+      - name: Build explicitly signed Staging and Production APKs
         env:
           SPEAKUP_ANDROID_KEY_ALIAS: ${{ secrets.SPEAKUP_ANDROID_KEY_ALIAS }}
           SPEAKUP_ANDROID_STORE_PASSWORD: ${{ secrets.SPEAKUP_ANDROID_STORE_PASSWORD }}

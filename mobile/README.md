@@ -30,7 +30,7 @@ Android 真机上运行 App。连接多台设备时，可通过
 首发网站分发基线为：
 
 - applicationId：`com.xengineer.speakup`
-- versionName/versionCode：`0.1.2` / `3`（Release Tag：`v0.1.2`）
+- versionName/versionCode：`0.1.3` / `4`（Release Tag：`v0.1.3`）
 - ABI：仅 `arm64-v8a`
 - staging API 发布契约：`https://staging-api.speak-up.top`
 - production API 发布契约：`https://api.speak-up.top`
@@ -57,10 +57,14 @@ CI Secret 中提供以下环境变量：
 - `SPEAKUP_ANDROID_KEY_PASSWORD`
 - `SPEAKUP_ANDROID_CERT_SHA256`（公开证书指纹，仅用于产物校验）
 
-前四项有任一缺失、空值或 keystore 文件不可读时，release Gradle 配置立即失败；
-release 不再使用 debug signing。不要把 keystore、密码、`key.properties`、终端
-输出或 CI Secret 提交到仓库。首次网站发布后必须长期保管同一 app signing key，
-否则后续 APK 无法作为更新安装。
+五项有任一缺失、空值、密码不正确或 keystore 文件不可读时，专用构建入口会在
+耗时构建前失败。普通 Gradle/Flutter release 命令也会 fail closed；只能使用下方
+两个 Makefile 目标。目标先生成 unsigned APK，再执行 `zipalign -P 16`，最后由
+`apksigner` 使用批准 keystore 显式签名一次；输入若已签名会被拒绝，不会二次
+签名或回落到 debug signing。内部变量 `SPEAKUP_ANDROID_EXTERNAL_SIGNING` 只由
+Makefile 设置，不得手动绕过入口。不要把 keystore、密码、`key.properties`、
+终端输出或 CI Secret 提交到仓库。首次网站发布后必须长期保管同一 app signing
+key，否则后续 APK 无法作为更新安装。
 
 ### 构建与校验
 
@@ -72,7 +76,8 @@ make build-android-release-staging
 make build-android-release-production
 ```
 
-两个 build 入口都会在构建后立即执行完整校验；如果只需重新检查现有产物：
+两个 build 入口都会先校验 keystore，再构建、对齐、签名并立即执行完整产物
+校验；如果只需重新检查现有产物：
 
 ```shell
 make verify-android-release-staging
@@ -92,6 +97,7 @@ make check-android-release-guard
 参考：[Flutter Android flavors](https://docs.flutter.dev/deployment/flavors)、
 [Flutter Android 发布](https://docs.flutter.dev/deployment/android)、
 [Android App Signing](https://developer.android.com/studio/publish/app-signing)、
+[zipalign](https://developer.android.com/tools/zipalign)、
 [apksigner](https://developer.android.com/tools/apksigner)。
 
 ## iOS 模拟器调试
