@@ -24,6 +24,7 @@ SHELL := /bin/bash
 	check-api-dependencies \
 	check-api-contracts \
 	check-release-candidate \
+	check-production-backup \
 	check-offline-release \
 	check-android-download \
 	check-tls-lifecycle \
@@ -53,6 +54,7 @@ help:
 		'  make check-resume-ocr-live Run the PaddleOCR hosted API test with an explicit PDF' \
 		'  make check-api      Validate OpenAPI, JSON Schema, and contract fixtures' \
 		'  make check-release-candidate  Validate release metadata and manifest tooling' \
+		'  make check-production-backup  Exercise PostgreSQL backup and isolated restore' \
 		'  make check-offline-release  Validate offline image build/load contracts' \
 		'  make check-android-download  Validate the public Android bundle and publish contract' \
 		'  make check-tls-lifecycle  Validate TLS issuance and renewal contracts' \
@@ -264,6 +266,9 @@ check-release-candidate:
 	./tools/android-release/verify-keystore.test.sh
 	./tools/android-release/verify.test.sh
 	node --test tools/release-candidate/*.test.mjs
+
+check-production-backup:
+	./deploy/production/test-backup.sh
 
 check-offline-release:
 	./tools/release-candidate/build-offline-images.test.sh

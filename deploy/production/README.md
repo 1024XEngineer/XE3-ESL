@@ -268,9 +268,121 @@ loopback bindings. Public HTTPS and business-route smoke tests belong to the
 release smoke contract. There is intentionally no `deploy` or `down` command in
 this directory yet.
 
+## PostgreSQL logical backup and isolated restore check
+
+The Production PostgreSQL data volume has a separate, fail-closed logical
+backup contract. The backup script discovers the running Production PostgreSQL
+container through its fixed Compose labels, verifies its image, database,
+healthy state, source volume, and clean migration version, then creates a
+custom-format `pg_dump`. The dump waits at most 30 seconds for any table lock
+instead of blocking indefinitely. Both `backup daily` and `backup predeploy`
+write the dump, checksum, and release-linked JSON metadata under a private
+`.partial-*` directory, then complete an isolated `pg_restore`. Only after that
+restore succeeds is the directory published atomically as a finalized backup
+and expired finalized backups pruned. A failed dump, checksum, or restore is
+never published and never triggers retention deletion. The current run's exact
+partial directory is removed on failure using only the three fixed contract
+file names; unexpected entries stop cleanup instead of allowing recursive
+deletion.
+
+The daily timer therefore creates and restore-verifies a new backup on every
+successful run. The separate `check [BACKUP_ID]` command revalidates the latest
+or named finalized backup later: it verifies age, metadata, and checksum, then
+restores with the exact digest-pinned PostgreSQL image recorded by that backup
+into a temporary Docker volume with networking disabled. Historical backup
+checks therefore require their recorded image to remain available locally;
+they do not silently substitute the current Production image. Neither path
+mounts or changes the Production PostgreSQL volume. Backup and restore-check
+processes share
+`/run/lock/xe3-postgres-backup.lock`, so they fail instead of overlapping.
+
+Install the script, private configuration, and systemd units on the Production
+host:
+
+```sh
+install -d -m 0750 /etc/speakup
+install -m 0755 deploy/production/xe3-postgres-backup \
+  /usr/local/sbin/xe3-postgres-backup
+install -m 0600 deploy/production/postgres-backup.env.example \
+  /etc/speakup/postgres-backup.env
+install -m 0644 deploy/production/xe3-postgres-backup.service \
+  deploy/production/xe3-postgres-backup.timer \
+  deploy/production/xe3-postgres-restore-check.service \
+  /etc/systemd/system/
+```
+
+Populate every value in `/etc/speakup/postgres-backup.env` before starting a
+unit. `POSTGRES_BACKUP_IMAGE` must be the exact repository digest used by the
+Production Compose contract; tag-only references and bare image IDs are
+rejected.
+The database, user, and source volume must match the running Production
+PostgreSQL service. Set `POSTGRES_BACKUP_DEPLOYMENT_VERSION` and
+`POSTGRES_BACKUP_GIT_SHA` from the deployed, reviewed release manifest and
+update both when Production is promoted. Choose explicit retention and maximum
+backup age values for the approved recovery policy; the script has no silent
+defaults. The file contains no database password because backup access stays
+inside the already-running PostgreSQL container through the local Docker Unix
+socket.
+
+Enable the daily backup only after a manual backup and isolated restore check
+both succeed:
+
+```sh
+systemctl daemon-reload
+systemctl start xe3-postgres-backup.service
+systemctl start xe3-postgres-restore-check.service
+systemctl enable --now xe3-postgres-backup.timer
+systemctl list-timers xe3-postgres-backup.timer
+```
+
+The backup unit runs `xe3-postgres-backup backup daily`; the restore-check unit
+runs `xe3-postgres-backup check`, which selects the latest finalized backup when
+no ID is given. `StateDirectory=speakup/postgres-backups` must create
+`/var/lib/speakup/postgres-backups` before the script starts, owned by the
+service user with mode `0700`; the script rejects a missing, symlinked,
+wrong-owner, or wrong-mode root instead of creating or repairing it. Both units
+use a `0077` umask and a two-hour start timeout. Their process network namespace
+is private and only `AF_UNIX` is permitted so the Docker Unix socket remains
+usable without granting the unit IP network access.
+
+The configured application database user is also the owner of objects created
+by the migration command. Dumps and isolated restores both use
+`--no-owner --no-privileges`: they preserve the application schema and data
+under that same database user without requiring cluster roles, ownership
+reassignment, or grant restoration. This is a deliberate single-application
+database boundary, not a backup of PostgreSQL cluster identities.
+
+Treat a non-zero result from either service, an overdue timer, a failed restore
+check, or insufficient space below `/var/lib/speakup/postgres-backups` as an
+alert. The exact evidence is available without exposing configuration values:
+
+```sh
+systemctl status xe3-postgres-backup.service \
+  xe3-postgres-restore-check.service xe3-postgres-backup.timer
+journalctl --unit xe3-postgres-backup.service \
+  --unit xe3-postgres-restore-check.service
+```
+
+Wire those systemd failure states and filesystem-capacity signals into the
+host's monitoring before relying on the timer. Run the isolated restore check
+after any image or PostgreSQL major-version change and as part of the audited
+pre-deployment gate. The daily service already proves its newly created backup;
+the later check proves that a selected finalized backup still passes the same
+restore contract. A backup that has not restored successfully is not valid
+release evidence.
+
+This contract deliberately provides **no Production restore command**. It also
+does not capture PostgreSQL roles or tablespaces and does not configure WAL
+archiving or point-in-time recovery (PITR). Restoring data can discard writes
+made after the selected backup, so an actual Production restore requires a
+separate reviewed disaster-recovery runbook, an explicit outage, a named backup
+ID, and operator approval. Image rollback must never silently restore this
+database.
+
 ## Reproducible checks
 
 ```sh
+make check-production-backup
 make check-android-download
 make check-production-deploy
 make check-production-nginx
@@ -292,3 +404,5 @@ the four pull policies, and fail-closed behavior without contacting Production.
 - [GitHub workflow API](https://docs.github.com/en/rest/actions/workflows#get-a-workflow)
 - [GitHub workflow run API](https://docs.github.com/en/rest/actions/workflow-runs#get-a-workflow-run)
 - [Nginx proxy module](https://nginx.org/en/docs/http/ngx_http_proxy_module.html)
+- [PostgreSQL SQL dump backup](https://www.postgresql.org/docs/18/backup-dump.html)
+- [PostgreSQL `pg_restore`](https://www.postgresql.org/docs/18/app-pgrestore.html)

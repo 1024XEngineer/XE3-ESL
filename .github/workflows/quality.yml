@@ -271,7 +271,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.deploy == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -311,6 +311,22 @@ jobs:
 
       - name: Validate Production deployment contract
         run: make check-production-deploy
+
+      - name: Validate Production PostgreSQL systemd units
+        run: |
+          sudo install -D -m 0755 \
+            deploy/production/xe3-postgres-backup \
+            /usr/local/sbin/xe3-postgres-backup
+          sudo install -D -m 0600 \
+            deploy/production/postgres-backup.env.example \
+            /etc/speakup/postgres-backup.env
+          systemd-analyze verify \
+            deploy/production/xe3-postgres-backup.service \
+            deploy/production/xe3-postgres-restore-check.service \
+            deploy/production/xe3-postgres-backup.timer
+
+      - name: Exercise Production PostgreSQL backup and isolated restore
+        run: make check-production-backup
 
       - name: Validate offline release contract
         run: make check-offline-release
