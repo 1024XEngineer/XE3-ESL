@@ -43,7 +43,8 @@ write_environment() {
     'PRODUCTION_API_HOST=api.speak-up.top' \
     "PRODUCTION_TLS_CERTIFICATE=$certificate" \
     "PRODUCTION_TLS_CERTIFICATE_KEY=$certificate_key" \
-    "PRODUCTION_ACME_ROOT=$temporary_directory/acme" > "$destination"
+    "PRODUCTION_ACME_ROOT=$temporary_directory/acme" \
+    "PRODUCTION_PUBLIC_ROOT=$temporary_directory/public" > "$destination"
   chmod 0600 "$destination"
 }
 
@@ -79,7 +80,10 @@ temporary_directory=$(mktemp -d)
 readonly temporary_directory
 trap 'rm -rf "$temporary_directory"' EXIT
 
-mkdir -p "$temporary_directory/acme" "$temporary_directory/fake-bin"
+mkdir -p \
+  "$temporary_directory/acme" \
+  "$temporary_directory/fake-bin" \
+  "$temporary_directory/public"
 printf '%s\n' 'TEXT_GENERATION_PROVIDER=test-fixture' > "$temporary_directory/server.env"
 printf '%s\n' 'test-certificate-placeholder' > "$temporary_directory/fullchain.pem"
 printf '%s\n' 'test-key-placeholder' > "$temporary_directory/privkey.pem"
@@ -264,6 +268,24 @@ bash -n "$manage" "$0"
   > "$temporary_directory/validate.out"
 grep -Fq 'validated=true' "$temporary_directory/validate.out" ||
   fail "valid Production contract was not accepted"
+
+chmod 0777 "$temporary_directory/public"
+expect_failure "world-writable public root" \
+  "$manage" validate \
+    --manifest "$temporary_directory/release-manifest.json" \
+    --env-file "$temporary_directory/production.env"
+chmod 0700 "$temporary_directory/public"
+
+mkdir -p "$temporary_directory/public/downloads/android"
+chmod 0777 "$temporary_directory/public/downloads/android"
+expect_failure "world-writable Android public directory" \
+  "$manage" validate \
+    --manifest "$temporary_directory/release-manifest.json" \
+    --env-file "$temporary_directory/production.env"
+chmod 0700 "$temporary_directory/public/downloads/android"
+rmdir \
+  "$temporary_directory/public/downloads/android" \
+  "$temporary_directory/public/downloads"
 
 expect_failure "missing existing Portal data volume" \
   env TEST_MISSING_VOLUME=xe3-speakup-portal-data \
