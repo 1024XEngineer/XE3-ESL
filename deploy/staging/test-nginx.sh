@@ -185,11 +185,30 @@ printf '%s\n' \
   '}' \
   >"$temporary_directory/upstream.conf"
 
+# The production host explicitly runs Nginx workers as root, which is required
+# to read the deployment contract's owner-only htpasswd file.
+printf '%s\n' \
+  'user root;' \
+  'worker_processes 1;' \
+  'error_log /dev/stderr notice;' \
+  'pid /tmp/nginx.pid;' \
+  'events { worker_connections 1024; }' \
+  'http {' \
+  '    include /etc/nginx/mime.types;' \
+  '    default_type application/octet-stream;' \
+  '    access_log /dev/stdout;' \
+  '    sendfile on;' \
+  '    keepalive_timeout 65;' \
+  '    include /etc/nginx/conf.d/*.conf;' \
+  '}' \
+  >"$temporary_directory/nginx.conf"
+
 docker run --detach \
   --name "$runtime_container" \
   --publish 127.0.0.1::443 \
   --volume "$temporary_directory:$temporary_directory:ro" \
   --volume "$temporary_directory/logs:/etc/nginx/logs" \
+  --volume "$temporary_directory/nginx.conf:/etc/nginx/nginx.conf:ro" \
   --volume "$temporary_directory/default.conf:/etc/nginx/conf.d/default.conf:ro" \
   --volume "$temporary_directory/upstream.conf:/etc/nginx/conf.d/upstream.conf:ro" \
   "$nginx_image" \
