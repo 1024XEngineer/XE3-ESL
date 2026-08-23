@@ -360,6 +360,21 @@ sha256_file() {
   printf '%s\n' "$digest"
 }
 
+require_owned_public_directory() {
+  local description=$1
+  local directory=$2
+  local mode
+
+  require_safe_path_ancestors "$description" "$directory"
+  [[ ! -L "$directory" && -d "$directory" && -x "$directory" ]] ||
+    fail "$description must be a real directory: $directory"
+  require_current_owner "$description" "$directory"
+  mode=$(path_mode "$directory") ||
+    fail "cannot inspect permissions for $description: $directory"
+  (( (8#$mode & 0022) == 0 )) ||
+    fail "$description cannot be group or world writable: $directory"
+}
+
 allowed_configuration_key() {
   case "$1" in
     STAGING_POSTGRES_DB | \
@@ -372,7 +387,8 @@ allowed_configuration_key() {
       STAGING_TLS_CERTIFICATE | \
       STAGING_TLS_CERTIFICATE_KEY | \
       STAGING_HTPASSWD_FILE | \
-      STAGING_ACME_ROOT)
+      STAGING_ACME_ROOT | \
+      STAGING_PUBLIC_ROOT)
       return 0
       ;;
     *)
@@ -398,7 +414,8 @@ load_configuration() {
     STAGING_TLS_CERTIFICATE \
     STAGING_TLS_CERTIFICATE_KEY \
     STAGING_HTPASSWD_FILE \
-    STAGING_ACME_ROOT
+    STAGING_ACME_ROOT \
+    STAGING_PUBLIC_ROOT
 
   while IFS= read -r line || [[ -n "$line" ]]; do
     line_number=$((line_number + 1))
@@ -464,6 +481,7 @@ validate_configuration() {
     STAGING_TLS_CERTIFICATE_KEY
     STAGING_HTPASSWD_FILE
     STAGING_ACME_ROOT
+    STAGING_PUBLIC_ROOT
   )
   for name in "${required[@]}"; do
     require_value "$name"
@@ -490,7 +508,8 @@ validate_configuration() {
     STAGING_TLS_CERTIFICATE \
     STAGING_TLS_CERTIFICATE_KEY \
     STAGING_HTPASSWD_FILE \
-    STAGING_ACME_ROOT; do
+    STAGING_ACME_ROOT \
+    STAGING_PUBLIC_ROOT; do
     valid_absolute_path "${!name}" || fail "$name must be a safe absolute path"
   done
 
@@ -500,6 +519,14 @@ validate_configuration() {
   require_private_file "htpasswd file" "$STAGING_HTPASSWD_FILE"
   require_owned_directory "ACME root directory" "$STAGING_ACME_ROOT" \
     "700 750 755"
+  require_owned_public_directory "STAGING_PUBLIC_ROOT" "$STAGING_PUBLIC_ROOT"
+  for name in \
+    "$STAGING_PUBLIC_ROOT/downloads" \
+    "$STAGING_PUBLIC_ROOT/downloads/android"; do
+    if [[ -e "$name" || -L "$name" ]]; then
+      require_owned_public_directory "Staging public download directory" "$name"
+    fi
+  done
 }
 
 validate_manifest() {
@@ -673,6 +700,7 @@ render_nginx() {
     -e "s|__STAGING_TLS_CERTIFICATE_KEY__|$STAGING_TLS_CERTIFICATE_KEY|g" \
     -e "s|__STAGING_HTPASSWD_FILE__|$STAGING_HTPASSWD_FILE|g" \
     -e "s|__STAGING_ACME_ROOT__|$STAGING_ACME_ROOT|g" \
+    -e "s|__STAGING_PUBLIC_ROOT__|$STAGING_PUBLIC_ROOT|g" \
     "$nginx_template" >"$temporary"; then
     rm -f "$temporary"
     fail "failed to render Nginx template"

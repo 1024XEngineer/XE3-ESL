@@ -330,16 +330,23 @@ Production APK 要求：
 - CI 验证 APK 签名、SHA-256、包名、版本和 arm64 架构。
 - 正式签名私钥只存在于密码管理器与受保护的 GitHub Environment Secret。
 
-APK 不打入 Portal Docker 镜像。Deploy Workflow 将它上传到版本目录：
+APK 不打入 Portal Docker 镜像。严格的公开 bundle 由同一次 Release Candidate
+运行产生的 v1 `release-manifest.json`、Production APK 和人工明确给出的规范 UTC
+发布时间生成。构建器核对文件名、大小、APK SHA-256、签名证书指纹与 Android
+契约，并输出以下固定目录：
 
 ```text
-/downloads/v0.1.1/speakup-v0.1.1-arm64.apk
-/downloads/v0.1.1/speakup-v0.1.1-arm64.apk.sha256
-/downloads/latest.json
+/downloads/android/v0.1.1/speakup-v0.1.1-production-arm64.apk
+/downloads/android/v0.1.1/speakup-v0.1.1-production-arm64.apk.sha256
+/downloads/android/v0.1.1/release.json
+/downloads/android/release.json
 ```
 
-Portal 读取 `latest.json` 展示当前版本、文件大小、发布日期、SHA-256、更新说明
-与安装入口。只有生产冒烟成功后才原子更新 `latest.json`。
+版本目录不覆盖。Portal 同源读取当前 `release.json`，只有严格校验元数据后才展示
+唯一的版本化 APK 链接、版本、文件大小、发布日期、兼容范围、APK SHA-256 和签名
+证书 SHA-256。缺失元数据表示准备中；网络、JSON 或协议错误表示不可用，均不猜测
+下载地址。Production 先发布并验证版本目录，只有生产冒烟成功后才原子切换当前
+`release.json`；不存在 `latest.apk` 或可变 APK 路径。
 
 首版是网页直接分发 APK，用户需要允许浏览器安装未知来源应用。它不提供 iOS
 安装，也不等同于 Google Play 发布。
@@ -397,7 +404,7 @@ Portal 报名和访问事件继续使用独立 SQLite。它与产品核心业务
 
 ### 11.3 APK
 
-- 问题版本尚未公开时，不更新 `latest.json`。
+- 问题版本尚未公开时，不激活它的当前 `release.json`。
 - 已公开时立即停止分发问题 APK并恢复上一版本下载入口。
 - 已经安装新版的 Android 用户通常不能安装更低 versionCode；需要发布更高
   versionCode 的 hotfix，不能把“恢复下载链接”误认为完成客户端回滚。

@@ -40,6 +40,8 @@ and server environment are externally injected and are not committed.
 - A certificate whose SANs cover both Staging hostnames.
 - A populated htpasswd file and a real Staging Server environment file.
 - Registry credentials with read access to the two GHCR images.
+- A real, current-UID-owned `STAGING_PUBLIC_ROOT` that is not group- or
+  world-writable.
 
 The Server environment file must contain the real Staging provider and secret
 configuration required by the application. Use the repository `.env.example`
@@ -67,6 +69,7 @@ install -d -m 0750 /etc/speakup
 install -m 0600 staging.env.example /etc/speakup/staging.env
 install -m 0600 /secure/source/staging-server.env \
   /etc/speakup/staging-server.env
+install -d -m 0755 /var/www/speakup-staging-public
 install -d -o root -g root -m 0700 /run/lock/xe3-speakup-staging
 ```
 
@@ -180,8 +183,15 @@ then test and reload Nginx using the paths appropriate to that host. The
 committed template keeps ACME HTTP challenges reachable, redirects other HTTP
 traffic to HTTPS, protects the Portal with Basic Auth, preserves the API Bearer
 header and WebSocket upgrades, and returns `404` for exact `/metrics` requests
-before they reach either application. The API host intentionally has no
-`auth_basic` directive.
+before they reach either application. It also serves only the strict versioned
+Android APK, checksum, and metadata routes from `STAGING_PUBLIC_ROOT`; the
+current metadata is not cached, versioned files are immutable, and unknown or
+directory paths return `404`. These Portal download routes inherit Basic Auth.
+The API host intentionally has no `auth_basic` directive and returns `404` for
+the complete Android download namespace.
+
+Build, validate, publish, activate, and roll back the public APK bundle with
+the separate [Android publication contract](../android-download/README.md).
 
 ## 5. Verify
 
@@ -195,6 +205,8 @@ before they reach either application. The API host intentionally has no
   --env-file /etc/speakup/staging.env
 
 curl --fail --user staging-user https://staging.speak-up.top/
+curl --fail --user staging-user \
+  https://staging.speak-up.top/downloads/android/release.json
 curl --fail https://staging-api.speak-up.top/health
 curl --fail https://staging-api.speak-up.top/readyz
 test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
@@ -233,6 +245,7 @@ unlocked or concurrently with a release.
 ## Reproducible contract checks
 
 ```sh
+make check-android-download
 make check-staging-deploy
 make check-staging-nginx
 ```

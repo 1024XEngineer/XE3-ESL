@@ -44,7 +44,8 @@ write_environment() {
     "STAGING_TLS_CERTIFICATE=$certificate" \
     "STAGING_TLS_CERTIFICATE_KEY=$certificate_key" \
     "STAGING_HTPASSWD_FILE=$htpasswd" \
-    "STAGING_ACME_ROOT=$acme_root" >"$destination"
+    "STAGING_ACME_ROOT=$acme_root" \
+    "STAGING_PUBLIC_ROOT=$temporary_directory/public" >"$destination"
   chmod 0600 "$destination"
 }
 
@@ -81,7 +82,10 @@ temporary_directory=$(cd "$temporary_directory" && pwd -P)
 readonly temporary_directory
 trap 'rm -rf "$temporary_directory"' EXIT
 
-mkdir -p "$temporary_directory/acme" "$temporary_directory/fake-bin"
+mkdir -p \
+  "$temporary_directory/acme" \
+  "$temporary_directory/fake-bin" \
+  "$temporary_directory/public"
 printf '%s\n' 'TEXT_GENERATION_PROVIDER=test-fixture' >"$temporary_directory/server.env"
 printf '%s\n' 'test-user:test-password-hash' >"$temporary_directory/staging.htpasswd"
 printf '%s\n' 'test-certificate-placeholder' >"$temporary_directory/fullchain.pem"
@@ -101,6 +105,24 @@ bash -n "$manage" "$0"
   >"$temporary_directory/validate.out"
 grep -Fq 'validated=true' "$temporary_directory/validate.out" ||
   fail "valid deployment contract was not accepted"
+
+chmod 0777 "$temporary_directory/public"
+expect_failure "world-writable public root" \
+  "$manage" validate \
+    --manifest "$temporary_directory/release-manifest.json" \
+    --env-file "$temporary_directory/staging.env"
+chmod 0700 "$temporary_directory/public"
+
+mkdir -p "$temporary_directory/public/downloads/android"
+chmod 0777 "$temporary_directory/public/downloads/android"
+expect_failure "world-writable Android public directory" \
+  "$manage" validate \
+    --manifest "$temporary_directory/release-manifest.json" \
+    --env-file "$temporary_directory/staging.env"
+chmod 0700 "$temporary_directory/public/downloads/android"
+rmdir \
+  "$temporary_directory/public/downloads/android" \
+  "$temporary_directory/public/downloads"
 
 write_manifest "$temporary_directory/invalid-manifest.json" 'latest'
 expect_failure "mutable Portal image reference" \

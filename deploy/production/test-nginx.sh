@@ -35,6 +35,18 @@ assert_contains() {
   }
 }
 
+assert_pcre_capture_name_lengths() {
+  local match name
+
+  while IFS= read -r match; do
+    name=${match:3:${#match}-4}
+    ((${#name} <= 32)) || {
+      printf 'PCRE capture name exceeds 32 characters: %s\n' "$name" >&2
+      exit 1
+    }
+  done < <(grep -oE '\(\?<[^>]+>' "$rendered_configuration" || true)
+}
+
 assert_count() {
   local expected=$1
   local wanted=$2
@@ -58,9 +70,54 @@ assert_response_header() {
   }
 }
 
+assert_curl_succeeds() {
+  local description=$1
+  shift
+
+  curl --fail --show-error "$@" || {
+    printf 'failed HTTP check: %s\n' "$description" >&2
+    docker logs "$runtime_container" >&2
+    exit 1
+  }
+}
+
 mkdir -p "$temporary_directory/acme"
 mkdir -p "$temporary_directory/logs"
+mkdir -p "$temporary_directory/public/downloads/android/v0.1.0"
 printf '%s\n' 'TEXT_GENERATION_PROVIDER=test-fixture' >"$temporary_directory/server.env"
+printf '%s\n' 'signed-production-apk-fixture' > \
+  "$temporary_directory/public/downloads/android/v0.1.0/speakup-v0.1.0-production-arm64.apk"
+apk_sha=$(sha256sum \
+  "$temporary_directory/public/downloads/android/v0.1.0/speakup-v0.1.0-production-arm64.apk" |
+  awk '{print $1}')
+apk_size=$(stat -c '%s' \
+  "$temporary_directory/public/downloads/android/v0.1.0/speakup-v0.1.0-production-arm64.apk" 2>/dev/null ||
+  stat -f '%z' \
+    "$temporary_directory/public/downloads/android/v0.1.0/speakup-v0.1.0-production-arm64.apk")
+printf '%s  %s\n' "$apk_sha" 'speakup-v0.1.0-production-arm64.apk' > \
+  "$temporary_directory/public/downloads/android/v0.1.0/speakup-v0.1.0-production-arm64.apk.sha256"
+jq --null-input --arg sha "$apk_sha" --argjson size "$apk_size" '
+  {
+    metadata_version: 1,
+    version: "0.1.0",
+    version_code: 1,
+    published_at: "2026-08-23T12:34:56Z",
+    file_name: "speakup-v0.1.0-production-arm64.apk",
+    download_path:
+      "/downloads/android/v0.1.0/speakup-v0.1.0-production-arm64.apk",
+    size_bytes: $size,
+    minimum_android_api: 24,
+    abis: ["arm64-v8a"],
+    apk_sha256: $sha,
+    apk_certificate_sha256: ("e" * 64)
+  }
+' >"$temporary_directory/public/downloads/android/v0.1.0/release.json"
+cp \
+  "$temporary_directory/public/downloads/android/v0.1.0/release.json" \
+  "$temporary_directory/public/downloads/android/release.json"
+cp \
+  "$temporary_directory/public/downloads/android/v0.1.0/speakup-v0.1.0-production-arm64.apk" \
+  "$temporary_directory/public/downloads/android/v0.1.0/speakup-v0.1.1-production-arm64.apk"
 chmod 600 "$temporary_directory/server.env"
 openssl req \
   -x509 \
@@ -86,6 +143,7 @@ printf '%s\n' \
   "PRODUCTION_TLS_CERTIFICATE=$temporary_directory/fullchain.pem" \
   "PRODUCTION_TLS_CERTIFICATE_KEY=$temporary_directory/privkey.pem" \
   "PRODUCTION_ACME_ROOT=$temporary_directory/acme" \
+  "PRODUCTION_PUBLIC_ROOT=$temporary_directory/public" \
   >"$temporary_directory/production.env"
 chmod 600 "$temporary_directory/production.env"
 
@@ -94,12 +152,15 @@ chmod 600 "$temporary_directory/production.env"
   --output "$rendered_configuration" \
   >/dev/null
 
+assert_pcre_capture_name_lengths
+
 assert_count 'server_name speak-up.top;' 2
 assert_count 'server_name api.speak-up.top;' 2
 assert_count 'server_name www.speak-up.top;' 2
 assert_count 'return 301 https://speak-up.top$request_uri;' 3
 assert_count 'return 301 https://api.speak-up.top$request_uri;' 1
 assert_count "root $temporary_directory/acme;" 3
+assert_count "root $temporary_directory/public;" 4
 assert_count "ssl_certificate $temporary_directory/fullchain.pem;" 3
 assert_count "ssl_certificate_key $temporary_directory/privkey.pem;" 3
 assert_count 'location = /metrics {' 2
@@ -117,6 +178,10 @@ assert_count 'proxy_set_header Upgrade $http_upgrade;' 1
 assert_count 'proxy_set_header Connection $speakup_production_connection_upgrade;' 1
 assert_contains 'access_log logs/xe3-speakup-production-portal.access.log;'
 assert_contains 'access_log logs/xe3-speakup-production-api.access.log;'
+assert_contains 'default_type application/vnd.android.package-archive;'
+assert_contains 'add_header Cache-Control "no-store" always;'
+assert_contains 'add_header Cache-Control "public, max-age=31536000, immutable" always;'
+assert_contains 'location ^~ /downloads/android/'
 
 if grep -Eq '__PRODUCTION_[A-Z_]+__' "$rendered_configuration"; then
   printf '%s\n' 'rendered Nginx configuration contains a placeholder' >&2
@@ -124,8 +189,11 @@ if grep -Eq '__PRODUCTION_[A-Z_]+__' "$rendered_configuration"; then
 fi
 
 docker run --rm \
-  --volume "$temporary_directory:$temporary_directory:ro" \
+  --volume "$temporary_directory/acme:$temporary_directory/acme:ro" \
+  --volume "$temporary_directory/fullchain.pem:$temporary_directory/fullchain.pem:ro" \
+  --volume "$temporary_directory/privkey.pem:$temporary_directory/privkey.pem:ro" \
   --volume "$temporary_directory/logs:/etc/nginx/logs" \
+  --volume "$temporary_directory/public:$temporary_directory/public:ro" \
   --volume "$rendered_configuration:/etc/nginx/conf.d/default.conf:ro" \
   "$nginx_image" \
   nginx -t
@@ -156,8 +224,11 @@ docker run --detach \
   --name "$runtime_container" \
   --publish 127.0.0.1::80 \
   --publish 127.0.0.1::443 \
-  --volume "$temporary_directory:$temporary_directory:ro" \
+  --volume "$temporary_directory/acme:$temporary_directory/acme:ro" \
+  --volume "$temporary_directory/fullchain.pem:$temporary_directory/fullchain.pem:ro" \
+  --volume "$temporary_directory/privkey.pem:$temporary_directory/privkey.pem:ro" \
   --volume "$temporary_directory/logs:/etc/nginx/logs" \
+  --volume "$temporary_directory/public:$temporary_directory/public:ro" \
   --volume "$rendered_configuration:/etc/nginx/conf.d/default.conf:ro" \
   --volume "$upstream_configuration:/etc/nginx/conf.d/upstream-stub.conf:ro" \
   "$nginx_image" \
@@ -222,9 +293,103 @@ for host in speak-up.top api.speak-up.top; do
   }
 done
 
+current_headers="$temporary_directory/current-release.headers"
+current_body="$temporary_directory/current-release.json"
+assert_curl_succeeds 'current release metadata request' \
+  --insecure \
+  --silent \
+  --dump-header "$current_headers" \
+  --output "$current_body" \
+  --resolve "speak-up.top:$https_port:127.0.0.1" \
+  "https://speak-up.top:$https_port/downloads/android/release.json"
+assert_response_header "$current_headers" 'Content-Type: application/json'
+assert_response_header "$current_headers" 'Cache-Control: no-store'
+cmp \
+  "$current_body" \
+  "$temporary_directory/public/downloads/android/release.json"
+
+version_headers="$temporary_directory/version-release.headers"
+assert_curl_succeeds 'versioned release metadata request' \
+  --insecure \
+  --silent \
+  --dump-header "$version_headers" \
+  --output /dev/null \
+  --resolve "speak-up.top:$https_port:127.0.0.1" \
+  "https://speak-up.top:$https_port/downloads/android/v0.1.0/release.json"
+assert_response_header "$version_headers" \
+  'Cache-Control: public, max-age=31536000, immutable'
+
+checksum_body="$temporary_directory/downloaded.sha256"
+assert_curl_succeeds 'checksum download request' \
+  --insecure \
+  --silent \
+  --output "$checksum_body" \
+  --resolve "speak-up.top:$https_port:127.0.0.1" \
+  "https://speak-up.top:$https_port/downloads/android/v0.1.0/speakup-v0.1.0-production-arm64.apk.sha256"
+cmp \
+  "$checksum_body" \
+  "$temporary_directory/public/downloads/android/v0.1.0/speakup-v0.1.0-production-arm64.apk.sha256"
+
+apk_headers="$temporary_directory/apk.headers"
+apk_body="$temporary_directory/downloaded.apk"
+assert_curl_succeeds 'APK HEAD request' \
+  --head \
+  --insecure \
+  --silent \
+  --dump-header "$apk_headers" \
+  --output /dev/null \
+  --resolve "speak-up.top:$https_port:127.0.0.1" \
+  "https://speak-up.top:$https_port/downloads/android/v0.1.0/speakup-v0.1.0-production-arm64.apk"
+assert_response_header "$apk_headers" \
+  'Content-Type: application/vnd.android.package-archive'
+assert_response_header "$apk_headers" \
+  'Cache-Control: public, max-age=31536000, immutable'
+assert_response_header "$apk_headers" "Content-Length: $apk_size"
+assert_curl_succeeds 'APK download request' \
+  --insecure \
+  --silent \
+  --output "$apk_body" \
+  --resolve "speak-up.top:$https_port:127.0.0.1" \
+  "https://speak-up.top:$https_port/downloads/android/v0.1.0/speakup-v0.1.0-production-arm64.apk"
+[[ "$(sha256sum "$apk_body" | awk '{print $1}')" == "$apk_sha" ]] || {
+  printf '%s\n' 'downloaded APK SHA-256 is incorrect' >&2
+  exit 1
+}
+
+for path in \
+  /downloads/android \
+  /downloads/android/ \
+  /downloads/android/latest.apk \
+  /downloads/android/v0.1.0/unknown.txt \
+  /downloads/android/v0.1.0/speakup-v0.1.1-production-arm64.apk; do
+  status=$(curl \
+    --insecure \
+    --silent \
+    --output /dev/null \
+    --write-out '%{http_code}' \
+    --resolve "speak-up.top:$https_port:127.0.0.1" \
+    "https://speak-up.top:$https_port$path")
+  [[ "$status" == 404 ]] || {
+    printf 'unexpected Android download path %s returned %s\n' "$path" "$status" >&2
+    exit 1
+  }
+done
+
+api_download_status=$(curl \
+  --insecure \
+  --silent \
+  --output /dev/null \
+  --write-out '%{http_code}' \
+  --resolve "api.speak-up.top:$https_port:127.0.0.1" \
+  "https://api.speak-up.top:$https_port/downloads/android/release.json")
+[[ "$api_download_status" == 404 ]] || {
+  printf 'API Android download route returned %s instead of 404\n' \
+    "$api_download_status" >&2
+  exit 1
+}
+
 api_headers="$temporary_directory/api.headers"
-curl \
-  --fail \
+assert_curl_succeeds 'API proxy request' \
   --http1.1 \
   --insecure \
   --silent \

@@ -66,6 +66,28 @@ require_private_file() {
   esac
 }
 
+require_owned_public_directory() {
+  local description=$1
+  local directory=$2
+  local owner mode
+
+  [[ ! -L "$directory" && -d "$directory" ]] ||
+    fail "$description must be a real directory: $directory"
+  if owner=$(stat -c '%u' -- "$directory" 2>/dev/null); then
+    mode=$(stat -c '%a' -- "$directory") ||
+      fail "cannot inspect permissions for $description: $directory"
+  elif owner=$(stat -f '%u' "$directory" 2>/dev/null); then
+    mode=$(stat -f '%Lp' "$directory") ||
+      fail "cannot inspect permissions for $description: $directory"
+  else
+    fail "cannot inspect ownership for $description: $directory"
+  fi
+  [[ "$owner" == "$(id -u)" ]] ||
+    fail "$description must be owned by the current user: $directory"
+  (( (8#$mode & 0022) == 0 )) ||
+    fail "$description cannot be group or world writable: $directory"
+}
+
 allowed_configuration_key() {
   case "$1" in
     PRODUCTION_POSTGRES_DB | \
@@ -79,7 +101,8 @@ allowed_configuration_key() {
       PRODUCTION_API_HOST | \
       PRODUCTION_TLS_CERTIFICATE | \
       PRODUCTION_TLS_CERTIFICATE_KEY | \
-      PRODUCTION_ACME_ROOT)
+      PRODUCTION_ACME_ROOT | \
+      PRODUCTION_PUBLIC_ROOT)
       return 0
       ;;
     *)
@@ -106,7 +129,8 @@ load_configuration() {
     PRODUCTION_API_HOST \
     PRODUCTION_TLS_CERTIFICATE \
     PRODUCTION_TLS_CERTIFICATE_KEY \
-    PRODUCTION_ACME_ROOT
+    PRODUCTION_ACME_ROOT \
+    PRODUCTION_PUBLIC_ROOT
 
   while IFS= read -r line || [[ -n "$line" ]]; do
     line=${line%$'\r'}
@@ -184,6 +208,7 @@ validate_configuration() {
     PRODUCTION_TLS_CERTIFICATE
     PRODUCTION_TLS_CERTIFICATE_KEY
     PRODUCTION_ACME_ROOT
+    PRODUCTION_PUBLIC_ROOT
   )
   for name in "${required[@]}"; do
     require_value "$name"
@@ -217,7 +242,8 @@ validate_configuration() {
     PRODUCTION_SERVER_ENV_FILE \
     PRODUCTION_TLS_CERTIFICATE \
     PRODUCTION_TLS_CERTIFICATE_KEY \
-    PRODUCTION_ACME_ROOT; do
+    PRODUCTION_ACME_ROOT \
+    PRODUCTION_PUBLIC_ROOT; do
     valid_absolute_path "${!name}" || fail "$name must be a safe absolute path"
   done
 
@@ -226,6 +252,14 @@ validate_configuration() {
   require_private_file "TLS certificate key" "$PRODUCTION_TLS_CERTIFICATE_KEY"
   [[ -d "$PRODUCTION_ACME_ROOT" ]] ||
     fail "ACME root directory does not exist: $PRODUCTION_ACME_ROOT"
+  require_owned_public_directory "PRODUCTION_PUBLIC_ROOT" "$PRODUCTION_PUBLIC_ROOT"
+  for name in \
+    "$PRODUCTION_PUBLIC_ROOT/downloads" \
+    "$PRODUCTION_PUBLIC_ROOT/downloads/android"; do
+    if [[ -e "$name" || -L "$name" ]]; then
+      require_owned_public_directory "Production public download directory" "$name"
+    fi
+  done
 }
 
 validate_manifest() {
@@ -358,6 +392,7 @@ render_nginx() {
     -e "s|__PRODUCTION_TLS_CERTIFICATE__|$PRODUCTION_TLS_CERTIFICATE|g" \
     -e "s|__PRODUCTION_TLS_CERTIFICATE_KEY__|$PRODUCTION_TLS_CERTIFICATE_KEY|g" \
     -e "s|__PRODUCTION_ACME_ROOT__|$PRODUCTION_ACME_ROOT|g" \
+    -e "s|__PRODUCTION_PUBLIC_ROOT__|$PRODUCTION_PUBLIC_ROOT|g" \
     "$nginx_template" > "$temporary"; then
     rm -f "$temporary"
     fail "failed to render Nginx template"

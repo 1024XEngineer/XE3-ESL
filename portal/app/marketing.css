@@ -237,8 +237,12 @@
 .download-back { display: inline-block; margin-bottom: clamp(62px, 7vw, 96px); color: var(--muted); font-size: 14px; font-weight: 700; }
 .download-hero h1 { max-width: 850px; font-size: clamp(58px, 7.5vw, 104px); line-height: 0.94; }
 .download-hero-copy > p:not(.eyebrow) { max-width: 680px; margin-top: 30px; color: var(--muted); font-size: 18px; line-height: 1.7; }
-.download-state { margin-top: 38px; padding-top: 20px; border-top: 1px solid var(--line); display: grid; gap: 8px; }
+.download-release-action { margin-top: 38px; padding-top: 20px; border-top: 1px solid var(--line); display: flex; align-items: end; justify-content: space-between; gap: 24px; }
+.download-state { display: grid; gap: 8px; }
 .download-state small { color: var(--muted); line-height: 1.55; }
+.download-state-ready i { background: var(--fathom); box-shadow: 0 0 0 4px rgba(3, 79, 70, 0.14); }
+.download-state-unavailable i { background: var(--muted); box-shadow: 0 0 0 4px rgba(26, 26, 26, 0.1); }
+.download-primary-action { flex: 0 0 auto; }
 
 .download-availability { padding: 30px; border: 2px solid var(--ink); border-radius: 28px; background: var(--dawn); box-shadow: 10px 12px 0 rgba(26, 26, 26, 0.09); }
 .download-availability h2 { font-size: clamp(32px, 3.2vw, 44px); }
@@ -256,7 +260,7 @@
 .download-hashes > div { padding: 28px 0; border-top: 1px solid var(--line); }
 .download-hashes > div:last-child { border-bottom: 1px solid var(--line); }
 .download-hashes dt { margin-bottom: 10px; font-size: 20px; font-weight: 760; }
-.download-hashes dd { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; }
+.download-hashes dd { color: var(--muted); overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; }
 .download-steps { margin: 0; padding: 0; list-style: none; }
 .download-steps li { padding: 24px 0 28px; border-top: 1px solid var(--line); display: grid; grid-template-columns: 48px 1fr; gap: 20px; }
 .download-steps li:last-child { border-bottom: 1px solid var(--line); }
@@ -304,6 +308,8 @@
   .download-back { margin-bottom: 58px; }
   .download-hero h1 { font-size: 54px; }
   .download-availability { padding: 24px 20px; }
+  .download-release-action { align-items: stretch; flex-direction: column; }
+  .download-primary-action { width: 100%; }
   .download-verify { width: 100%; border-radius: 36px; }
   .download-facts > div { grid-template-columns: 1fr; gap: 7px; }
   .release-site footer { grid-template-columns: 1fr auto; padding: 28px 20px; }
