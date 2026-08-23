@@ -176,7 +176,7 @@ func TestLiveRealtimeSpeechSynthesis(t *testing.T) {
 	firstChunkDelay := time.Duration(0)
 	chunkCount := 0
 	audioBytes := 0
-	err = synthesizer.streamRealtimePCM(
+	_, err = synthesizer.streamRealtimePCM(
 		context.Background(),
 		"Please repeat after me. This audio should start immediately.",
 		func(chunk []byte) error {

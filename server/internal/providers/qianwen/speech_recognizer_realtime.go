@@ -149,7 +149,7 @@ func (recognizer *speechRecognizer) transcribeRealtimeAudio(
 		_ = connection.SetReadDeadline(deadline)
 		_ = connection.SetWriteDeadline(deadline)
 	}
-	taskID, err := newRealtimeASRTaskID()
+	taskID, err := newRealtimeSpeechTaskID()
 	if err != nil {
 		return protocol.TranscriptionResult{}, err
 	}
@@ -439,7 +439,7 @@ func realtimeASREndpoint(baseURL string) string {
 	return parsed.String()
 }
 
-func newRealtimeASRTaskID() (string, error) {
+func newRealtimeSpeechTaskID() (string, error) {
 	var raw [16]byte
 	if _, err := rand.Read(raw[:]); err != nil {
 		return "", err

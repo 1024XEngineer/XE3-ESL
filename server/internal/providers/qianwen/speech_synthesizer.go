@@ -40,6 +40,7 @@ type TTSConfig struct {
 type speechSynthesizer struct {
 	endpoint         string
 	realtimeEndpoint string
+	synthesizeOverWS bool
 	model            string
 	voice            string
 	languageHint     string
@@ -86,9 +87,10 @@ func newSynthesizerWithClient(
 	if err != nil {
 		return nil, err
 	}
-	if !isBeijingDashScopeAPIBaseURL(baseURL) {
+	synthesizeOverWS := isSingaporeDashScopeWorkspaceAPIBaseURL(baseURL)
+	if !isBeijingDashScopeAPIBaseURL(baseURL) && !synthesizeOverWS {
 		return nil, errors.New(
-			"Qwen-Audio-TTS is available only through a China (Beijing) endpoint",
+			"Qwen-Audio-TTS requires a China (Beijing) or Singapore Workspace endpoint",
 		)
 	}
 	realtimeEndpoint, err := realtimeTTSEndpoint(baseURL)
@@ -120,6 +122,7 @@ func newSynthesizerWithClient(
 	return &speechSynthesizer{
 		endpoint:         baseURL + ttsSpeechSynthesizerPath,
 		realtimeEndpoint: realtimeEndpoint,
+		synthesizeOverWS: synthesizeOverWS,
 		model:            model,
 		voice:            voice,
 		languageHint:     language,
@@ -153,6 +156,12 @@ func (synthesizer *speechSynthesizer) Synthesize(
 			"",
 			"",
 			err,
+		)
+	}
+	if synthesizer.synthesizeOverWS {
+		return synthesizer.synthesizeRealtimeWAV(
+			ctx,
+			strings.TrimSpace(request.Text),
 		)
 	}
 	payload := ttsRequest{
@@ -617,6 +626,17 @@ func isBeijingDashScopeAPIBaseURL(baseURL string) bool {
 	workspaceID := strings.TrimSuffix(host, suffix)
 	return workspaceID != host &&
 		validDNSLabel(workspaceID)
+}
+
+func isSingaporeDashScopeWorkspaceAPIBaseURL(baseURL string) bool {
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return false
+	}
+	const suffix = ".ap-southeast-1.maas.aliyuncs.com"
+	host := strings.ToLower(parsed.Hostname())
+	workspaceID := strings.TrimSuffix(host, suffix)
+	return workspaceID != host && validDNSLabel(workspaceID)
 }
 
 func validDNSLabel(value string) bool {

@@ -3,8 +3,7 @@ package qianwen
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,7 +18,11 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-const ttsRealtimePath = "/api-ws/v1/inference/"
+const (
+	ttsRealtimePath        = "/api-ws/v1/inference"
+	pcmWAVHeaderBytes      = 44
+	maxRealtimeTTSPCMBytes = platformmedia.MaxAudioBytes - pcmWAVHeaderBytes
+)
 
 type speechRealtimeEnvelope struct {
 	Header speechRealtimeHeader `json:"header"`
@@ -45,20 +48,129 @@ func realtimeTTSEndpoint(baseURL string) (string, error) {
 	return parsed.String(), nil
 }
 
+func (synthesizer *speechSynthesizer) synthesizeRealtimeWAV(
+	ctx context.Context,
+	text string,
+) (protocol.SynthesisResult, error) {
+	var pcm bytes.Buffer
+	defer func() { clear(pcm.Bytes()) }()
+	taskID, err := synthesizer.streamRealtimePCM(
+		ctx,
+		text,
+		func(chunk []byte) error {
+			if len(chunk) == 0 ||
+				int64(pcm.Len()+len(chunk)) > maxRealtimeTTSPCMBytes {
+				return errors.New("Qianwen realtime TTS PCM exceeds the accepted size")
+			}
+			_, _ = pcm.Write(chunk)
+			return nil
+		},
+	)
+	if err != nil {
+		return protocol.SynthesisResult{}, realtimeSynthesisError(ctx, taskID, err)
+	}
+	wav, err := pcm16MonoWAV(pcm.Bytes())
+	if err != nil {
+		return protocol.SynthesisResult{}, invalidSpeechResponse(
+			protocol.SpeechOperationSynthesis,
+			0,
+			taskID,
+			"Qianwen realtime TTS returned invalid PCM",
+		)
+	}
+	defer clear(wav)
+	audio, err := platformmedia.CaptureTemporaryAudio(
+		synthesizer.tempDirectory,
+		platformmedia.ContentTypeWAV,
+		bytes.NewReader(wav),
+	)
+	if err != nil {
+		return protocol.SynthesisResult{}, invalidSpeechResponse(
+			protocol.SpeechOperationSynthesis,
+			0,
+			taskID,
+			"Qianwen realtime TTS WAV failed validation",
+		)
+	}
+	return protocol.SynthesisResult{
+		RequestID: taskID,
+		Provider:  providerName,
+		Model:     synthesizer.model,
+		AudioID:   taskID,
+		Audio:     audio,
+	}, nil
+}
+
 func (synthesizer *speechSynthesizer) streamRealtimePCM(
 	ctx context.Context,
 	text string,
 	consume func([]byte) error,
-) error {
+) (string, error) {
 	session, err := synthesizer.openRealtimeSpeech(ctx, consume)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer session.Close()
 	if err := session.AppendText(text); err != nil {
+		return session.taskID, err
+	}
+	return session.taskID, session.Finish()
+}
+
+func realtimeSynthesisError(ctx context.Context, taskID string, err error) error {
+	var speechError *protocol.SpeechError
+	if errors.As(err, &speechError) {
 		return err
 	}
-	return session.Finish()
+	if ctx.Err() != nil {
+		return speechTransportError(protocol.SpeechOperationSynthesis, ctx, err)
+	}
+	return invalidSpeechResponse(
+		protocol.SpeechOperationSynthesis,
+		0,
+		taskID,
+		"Qianwen realtime TTS failed",
+	)
+}
+
+func pcm16MonoWAV(pcm []byte) ([]byte, error) {
+	const bytesPerSample = agentconversation.AssistantSpeechBitsPerSample / 8
+	if len(pcm) == 0 || len(pcm)%bytesPerSample != 0 ||
+		int64(len(pcm)) > maxRealtimeTTSPCMBytes {
+		return nil, errors.New("Qianwen realtime TTS PCM is invalid")
+	}
+	wav := make([]byte, pcmWAVHeaderBytes+len(pcm))
+	copy(wav[0:4], "RIFF")
+	binary.LittleEndian.PutUint32(wav[4:8], uint32(len(wav)-8))
+	copy(wav[8:12], "WAVE")
+	copy(wav[12:16], "fmt ")
+	binary.LittleEndian.PutUint32(wav[16:20], 16)
+	binary.LittleEndian.PutUint16(wav[20:22], 1)
+	binary.LittleEndian.PutUint16(
+		wav[22:24],
+		agentconversation.AssistantSpeechChannelCount,
+	)
+	binary.LittleEndian.PutUint32(
+		wav[24:28],
+		agentconversation.AssistantSpeechSampleRate,
+	)
+	binary.LittleEndian.PutUint32(
+		wav[28:32],
+		agentconversation.AssistantSpeechSampleRate*
+			agentconversation.AssistantSpeechChannelCount*bytesPerSample,
+	)
+	binary.LittleEndian.PutUint16(
+		wav[32:34],
+		agentconversation.AssistantSpeechChannelCount*bytesPerSample,
+	)
+	binary.LittleEndian.PutUint16(
+		wav[34:36],
+		agentconversation.AssistantSpeechBitsPerSample,
+	)
+	copy(wav[36:40], "data")
+	binary.LittleEndian.PutUint32(wav[40:44], uint32(len(pcm)))
+	copy(wav[pcmWAVHeaderBytes:], pcm)
+	return wav, nil
 }
 
 type speechRealtimeSession struct {
@@ -81,7 +193,7 @@ func (synthesizer *speechSynthesizer) openRealtimeSpeech(
 	if synthesizer == nil || ctx == nil || consume == nil {
 		return nil, errors.New("Qianwen realtime TTS is unavailable")
 	}
-	taskID, err := newRealtimeTaskID()
+	taskID, err := newRealtimeSpeechTaskID()
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +218,6 @@ func (synthesizer *speechSynthesizer) openRealtimeSpeech(
 		)
 	}
 	if deadline, ok := callContext.Deadline(); ok {
-		_ = connection.SetReadDeadline(deadline)
 		_ = connection.SetWriteDeadline(deadline)
 	}
 	session := &speechRealtimeSession{
@@ -134,13 +245,34 @@ func (synthesizer *speechSynthesizer) openRealtimeSpeech(
 		return nil, err
 	}
 	if err := waitForSpeechRealtimeEvent(
+		callContext,
 		connection,
 		taskID,
 		"task-started",
 	); err != nil {
+		var speechError *protocol.SpeechError
+		if !errors.As(err, &speechError) {
+			if callContext.Err() != nil {
+				err = speechTransportError(
+					protocol.SpeechOperationSynthesis,
+					callContext,
+					err,
+				)
+			} else {
+				err = invalidSpeechResponse(
+					protocol.SpeechOperationSynthesis,
+					0,
+					taskID,
+					"Qianwen realtime TTS start event is invalid",
+				)
+			}
+		}
 		cancel()
 		_ = connection.Close()
 		return nil, err
+	}
+	if deadline, ok := callContext.Deadline(); ok {
+		_ = connection.SetReadDeadline(deadline)
 	}
 	session.reading = true
 	go session.readAudio()
@@ -258,11 +390,34 @@ func (session *speechRealtimeSession) Close() error {
 }
 
 func waitForSpeechRealtimeEvent(
+	ctx context.Context,
 	connection *websocket.Conn,
 	taskID string,
 	expected string,
 ) error {
-	messageType, payload, err := connection.ReadMessage()
+	type readResult struct {
+		messageType int
+		payload     []byte
+		err         error
+	}
+	result := make(chan readResult, 1)
+	go func() {
+		messageType, payload, err := connection.ReadMessage()
+		result <- readResult{
+			messageType: messageType,
+			payload:     payload,
+			err:         err,
+		}
+	}()
+	var read readResult
+	select {
+	case <-ctx.Done():
+		_ = connection.Close()
+		<-result
+		return ctx.Err()
+	case read = <-result:
+	}
+	messageType, payload, err := read.messageType, read.payload, read.err
 	if err != nil || messageType != websocket.TextMessage {
 		return errors.New("Qianwen realtime TTS start event is unavailable")
 	}
@@ -283,18 +438,18 @@ func decodeSpeechRealtimeEvent(payload []byte, taskID string) (string, error) {
 		return "", errors.New("Qianwen realtime TTS returned an invalid event")
 	}
 	if envelope.Header.Event == "task-failed" {
-		return "", errors.New("Qianwen realtime TTS task failed")
+		providerCode := sanitizeIdentifier(envelope.Header.ErrorCode)
+		return "", protocol.NewSpeechError(
+			protocol.SpeechOperationSynthesis,
+			classifyStatus(0, providerCode),
+			0,
+			providerCode,
+			sanitizeIdentifier(envelope.Header.TaskID),
+			errors.New("Qianwen realtime TTS task failed"),
+		)
 	}
 	if strings.TrimSpace(envelope.Header.Event) == "" {
 		return "", errors.New("Qianwen realtime TTS event type is missing")
 	}
 	return envelope.Header.Event, nil
-}
-
-func newRealtimeTaskID() (string, error) {
-	raw := make([]byte, 16)
-	if _, err := rand.Read(raw); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(raw), nil
 }
