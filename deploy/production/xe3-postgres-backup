@@ -1,0 +1,875 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+umask 077
+
+readonly compose_project="xe3-speakup-production"
+readonly compose_service="postgres"
+readonly database_network="xe3-speakup-production_database"
+readonly production_postgres_image="postgres:18-bookworm@sha256:7d2695c3aa88e792e8b3b233e7e4adb296a20412c6c0ca361e3edaaacfada108"
+readonly production_postgres_volume="xe3-speakup-postgres-data"
+readonly restore_label="com.xengineer.speakup.postgres-restore-check"
+readonly restore_backup_label="com.xengineer.speakup.postgres-restore-backup-id"
+readonly restore_run_label="com.xengineer.speakup.postgres-restore-run-id"
+readonly dump_file_name="database.dump"
+readonly checksum_file_name="database.dump.sha256"
+readonly metadata_file_name="metadata.json"
+
+restore_container=""
+restore_volume=""
+restore_backup_id=""
+restore_run_id=""
+active_partial_directory=""
+
+usage() {
+  cat >&2 <<'EOF'
+Usage:
+  xe3-postgres-backup backup <daily|predeploy>
+  xe3-postgres-backup check [BACKUP_ID]
+EOF
+}
+
+fail() {
+  printf 'Production PostgreSQL backup error: %s\n' "$*" >&2
+  exit 1
+}
+
+cleanup_restore_resources() {
+  local failed=0 inspect_output
+
+  if [[ -n "$restore_container" ]]; then
+    if inspect_output="$(docker container inspect "$restore_container")"; then
+      if jq --exit-status \
+        --arg container_id "$restore_container" \
+        --arg label "$restore_label" \
+        --arg backup_label "$restore_backup_label" \
+        --arg backup_id "$restore_backup_id" \
+        --arg run_label "$restore_run_label" \
+        --arg run_id "$restore_run_id" '
+          length == 1 and
+          .[0].Id == $container_id and
+          .[0].Config.Labels[$label] == "true" and
+          .[0].Config.Labels[$backup_label] == $backup_id and
+          .[0].Config.Labels[$run_label] == $run_id
+        ' <<< "$inspect_output" >/dev/null; then
+        if docker container rm --force "$restore_container" >/dev/null 2>&1; then
+          restore_container=""
+        else
+          failed=1
+        fi
+      else
+        failed=1
+      fi
+    else
+      failed=1
+    fi
+  fi
+
+  if [[ -n "$restore_volume" ]]; then
+    if [[ "$restore_volume" == "$production_postgres_volume" ]]; then
+      failed=1
+    elif inspect_output="$(docker volume inspect "$restore_volume")"; then
+      if jq --exit-status \
+        --arg volume "$restore_volume" \
+        --arg label "$restore_label" \
+        --arg backup_label "$restore_backup_label" \
+        --arg backup_id "$restore_backup_id" \
+        --arg run_label "$restore_run_label" \
+        --arg run_id "$restore_run_id" '
+          length == 1 and
+          .[0].Name == $volume and
+          .[0].Labels[$label] == "true" and
+          .[0].Labels[$backup_label] == $backup_id and
+          .[0].Labels[$run_label] == $run_id
+        ' <<< "$inspect_output" >/dev/null; then
+        if docker volume rm "$restore_volume" >/dev/null 2>&1; then
+          restore_volume=""
+        else
+          failed=1
+        fi
+      else
+        failed=1
+      fi
+    else
+      failed=1
+    fi
+  fi
+
+  if [[ -z "$restore_container" && -z "$restore_volume" ]]; then
+    restore_backup_id=""
+    restore_run_id=""
+  fi
+
+  ((failed == 0))
+}
+
+cleanup_partial_directory() {
+  local failed=0 entry name
+  local -a entries
+
+  [[ -n "$active_partial_directory" ]] || return 0
+  if [[ -z "${POSTGRES_BACKUP_ROOT:-}" ||
+    "${active_partial_directory%/*}" != "$POSTGRES_BACKUP_ROOT" ||
+    "${active_partial_directory##*/}" != .partial-* ||
+    ! -d "$active_partial_directory" || -L "$active_partial_directory" ]]; then
+    return 1
+  fi
+
+  shopt -s nullglob dotglob
+  entries=("$active_partial_directory"/*)
+  shopt -u nullglob dotglob
+  for entry in "${entries[@]}"; do
+    name=${entry##*/}
+    case "$name" in
+      "$dump_file_name" | "$checksum_file_name" | "$metadata_file_name") ;;
+      *) return 1 ;;
+    esac
+    [[ -f "$entry" && ! -L "$entry" ]] || return 1
+  done
+  for entry in "${entries[@]}"; do
+    rm -- "$entry" || failed=1
+  done
+  if ((failed == 0)) && rmdir -- "$active_partial_directory"; then
+    active_partial_directory=""
+  else
+    failed=1
+  fi
+
+  ((failed == 0))
+}
+
+cleanup_on_exit() {
+  local status=$?
+
+  trap - EXIT
+  set +e
+  if ! cleanup_restore_resources; then
+    status=1
+  fi
+  if ! cleanup_partial_directory; then
+    status=1
+  fi
+  exit "$status"
+}
+
+trap cleanup_on_exit EXIT
+trap 'exit 130' INT HUP TERM
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || fail "$1 is required"
+}
+
+require_value() {
+  local name=$1
+
+  [[ -n "${!name:-}" ]] || fail "$name is required"
+  [[ "${!name}" != *$'\n'* && "${!name}" != *$'\r'* ]] ||
+    fail "$name must not contain newlines"
+}
+
+require_positive_integer() {
+  local name=$1
+
+  require_value "$name"
+  [[ "${!name}" =~ ^[1-9][0-9]*$ ]] ||
+    fail "$name must be a positive integer"
+}
+
+valid_absolute_path() {
+  local value=$1
+
+  [[ "$value" =~ ^/[A-Za-z0-9._/-]+$ ]] &&
+    [[ "$value" != "/" ]] &&
+    [[ "$value" != *//* ]] &&
+    [[ "$value" != */../* ]] &&
+    [[ "$value" != */./* ]] &&
+    [[ "$value" != */.. ]] &&
+    [[ "$value" != */. ]]
+}
+
+validate_common_configuration() {
+  require_value POSTGRES_BACKUP_ROOT
+  require_value POSTGRES_BACKUP_IMAGE
+  require_value POSTGRES_BACKUP_SOURCE_VOLUME
+  require_value POSTGRES_BACKUP_DATABASE
+  require_value POSTGRES_BACKUP_USER
+
+  valid_absolute_path "$POSTGRES_BACKUP_ROOT" ||
+    fail 'POSTGRES_BACKUP_ROOT must be a safe absolute non-root path'
+  [[ "$POSTGRES_BACKUP_IMAGE" == "$production_postgres_image" ]] ||
+    fail 'POSTGRES_BACKUP_IMAGE must match the audited Production PostgreSQL digest'
+  [[ "$POSTGRES_BACKUP_SOURCE_VOLUME" == "$production_postgres_volume" ]] ||
+    fail 'POSTGRES_BACKUP_SOURCE_VOLUME must match the Production PostgreSQL volume'
+  [[ "$POSTGRES_BACKUP_DATABASE" =~ ^[a-z_][a-z0-9_]{0,62}$ ]] ||
+    fail 'POSTGRES_BACKUP_DATABASE must be a lowercase PostgreSQL identifier'
+  [[ "$POSTGRES_BACKUP_USER" =~ ^[a-z_][a-z0-9_]{0,62}$ ]] ||
+    fail 'POSTGRES_BACKUP_USER must be a lowercase PostgreSQL identifier'
+}
+
+validate_backup_configuration() {
+  validate_common_configuration
+  require_value POSTGRES_BACKUP_DEPLOYMENT_VERSION
+  require_value POSTGRES_BACKUP_GIT_SHA
+  require_positive_integer POSTGRES_BACKUP_RETENTION_DAYS
+  require_positive_integer POSTGRES_BACKUP_MAX_AGE_SECONDS
+
+  [[ "$POSTGRES_BACKUP_DEPLOYMENT_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$ ]] ||
+    fail 'POSTGRES_BACKUP_DEPLOYMENT_VERSION has an invalid format'
+  [[ "$POSTGRES_BACKUP_GIT_SHA" =~ ^[a-f0-9]{40}$ ]] ||
+    fail 'POSTGRES_BACKUP_GIT_SHA must be a full lowercase Git SHA'
+}
+
+validate_check_configuration() {
+  validate_common_configuration
+  require_positive_integer POSTGRES_BACKUP_MAX_AGE_SECONDS
+}
+
+image_id_for_reference() {
+  local image_reference=$1
+  local image_id
+
+  image_id="$(
+    docker image inspect --format '{{.Id}}' "$image_reference"
+  )" || fail 'required PostgreSQL image is not available locally'
+  [[ "$image_id" =~ ^sha256:[a-f0-9]{64}$ ]] ||
+    fail 'required PostgreSQL image ID is not content-addressed'
+  printf '%s\n' "$image_id"
+}
+
+configured_image_id() {
+  image_id_for_reference "$POSTGRES_BACKUP_IMAGE"
+}
+
+discover_source_container() {
+  local container_ids count
+
+  container_ids="$(
+    docker container ls --quiet \
+      --filter "label=com.docker.compose.project=$compose_project" \
+      --filter "label=com.docker.compose.service=$compose_service"
+  )" || fail 'cannot inspect the Production PostgreSQL container'
+  count="$(printf '%s\n' "$container_ids" | awk 'NF { count += 1 } END { print count + 0 }')"
+  [[ "$count" == "1" ]] ||
+    fail 'exactly one running Production PostgreSQL container is required'
+  printf '%s\n' "$container_ids"
+}
+
+validate_source_container() {
+  local container_id=$1
+  local image_id=$2
+  local state configured_reference mounted_volume
+
+  state="$(
+    docker container inspect --format \
+      '{{.State.Running}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' \
+      "$container_id"
+  )" || fail 'cannot inspect the Production PostgreSQL state'
+  [[ "$state" == "true|healthy" ]] ||
+    fail 'Production PostgreSQL must be running and healthy'
+
+  configured_reference="$(
+    docker container inspect --format '{{.Config.Image}}' "$container_id"
+  )"
+  [[ "$configured_reference" == "$POSTGRES_BACKUP_IMAGE" ]] ||
+    fail 'running PostgreSQL image reference does not match the audited digest'
+  [[ "$(docker container inspect --format '{{.Image}}' "$container_id")" == "$image_id" ]] ||
+    fail 'running PostgreSQL image ID does not match the audited digest'
+
+  docker volume inspect "$POSTGRES_BACKUP_SOURCE_VOLUME" >/dev/null ||
+    fail 'configured Production PostgreSQL volume does not exist'
+  mounted_volume="$(
+    docker container inspect --format \
+      '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql"}}{{.Type}}|{{.Name}}{{println}}{{end}}{{end}}' \
+      "$container_id"
+  )"
+  [[ "$mounted_volume" == "volume|$POSTGRES_BACKUP_SOURCE_VOLUME" ]] ||
+    fail 'configured volume is not the running PostgreSQL data mount'
+
+  docker container inspect "$container_id" | jq --exit-status \
+    --arg network "$database_network" '
+      length == 1 and
+      ((.[0].HostConfig.PortBindings // {}) == {}) and
+      ((.[0].NetworkSettings.Networks | keys) == [$network])
+    ' >/dev/null ||
+    fail 'Production PostgreSQL must have no published port and only the internal database network'
+  docker network inspect "$database_network" | jq --exit-status '
+    length == 1 and .[0].Internal == true
+  ' >/dev/null ||
+    fail 'Production database network must exist and remain internal'
+
+  docker container inspect "$container_id" | jq --exit-status \
+    --arg expected "POSTGRES_DB=$POSTGRES_BACKUP_DATABASE" '
+      [.[] | .Config.Env[] | select(startswith("POSTGRES_DB="))] == [$expected]
+    ' >/dev/null || fail 'running PostgreSQL database identity does not match backup configuration'
+  docker container inspect "$container_id" | jq --exit-status \
+    --arg expected "POSTGRES_USER=$POSTGRES_BACKUP_USER" '
+      [.[] | .Config.Env[] | select(startswith("POSTGRES_USER="))] == [$expected]
+    ' >/dev/null || fail 'running PostgreSQL user identity does not match backup configuration'
+}
+
+database_query() {
+  local container_id=$1
+  local sql=$2
+
+  docker container exec --user postgres "$container_id" \
+    psql \
+      --no-psqlrc \
+      --set ON_ERROR_STOP=1 \
+      --tuples-only \
+      --no-align \
+      --quiet \
+      --username "$POSTGRES_BACKUP_USER" \
+      --dbname "$POSTGRES_BACKUP_DATABASE" \
+      --command "$sql"
+}
+
+schema_state() {
+  local container_id=$1
+  local state
+
+  state="$(
+    database_query "$container_id" \
+      "SELECT version::text || '|' || CASE WHEN dirty THEN 'true' ELSE 'false' END FROM public.schema_migrations;"
+  )" || fail 'cannot read PostgreSQL migration state'
+  [[ "$state" =~ ^([1-9][0-9]*)\|false$ ]] ||
+    fail 'PostgreSQL migration state must contain exactly one clean positive version'
+  printf '%s\n' "${BASH_REMATCH[1]}"
+}
+
+postgres_version() {
+  local container_id=$1
+  local version
+
+  version="$(database_query "$container_id" 'SHOW server_version;')" ||
+    fail 'cannot read PostgreSQL version'
+  [[ -n "$version" && ${#version} -le 128 ]] ||
+    fail 'PostgreSQL version is invalid'
+  [[ "$version" != *$'\n'* && "$version" != *$'\r'* && "$version" != *$'\t'* ]] ||
+    fail 'PostgreSQL version contains control characters'
+  printf '%s\n' "$version"
+}
+
+sha256_file() {
+  local file=$1
+
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$file" | awk '{print $1}'
+  else
+    shasum -a 256 "$file" | awk '{print $1}'
+  fi
+}
+
+file_size() {
+  local file=$1
+  local size
+
+  if size="$(stat -c '%s' "$file" 2>/dev/null)"; then
+    :
+  elif size="$(stat -f '%z' "$file" 2>/dev/null)"; then
+    :
+  else
+    fail 'cannot inspect backup file size'
+  fi
+  [[ "$size" =~ ^[1-9][0-9]*$ ]] || fail 'backup dump must not be empty'
+  printf '%s\n' "$size"
+}
+
+file_mode() {
+  local file=$1
+  local mode
+
+  if mode="$(stat -c '%a' "$file" 2>/dev/null)"; then
+    :
+  elif mode="$(stat -f '%Lp' "$file" 2>/dev/null)"; then
+    :
+  else
+    fail 'cannot inspect backup file permissions'
+  fi
+  printf '%s\n' "$mode"
+}
+
+file_owner_id() {
+  local file=$1
+  local owner
+
+  if owner="$(stat -c '%u' "$file" 2>/dev/null)"; then
+    :
+  elif owner="$(stat -f '%u' "$file" 2>/dev/null)"; then
+    :
+  else
+    fail 'cannot inspect backup path ownership'
+  fi
+  printf '%s\n' "$owner"
+}
+
+validate_backup_root() {
+  [[ -d "$POSTGRES_BACKUP_ROOT" && ! -L "$POSTGRES_BACKUP_ROOT" ]] ||
+    fail 'POSTGRES_BACKUP_ROOT must already exist as a real directory'
+  [[ "${POSTGRES_BACKUP_ROOT##*/}" == "postgres-backups" ]] ||
+    fail 'POSTGRES_BACKUP_ROOT must end with postgres-backups'
+  [[ "$(file_mode "$POSTGRES_BACKUP_ROOT")" == "700" ]] ||
+    fail 'POSTGRES_BACKUP_ROOT must have mode 0700'
+  [[ "$(file_owner_id "$POSTGRES_BACKUP_ROOT")" == "$EUID" ]] ||
+    fail 'POSTGRES_BACKUP_ROOT must be owned by the current service user'
+}
+
+write_metadata() {
+  local file=$1
+  local backup_id=$2
+  local created_at=$3
+  local backup_type=$4
+  local version=$5
+  local schema_version=$6
+  local size=$7
+  local checksum=$8
+
+  jq --null-input --sort-keys \
+    --arg backup_id "$backup_id" \
+    --arg backup_type "$backup_type" \
+    --arg created_at "$created_at" \
+    --arg database_name "$POSTGRES_BACKUP_DATABASE" \
+    --arg database_user "$POSTGRES_BACKUP_USER" \
+    --arg deployment_version "$POSTGRES_BACKUP_DEPLOYMENT_VERSION" \
+    --arg git_sha "$POSTGRES_BACKUP_GIT_SHA" \
+    --arg postgres_image "$POSTGRES_BACKUP_IMAGE" \
+    --arg postgres_version "$version" \
+    --arg sha256 "$checksum" \
+    --arg source_compose_project "$compose_project" \
+    --arg source_compose_service "$compose_service" \
+    --arg source_volume "$POSTGRES_BACKUP_SOURCE_VOLUME" \
+    --argjson schema_version "$schema_version" \
+    --argjson size_bytes "$size" '
+      {
+        format_version: 1,
+        backup_id: $backup_id,
+        created_at: $created_at,
+        backup_type: $backup_type,
+        deployment_version: $deployment_version,
+        git_sha: $git_sha,
+        source_compose_project: $source_compose_project,
+        source_compose_service: $source_compose_service,
+        source_volume: $source_volume,
+        postgres_image: $postgres_image,
+        postgres_version: $postgres_version,
+        database_name: $database_name,
+        database_user: $database_user,
+        schema_version: $schema_version,
+        schema_dirty: false,
+        size_bytes: $size_bytes,
+        sha256: $sha256
+      }
+    ' > "$file"
+}
+
+validate_metadata() {
+  local directory=$1
+  local backup_id=${2:-${directory##*/}}
+  local metadata="$directory/$metadata_file_name"
+
+  [[ -f "$metadata" && ! -L "$metadata" ]] ||
+    fail 'backup metadata is missing or is not a regular file'
+  jq --exit-status \
+    --arg backup_id "$backup_id" \
+    --arg database_name "$POSTGRES_BACKUP_DATABASE" \
+    --arg database_user "$POSTGRES_BACKUP_USER" \
+    --arg source_compose_project "$compose_project" \
+    --arg source_compose_service "$compose_service" \
+    --arg source_volume "$POSTGRES_BACKUP_SOURCE_VOLUME" '
+      type == "object" and
+      keys == [
+        "backup_id",
+        "backup_type",
+        "created_at",
+        "database_name",
+        "database_user",
+        "deployment_version",
+        "format_version",
+        "git_sha",
+        "postgres_image",
+        "postgres_version",
+        "schema_dirty",
+        "schema_version",
+        "sha256",
+        "size_bytes",
+        "source_compose_project",
+        "source_compose_service",
+        "source_volume"
+      ] and
+      .format_version == 1 and
+      .backup_id == $backup_id and
+      (.backup_type == "daily" or .backup_type == "predeploy") and
+      (.created_at | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$") and (fromdateiso8601 | type == "number")) and
+      ((.created_at | gsub("[-:]"; "")) + "-" + .backup_type == .backup_id) and
+      (.deployment_version | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")) and
+      (.git_sha | type == "string" and test("^[a-f0-9]{40}$")) and
+      .source_compose_project == $source_compose_project and
+      .source_compose_service == $source_compose_service and
+      .source_volume == $source_volume and
+      (.postgres_image | type == "string" and test("^postgres:[1-9][0-9]*-bookworm@sha256:[a-f0-9]{64}$")) and
+      (.postgres_version | type == "string" and length > 0 and length <= 128 and test("^[1-9][0-9]*\\.") and ([explode[] | select(. < 32 or . == 127)] | length == 0)) and
+      ((.postgres_image | capture("^postgres:(?<major>[1-9][0-9]*)-bookworm@sha256:[a-f0-9]{64}$").major) ==
+       (.postgres_version | capture("^(?<major>[1-9][0-9]*)\\.").major)) and
+      .database_name == $database_name and
+      .database_user == $database_user and
+      (.schema_version | type == "number" and floor == . and . > 0) and
+      .schema_dirty == false and
+      (.size_bytes | type == "number" and floor == . and . > 0) and
+      (.sha256 | type == "string" and test("^[a-f0-9]{64}$"))
+    ' "$metadata" >/dev/null || fail 'backup metadata is invalid or does not match this Production database'
+}
+
+metadata_fields() {
+  local directory=$1
+
+  jq --raw-output '
+    [
+      .created_at,
+      (.schema_version | tostring),
+      .postgres_version,
+      .postgres_image,
+      (.size_bytes | tostring),
+      .sha256
+    ] | @tsv
+  ' "$directory/$metadata_file_name"
+}
+
+validate_exact_backup_entries() {
+  local directory=$1
+  local entry name
+  local -a entries
+  local dump_count=0 checksum_count=0 metadata_count=0
+
+  shopt -s nullglob dotglob
+  entries=("$directory"/*)
+  shopt -u nullglob dotglob
+  [[ "${#entries[@]}" == 3 ]] ||
+    fail 'backup directory must contain exactly the three contract files'
+  for entry in "${entries[@]}"; do
+    name=${entry##*/}
+    case "$name" in
+      "$dump_file_name") dump_count=$((dump_count + 1)) ;;
+      "$checksum_file_name") checksum_count=$((checksum_count + 1)) ;;
+      "$metadata_file_name") metadata_count=$((metadata_count + 1)) ;;
+      *) fail 'backup directory contains an unexpected entry' ;;
+    esac
+  done
+  [[ "$dump_count" == 1 && "$checksum_count" == 1 && "$metadata_count" == 1 ]] ||
+    fail 'backup directory contract files are incomplete'
+}
+
+verify_backup_files() {
+  local directory=$1
+  local require_freshness=$2
+  local backup_id=${3:-${directory##*/}}
+  local fields created_at schema_version version postgres_image expected_size expected_sha
+  local dump_file="$directory/$dump_file_name"
+  local checksum_file="$directory/$checksum_file_name"
+  local actual_size actual_sha
+
+  [[ -d "$directory" && ! -L "$directory" ]] ||
+    fail 'selected backup directory does not exist or is unsafe'
+  validate_exact_backup_entries "$directory"
+  validate_metadata "$directory" "$backup_id"
+  [[ -f "$dump_file" && ! -L "$dump_file" ]] || fail 'backup dump is missing or unsafe'
+  [[ -f "$checksum_file" && ! -L "$checksum_file" ]] || fail 'backup checksum is missing or unsafe'
+  [[ "$(file_mode "$directory")" == "700" ]] || fail 'backup directory must have mode 0700'
+  [[ "$(file_mode "$dump_file")" == "600" ]] || fail 'backup dump must have mode 0600'
+  [[ "$(file_mode "$checksum_file")" == "600" ]] || fail 'backup checksum must have mode 0600'
+  [[ "$(file_mode "$directory/$metadata_file_name")" == "600" ]] ||
+    fail 'backup metadata must have mode 0600'
+
+  fields="$(metadata_fields "$directory")"
+  IFS=$'\t' read -r \
+    created_at schema_version version postgres_image expected_size expected_sha <<< "$fields"
+  actual_size="$(file_size "$dump_file")"
+  [[ "$actual_size" == "$expected_size" ]] || fail 'backup dump size does not match metadata'
+  actual_sha="$(sha256_file "$dump_file")"
+  [[ "$actual_sha" == "$expected_sha" ]] || fail 'backup dump SHA-256 does not match metadata'
+  printf '%s  %s\n' "$expected_sha" "$dump_file_name" |
+    cmp -s - "$checksum_file" || fail 'backup checksum file does not match metadata'
+
+  if [[ "$require_freshness" == "true" ]]; then
+    jq --exit-status --arg max_age "$POSTGRES_BACKUP_MAX_AGE_SECONDS" '
+      (.created_at | fromdateiso8601) as $created |
+      now as $current |
+      ($created <= $current and ($current - $created) <= ($max_age | tonumber))
+    ' "$directory/$metadata_file_name" >/dev/null || fail 'backup is stale or has a future timestamp'
+  fi
+
+  printf '%s\t%s\t%s\n' "$schema_version" "$version" "$postgres_image"
+}
+
+backup_entries() {
+  local -a entries
+
+  shopt -s nullglob dotglob
+  entries=("$POSTGRES_BACKUP_ROOT"/*)
+  shopt -u nullglob dotglob
+  printf '%s\n' "${entries[@]}"
+}
+
+latest_backup_id() {
+  local entry name latest=""
+
+  while IFS= read -r entry; do
+    [[ -n "$entry" ]] || continue
+    name=${entry##*/}
+    if [[ "$name" == .partial-* ]]; then
+      [[ -d "$entry" && ! -L "$entry" ]] || fail 'partial backup entry is unsafe'
+      continue
+    fi
+    [[ "$name" =~ ^[0-9]{8}T[0-9]{6}Z-(daily|predeploy)$ ]] ||
+      fail 'backup root contains an unexpected entry'
+    [[ -d "$entry" && ! -L "$entry" ]] || fail 'finalized backup entry is unsafe'
+    if [[ -z "$latest" || "$name" > "$latest" ]]; then
+      latest=$name
+    fi
+  done < <(backup_entries)
+
+  [[ -n "$latest" ]] || fail 'no finalized PostgreSQL backup exists'
+  printf '%s\n' "$latest"
+}
+
+prune_expired_backups() {
+  local keep=$1
+  local entry name
+
+  while IFS= read -r entry; do
+    [[ -n "$entry" ]] || continue
+    name=${entry##*/}
+    if [[ "$name" == .partial-* || "$name" == "$keep" ]]; then
+      continue
+    fi
+    [[ "$name" =~ ^[0-9]{8}T[0-9]{6}Z-(daily|predeploy)$ ]] ||
+      fail 'backup root contains an unexpected entry'
+    verify_backup_files "$entry" false >/dev/null
+    if jq --exit-status --arg retention_days "$POSTGRES_BACKUP_RETENTION_DAYS" '
+      (now - (.created_at | fromdateiso8601)) > (($retention_days | tonumber) * 86400)
+    ' "$entry/$metadata_file_name" >/dev/null; then
+      [[ "${entry%/*}" == "$POSTGRES_BACKUP_ROOT" ]] ||
+        fail 'refusing to prune outside POSTGRES_BACKUP_ROOT'
+      rm -- \
+        "$entry/$dump_file_name" \
+        "$entry/$checksum_file_name" \
+        "$entry/$metadata_file_name" ||
+        fail 'cannot remove expired backup contract files'
+      rmdir -- "$entry" || fail 'cannot remove expired backup directory'
+    fi
+  done < <(backup_entries)
+}
+
+run_backup() {
+  local backup_type=$1
+  local image_id source_container schema_version schema_version_after version
+  local timestamp backup_id created_at partial_directory final_directory
+  local dump_file size checksum
+
+  validate_backup_configuration
+  validate_backup_root
+
+  image_id="$(configured_image_id)"
+  source_container="$(discover_source_container)"
+  validate_source_container "$source_container" "$image_id"
+  schema_version="$(schema_state "$source_container")"
+  version="$(postgres_version "$source_container")"
+
+  timestamp="$(date -u '+%Y%m%dT%H%M%SZ')"
+  backup_id="$timestamp-$backup_type"
+  created_at="${timestamp:0:4}-${timestamp:4:2}-${timestamp:6:2}T${timestamp:9:2}:${timestamp:11:2}:${timestamp:13:2}Z"
+  partial_directory="$POSTGRES_BACKUP_ROOT/.partial-$backup_id-$$-$RANDOM"
+  final_directory="$POSTGRES_BACKUP_ROOT/$backup_id"
+  [[ ! -e "$partial_directory" && ! -e "$final_directory" ]] ||
+    fail 'backup ID already exists'
+  mkdir -m 700 "$partial_directory"
+  active_partial_directory=$partial_directory
+  dump_file="$partial_directory/$dump_file_name"
+
+  if ! docker container exec --user postgres "$source_container" \
+    pg_dump \
+      --format=custom \
+      --lock-wait-timeout=30s \
+      --no-owner \
+      --no-privileges \
+      --username "$POSTGRES_BACKUP_USER" \
+      --dbname "$POSTGRES_BACKUP_DATABASE" > "$dump_file"; then
+    fail 'pg_dump failed; partial output was not finalized'
+  fi
+  schema_version_after="$(schema_state "$source_container")"
+  [[ "$schema_version_after" == "$schema_version" ]] ||
+    fail 'PostgreSQL migration state changed during pg_dump; partial output was not finalized'
+  chmod 600 "$dump_file"
+  size="$(file_size "$dump_file")"
+  checksum="$(sha256_file "$dump_file")"
+  [[ "$checksum" =~ ^[a-f0-9]{64}$ ]] || fail 'cannot calculate backup SHA-256'
+  printf '%s  %s\n' "$checksum" "$dump_file_name" > \
+    "$partial_directory/$checksum_file_name"
+  write_metadata \
+    "$partial_directory/$metadata_file_name" \
+    "$backup_id" \
+    "$created_at" \
+    "$backup_type" \
+    "$version" \
+    "$schema_version" \
+    "$size" \
+    "$checksum"
+  chmod 600 \
+    "$partial_directory/$checksum_file_name" \
+    "$partial_directory/$metadata_file_name"
+  sync
+  run_isolated_restore "$partial_directory" "$backup_id"
+  if mv "$partial_directory" "$final_directory"; then
+    active_partial_directory=""
+  else
+    fail 'cannot finalize the verified PostgreSQL backup'
+  fi
+  sync
+
+  prune_expired_backups "$backup_id"
+  printf 'backup_id=%s restore=verified\n' "$backup_id"
+}
+
+wait_for_restore_database() {
+  local attempt init_process
+
+  for ((attempt = 1; attempt <= 30; attempt += 1)); do
+    init_process="$(
+      docker container exec "$restore_container" cat /proc/1/comm 2>/dev/null || true
+    )"
+    if [[ "$init_process" == "postgres" ]] &&
+      docker container exec --user postgres "$restore_container" \
+      pg_isready \
+        --username "$POSTGRES_BACKUP_USER" \
+        --dbname "$POSTGRES_BACKUP_DATABASE" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  fail 'isolated PostgreSQL restore container did not become ready'
+}
+
+run_isolated_restore() {
+  local backup_directory=$1
+  local backup_id=$2
+  local image_id suffix
+  local restored_fields schema_version expected_version restore_image
+  local actual_schema actual_version restore_container_name
+
+  restored_fields="$(verify_backup_files "$backup_directory" true "$backup_id")"
+  IFS=$'\t' read -r schema_version expected_version restore_image <<< "$restored_fields"
+
+  image_id="$(image_id_for_reference "$restore_image")"
+  suffix="${backup_id//[^A-Za-z0-9_.-]/-}-$$-$RANDOM"
+  restore_container_name="xe3-postgres-restore-$suffix"
+  restore_volume="xe3-postgres-restore-$suffix"
+  restore_backup_id=$backup_id
+  restore_run_id="$$-$RANDOM-$RANDOM"
+  [[ "$restore_volume" != "$POSTGRES_BACKUP_SOURCE_VOLUME" ]] ||
+    fail 'isolated restore volume must not be the Production source volume'
+  if docker volume inspect "$restore_volume" >/dev/null 2>&1; then
+    fail 'isolated restore volume name already exists'
+  fi
+  [[ "$(docker volume create \
+    --label "$restore_label=true" \
+    --label "$restore_backup_label=$backup_id" \
+    --label "$restore_run_label=$restore_run_id" \
+    "$restore_volume")" == "$restore_volume" ]] ||
+    fail 'cannot create the isolated restore volume'
+  if docker container inspect "$restore_container_name" >/dev/null 2>&1; then
+    fail 'isolated restore container name already exists'
+  fi
+  restore_container="$(docker container run \
+    --detach \
+    --pull never \
+    --name "$restore_container_name" \
+    --network none \
+    --label "$restore_label=true" \
+    --label "$restore_backup_label=$backup_id" \
+    --label "$restore_run_label=$restore_run_id" \
+    --mount "type=volume,src=$restore_volume,dst=/var/lib/postgresql" \
+    --env "POSTGRES_DB=$POSTGRES_BACKUP_DATABASE" \
+    --env "POSTGRES_USER=$POSTGRES_BACKUP_USER" \
+    --env POSTGRES_HOST_AUTH_METHOD=trust \
+    "$image_id")" || fail 'cannot start the isolated restore container'
+  [[ "$restore_container" =~ ^[a-f0-9]{64}$ ]] ||
+    fail 'isolated restore container did not return an immutable ID'
+
+  wait_for_restore_database
+  docker container exec --interactive --user postgres "$restore_container" \
+    pg_restore \
+      --single-transaction \
+      --exit-on-error \
+      --no-owner \
+      --no-privileges \
+      --username "$POSTGRES_BACKUP_USER" \
+      --dbname "$POSTGRES_BACKUP_DATABASE" < \
+    "$backup_directory/$dump_file_name" || fail 'isolated pg_restore failed'
+
+  actual_schema="$(schema_state "$restore_container")"
+  actual_version="$(postgres_version "$restore_container")"
+  [[ "$actual_schema" == "$schema_version" ]] ||
+    fail 'isolated restore migration version does not match backup metadata'
+  [[ "$actual_version" == "$expected_version" ]] ||
+    fail 'isolated restore PostgreSQL version does not match backup metadata'
+
+  cleanup_restore_resources || fail 'cannot remove isolated restore resources'
+}
+
+run_check() {
+  local requested_id=${1:-}
+  local backup_id backup_directory
+
+  validate_check_configuration
+  validate_backup_root
+
+  if [[ -n "$requested_id" ]]; then
+    [[ "$requested_id" =~ ^[0-9]{8}T[0-9]{6}Z-(daily|predeploy)$ ]] ||
+      fail 'BACKUP_ID has an invalid format'
+    backup_id=$requested_id
+  else
+    backup_id="$(latest_backup_id)"
+  fi
+  backup_directory="$POSTGRES_BACKUP_ROOT/$backup_id"
+  run_isolated_restore "$backup_directory" "$backup_id"
+  printf 'backup_id=%s restore=verified\n' "$backup_id"
+}
+
+main() {
+  local command_name=${1:-}
+
+  require_command docker
+  require_command jq
+  require_command awk
+  require_command cmp
+  require_command date
+  require_command stat
+  require_command sync
+  if ! command -v sha256sum >/dev/null 2>&1 &&
+    ! command -v shasum >/dev/null 2>&1; then
+    fail 'sha256sum or shasum is required'
+  fi
+
+  case "$command_name" in
+    backup)
+      [[ $# == 2 ]] || {
+        usage
+        exit 1
+      }
+      [[ "$2" == "daily" || "$2" == "predeploy" ]] ||
+        fail 'backup type must be daily or predeploy'
+      run_backup "$2"
+      ;;
+    check)
+      [[ $# == 1 || $# == 2 ]] || {
+        usage
+        exit 1
+      }
+      run_check "${2:-}"
+      ;;
+    *)
+      usage
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"

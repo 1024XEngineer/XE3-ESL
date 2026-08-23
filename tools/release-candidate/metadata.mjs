@@ -5,9 +5,13 @@ import { appendFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { readArguments } from "./cli.mjs";
+
 const stableTagPattern = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const pubspecVersionPattern = /^version:\s*["']?([^+\s"']+)\+(\d+)["']?\s*$/gm;
 const migrationPattern = /^server\/migrations\/(\d{6})_[^/]+\.up\.sql$/;
+const tagRemotePattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const officialUpstreamUrl = "https://github.com/1024XEngineer/XE3-ESL.git";
 
 export function parseStableTag(tag) {
   const match = stableTagPattern.exec(tag);
@@ -85,7 +89,7 @@ function isAncestor(repoDir, commit, mainRef) {
   }).status === 0;
 }
 
-function stableTagRefs(repoDir) {
+function stableTagRefs(repoDir, tagRemote) {
   const local = new Map(
     git(repoDir, ["tag", "--list", "v*"])
       .split("\n")
@@ -96,7 +100,7 @@ function stableTagRefs(repoDir) {
       ]),
   );
   const remote = new Map(
-    git(repoDir, ["ls-remote", "--tags", "--refs", "origin", "refs/tags/v*"])
+    git(repoDir, ["ls-remote", "--tags", "--refs", tagRemote, "refs/tags/v*"])
       .split("\n")
       .filter(Boolean)
       .map((line) => line.split("\t"))
@@ -107,12 +111,91 @@ function stableTagRefs(repoDir) {
     local.size !== remote.size ||
     [...remote].some(([tag, object]) => local.get(tag) !== object)
   ) {
-    throw new Error("Local stable release tags do not match origin");
+    throw new Error(`Local stable release tags do not match ${tagRemote}`);
   }
   return [...local.keys()];
 }
 
-export function collectReleaseMetadata({ repoDir, tag, mainRef }) {
+function officialUpstreamMain(repoDir) {
+  let urls;
+  try {
+    urls = git(repoDir, ["config", "--get-all", "remote.upstream.url"])
+      .split("\n")
+      .filter(Boolean);
+  } catch {
+    throw new Error(`upstream must use ${officialUpstreamUrl}`);
+  }
+  if (urls.length !== 1 || urls[0] !== officialUpstreamUrl) {
+    throw new Error(`upstream must use ${officialUpstreamUrl}`);
+  }
+  const rewrites = spawnSync(
+    "git",
+    [
+      "config",
+      "--null",
+      "--get-regexp",
+      "^url\\..*\\.(insteadof|pushinsteadof)$",
+    ],
+    {
+      cwd: repoDir,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  if (rewrites.error) throw rewrites.error;
+  if (
+    rewrites.status !== 0 &&
+    !(rewrites.status === 1 && rewrites.stdout === "")
+  ) {
+    throw new Error("cannot inspect Git URL rewrite configuration");
+  }
+  for (const record of rewrites.stdout.split("\0").filter(Boolean)) {
+    const separator = record.indexOf("\n");
+    if (separator < 1) {
+      throw new Error("Git URL rewrite configuration is malformed");
+    }
+    const prefix = record.slice(separator + 1);
+    if (officialUpstreamUrl.startsWith(prefix)) {
+      throw new Error("Git URL rewrites must not affect the official upstream URL");
+    }
+  }
+  const lines = git(repoDir, [
+    "ls-remote",
+    "--heads",
+    "--refs",
+    "upstream",
+    "refs/heads/main",
+  ])
+    .split("\n")
+    .filter(Boolean);
+  if (lines.length !== 1) {
+    throw new Error("upstream must expose exactly one refs/heads/main");
+  }
+  const [commit, ref, extra] = lines[0].split("\t");
+  if (
+    extra !== undefined ||
+    ref !== "refs/heads/main" ||
+    !/^[0-9a-f]{40}$/.test(commit)
+  ) {
+    throw new Error("upstream refs/heads/main is invalid");
+  }
+  return commit;
+}
+
+export function collectReleaseMetadata({
+  repoDir,
+  tag,
+  mainRef,
+  tagRemote = "origin",
+}) {
+  if (
+    typeof tagRemote !== "string" ||
+    !tagRemotePattern.test(tagRemote) ||
+    tagRemote === "." ||
+    tagRemote === ".."
+  ) {
+    throw new Error("tagRemote must be a plain Git remote name");
+  }
   if (git(repoDir, ["rev-parse", "--is-shallow-repository"]) === "true") {
     throw new Error("Release validation requires the complete Git history");
   }
@@ -127,6 +210,9 @@ export function collectReleaseMetadata({ repoDir, tag, mainRef }) {
     throw new Error(`HEAD ${headCommit} does not match release tag ${tag}`);
   }
   const mainCommit = git(repoDir, ["rev-parse", "--verify", `${mainRef}^{commit}`]);
+  if (tagRemote === "upstream" && mainCommit !== officialUpstreamMain(repoDir)) {
+    throw new Error(`${mainRef} does not match live upstream main`);
+  }
   if (!isAncestor(repoDir, tagCommit, mainCommit)) {
     throw new Error(`Release tag ${tag} is not contained in ${mainRef}`);
   }
@@ -140,7 +226,7 @@ export function collectReleaseMetadata({ repoDir, tag, mainRef }) {
   if (!firstParentCommits.has(tagCommit)) {
     throw new Error(`Release tag ${tag} is not on the first-parent history of ${mainRef}`);
   }
-  const allStableTags = stableTagRefs(repoDir);
+  const allStableTags = stableTagRefs(repoDir, tagRemote);
 
   const pubspec = git(repoDir, ["show", `${tagCommit}:mobile/pubspec.yaml`]);
   const current = parsePubspecVersion(pubspec);
@@ -227,21 +313,15 @@ export function collectReleaseMetadata({ repoDir, tag, mainRef }) {
   };
 }
 
-function readArguments(arguments_) {
-  const values = {};
-  for (let index = 0; index < arguments_.length; index += 2) {
-    const flag = arguments_[index];
-    const value = arguments_[index + 1];
-    if (!flag?.startsWith("--") || value === undefined) {
-      throw new Error("Usage: metadata.mjs --tag <vX.Y.Z> --main-ref <ref> [--repo <path>]");
-    }
-    values[flag.slice(2)] = value;
-  }
-  return values;
-}
-
 function main() {
-  const arguments_ = readArguments(process.argv.slice(2));
+  const usage =
+    "Usage: metadata.mjs --tag <vX.Y.Z> --main-ref <ref> " +
+    "[--repo <path>] [--tag-remote <name>]";
+  const arguments_ = readArguments(
+    process.argv.slice(2),
+    ["tag", "main-ref", "repo", "tag-remote"],
+    usage,
+  );
   if (!arguments_.tag || !arguments_["main-ref"]) {
     throw new Error("Both --tag and --main-ref are required");
   }
@@ -249,6 +329,7 @@ function main() {
     repoDir: path.resolve(arguments_.repo ?? "."),
     tag: arguments_.tag,
     mainRef: arguments_["main-ref"],
+    tagRemote: arguments_["tag-remote"] ?? "origin",
   });
   const output = Object.entries(metadata)
     .map(([key, value]) => `${key}=${value}`)

@@ -1,0 +1,24 @@
+[Unit]
+Description=Create a consistent SpeakUp Production PostgreSQL logical backup
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+TimeoutStartSec=2h
+EnvironmentFile=/etc/speakup/postgres-backup.env
+StateDirectory=speakup/postgres-backups
+StateDirectoryMode=0700
+UMask=0077
+ExecStart=/usr/bin/flock --nonblock /run/lock/xe3-postgres-backup.lock /usr/bin/env POSTGRES_BACKUP_ROOT=/var/lib/speakup/postgres-backups /usr/local/sbin/xe3-postgres-backup backup daily
+PrivateTmp=true
+PrivateDevices=true
+PrivateNetwork=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/run/lock
+NoNewPrivileges=true
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=
+LockPersonality=true
+MemoryDenyWriteExecute=true

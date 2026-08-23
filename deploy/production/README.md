@@ -38,7 +38,8 @@ release. Its one-time creation belongs to the audited server bootstrap.
 - The existing `speak-up.top` certificate lineage safely expanded to the exact
   Portal, redirect, and API SAN set through [`deploy/tls/`](../tls/README.md).
 - A populated ACME web root.
-- Registry read access for the manifest's Portal and Server image digests.
+- Either Registry read access for the manifest's Portal and Server image
+  digests, or the verified offline bundle described below.
 - A real, current-UID-owned `PRODUCTION_PUBLIC_ROOT` that is not group- or
   world-writable.
 
@@ -100,6 +101,127 @@ resolved Compose model, both external volumes, the external Server edge network,
 and the rendered Nginx template. It does not pull images or create/update
 containers or networks.
 
+## Offline image transfer when GHCR access is unavailable
+
+The offline path creates one self-consistent, digest-addressed release from the
+Portal and Server images built on the trusted workstation. It does not loosen
+`release-manifest.json` checks or authorize a Production deployment. Run it only
+from the clean, reviewed release Tag commit with the complete official Git
+history, Docker Buildx, Node.js, and both signed APKs ready. The `upstream`
+remote must be exactly
+`https://github.com/1024XEngineer/XE3-ESL.git`; the release validator rejects a
+stale `upstream/main` and any Git URL rewrite that could redirect this URL:
+
+```sh
+release_tag=v0.1.0
+release_version="${release_tag#v}"
+release_dir=/secure/release-staging/speakup-v${release_version}
+release_sha="$(git rev-parse --verify 'HEAD^{commit}')"
+./tools/release-candidate/build-offline-images.sh \
+  --version "$release_version" \
+  --git-sha "$release_sha" \
+  --output-dir "$release_dir/images"
+```
+
+Portal and Server are each built once without cache for `linux/amd64` from the
+exact clean commit. `offline-image-bundle.json` records the repositories,
+digests, archive sizes and SHA-256 values, plus the Buildx metadata files.
+Archive checksums protect transport; deployment identity remains the complete
+`repository@sha256:digest` recorded in the release manifest generated from this
+bundle. Vinext intentionally generates per-build security material, so this
+contract verifies and preserves the exact immutable artifacts rather than
+claiming byte-for-byte reproducibility from a separate rebuild.
+
+Generate the manifest through the single fail-closed offline wrapper. It
+snapshots and verifies both APKs, consumes the verifier reports rather than
+operator-supplied Android fields, validates the bundle, and atomically creates a
+new manifest without replacing an existing file. The certificate fingerprint
+file is public identity material, not a signing key. Replace the example run
+with the completed successful official `Quality` workflow for this exact commit
+on `main`; the wrapper verifies it through the fixed GitHub API before touching
+the APKs:
+
+```sh
+release_tag=v0.1.0
+release_version="${release_tag#v}"
+release_dir=/secure/release-staging/speakup-v${release_version}
+bundle_dir=${release_dir}/images
+certificate_file=${release_dir}/apk-certificate-sha256.txt
+staging_apk=${release_dir}/speakup-v${release_version}-staging-arm64.apk
+production_apk=${release_dir}/speakup-v${release_version}-production-arm64.apk
+quality_run_url=https://github.com/1024XEngineer/XE3-ESL/actions/runs/123456789
+
+node tools/release-candidate/offline-manifest.mjs \
+  --tag "$release_tag" \
+  --staging-apk "$staging_apk" \
+  --production-apk "$production_apk" \
+  --offline-bundle "$bundle_dir/offline-image-bundle.json" \
+  --certificate-file "$certificate_file" \
+  --quality-run-url "$quality_run_url" \
+  --output "$release_dir/release-manifest.json"
+```
+
+The wrapper rejects a non-official, fork, PR, failed, incomplete, wrong-branch,
+or wrong-commit Quality run. It also rejects a failed APK verification, an APK
+changed during snapshotting, an existing output path, or a bundle whose
+version, Git SHA, filenames, sizes, checksums, or Buildx digests differ. Network
+or GitHub API errors fail closed and do not create a manifest.
+
+This manual manifest intentionally records the single-platform digest from the
+offline Docker archive. A GHCR workflow may instead publish an OCI index whose
+top-level digest differs even when it contains equivalent `linux/amd64` image
+content. Therefore, never combine a GHCR-generated manifest with this offline
+bundle or silently replace one digest with the other. If these images are later
+pushed to GHCR under the same version, the remote digest must be proven to match
+this immutable manifest; otherwise publish a new version.
+
+Transfer the complete directory and its matching `release-manifest.json` to the
+release directory on the host. Do not rename individual files, unpack the
+archives, or copy them through the repository.
+
+The offline Compose override also forbids pulling the fixed PostgreSQL image.
+The target host must provision that exact public image from Docker Hub before
+entering the offline release window; this is intentionally not handled by the
+application image bundle:
+
+```sh
+docker pull --platform linux/amd64 \
+  postgres:18-bookworm@sha256:7d2695c3aa88e792e8b3b233e7e4adb296a20412c6c0ca361e3edaaacfada108
+docker image inspect \
+  postgres@sha256:7d2695c3aa88e792e8b3b233e7e4adb296a20412c6c0ca361e3edaaacfada108
+```
+
+If either command fails, stop. A `docker save` / `docker load` transfer of this
+multi-platform public image is not an accepted fallback because it does not
+reliably preserve the Registry index RepoDigest required by the Production
+contract. Do not substitute a tag-only image or a platform-manifest digest. A
+fully disconnected PostgreSQL import needs a separately reviewed OCI-index
+transport contract; it is not silently approximated by this application bundle.
+
+On the host, validate every file and the pre-provisioned PostgreSQL image before
+either application image is loaded:
+
+```sh
+./deploy/production/load-offline-images.sh \
+  --manifest /opt/speakup/releases/v0.1.0/release-manifest.json \
+  --bundle /opt/speakup/releases/v0.1.0/images/offline-image-bundle.json \
+  --directory /opt/speakup/releases/v0.1.0/images
+```
+
+The loader rejects unknown bundle fields, path traversal, links or special
+archive members, unreferenced or invalid OCI blobs, checksum or manifest
+mismatches, a missing exact PostgreSQL or application RepoDigest, a non-amd64
+image, or incorrect source/revision/version labels. It never pulls and never
+falls back to a tag, image ID, local Registry, `latest`, or a host-side build.
+
+The reviewed deployment orchestration must combine `compose.yaml` with
+`compose.offline.yaml` and still pass `--pull never` explicitly to every
+state-changing `docker compose up` invocation. The override changes only the
+four pull policies for `postgres`, `migrate`, `server`, and `portal`. This
+repository intentionally does not add a Production `deploy` command in this
+Issue; backup, migration, health, rollback, and approval sequencing remain
+mandatory before that command is enabled.
+
 ## Render Nginx for review
 
 ```sh
@@ -146,17 +268,131 @@ loopback bindings. Public HTTPS and business-route smoke tests belong to the
 release smoke contract. There is intentionally no `deploy` or `down` command in
 this directory yet.
 
+## PostgreSQL logical backup and isolated restore check
+
+The Production PostgreSQL data volume has a separate, fail-closed logical
+backup contract. The backup script discovers the running Production PostgreSQL
+container through its fixed Compose labels, verifies its image, database,
+healthy state, source volume, and clean migration version, then creates a
+custom-format `pg_dump`. The dump waits at most 30 seconds for any table lock
+instead of blocking indefinitely. Both `backup daily` and `backup predeploy`
+write the dump, checksum, and release-linked JSON metadata under a private
+`.partial-*` directory, then complete an isolated `pg_restore`. Only after that
+restore succeeds is the directory published atomically as a finalized backup
+and expired finalized backups pruned. A failed dump, checksum, or restore is
+never published and never triggers retention deletion. The current run's exact
+partial directory is removed on failure using only the three fixed contract
+file names; unexpected entries stop cleanup instead of allowing recursive
+deletion.
+
+The daily timer therefore creates and restore-verifies a new backup on every
+successful run. The separate `check [BACKUP_ID]` command revalidates the latest
+or named finalized backup later: it verifies age, metadata, and checksum, then
+restores with the exact digest-pinned PostgreSQL image recorded by that backup
+into a temporary Docker volume with networking disabled. Historical backup
+checks therefore require their recorded image to remain available locally;
+they do not silently substitute the current Production image. Neither path
+mounts or changes the Production PostgreSQL volume. Backup and restore-check
+processes share
+`/run/lock/xe3-postgres-backup.lock`, so they fail instead of overlapping.
+
+Install the script, private configuration, and systemd units on the Production
+host:
+
+```sh
+install -d -m 0750 /etc/speakup
+install -m 0755 deploy/production/xe3-postgres-backup \
+  /usr/local/sbin/xe3-postgres-backup
+install -m 0600 deploy/production/postgres-backup.env.example \
+  /etc/speakup/postgres-backup.env
+install -m 0644 deploy/production/xe3-postgres-backup.service \
+  deploy/production/xe3-postgres-backup.timer \
+  deploy/production/xe3-postgres-restore-check.service \
+  /etc/systemd/system/
+```
+
+Populate every value in `/etc/speakup/postgres-backup.env` before starting a
+unit. `POSTGRES_BACKUP_IMAGE` must be the exact repository digest used by the
+Production Compose contract; tag-only references and bare image IDs are
+rejected.
+The database, user, and source volume must match the running Production
+PostgreSQL service. Set `POSTGRES_BACKUP_DEPLOYMENT_VERSION` and
+`POSTGRES_BACKUP_GIT_SHA` from the deployed, reviewed release manifest and
+update both when Production is promoted. Choose explicit retention and maximum
+backup age values for the approved recovery policy; the script has no silent
+defaults. The file contains no database password because backup access stays
+inside the already-running PostgreSQL container through the local Docker Unix
+socket.
+
+Enable the daily backup only after a manual backup and isolated restore check
+both succeed:
+
+```sh
+systemctl daemon-reload
+systemctl start xe3-postgres-backup.service
+systemctl start xe3-postgres-restore-check.service
+systemctl enable --now xe3-postgres-backup.timer
+systemctl list-timers xe3-postgres-backup.timer
+```
+
+The backup unit runs `xe3-postgres-backup backup daily`; the restore-check unit
+runs `xe3-postgres-backup check`, which selects the latest finalized backup when
+no ID is given. `StateDirectory=speakup/postgres-backups` must create
+`/var/lib/speakup/postgres-backups` before the script starts, owned by the
+service user with mode `0700`; the script rejects a missing, symlinked,
+wrong-owner, or wrong-mode root instead of creating or repairing it. Both units
+use a `0077` umask and a two-hour start timeout. Their process network namespace
+is private and only `AF_UNIX` is permitted so the Docker Unix socket remains
+usable without granting the unit IP network access.
+
+The configured application database user is also the owner of objects created
+by the migration command. Dumps and isolated restores both use
+`--no-owner --no-privileges`: they preserve the application schema and data
+under that same database user without requiring cluster roles, ownership
+reassignment, or grant restoration. This is a deliberate single-application
+database boundary, not a backup of PostgreSQL cluster identities.
+
+Treat a non-zero result from either service, an overdue timer, a failed restore
+check, or insufficient space below `/var/lib/speakup/postgres-backups` as an
+alert. The exact evidence is available without exposing configuration values:
+
+```sh
+systemctl status xe3-postgres-backup.service \
+  xe3-postgres-restore-check.service xe3-postgres-backup.timer
+journalctl --unit xe3-postgres-backup.service \
+  --unit xe3-postgres-restore-check.service
+```
+
+Wire those systemd failure states and filesystem-capacity signals into the
+host's monitoring before relying on the timer. Run the isolated restore check
+after any image or PostgreSQL major-version change and as part of the audited
+pre-deployment gate. The daily service already proves its newly created backup;
+the later check proves that a selected finalized backup still passes the same
+restore contract. A backup that has not restored successfully is not valid
+release evidence.
+
+This contract deliberately provides **no Production restore command**. It also
+does not capture PostgreSQL roles or tablespaces and does not configure WAL
+archiving or point-in-time recovery (PITR). Restoring data can discard writes
+made after the selected backup, so an actual Production restore requires a
+separate reviewed disaster-recovery runbook, an explicit outage, a named backup
+ID, and operator approval. Image rollback must never silently restore this
+database.
+
 ## Reproducible checks
 
 ```sh
+make check-production-backup
 make check-android-download
 make check-production-deploy
 make check-production-nginx
+make check-offline-release
 ```
 
 The tests resolve the Compose model and prove digest-only images, fixed project
 name, loopback ports, internal database network, external volume names, Nginx
-headers, and fail-closed validation without contacting Production.
+headers, strict offline bundle validation, an unchanged Compose model except for
+the four pull policies, and fail-closed behavior without contacting Production.
 
 ## References
 
@@ -164,4 +400,9 @@ headers, and fail-closed validation without contacting Production.
 - [Docker Compose external volumes](https://docs.docker.com/reference/compose-file/volumes/)
 - [Docker Compose project names](https://docs.docker.com/compose/how-tos/project-name/)
 - [Docker Compose startup order](https://docs.docker.com/compose/how-tos/startup-order/)
+- [Docker image pull](https://docs.docker.com/reference/cli/docker/image/pull/)
+- [GitHub workflow API](https://docs.github.com/en/rest/actions/workflows#get-a-workflow)
+- [GitHub workflow run API](https://docs.github.com/en/rest/actions/workflow-runs#get-a-workflow-run)
 - [Nginx proxy module](https://nginx.org/en/docs/http/ngx_http_proxy_module.html)
+- [PostgreSQL SQL dump backup](https://www.postgresql.org/docs/18/backup-dump.html)
+- [PostgreSQL `pg_restore`](https://www.postgresql.org/docs/18/app-pgrestore.html)

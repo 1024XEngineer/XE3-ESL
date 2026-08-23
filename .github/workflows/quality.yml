@@ -271,7 +271,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.deploy == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -282,6 +282,20 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "24.18.0"
+
+      - name: Set up Docker Engine
+        uses: docker/setup-docker-action@77e84dbf09b47d1e29270283c22f16145aa85ca1 # v5.4.0
+        with:
+          version: v29.6.2
+          daemon-config: |
+            {
+              "features": {
+                "containerd-snapshotter": true
+              }
+            }
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
       - name: Validate Android download publication contract
         run: make check-android-download
@@ -297,6 +311,25 @@ jobs:
 
       - name: Validate Production deployment contract
         run: make check-production-deploy
+
+      - name: Validate Production PostgreSQL systemd units
+        run: |
+          sudo install -D -m 0755 \
+            deploy/production/xe3-postgres-backup \
+            /usr/local/sbin/xe3-postgres-backup
+          sudo install -D -m 0600 \
+            deploy/production/postgres-backup.env.example \
+            /etc/speakup/postgres-backup.env
+          systemd-analyze verify \
+            deploy/production/xe3-postgres-backup.service \
+            deploy/production/xe3-postgres-restore-check.service \
+            deploy/production/xe3-postgres-backup.timer
+
+      - name: Exercise Production PostgreSQL backup and isolated restore
+        run: make check-production-backup
+
+      - name: Validate offline release contract
+        run: make check-offline-release
 
       - name: Validate rendered Production Nginx configuration
         run: make check-production-nginx
