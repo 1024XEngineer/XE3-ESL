@@ -5,35 +5,22 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-val releaseSigningVariableNames = listOf(
-    "SPEAKUP_ANDROID_KEYSTORE_PATH",
-    "SPEAKUP_ANDROID_KEY_ALIAS",
-    "SPEAKUP_ANDROID_STORE_PASSWORD",
-    "SPEAKUP_ANDROID_KEY_PASSWORD",
+val externalReleaseSigning =
+    providers.environmentVariable("SPEAKUP_ANDROID_EXTERNAL_SIGNING").orNull == "true"
+val applicationProjectPath = project.path
+gradle.taskGraph.whenReady(
+    org.gradle.api.Action<org.gradle.api.execution.TaskExecutionGraph> {
+        val releaseTaskRequested = allTasks.any { task ->
+            task.project.path == applicationProjectPath &&
+                task.name.contains("release", ignoreCase = true)
+        }
+        if (releaseTaskRequested && !externalReleaseSigning) {
+            throw GradleException(
+                "Android release APKs must use the explicit Makefile signing targets.",
+            )
+        }
+    },
 )
-val releaseBuildRequested = gradle.startParameter.taskNames.any {
-    it.contains("release", ignoreCase = true)
-}
-val releaseSigningValues = releaseSigningVariableNames.associateWith {
-    providers.environmentVariable(it).orNull
-}
-val missingReleaseSigningVariables = releaseSigningValues
-    .filterValues { it.isNullOrBlank() }
-    .keys
-
-if (releaseBuildRequested && missingReleaseSigningVariables.isNotEmpty()) {
-    throw GradleException(
-        "Missing Android release signing environment variables: " +
-            missingReleaseSigningVariables.joinToString(", "),
-    )
-}
-
-val releaseKeystore = releaseSigningValues["SPEAKUP_ANDROID_KEYSTORE_PATH"]
-    ?.takeIf { it.isNotBlank() }
-    ?.let(::file)
-if (releaseBuildRequested && releaseKeystore?.isFile != true) {
-    throw GradleException("Android release keystore is not a readable file.")
-}
 
 android {
     namespace = "com.xengineer.speakup"
@@ -65,20 +52,10 @@ android {
         }
     }
 
-    signingConfigs {
-        if (missingReleaseSigningVariables.isEmpty()) {
-            create("release") {
-                storeFile = releaseKeystore
-                keyAlias = releaseSigningValues.getValue("SPEAKUP_ANDROID_KEY_ALIAS")
-                storePassword = releaseSigningValues.getValue("SPEAKUP_ANDROID_STORE_PASSWORD")
-                keyPassword = releaseSigningValues.getValue("SPEAKUP_ANDROID_KEY_PASSWORD")
-            }
-        }
-    }
-
     buildTypes {
         release {
-            signingConfig = signingConfigs.findByName("release")
+            // Release APKs are aligned and signed exactly once by sign.sh.
+            signingConfig = null
         }
     }
 
