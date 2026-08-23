@@ -84,6 +84,9 @@ jobs:
                 .github/workflows/release-candidate.yml|tools/release-candidate/*)
                   set_all_checks
                   ;;
+                tools/android-download/*)
+                  deploy=true
+                  ;;
                 mobile/*)
                   flutter=true
                   ;;
@@ -294,8 +297,14 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
+      - name: Validate Android download publication contract
+        run: make check-android-download
+
       - name: Validate Staging deployment contract
         run: make check-staging-deploy
+
+      - name: Validate TLS lifecycle contract
+        run: make check-tls-lifecycle
 
       - name: Validate rendered Nginx configuration
         run: make check-staging-nginx

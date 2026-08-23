@@ -49,6 +49,7 @@ require_private_file() {
   local file=$2
   local mode
 
+  [[ ! -L "$file" ]] || fail "$description must not be a symbolic link: $file"
   require_regular_file "$description" "$file"
   if mode=$(stat -c '%a' -- "$file" 2>/dev/null); then
     :
@@ -66,6 +67,70 @@ require_private_file() {
   esac
 }
 
+require_private_tls_key() {
+  local description=$1
+  local file=$2
+  local target=$file
+  local mode owner current_uid
+
+  if [[ -L "$file" ]]; then
+    require_command realpath
+    target=$(realpath "$file" 2>/dev/null) ||
+      fail "cannot resolve $description symbolic link: $file"
+  fi
+
+  [[ ! -L "$target" ]] || fail "$description does not resolve to a regular file: $file"
+  require_regular_file "$description" "$target"
+
+  if mode=$(stat -c '%a' -- "$target" 2>/dev/null); then
+    :
+  elif mode=$(stat -f '%Lp' "$target" 2>/dev/null); then
+    :
+  else
+    fail "cannot inspect permissions for $description: $file"
+  fi
+  case "$mode" in
+    400 | 600)
+      ;;
+    *)
+      fail "$description target must have mode 0400 or 0600: $file"
+      ;;
+  esac
+
+  if owner=$(stat -c '%u' -- "$target" 2>/dev/null); then
+    :
+  elif owner=$(stat -f '%u' "$target" 2>/dev/null); then
+    :
+  else
+    fail "cannot inspect owner for $description: $file"
+  fi
+  current_uid=$(id -u) || fail "cannot determine the current user for $description"
+  [[ "$owner" == "$current_uid" ]] ||
+    fail "$description target must be owned by the current user: $file"
+}
+
+require_owned_public_directory() {
+  local description=$1
+  local directory=$2
+  local owner mode
+
+  [[ ! -L "$directory" && -d "$directory" ]] ||
+    fail "$description must be a real directory: $directory"
+  if owner=$(stat -c '%u' -- "$directory" 2>/dev/null); then
+    mode=$(stat -c '%a' -- "$directory") ||
+      fail "cannot inspect permissions for $description: $directory"
+  elif owner=$(stat -f '%u' "$directory" 2>/dev/null); then
+    mode=$(stat -f '%Lp' "$directory") ||
+      fail "cannot inspect permissions for $description: $directory"
+  else
+    fail "cannot inspect ownership for $description: $directory"
+  fi
+  [[ "$owner" == "$(id -u)" ]] ||
+    fail "$description must be owned by the current user: $directory"
+  (( (8#$mode & 0022) == 0 )) ||
+    fail "$description cannot be group or world writable: $directory"
+}
+
 allowed_configuration_key() {
   case "$1" in
     PRODUCTION_POSTGRES_DB | \
@@ -79,7 +144,8 @@ allowed_configuration_key() {
       PRODUCTION_API_HOST | \
       PRODUCTION_TLS_CERTIFICATE | \
       PRODUCTION_TLS_CERTIFICATE_KEY | \
-      PRODUCTION_ACME_ROOT)
+      PRODUCTION_ACME_ROOT | \
+      PRODUCTION_PUBLIC_ROOT)
       return 0
       ;;
     *)
@@ -106,7 +172,8 @@ load_configuration() {
     PRODUCTION_API_HOST \
     PRODUCTION_TLS_CERTIFICATE \
     PRODUCTION_TLS_CERTIFICATE_KEY \
-    PRODUCTION_ACME_ROOT
+    PRODUCTION_ACME_ROOT \
+    PRODUCTION_PUBLIC_ROOT
 
   while IFS= read -r line || [[ -n "$line" ]]; do
     line=${line%$'\r'}
@@ -184,6 +251,7 @@ validate_configuration() {
     PRODUCTION_TLS_CERTIFICATE
     PRODUCTION_TLS_CERTIFICATE_KEY
     PRODUCTION_ACME_ROOT
+    PRODUCTION_PUBLIC_ROOT
   )
   for name in "${required[@]}"; do
     require_value "$name"
@@ -217,15 +285,24 @@ validate_configuration() {
     PRODUCTION_SERVER_ENV_FILE \
     PRODUCTION_TLS_CERTIFICATE \
     PRODUCTION_TLS_CERTIFICATE_KEY \
-    PRODUCTION_ACME_ROOT; do
+    PRODUCTION_ACME_ROOT \
+    PRODUCTION_PUBLIC_ROOT; do
     valid_absolute_path "${!name}" || fail "$name must be a safe absolute path"
   done
 
   require_private_file "server environment file" "$PRODUCTION_SERVER_ENV_FILE"
   require_regular_file "TLS certificate" "$PRODUCTION_TLS_CERTIFICATE"
-  require_private_file "TLS certificate key" "$PRODUCTION_TLS_CERTIFICATE_KEY"
+  require_private_tls_key "TLS certificate key" "$PRODUCTION_TLS_CERTIFICATE_KEY"
   [[ -d "$PRODUCTION_ACME_ROOT" ]] ||
     fail "ACME root directory does not exist: $PRODUCTION_ACME_ROOT"
+  require_owned_public_directory "PRODUCTION_PUBLIC_ROOT" "$PRODUCTION_PUBLIC_ROOT"
+  for name in \
+    "$PRODUCTION_PUBLIC_ROOT/downloads" \
+    "$PRODUCTION_PUBLIC_ROOT/downloads/android"; do
+    if [[ -e "$name" || -L "$name" ]]; then
+      require_owned_public_directory "Production public download directory" "$name"
+    fi
+  done
 }
 
 validate_manifest() {
@@ -358,6 +435,7 @@ render_nginx() {
     -e "s|__PRODUCTION_TLS_CERTIFICATE__|$PRODUCTION_TLS_CERTIFICATE|g" \
     -e "s|__PRODUCTION_TLS_CERTIFICATE_KEY__|$PRODUCTION_TLS_CERTIFICATE_KEY|g" \
     -e "s|__PRODUCTION_ACME_ROOT__|$PRODUCTION_ACME_ROOT|g" \
+    -e "s|__PRODUCTION_PUBLIC_ROOT__|$PRODUCTION_PUBLIC_ROOT|g" \
     "$nginx_template" > "$temporary"; then
     rm -f "$temporary"
     fail "failed to render Nginx template"

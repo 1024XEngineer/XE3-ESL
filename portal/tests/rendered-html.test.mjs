@@ -43,6 +43,11 @@ test("renders an honest Android download preparing state", async () => {
   assert.match(html, /更新日志/);
   assert.match(html, /隐私与权限/);
   assert.match(html, /问题反馈/);
+  assert.match(html, /独立更新日志尚未提供/);
+  assert.match(html, /正式隐私说明与权限清单尚未提供/);
+  assert.match(html, /正式反馈入口尚未提供/);
+  assert.doesNotMatch(html, /开放下载前公开/);
+  assert.doesNotMatch(html, /安装步骤与更新记录/);
   assert.match(html, /安装未知应用/);
   assert.doesNotMatch(html, /\.apk(?:"|\?)/);
   assert.doesNotMatch(html, /versionName:\s*\d/);

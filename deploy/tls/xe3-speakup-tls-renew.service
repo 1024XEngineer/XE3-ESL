@@ -1,0 +1,20 @@
+[Unit]
+Description=Renew and verify SpeakUp TLS certificates
+Documentation=https://eff-certbot.readthedocs.io/en/stable/using.html#renewing-certificates
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+TimeoutStartSec=15min
+ExecStart=/usr/local/sbin/xe3-speakup-tls renew --env-file /etc/speakup/tls.env
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
