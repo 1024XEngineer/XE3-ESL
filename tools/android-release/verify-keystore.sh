@@ -23,6 +23,10 @@ if [[ -z "${SPEAKUP_ANDROID_STORE_PASSWORD:-}" ]]; then
   printf 'SPEAKUP_ANDROID_STORE_PASSWORD is required.\n' >&2
   exit 1
 fi
+if [[ -z "${SPEAKUP_ANDROID_KEY_PASSWORD:-}" ]]; then
+  printf 'SPEAKUP_ANDROID_KEY_PASSWORD is required.\n' >&2
+  exit 1
+fi
 if [[ -z "$expected_certificate_sha256" ]]; then
   printf 'SPEAKUP_ANDROID_CERT_SHA256 is required.\n' >&2
   exit 1
@@ -51,6 +55,33 @@ if ! grep -Fq 'Entry type: PrivateKeyEntry' <<< "$key_report"; then
   printf 'Android release alias is not a private key entry.\n' >&2
   exit 1
 fi
+
+private_key_check_directory="$(mktemp -d)"
+private_key_check="$private_key_check_directory/private-key-check.jks"
+cleanup_private_key_check() {
+  rm -f "$private_key_check"
+  rmdir "$private_key_check_directory" 2>/dev/null || true
+}
+trap cleanup_private_key_check EXIT
+if ! "$keytool" \
+  -J-Duser.language=en \
+  -J-Duser.country=US \
+  -importkeystore \
+  -noprompt \
+  -srckeystore "$keystore" \
+  -srcalias "$alias_name" \
+  -srcstorepass:env SPEAKUP_ANDROID_STORE_PASSWORD \
+  -srckeypass:env SPEAKUP_ANDROID_KEY_PASSWORD \
+  -destkeystore "$private_key_check" \
+  -deststoretype JKS \
+  -deststorepass:env SPEAKUP_ANDROID_STORE_PASSWORD \
+  -destkeypass:env SPEAKUP_ANDROID_KEY_PASSWORD \
+  >/dev/null 2>&1; then
+  printf 'SPEAKUP_ANDROID_KEY_PASSWORD cannot unlock the Android release key.\n' >&2
+  exit 1
+fi
+cleanup_private_key_check
+trap - EXIT
 
 certificate_sha256="$(
   sed -n 's/^[[:space:]]*SHA256: //p' <<< "$key_report" |

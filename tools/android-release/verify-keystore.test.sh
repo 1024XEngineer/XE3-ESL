@@ -12,6 +12,10 @@ mkdir -p "$fake_bin"
 printf '%s\n' 'fixture keystore' > "$temporary_directory/release.keystore"
 cat > "$fake_bin/keytool" <<EOF
 #!/usr/bin/env bash
+if [[ " \$* " == *" -importkeystore "* ]]; then
+  [[ "\${SPEAKUP_ANDROID_KEY_PASSWORD:-}" == fixture-key-password ]]
+  exit
+fi
 cat <<'REPORT'
 Alias name: speakup-release
 Entry type: PrivateKeyEntry
@@ -26,6 +30,7 @@ report="$(
     JAVA_HOME="$temporary_directory" \
     SPEAKUP_ANDROID_KEY_ALIAS=speakup-release \
     SPEAKUP_ANDROID_STORE_PASSWORD=fixture-password \
+    SPEAKUP_ANDROID_KEY_PASSWORD=fixture-key-password \
     SPEAKUP_ANDROID_CERT_SHA256="$certificate_sha256" \
     "$script_directory/verify-keystore.sh" \
       "$temporary_directory/release.keystore"
@@ -36,6 +41,7 @@ if PATH="$fake_bin:$PATH" \
   JAVA_HOME="$temporary_directory" \
   SPEAKUP_ANDROID_KEY_ALIAS=speakup-release \
   SPEAKUP_ANDROID_STORE_PASSWORD=fixture-password \
+  SPEAKUP_ANDROID_KEY_PASSWORD=fixture-key-password \
   SPEAKUP_ANDROID_CERT_SHA256="${certificate_sha256%?}d" \
   "$script_directory/verify-keystore.sh" \
     "$temporary_directory/release.keystore" \
@@ -46,5 +52,21 @@ fi
 grep -Fq \
   'Android release keystore certificate does not match the approved certificate.' \
   "$temporary_directory/rejected.out"
+
+if PATH="$fake_bin:$PATH" \
+  JAVA_HOME="$temporary_directory" \
+  SPEAKUP_ANDROID_KEY_ALIAS=speakup-release \
+  SPEAKUP_ANDROID_STORE_PASSWORD=fixture-password \
+  SPEAKUP_ANDROID_KEY_PASSWORD=wrong-key-password \
+  SPEAKUP_ANDROID_CERT_SHA256="$certificate_sha256" \
+  "$script_directory/verify-keystore.sh" \
+    "$temporary_directory/release.keystore" \
+    > "$temporary_directory/wrong-key-password.out" 2>&1; then
+  printf 'An incorrect Android release key password was accepted.\n' >&2
+  exit 1
+fi
+grep -Fq \
+  'SPEAKUP_ANDROID_KEY_PASSWORD cannot unlock the Android release key.' \
+  "$temporary_directory/wrong-key-password.out"
 
 printf '%s\n' 'Android release keystore verifier tests passed'
