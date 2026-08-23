@@ -20,7 +20,7 @@ temporary_directory=$(cd "$temporary_directory" && pwd -P)
 readonly temporary_directory
 trap 'rm -rf "$temporary_directory"' EXIT
 
-mkdir -p "$temporary_directory/acme"
+mkdir -p "$temporary_directory/acme" "$temporary_directory/logs"
 printf '%s\n' 'TEXT_GENERATION_PROVIDER=test-fixture' >"$temporary_directory/server.env"
 printf '%s\n' 'staging:test-password-hash' >"$temporary_directory/staging.htpasswd"
 openssl req \
@@ -57,8 +57,20 @@ chmod 0600 "$temporary_directory/staging.env"
   --output "$temporary_directory/default.conf" \
   >/dev/null
 
+for expected in \
+  'access_log logs/xe3-speakup-staging-portal.access.log;' \
+  'error_log logs/xe3-speakup-staging-portal.error.log warn;' \
+  'access_log logs/xe3-speakup-staging-api.access.log;' \
+  'error_log logs/xe3-speakup-staging-api.error.log warn;'; do
+  grep -Fq -- "$expected" "$temporary_directory/default.conf" || {
+    printf 'missing expected Nginx log directive: %s\n' "$expected" >&2
+    exit 1
+  }
+done
+
 docker run --rm \
   --volume "$temporary_directory:$temporary_directory:ro" \
+  --volume "$temporary_directory/logs:/etc/nginx/logs" \
   --volume "$temporary_directory/default.conf:/etc/nginx/conf.d/default.conf:ro" \
   "$nginx_image" \
   nginx -t
