@@ -434,7 +434,7 @@ func realtimeASREndpoint(baseURL string) string {
 	} else {
 		parsed.Scheme = "ws"
 	}
-	parsed.Path = "/api-ws/v1/inference/"
+	parsed.Path = "/api-ws/v1/inference"
 	parsed.RawQuery = "heartbeat=true"
 	return parsed.String()
 }
