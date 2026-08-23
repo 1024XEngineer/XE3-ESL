@@ -16,7 +16,7 @@ cat > "$fake_bin/apksigner" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' \
   'Signer #1 certificate SHA-256 digest: $certificate_sha256' \
-  'Signer (minSdkVersion=24, maxSdkVersion=2147483647) certificate SHA-256 digest: $certificate_sha256'
+  'Signer (minSdkVersion=35 (dev release=true), maxSdkVersion=2147483647) certificate SHA-256 digest: $certificate_sha256'
 EOF
 cat > "$fake_bin/java" <<'EOF'
 #!/usr/bin/env bash
