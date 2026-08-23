@@ -130,7 +130,7 @@ fi
 certificate_sha256="$(
   printf '%s\n' "$signature_report" |
     sed -n -E \
-      's/^Signer (#[0-9]+|\(.*\)) certificate SHA-256 digest:[[:space:]]*(.*)$/\2/p' |
+      's/^.*certificate SHA-256 digest:[[:space:]]*([0-9A-Fa-f:]+)[[:space:]]*$/\1/p' |
     tr '[:upper:]' '[:lower:]' |
     sed 's/[[:space:]:]//g' |
     LC_ALL=C sort -u
@@ -150,6 +150,10 @@ expected_certificate_sha256="$(
     'APK signer certificate output is missing or contains multiple certificates.' >&2
   printf 'Observed signer certificate SHA-256 values: %s\n' \
     "${certificate_sha256:-<none>}" >&2
+  printf 'apksigner: %s\n' "$apksigner" >&2
+  "$apksigner" --version >&2 2>/dev/null || true
+  printf '%s\n' "$signature_report" |
+    sed -n '/certificate SHA-256 digest:/p' >&2
   exit 1
 }
 [[ "$certificate_sha256" == "$expected_certificate_sha256" ]] || {
