@@ -25,6 +25,7 @@ SHELL := /bin/bash
 	check-api-contracts \
 	check-release-candidate \
 	check-android-download \
+	check-tls-lifecycle \
 	check-production-deploy \
 	check-production-nginx \
 	check-staging-deploy \
@@ -52,6 +53,7 @@ help:
 		'  make check-api      Validate OpenAPI, JSON Schema, and contract fixtures' \
 		'  make check-release-candidate  Validate release metadata and manifest tooling' \
 		'  make check-android-download  Validate the public Android bundle and publish contract' \
+		'  make check-tls-lifecycle  Validate TLS issuance and renewal contracts' \
 		'  make check-production-deploy  Validate the immutable Production contract' \
 		'  make check-production-nginx  Run nginx -t against the Production template' \
 		'  make check-staging-deploy  Validate Staging runtime, schema, lock, and receipt contracts' \
@@ -263,6 +265,10 @@ check-release-candidate:
 check-android-download:
 	node --test tools/android-download/*.test.mjs
 	./deploy/android-download/test.sh
+
+check-tls-lifecycle:
+	./deploy/tls/test.sh
+	./deploy/tls/test-nginx.sh
 
 check-production-deploy:
 	./deploy/production/test.sh

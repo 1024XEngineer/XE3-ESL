@@ -1,15 +1,16 @@
 server {
     listen 80;
     listen [::]:80;
-    server_name speak-up.top www.speak-up.top;
+    server_name __TLS_SERVER_NAMES__;
+    set $speakup_tls_bootstrap __TLS_BOOTSTRAP_ENVIRONMENT__;
 
     location ^~ /.well-known/acme-challenge/ {
-        root /opt/xe3-speakup-portal/certbot/www;
+        root __TLS_ACME_ROOT__;
         default_type text/plain;
         try_files $uri =404;
     }
 
     location / {
-        return 503;
+        return 404;
     }
 }

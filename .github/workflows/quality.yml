@@ -289,6 +289,9 @@ jobs:
       - name: Validate Staging deployment contract
         run: make check-staging-deploy
 
+      - name: Validate TLS lifecycle contract
+        run: make check-tls-lifecycle
+
       - name: Validate rendered Nginx configuration
         run: make check-staging-nginx
 

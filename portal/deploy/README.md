@@ -33,52 +33,19 @@ Compose 只将容器的 `3000` 端口映射到主机回环地址
 Compose 仅信任 `speak-up.top` 与 `www.speak-up.top` 的代理主机信息，
 用于还原 Nginx 终止 TLS 前的 HTTPS 请求来源。
 
-## 2. 首次签发证书
+## 2. 证书生命周期
 
-先安装只监听 HTTP 的临时配置，让 ACME challenge 可访问：
+本目录不再提供旧的可变 Certbot 镜像和无条件 reload 安装入口。首次 Staging 签发、
+现有 Production 证书扩展、精确 SAN/密钥/权限/有效期验证、renewal dry-run 与
+systemd 自动续期统一使用仓库根目录的 [`deploy/tls/README.md`](../../deploy/tls/README.md)。
 
-```sh
-install -d /usr/local/nginx/conf/conf.d
-install -m 0644 \
-  deploy/xe3-speakup-portal-http.conf \
-  /usr/local/nginx/conf/conf.d/xe3-speakup-portal.conf
-/usr/local/nginx/sbin/nginx -t
-/usr/local/nginx/sbin/nginx -s reload
-```
+迁移前不得删除现有 `/opt/xe3-speakup-portal/certbot/conf` 账户和
+`speak-up.top` lineage；新流程通过操作员注入该根目录来安全扩展它。本次仓库改动
+本身不会签发证书、安装 Nginx 配置或修改服务器。
+仓库删除文件不会自动停用服务器上曾经安装的 cron 或 `/usr/local/sbin` 副本；启用
+新 systemd timer 前必须按新文档审计并停用旧调度，避免两个续期器并行运行。
 
-若 Nginx 尚未启动，最后一条命令改为
-`/usr/local/nginx/sbin/nginx`。确认 80 端口已从公网放行后签发证书：
-
-```sh
-CERTBOT_EMAIL=ops@example.com ./deploy/xe3-issue-cert.sh
-```
-
-签发成功后安装正式 HTTPS 配置：
-
-```sh
-install -m 0644 \
-  deploy/xe3-speakup-portal.conf \
-  /usr/local/nginx/conf/conf.d/xe3-speakup-portal.conf
-/usr/local/nginx/sbin/nginx -t
-/usr/local/nginx/sbin/nginx -s reload
-```
-
-## 3. 安装自动续期
-
-```sh
-install -o root -g root -m 0755 \
-  deploy/xe3-renew-cert.sh \
-  /usr/local/sbin/xe3-renew-cert
-install -m 0644 \
-  deploy/xe3-speakup-certbot.cron \
-  /etc/cron.d/xe3-speakup-certbot
-```
-
-cron 只执行由 `root` 安装到 `/usr/local/sbin/` 的固定副本，避免普通部署
-用户修改工作目录后获得 root 执行权限。续期脚本发生变更时，需要重新执行
-上述 `install` 命令。
-
-## 4. 安装 SQLite 定时备份
+## 3. 安装 SQLite 定时备份
 
 备份任务使用 SQLite Online Backup API 读取活动数据库，不直接复制正在写入的
 `portal.sqlite`。源 Docker volume 在一次性备份容器中只读挂载；完整备份先写入
@@ -166,7 +133,7 @@ Docker 官方 [Volumes](https://docs.docker.com/engine/storage/volumes/)，以�
 [`systemd.timer`](https://www.freedesktop.org/software/systemd/man/latest/systemd.timer.html)
 和 [`systemd.service`](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html)。
 
-## 5. 验证
+## 4. 验证
 
 ```sh
 docker compose -f deploy/compose.yaml ps
