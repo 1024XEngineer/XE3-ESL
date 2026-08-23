@@ -65,8 +65,12 @@ jobs:
             deploy=true
           }
 
-          if [[ "$EVENT_NAME" != "pull_request" ]]; then
+          if [[ "$EVENT_NAME" == "workflow_call" ]]; then
+            # Release Candidate runs the protected real-APK job downstream.
             set_all_checks
+          elif [[ "$EVENT_NAME" != "pull_request" ]]; then
+            set_all_checks
+            android_release=true
           elif [[ "$BASE_REF" == "main" ]]; then
             set_all_checks
             android_release=true
