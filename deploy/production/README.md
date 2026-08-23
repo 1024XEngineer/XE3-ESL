@@ -35,9 +35,12 @@ release. Its one-time creation belongs to the audited server bootstrap.
 - The external Server edge network exists with an audited, non-conflicting
   subnet and fixed gateway.
 - A non-empty Server environment file outside the repository.
-- A TLS certificate/key covering the selected Portal, redirect, and API hosts.
+- The existing `speak-up.top` certificate lineage safely expanded to the exact
+  Portal, redirect, and API SAN set through [`deploy/tls/`](../tls/README.md).
 - A populated ACME web root.
 - Registry read access for the manifest's Portal and Server image digests.
+- A real, current-UID-owned `PRODUCTION_PUBLIC_ROOT` that is not group- or
+  world-writable.
 
 Do not copy local `.env` defaults into Production and do not commit any filled
 environment file. The Server environment file contains real provider
@@ -53,7 +56,20 @@ install -m 0600 deploy/production/production.env.example \
   /etc/speakup/production.env
 install -m 0600 /secure/source/production-server.env \
   /etc/speakup/production-server.env
+install -d -m 0755 /var/www/speakup-production-public
 ```
+
+Preserve the existing Production Certbot configuration and webroot. The TLS
+lifecycle contract adds only an `api.speak-up.top` bootstrap vhost, expands the
+existing `speak-up.top` lineage with the same webroot, and validates the exact
+three-name certificate before this deployment template may use it. The
+certificate paths here must stay aligned with `TLS_CERTBOT_CONFIG_ROOT`.
+Keep the private-key setting on Certbot's stable
+`live/speak-up.top/privkey.pem` symbolic link: validation resolves the current
+archive target and requires that target to be a non-empty regular file owned by
+the invoking user with mode `0400` or `0600`. Renewal therefore does not require
+an environment-file edit. Other secret files remain regular-file-only and may
+not be symbolic links.
 
 `PRODUCTION_POSTGRES_PASSWORD` is restricted to at least 24 URL-safe
 characters because it is inserted into a PostgreSQL URL. `PORTAL_ADMIN_PASSWORD`
@@ -95,8 +111,16 @@ containers or networks.
 Rendering only writes the requested file. It never installs or reloads Nginx.
 The template preserves Portal request limits, canonical-host redirect, API
 Bearer authentication, WebSocket upgrade headers, ACME challenges, and exact
-`/metrics` denial. APK static delivery is intentionally absent until its own
-versioned publication contract is reviewed.
+`/metrics` denial. It serves only the strict versioned Android APK, checksum,
+and metadata routes from `PRODUCTION_PUBLIC_ROOT`; current metadata is not
+cached, versioned files are immutable, and unknown or directory paths return
+`404`. The API host returns `404` for the complete Android download namespace.
+
+Nginx rendering does not publish or activate an APK. Build, validate, publish,
+activate, and roll back that separate state with the
+[Android publication contract](../android-download/README.md). Publish a new
+version without activation first; switch the current metadata only after the
+Production smoke checks pass.
 
 Install this vhost in place of the legacy Portal vhost; do not load both at the
 same time. The rate-limit zones and public hostnames intentionally have one
@@ -237,6 +261,7 @@ database.
 
 ```sh
 make check-production-backup
+make check-android-download
 make check-production-deploy
 make check-production-nginx
 ```

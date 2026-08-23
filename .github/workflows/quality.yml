@@ -84,6 +84,9 @@ jobs:
                 .github/workflows/release-candidate.yml|tools/release-candidate/*)
                   set_all_checks
                   ;;
+                tools/android-download/*)
+                  deploy=true
+                  ;;
                 mobile/*)
                   flutter=true
                   ;;
@@ -275,8 +278,19 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.18.0"
+
+      - name: Validate Android download publication contract
+        run: make check-android-download
+
       - name: Validate Staging deployment contract
         run: make check-staging-deploy
+
+      - name: Validate TLS lifecycle contract
+        run: make check-tls-lifecycle
 
       - name: Validate rendered Nginx configuration
         run: make check-staging-nginx

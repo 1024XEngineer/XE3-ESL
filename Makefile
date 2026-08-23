@@ -25,6 +25,8 @@ SHELL := /bin/bash
 	check-api-contracts \
 	check-release-candidate \
 	check-production-backup \
+	check-android-download \
+	check-tls-lifecycle \
 	check-production-deploy \
 	check-production-nginx \
 	check-staging-deploy \
@@ -52,9 +54,11 @@ help:
 		'  make check-api      Validate OpenAPI, JSON Schema, and contract fixtures' \
 		'  make check-release-candidate  Validate release metadata and manifest tooling' \
 		'  make check-production-backup  Exercise PostgreSQL backup and isolated restore' \
+		'  make check-android-download  Validate the public Android bundle and publish contract' \
+		'  make check-tls-lifecycle  Validate TLS issuance and renewal contracts' \
 		'  make check-production-deploy  Validate the immutable Production contract' \
 		'  make check-production-nginx  Run nginx -t against the Production template' \
-		'  make check-staging-deploy  Validate the immutable Staging deployment contract' \
+		'  make check-staging-deploy  Validate Staging runtime, schema, lock, and receipt contracts' \
 		'  make check-staging-nginx  Run nginx -t against the rendered Staging template' \
 		'  make dev-android    Start the backend and run the App on an Android device' \
 		'  make dev-ios-simulator  Start the backend on an iOS Simulator' \
@@ -257,11 +261,20 @@ check-api-contracts: check-api-dependencies
 	cd api && npm run check
 
 check-release-candidate:
+	./tools/android-release/verify-keystore.test.sh
 	./tools/android-release/verify.test.sh
 	node --test tools/release-candidate/*.test.mjs
 
 check-production-backup:
 	./deploy/production/test-backup.sh
+
+check-android-download:
+	node --test tools/android-download/*.test.mjs
+	./deploy/android-download/test.sh
+
+check-tls-lifecycle:
+	./deploy/tls/test.sh
+	./deploy/tls/test-nginx.sh
 
 check-production-deploy:
 	./deploy/production/test.sh

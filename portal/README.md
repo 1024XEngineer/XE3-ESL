@@ -15,7 +15,14 @@ npm install
 npm run dev
 ```
 
-默认首页为 `/`，运营后台为 `/admin`。
+默认首页为 `/`，Android 发布页为 `/download/android`，运营后台为 `/admin`。
+
+Android 发布页只从同源 `/downloads/android/release.json` 读取当前正式版本。
+`404` 显示“准备中”；网络、HTTP、JSON 或严格协议校验失败时显示“暂不可用”；只有
+元数据完整有效时才展示其中的版本化 APK 地址与真实版本、大小、时间、兼容范围及
+SHA-256。页面不会猜测下载地址，也不使用 `latest.apk`。APK 与发布元数据由宿主机
+Nginx 提供，不放入 Portal Docker 镜像；发布操作见
+[`deploy/android-download/README.md`](../deploy/android-download/README.md)。
 
 如需在本地持久化报名和事件数据：
 
