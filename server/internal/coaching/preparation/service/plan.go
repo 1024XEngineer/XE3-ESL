@@ -661,10 +661,7 @@ func validIELTSAssignmentParts(
 	case scene.PracticeModePart1:
 		expected = []scene.PracticeMode{scene.PracticeModePart1}
 	case scene.PracticeModePart2:
-		expected = []scene.PracticeMode{
-			scene.PracticeModePart2,
-			scene.PracticeModePart3,
-		}
+		expected = []scene.PracticeMode{scene.PracticeModePart2}
 	case scene.PracticeModePart3:
 		expected = []scene.PracticeMode{scene.PracticeModePart3}
 	default:
@@ -753,7 +750,7 @@ func ieltsAssignmentSceneBrief(assignment preparation.IELTSAssignmentSnapshot) s
 	case scene.PracticeModePart1:
 		return "完成冻结的 Part 1 熟悉话题问答。"
 	case scene.PracticeModePart2:
-		return "完成“" + topicTitle + "”题卡，并可继续同主题 Part 3。"
+		return "完成“" + topicTitle + "”Part 2 题卡。"
 	case scene.PracticeModePart3:
 		return "围绕“" + topicTitle + "”完成同主题 Part 3 讨论。"
 	default:

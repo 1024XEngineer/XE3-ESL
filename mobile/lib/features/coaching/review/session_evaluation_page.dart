@@ -3,8 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/coaching/evaluation/session_evaluation_controller.dart';
+import 'package:speakup/features/coaching/review/evaluation_report_detail_page.dart';
 import 'package:speakup/features/coaching/review/evaluation_report_presentation.dart';
-import 'package:speakup/features/coaching/review/review.dart';
 import 'package:speakup/features/coaching/review/review_history_client.dart';
 
 class SessionEvaluationPage extends StatefulWidget {

@@ -460,7 +460,6 @@ class _CompletionStep extends StatelessWidget {
     required this.message,
     required this.buttonLabel,
     required this.onPressed,
-    this.buttonKey = const Key('ielts-mock-continue'),
     super.key,
   });
 
@@ -468,7 +467,6 @@ class _CompletionStep extends StatelessWidget {
   final String message;
   final String buttonLabel;
   final VoidCallback? onPressed;
-  final Key buttonKey;
 
   @override
   Widget build(BuildContext context) {
@@ -503,7 +501,7 @@ class _CompletionStep extends StatelessWidget {
               ),
               const SizedBox(height: 36),
               FilledButton(
-                key: buttonKey,
+                key: const Key('ielts-mock-continue'),
                 onPressed: onPressed,
                 style: FilledButton.styleFrom(
                   minimumSize: const Size.fromHeight(52),
@@ -520,115 +518,6 @@ class _CompletionStep extends StatelessWidget {
                 ),
               ),
             ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SectionCompletionSheet extends StatelessWidget {
-  const _SectionCompletionSheet({
-    required this.title,
-    required this.message,
-    required this.primaryLabel,
-    required this.secondaryLabel,
-    required this.onPrimary,
-    required this.onSecondary,
-  });
-
-  final String title;
-  final String message;
-  final String primaryLabel;
-  final String secondaryLabel;
-  final VoidCallback onPrimary;
-  final VoidCallback onSecondary;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 560),
-        child: Material(
-          key: const Key('ielts-section-completion-sheet'),
-          color: SpeakUpDesign.surface,
-          elevation: 12,
-          shadowColor: const Color(0x26000000),
-          borderRadius: BorderRadius.circular(28),
-          clipBehavior: Clip.antiAlias,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Center(
-                  child: Container(
-                    width: 42,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: SpeakUpDesign.border,
-                      borderRadius: BorderRadius.circular(99),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 18),
-                Center(
-                  child: Container(
-                    width: 52,
-                    height: 52,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(color: SpeakUpDesign.ink, width: 2),
-                    ),
-                    child: const Icon(
-                      Icons.check_rounded,
-                      size: 34,
-                      color: SpeakUpDesign.ink,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  title,
-                  textAlign: TextAlign.center,
-                  style: SpeakUpDesign.pageTitle.copyWith(fontSize: 24),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  message,
-                  textAlign: TextAlign.center,
-                  style: SpeakUpDesign.body.copyWith(
-                    color: SpeakUpDesign.secondary,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                FilledButton(
-                  key: const Key('ielts-section-review-action'),
-                  onPressed: onPrimary,
-                  style: FilledButton.styleFrom(
-                    minimumSize: const Size.fromHeight(54),
-                    backgroundColor: SpeakUpDesign.ink,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                  ),
-                  child: Text(primaryLabel),
-                ),
-                const SizedBox(height: 4),
-                TextButton(
-                  key: const Key('ielts-section-list-action'),
-                  onPressed: onSecondary,
-                  style: TextButton.styleFrom(
-                    foregroundColor: SpeakUpDesign.ink,
-                    minimumSize: const Size.fromHeight(44),
-                  ),
-                  child: Text(secondaryLabel),
-                ),
-              ],
-            ),
           ),
         ),
       ),
@@ -716,7 +605,7 @@ class _SectionPracticeComplete extends StatelessWidget {
   Widget build(BuildContext context) {
     final part = switch (mode) {
       PracticeMode.part1 => 'Part 1',
-      PracticeMode.part2 => 'Part 2 + Part 3',
+      PracticeMode.part2 => 'Part 2',
       PracticeMode.part3 => 'Part 3',
       PracticeMode.fullMock => 'IELTS Speaking',
       PracticeMode.fullSimulation || PracticeMode.focus => throw StateError(
@@ -916,36 +805,6 @@ class _Part2Transition extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-}
-
-class _Part3Intro extends StatelessWidget {
-  const _Part3Intro({
-    required this.topicTitle,
-    required this.cueCardPrompt,
-    required this.ready,
-    required this.onPressed,
-  });
-
-  final String topicTitle;
-  final String? cueCardPrompt;
-  final bool ready;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return _CompletionStep(
-      key: const Key('ielts-part3-topic-intro'),
-      title: ready ? 'Part 3 Ready' : '正在进入 Part 3',
-      message:
-          '${cueCardPrompt == null ? 'Discussion topic' : 'This discussion continues the Part 2 topic'}:\n'
-          '$topicTitle'
-          '${cueCardPrompt == null ? '' : '\n\n$cueCardPrompt'}'
-          '${ready ? '' : '\n\n请先等待 Part 2 作答处理完成。'}',
-      buttonLabel: ready ? 'Start Part 3' : '正在准备第一个问题…',
-      buttonKey: const Key('ielts-part3-start'),
-      onPressed: ready ? onPressed : null,
     );
   }
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"time"
 
@@ -67,6 +68,10 @@ func (handler *Handler) uploadRealtime(c *gin.Context) {
 		writeRealtimeFailure(connection, "invalid_request", false)
 		return
 	}
+	if handler.recognizer != nil {
+		handler.uploadStreamingPCM(c, connection, actor, thread.ID, start)
+		return
+	}
 	pcm, err := readRealtimePCM(connection, handler.readTimeout)
 	if err != nil {
 		writeRealtimeFailure(connection, "stream_interrupted", true)
@@ -94,6 +99,99 @@ func (handler *Handler) uploadRealtime(c *gin.Context) {
 			Audio:          bytes.NewReader(wav),
 		},
 		observer,
+	)
+	if err != nil {
+		writeRealtimeFailure(connection, "stream_interrupted", true)
+		return
+	}
+	event := "draft.ready"
+	if draft.Status == agentvoice.StatusFailed {
+		event = "draft.failed"
+	}
+	_ = observer.write(event, gin.H{"draft": DraftResponse(draft)})
+}
+
+func (handler *Handler) uploadStreamingPCM(
+	c *gin.Context,
+	connection *websocket.Conn,
+	actor requestcontext.Actor,
+	threadID string,
+	start realtimeStartFrame,
+) {
+	observer := &realtimeTranscriptionWriter{
+		connection: connection,
+		timeout:    handler.readTimeout,
+	}
+	if err := observer.write("transcription.started", gin.H{}); err != nil {
+		return
+	}
+	streamContext, cancel := context.WithCancel(c.Request.Context())
+	defer cancel()
+	reader, writer := io.Pipe()
+	var pcm bytes.Buffer
+	type transcriptionResult struct {
+		result agentvoice.TranscriptionResult
+		err    error
+	}
+	completed := make(chan transcriptionResult, 1)
+	go func() {
+		defer reader.Close()
+		result, transcribeErr := handler.recognizer.TranscribePCMStream(
+			streamContext,
+			agentvoice.PCMTranscriptionRequest{
+				PCM: reader, SampleRate: start.SampleRate,
+			},
+			observer,
+		)
+		completed <- transcriptionResult{result: result, err: transcribeErr}
+	}()
+
+	streamed := make(chan error, 1)
+	go func() {
+		streamed <- streamEphemeralPCM(
+			connection,
+			io.MultiWriter(writer, &pcm),
+			handler.readTimeout,
+		)
+	}()
+	var streamErr error
+	var transcription transcriptionResult
+	select {
+	case streamErr = <-streamed:
+		if streamErr != nil {
+			cancel()
+			_ = writer.CloseWithError(streamErr)
+		} else {
+			_ = writer.Close()
+		}
+		transcription = <-completed
+	case transcription = <-completed:
+		cancel()
+		if transcription.err != nil {
+			_ = writer.CloseWithError(transcription.err)
+		} else {
+			_ = writer.Close()
+		}
+		streamErr = <-streamed
+	}
+	if streamErr != nil || transcription.err != nil {
+		writeRealtimeFailure(connection, "stream_interrupted", true)
+		return
+	}
+	wav, err := pcm16MonoWAV(pcm.Bytes(), start.SampleRate)
+	if err != nil {
+		writeRealtimeFailure(connection, "invalid_audio", false)
+		return
+	}
+	draft, err := handler.application.UploadRecognized(
+		c.Request.Context(),
+		actor,
+		agentvoice.UploadRequest{
+			ThreadID: threadID, IdempotencyKey: start.IdempotencyKey,
+			ContentType: platformmedia.ContentTypeWAV,
+			Audio:       bytes.NewReader(wav),
+		},
+		transcription.result,
 	)
 	if err != nil {
 		writeRealtimeFailure(connection, "stream_interrupted", true)

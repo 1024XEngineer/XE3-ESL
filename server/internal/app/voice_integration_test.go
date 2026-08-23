@@ -1205,6 +1205,7 @@ func newVoiceProductionIntegrationServer(
 			MaxOutputTokens:    256,
 			MaxInputCharacters: 12000,
 		},
+		AgentRunRuntimeConfiguration{LoopTimeout: time.Second},
 		catalog,
 		newBootstrapTestIELTSQuestionBank(t),
 		testJobTargetGenerator(generator),

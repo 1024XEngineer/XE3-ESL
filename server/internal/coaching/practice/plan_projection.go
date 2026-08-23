@@ -301,7 +301,7 @@ func ValidIELTSAssignment(
 	case PracticeModePart1:
 		expected = []PracticeMode{PracticeModePart1}
 	case PracticeModePart2:
-		expected = []PracticeMode{PracticeModePart2, PracticeModePart3}
+		expected = []PracticeMode{PracticeModePart2}
 	case PracticeModePart3:
 		expected = []PracticeMode{PracticeModePart3}
 	default:

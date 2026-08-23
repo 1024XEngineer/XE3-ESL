@@ -10,6 +10,7 @@ on:
       - dev
       - main
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   actions: read
@@ -28,6 +29,8 @@ jobs:
       flutter: ${{ steps.scope.outputs.flutter }}
       go: ${{ steps.scope.outputs.go }}
       api: ${{ steps.scope.outputs.api }}
+      portal: ${{ steps.scope.outputs.portal }}
+      deploy: ${{ steps.scope.outputs.deploy }}
     steps:
       - name: Check out repository history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -49,11 +52,15 @@ jobs:
           flutter=false
           go=false
           api=false
+          portal=false
+          deploy=false
 
           set_all_checks() {
             flutter=true
             go=true
             api=true
+            portal=true
+            deploy=true
           }
 
           if [[ "$EVENT_NAME" != "pull_request" || "$BASE_REF" == "main" ]]; then
@@ -71,8 +78,14 @@ jobs:
             while IFS= read -r -d '' file; do
               printf 'Changed file: %q\n' "$file"
               case "$file" in
-                Makefile|.github/workflows/quality.yml|.github/workflows/coverage-comment.yml)
+                Makefile|.github/workflows/quality.yml|.github/workflows/database.yml|.github/workflows/coverage-comment.yml)
                   set_all_checks
+                  ;;
+                .github/workflows/release-candidate.yml|tools/release-candidate/*)
+                  set_all_checks
+                  ;;
+                tools/android-download/*)
+                  deploy=true
                   ;;
                 mobile/*)
                   flutter=true
@@ -83,6 +96,12 @@ jobs:
                 api/*)
                   api=true
                   ;;
+                portal/*)
+                  portal=true
+                  ;;
+                deploy/*)
+                  deploy=true
+                  ;;
               esac
             done < "$changed_files"
           fi
@@ -91,7 +110,17 @@ jobs:
             echo "flutter=$flutter"
             echo "go=$go"
             echo "api=$api"
+            echo "portal=$portal"
+            echo "deploy=$deploy"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.18.0"
+
+      - name: Check release candidate tooling
+        run: make check-release-candidate
 
   flutter:
     name: Flutter
@@ -136,6 +165,25 @@ jobs:
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18-bookworm@sha256:1961f96e6029a02c3812d7cb329a3b03a3ac2bb067058dec17b0f5596aca9296
+        env:
+          POSTGRES_DB: xe3_esl
+          POSTGRES_USER: xe3_esl
+          POSTGRES_PASSWORD: ci-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready --username=xe3_esl --dbname=xe3_esl"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+          --health-start-period 5s
+    env:
+      DATABASE_URL: postgres://xe3_esl:ci-only-password@127.0.0.1:5432/xe3_esl?sslmode=disable
+      MIGRATION_ENV: test
+      TEST_DATABASE_URL: postgres://xe3_esl:ci-only-password@127.0.0.1:5432/xe3_esl?sslmode=disable
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -184,6 +232,75 @@ jobs:
       - name: Check API contracts
         run: make check-api
 
+  portal:
+    name: Portal
+    needs: changes
+    if: needs.changes.outputs.portal == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: portal
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: portal/package-lock.json
+
+      - name: Install Portal dependencies
+        run: npm ci
+
+      - name: Lint Portal
+        run: npm run lint
+
+      - name: Build and test Portal
+        run: npm test
+
+      - name: Build Portal Docker image
+        run: docker build --tag speakup-portal:ci .
+
+  deploy:
+    name: Deployment contracts
+    needs: changes
+    if: needs.changes.outputs.deploy == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.18.0"
+
+      - name: Validate Android download publication contract
+        run: make check-android-download
+
+      - name: Validate Staging deployment contract
+        run: make check-staging-deploy
+
+      - name: Validate TLS lifecycle contract
+        run: make check-tls-lifecycle
+
+      - name: Validate rendered Nginx configuration
+        run: make check-staging-nginx
+
+      - name: Validate Production deployment contract
+        run: make check-production-deploy
+
+      - name: Validate rendered Production Nginx configuration
+        run: make check-production-nginx
+
   coverage-gate:
     name: Coverage gate
     needs:
@@ -220,9 +337,7 @@ jobs:
               (workflow) => workflow.name === "Quality",
             );
             if (!qualityWorkflow) {
-              core.warning("Unable to find the Quality workflow; coverage gate skipped");
-              core.setOutput("available", "false");
-              return;
+              throw new Error("Unable to find the Quality workflow");
             }
 
             const runs = await github.paginate(
@@ -260,21 +375,13 @@ jobs:
             }
 
             if (!baseline) {
-              core.warning(
-                "No successful Quality run has a Go coverage artifact; coverage gate skipped",
+              throw new Error(
+                "No successful Quality run has a Go coverage artifact",
               );
-              core.setOutput("available", "false");
-              return;
             }
 
             core.setOutput("run_id", String(baseline.id));
             core.setOutput("available", "true");
-
-      - name: Explain missing coverage baseline
-        if: steps.baseline.outputs.available != 'true'
-        run: >-
-          echo "Coverage gate skipped because the base branch has no Go
-          coverage artifact baseline yet."
 
       - name: Download baseline Go coverage
         if: steps.baseline.outputs.available == 'true'
@@ -372,9 +479,7 @@ jobs:
               (workflow) => workflow.name === "Quality",
             );
             if (!qualityWorkflow) {
-              core.warning("Unable to find the Quality workflow; Flutter coverage gate skipped");
-              core.setOutput("available", "false");
-              return;
+              throw new Error("Unable to find the Quality workflow");
             }
 
             const runs = await github.paginate(
@@ -412,21 +517,13 @@ jobs:
             }
 
             if (!baseline) {
-              core.warning(
-                "No successful Quality run has a Flutter coverage artifact; coverage gate skipped",
+              throw new Error(
+                "No successful Quality run has a Flutter coverage artifact",
               );
-              core.setOutput("available", "false");
-              return;
             }
 
             core.setOutput("run_id", String(baseline.id));
             core.setOutput("available", "true");
-
-      - name: Explain missing Flutter coverage baseline
-        if: steps.baseline.outputs.available != 'true'
-        run: >-
-          echo "Flutter coverage gate skipped because the base branch has no
-          Flutter coverage artifact baseline yet."
 
       - name: Download baseline Flutter coverage
         if: steps.baseline.outputs.available == 'true'
@@ -492,6 +589,8 @@ jobs:
       - flutter
       - go
       - api
+      - portal
+      - deploy
       - coverage-gate
       - flutter-coverage-gate
     if: always()
@@ -505,6 +604,10 @@ jobs:
       GO_RESULT: ${{ needs.go.result }}
       API_REQUIRED: ${{ needs.changes.outputs.api }}
       API_RESULT: ${{ needs.api.result }}
+      PORTAL_REQUIRED: ${{ needs.changes.outputs.portal }}
+      PORTAL_RESULT: ${{ needs.portal.result }}
+      DEPLOY_REQUIRED: ${{ needs.changes.outputs.deploy }}
+      DEPLOY_RESULT: ${{ needs.deploy.result }}
       GO_COVERAGE_RESULT: ${{ needs.coverage-gate.result }}
       FLUTTER_COVERAGE_RESULT: ${{ needs.flutter-coverage-gate.result }}
     steps:
@@ -550,6 +653,8 @@ jobs:
           require_result "Flutter" "$FLUTTER_REQUIRED" "$FLUTTER_RESULT"
           require_result "Go" "$GO_REQUIRED" "$GO_RESULT"
           require_result "API contracts" "$API_REQUIRED" "$API_RESULT"
+          require_result "Portal" "$PORTAL_REQUIRED" "$PORTAL_RESULT"
+          require_result "Deployment contracts" "$DEPLOY_REQUIRED" "$DEPLOY_RESULT"
 
           require_coverage_result() {
             local name=$1

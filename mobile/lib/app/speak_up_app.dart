@@ -212,7 +212,20 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
 
   Future<void> _openSavedInterviewPlan(String planId) async {
     final controller = widget.jobPreparationController;
-    if (controller == null || !await controller.openSavedPlan(planId)) {
+    if (controller == null) {
+      return;
+    }
+    final opened = await controller.openSavedPlan(planId);
+    if (!mounted) return;
+    if (!opened) {
+      final navigatorContext = _navigatorKey.currentContext;
+      if (navigatorContext != null && navigatorContext.mounted) {
+        ScaffoldMessenger.of(navigatorContext)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(content: Text(controller.errorMessage ?? '暂时无法打开这场模拟面试。')),
+          );
+      }
       return;
     }
     _navigatorKey.currentState?.pushNamed(AppRoutes.jobPreparation);
@@ -338,15 +351,21 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
   Future<CompletedPracticeRouteResult?> _openInterviewReport(
     InterviewPracticeCompletion completion,
   ) {
+    return _openSessionReport(completion.practiceSessionId);
+  }
+
+  Future<CompletedPracticeRouteResult?> _openSessionReport(
+    String practiceSessionId,
+  ) {
     final navigator = _navigatorKey.currentState;
     final reportController = widget.sessionEvaluationController;
     if (navigator == null || reportController == null) {
-      throw StateError('Interview report route is not configured.');
+      throw StateError('Practice report route is not configured.');
     }
     return navigator.push<CompletedPracticeRouteResult>(
       MaterialPageRoute<CompletedPracticeRouteResult>(
         builder: (_) => SessionEvaluationPage(
-          practiceSessionId: completion.practiceSessionId,
+          practiceSessionId: practiceSessionId,
           controller: reportController,
         ),
       ),
@@ -483,6 +502,9 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
           practiceController: _practiceController,
           avatarControllerFactory: factory,
           onPracticeCompleted: launchController?.parkCurrentPractice,
+          onOpenReport: widget.sessionEvaluationController == null
+              ? null
+              : _openSessionReport,
           speechFeedbackController: widget.speechFeedbackController,
           onExitRequested: launchController?.parkCurrentPractice,
         );
@@ -492,6 +514,9 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
         practiceController: _practiceController,
         questionSpeaker: _practiceController.promptSpeaker,
         onPracticeCompleted: launchController?.parkCurrentPractice,
+        onOpenReport: widget.sessionEvaluationController == null
+            ? null
+            : _openSessionReport,
         speechFeedbackController: widget.speechFeedbackController,
         onExitRequested: launchController?.parkCurrentPractice,
       );

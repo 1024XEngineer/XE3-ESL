@@ -27,6 +27,42 @@ func TestSubmitWithImagesRequiresImageInputCapability(t *testing.T) {
 	}
 }
 
+func TestClassifyRunFailureRecognizesContextTermination(t *testing.T) {
+	tests := []struct {
+		name      string
+		err       error
+		wantKind  ErrorKind
+		retryable bool
+	}{
+		{
+			name:      "deadline",
+			err:       context.DeadlineExceeded,
+			wantKind:  ErrorTimeout,
+			retryable: true,
+		},
+		{
+			name:      "cancellation",
+			err:       context.Canceled,
+			wantKind:  ErrorCancelled,
+			retryable: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			kind, retryable := classifyRunFailure(test.err)
+			if kind != string(test.wantKind) || retryable != test.retryable {
+				t.Fatalf(
+					"classifyRunFailure() = (%q, %t), want (%q, %t)",
+					kind,
+					retryable,
+					test.wantKind,
+					test.retryable,
+				)
+			}
+		})
+	}
+}
+
 func TestRetryTextStreamReadsInputFromConversation(t *testing.T) {
 	t.Parallel()
 

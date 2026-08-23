@@ -347,7 +347,7 @@ jobs:
             const scopes = [];
             if (process.env.GO_AVAILABLE === "true") {
               scopes.push({
-                name: "server (Go)",
+                name: "server (Go + PostgreSQL)",
                 current: readGoCoverage(
                   path.join("coverage", "current", "go", "coverage.out"),
                 ),

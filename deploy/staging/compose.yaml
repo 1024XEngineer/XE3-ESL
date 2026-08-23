@@ -1,0 +1,115 @@
+name: xe3-speakup-staging
+
+services:
+  postgres:
+    image: postgres:18-bookworm@sha256:7d2695c3aa88e792e8b3b233e7e4adb296a20412c6c0ca361e3edaaacfada108
+    pull_policy: always
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${STAGING_POSTGRES_DB:?STAGING_POSTGRES_DB is required}
+      POSTGRES_USER: ${STAGING_POSTGRES_USER:?STAGING_POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${STAGING_POSTGRES_PASSWORD:?STAGING_POSTGRES_PASSWORD is required}
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    networks:
+      - database
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'pg_isready --username="$${POSTGRES_USER}" --dbname="$${POSTGRES_DB}"',
+        ]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 5s
+
+  migrate:
+    image: ghcr.io/1024xengineer/xe3-esl-server@${SERVER_IMAGE_DIGEST:?SERVER_IMAGE_DIGEST is required}
+    pull_policy: always
+    profiles:
+      - migration
+    restart: "no"
+    command:
+      - /usr/local/bin/speakup-migrate
+      - up
+    environment:
+      DATABASE_URL: postgres://${STAGING_POSTGRES_USER:?STAGING_POSTGRES_USER is required}:${STAGING_POSTGRES_PASSWORD:?STAGING_POSTGRES_PASSWORD is required}@postgres:5432/${STAGING_POSTGRES_DB:?STAGING_POSTGRES_DB is required}?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - database
+
+  server:
+    image: ghcr.io/1024xengineer/xe3-esl-server@${SERVER_IMAGE_DIGEST:?SERVER_IMAGE_DIGEST is required}
+    pull_policy: always
+    restart: unless-stopped
+    init: true
+    env_file:
+      - ${STAGING_SERVER_ENV_FILE:?STAGING_SERVER_ENV_FILE is required}
+    environment:
+      DATABASE_URL: postgres://${STAGING_POSTGRES_USER:?STAGING_POSTGRES_USER is required}:${STAGING_POSTGRES_PASSWORD:?STAGING_POSTGRES_PASSWORD is required}@postgres:5432/${STAGING_POSTGRES_DB:?STAGING_POSTGRES_DB is required}?sslmode=disable
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: "8080"
+    ports:
+      - "127.0.0.1:28083:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - server_edge
+      - database
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "-T",
+          "2",
+          "--spider",
+          "http://127.0.0.1:8080/readyz",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+
+  portal:
+    image: ghcr.io/1024xengineer/xe3-esl-portal@${PORTAL_IMAGE_DIGEST:?PORTAL_IMAGE_DIGEST is required}
+    pull_policy: always
+    restart: unless-stopped
+    init: true
+    environment:
+      PORTAL_ADMIN_PASSWORD: ${PORTAL_ADMIN_PASSWORD:?PORTAL_ADMIN_PASSWORD is required}
+      PORTAL_SQLITE_PATH: /app/.wrangler/portal.sqlite
+      VINEXT_TRUSTED_HOSTS: ${STAGING_PORTAL_HOST:?STAGING_PORTAL_HOST is required}
+    ports:
+      - "127.0.0.1:28082:3000"
+    volumes:
+      - portal_data:/app/.wrangler
+    networks:
+      - portal_edge
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/',{signal:AbortSignal.timeout(2000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+
+networks:
+  portal_edge:
+  server_edge:
+  database:
+    internal: true
+
+volumes:
+  portal_data:
+  postgres_data:

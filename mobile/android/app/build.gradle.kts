@@ -5,6 +5,34 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+val releaseSigningVariableNames = listOf(
+    "SPEAKUP_ANDROID_KEYSTORE_PATH",
+    "SPEAKUP_ANDROID_KEY_ALIAS",
+    "SPEAKUP_ANDROID_STORE_PASSWORD",
+    "SPEAKUP_ANDROID_KEY_PASSWORD",
+)
+val releaseBuildRequested = gradle.startParameter.taskNames.any {
+    it.contains("release", ignoreCase = true)
+}
+val releaseSigningValues = releaseSigningVariableNames.associateWith(System::getenv)
+val missingReleaseSigningVariables = releaseSigningValues
+    .filterValues { it.isNullOrBlank() }
+    .keys
+
+if (releaseBuildRequested && missingReleaseSigningVariables.isNotEmpty()) {
+    throw GradleException(
+        "Missing Android release signing environment variables: " +
+            missingReleaseSigningVariables.joinToString(", "),
+    )
+}
+
+val releaseKeystore = releaseSigningValues["SPEAKUP_ANDROID_KEYSTORE_PATH"]
+    ?.takeIf { it.isNotBlank() }
+    ?.let(::file)
+if (releaseBuildRequested && releaseKeystore?.isFile != true) {
+    throw GradleException("Android release keystore is not a readable file.")
+}
+
 android {
     namespace = "com.xengineer.speakup"
     compileSdk = flutter.compileSdkVersion
@@ -35,11 +63,30 @@ android {
         }
     }
 
+    signingConfigs {
+        if (missingReleaseSigningVariables.isEmpty()) {
+            create("release") {
+                storeFile = releaseKeystore
+                keyAlias = releaseSigningValues.getValue("SPEAKUP_ANDROID_KEY_ALIAS")
+                storePassword = releaseSigningValues.getValue("SPEAKUP_ANDROID_STORE_PASSWORD")
+                keyPassword = releaseSigningValues.getValue("SPEAKUP_ANDROID_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release")
+        }
+    }
+
+    flavorDimensions += "environment"
+    productFlavors {
+        create("staging") {
+            dimension = "environment"
+        }
+        create("production") {
+            dimension = "environment"
         }
     }
 }

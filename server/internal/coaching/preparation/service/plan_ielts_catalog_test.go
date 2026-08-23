@@ -65,7 +65,12 @@ func TestStaticIELTSCatalogProducesPlanCompatibleAssignments(t *testing.T) {
 		scene.PracticeModePart3,
 	} {
 		t.Run(string(mode)+" random assignment", func(t *testing.T) {
-			assertCompatible(t, mode, nil)
+			assignment := assertCompatible(t, mode, nil)
+			if mode == scene.PracticeModePart2 &&
+				(len(assignment.Parts) != 1 ||
+					assignment.Parts[0].Part != scene.PracticeModePart2) {
+				t.Fatalf("Part 2 assignment = %#v", assignment.Parts)
+			}
 		})
 	}
 	for _, topic := range bank.Part1Topics {

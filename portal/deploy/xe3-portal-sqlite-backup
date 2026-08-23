@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+umask 077
+
+fail() {
+  printf 'Portal SQLite backup error: %s\n' "$1" >&2
+  exit 1
+}
+
+require_value() {
+  local name="$1"
+  [[ -n "${!name:-}" ]] || fail "$name is required"
+  [[ "${!name}" != *$'\n'* ]] || fail "$name must not contain newlines"
+}
+
+require_positive_integer() {
+  local name="$1"
+  require_value "$name"
+  [[ "${!name}" =~ ^[1-9][0-9]*$ ]] || fail "$name must be a positive integer"
+}
+
+command_name="${1:-}"
+[[ "$command_name" == "backup" || "$command_name" == "check" ]] || \
+  fail 'usage: xe3-portal-sqlite-backup <backup|check>'
+
+require_value PORTAL_BACKUP_ROOT
+require_value PORTAL_BACKUP_IMAGE
+[[ "$PORTAL_BACKUP_ROOT" == /* && "$PORTAL_BACKUP_ROOT" != / ]] || \
+  fail 'PORTAL_BACKUP_ROOT must be an absolute non-root path'
+[[ "$PORTAL_BACKUP_ROOT" != *,* ]] || \
+  fail 'PORTAL_BACKUP_ROOT must not contain commas'
+[[ "$PORTAL_BACKUP_IMAGE" =~ ^sha256:[a-f0-9]{64}$ || \
+   "$PORTAL_BACKUP_IMAGE" =~ @sha256:[a-f0-9]{64}$ ]] || \
+  fail 'PORTAL_BACKUP_IMAGE must use a local image ID or repository digest'
+
+command -v docker >/dev/null || fail 'docker is required'
+image_id="$(
+  docker image inspect --format '{{.Id}}' "$PORTAL_BACKUP_IMAGE"
+)" || fail 'configured Portal backup image is not available locally'
+[[ "$image_id" =~ ^sha256:[a-f0-9]{64}$ ]] || \
+  fail 'configured Portal backup image ID is not content-addressed'
+
+common_docker_args=(
+  run
+  --rm
+  --network none
+  --read-only
+  --cap-drop ALL
+  --security-opt no-new-privileges:true
+  --user 0:0
+)
+
+if [[ "$command_name" == "backup" ]]; then
+  require_value PORTAL_BACKUP_CONTAINER
+  require_value PORTAL_BACKUP_SOURCE_VOLUME
+  require_value PORTAL_BACKUP_DEPLOYMENT_VERSION
+  require_positive_integer PORTAL_BACKUP_RETENTION_DAYS
+  [[ "$PORTAL_BACKUP_CONTAINER" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] || \
+    fail 'PORTAL_BACKUP_CONTAINER has an invalid Docker name'
+  [[ "$PORTAL_BACKUP_SOURCE_VOLUME" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] || \
+    fail 'PORTAL_BACKUP_SOURCE_VOLUME has an invalid Docker volume name'
+  docker volume inspect "$PORTAL_BACKUP_SOURCE_VOLUME" >/dev/null || \
+    fail 'configured Portal data volume does not exist'
+
+  container_running="$(
+    docker container inspect \
+      --format '{{.State.Running}}' \
+      "$PORTAL_BACKUP_CONTAINER"
+  )" || fail 'configured Portal container does not exist'
+  [[ "$container_running" == "true" ]] || \
+    fail 'configured Portal container is not running'
+
+  mounted_volume="$(
+    docker container inspect \
+      --format '{{range .Mounts}}{{if eq .Destination "/app/.wrangler"}}{{.Name}}{{end}}{{end}}' \
+      "$PORTAL_BACKUP_CONTAINER"
+  )"
+  [[ "$mounted_volume" == "$PORTAL_BACKUP_SOURCE_VOLUME" ]] || \
+    fail 'configured volume is not the Portal container data mount'
+  container_image_id="$(
+    docker container inspect --format '{{.Image}}' "$PORTAL_BACKUP_CONTAINER"
+  )"
+  [[ "$container_image_id" == "$image_id" ]] || \
+    fail 'configured backup image does not match the running Portal deployment'
+
+  docker "${common_docker_args[@]}" \
+    --mount "type=volume,src=$PORTAL_BACKUP_SOURCE_VOLUME,dst=/source,readonly,volume-nocopy" \
+    --mount "type=bind,src=$PORTAL_BACKUP_ROOT,dst=/backups" \
+    "$image_id" \
+    node --no-warnings /app/ops/portal-sqlite-backup.mjs backup \
+      --source /source/portal.sqlite \
+      --backup-root /backups \
+      --source-id "docker-volume:$PORTAL_BACKUP_SOURCE_VOLUME/portal.sqlite" \
+      --deployment-version "$PORTAL_BACKUP_DEPLOYMENT_VERSION" \
+      --retention-days "$PORTAL_BACKUP_RETENTION_DAYS"
+else
+  require_positive_integer PORTAL_BACKUP_MAX_AGE_SECONDS
+  docker "${common_docker_args[@]}" \
+    --mount "type=bind,src=$PORTAL_BACKUP_ROOT,dst=/backups,readonly" \
+    --mount "type=volume,dst=/restore,volume-nocopy" \
+    "$image_id" \
+    node --no-warnings /app/ops/portal-sqlite-backup.mjs check \
+      --backup-root /backups \
+      --restore-root /restore \
+      --max-age-seconds "$PORTAL_BACKUP_MAX_AGE_SECONDS"
+fi

@@ -1,0 +1,146 @@
+map $http_upgrade $speakup_staging_connection_upgrade {
+    default upgrade;
+    '' close;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name __STAGING_PORTAL_HOST__ __STAGING_API_HOST__;
+
+    location ^~ /.well-known/acme-challenge/ {
+        auth_basic off;
+        root __STAGING_ACME_ROOT__;
+        default_type text/plain;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name __STAGING_PORTAL_HOST__;
+
+    ssl_certificate __STAGING_TLS_CERTIFICATE__;
+    ssl_certificate_key __STAGING_TLS_CERTIFICATE_KEY__;
+
+    access_log logs/xe3-speakup-staging-portal.access.log;
+    error_log logs/xe3-speakup-staging-portal.error.log warn;
+
+    auth_basic "SpeakUp Staging";
+    auth_basic_user_file __STAGING_HTPASSWD_FILE__;
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+
+    location = /metrics {
+        auth_basic off;
+        return 404;
+    }
+
+    location = /downloads/android/release.json {
+        root __STAGING_PUBLIC_ROOT__;
+        try_files $uri =404;
+        default_type application/json;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+        add_header Cache-Control "no-store" always;
+    }
+
+    location ~ "^/downloads/android/v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)/release\.json$" {
+        root __STAGING_PUBLIC_ROOT__;
+        try_files $uri =404;
+        default_type application/json;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+    }
+
+    location ~ "^/downloads/android/v(?<staging_checksum_dir_version>(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))/speakup-v(?<staging_checksum_file_version>(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))-production-arm64\.apk\.sha256$" {
+        if ($staging_checksum_dir_version != $staging_checksum_file_version) {
+            return 404;
+        }
+        root __STAGING_PUBLIC_ROOT__;
+        try_files $uri =404;
+        default_type text/plain;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+    }
+
+    location ~ "^/downloads/android/v(?<staging_apk_directory_version>(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))/speakup-v(?<staging_apk_file_version>(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))-production-arm64\.apk$" {
+        if ($staging_apk_directory_version != $staging_apk_file_version) {
+            return 404;
+        }
+        root __STAGING_PUBLIC_ROOT__;
+        try_files $uri =404;
+        default_type application/vnd.android.package-archive;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+    }
+
+    location = /downloads/android {
+        return 404;
+    }
+
+    location /downloads/android/ {
+        return 404;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:28082;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name __STAGING_API_HOST__;
+
+    ssl_certificate __STAGING_TLS_CERTIFICATE__;
+    ssl_certificate_key __STAGING_TLS_CERTIFICATE_KEY__;
+
+    access_log logs/xe3-speakup-staging-api.access.log;
+    error_log logs/xe3-speakup-staging-api.error.log warn;
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy no-referrer always;
+    client_max_body_size 12m;
+
+    location = /metrics {
+        return 404;
+    }
+
+    location = /downloads/android {
+        return 404;
+    }
+
+    location ^~ /downloads/android/ {
+        return 404;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:28083;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $speakup_staging_connection_upgrade;
+        proxy_read_timeout 180s;
+    }
+}

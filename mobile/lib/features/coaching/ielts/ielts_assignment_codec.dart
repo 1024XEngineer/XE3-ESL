@@ -33,10 +33,7 @@ IeltsPracticeAssignment decodeIeltsAssignment(Object? value) {
       IeltsSpeakingPart.part3,
     ],
     PracticeMode.part1 => const <IeltsSpeakingPart>[IeltsSpeakingPart.part1],
-    PracticeMode.part2 => const <IeltsSpeakingPart>[
-      IeltsSpeakingPart.part2,
-      IeltsSpeakingPart.part3,
-    ],
+    PracticeMode.part2 => const <IeltsSpeakingPart>[IeltsSpeakingPart.part2],
     PracticeMode.part3 => const <IeltsSpeakingPart>[IeltsSpeakingPart.part3],
     PracticeMode.fullSimulation ||
     PracticeMode.focus => const <IeltsSpeakingPart>[],

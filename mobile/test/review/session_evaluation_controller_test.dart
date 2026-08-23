@@ -63,7 +63,10 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('review-detail-page')), findsOneWidget);
+      expect(
+        find.byKey(const Key('evaluation-report-detail-page')),
+        findsOneWidget,
+      );
       expect(
         find.text(
           sceneType == EvaluationReportSceneType.ieltsSpeaking
@@ -107,7 +110,10 @@ void main() {
 
     expect(client.calls, 2);
     expect(client.retryCalls, 1);
-    expect(find.byKey(const Key('review-detail-page')), findsOneWidget);
+    expect(
+      find.byKey(const Key('evaluation-report-detail-page')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('does not offer retry for a terminal non-retryable failure', (
