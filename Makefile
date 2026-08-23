@@ -54,7 +54,7 @@ help:
 		'  make check-android-download  Validate the public Android bundle and publish contract' \
 		'  make check-production-deploy  Validate the immutable Production contract' \
 		'  make check-production-nginx  Run nginx -t against the Production template' \
-		'  make check-staging-deploy  Validate the immutable Staging deployment contract' \
+		'  make check-staging-deploy  Validate Staging runtime, schema, lock, and receipt contracts' \
 		'  make check-staging-nginx  Run nginx -t against the rendered Staging template' \
 		'  make dev-android    Start the backend and run the App on an Android device' \
 		'  make dev-ios-simulator  Start the backend on an iOS Simulator' \
