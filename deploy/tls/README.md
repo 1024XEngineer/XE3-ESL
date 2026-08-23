@@ -24,6 +24,11 @@ change DNS, install Nginx configuration, or switch any traffic.
   expanded exact three-name certificate is accepted idempotently. A missing
   lineage, a partial lineage, or any other SAN is rejected. The result must
   contain exactly `speak-up.top`, `www.speak-up.top`, and `api.speak-up.top`.
+- New issuance never registers or guesses an ACME account. Both Staging issue
+  and Production expansion reuse the exact account referenced by the existing
+  Production renewal configuration, validate its fixed Let's Encrypt storage
+  path and file permissions, pass it explicitly with `--account`, and require
+  both saved renewal configurations to retain that same account.
 - Both Production's existing Portal hosts and its new API host use the same
   operator-provided Production webroot during expansion and renewal.
 - A certificate is usable only when the Certbot live paths resolve inside the
@@ -53,8 +58,8 @@ change DNS, install Nginx configuration, or switch any traffic.
   `True`. The real `[[webroot_map]]` must contain every certificate SAN exactly
   once, no other key, and map each one to `/var/www/acme`.
 
-The contact email, ACME account data, certificates, private keys, populated
-environment file, and deployed SHA state are host data and must not be committed.
+ACME account data, certificates, private keys, the populated environment file,
+and deployed SHA state are host data and must not be committed.
 
 ## 1. Install the configuration contract
 
@@ -76,13 +81,15 @@ install -o root -g root -m 0644 \
   /usr/local/sbin/nginx-http.conf.template
 ```
 
-Fill `TLS_CONTACT_EMAIL` only in `/etc/speakup/tls.env`. Confirm that
-`TLS_CERTBOT_CONFIG_ROOT` points to the existing Production Certbot root and
-that `TLS_PRODUCTION_ACME_ROOT` is the webroot already served by the current
-`speak-up.top` and `www.speak-up.top` port-80 vhosts. The example values match
-the recorded legacy Portal layout. The configuration parser accepts only the
-six documented raw `KEY=value` entries, rejects duplicates and shell syntax,
-and never prints values from a rejected line.
+Confirm that `TLS_CERTBOT_CONFIG_ROOT` points to the existing Production Certbot
+root and that `TLS_PRODUCTION_ACME_ROOT` is the webroot already served by the
+current `speak-up.top` and `www.speak-up.top` port-80 vhosts. That root must
+contain the Production renewal file and its referenced Let's Encrypt production
+account; the wrapper refuses to register a replacement account or select one by
+directory order. The example values match the recorded legacy Portal layout.
+The configuration parser accepts only the five documented raw `KEY=value`
+entries, rejects duplicates and shell syntax, and never prints values from a
+rejected line.
 
 Prepare the reviewed image in a separate, auditable installation step:
 
@@ -155,10 +162,22 @@ After DNS and public port 80 have been independently verified:
 ```
 
 Neither command installs an HTTPS vhost or reloads Nginx. Each command uses
-only the fixed lineage and SAN arguments, then verifies the resulting live
-certificate and prints a small audit record containing its environment, lineage,
-SHA-256, expiry, and `reload=false`. It does not print the environment file,
-account key, or private key.
+only the fixed lineage, SANs, Let's Encrypt production endpoint, and explicitly
+validated existing Production account. It then verifies the resulting live
+certificate and persisted renewal account and prints a small audit record
+containing its environment, lineage, SHA-256, expiry, and `reload=false`. It does
+not print the environment file, account identifier, account key, or private key.
+
+If `issue-staging` exits after Certbot has already reported a saved certificate,
+do not rerun it blindly: the exact Staging lineage may now exist and rate limits
+still apply. Record hashes and permissions for
+`live/staging.speak-up.top`, `archive/staging.speak-up.top`, and
+`renewal/staging.speak-up.top.conf`, then run `verify --environment staging`.
+Repair a local permission or renewal-account mismatch in place when the
+certificate itself is valid. If the lineage is incomplete or irreparably wrong,
+move only those three exact Staging paths to a root-owned timestamped quarantine
+outside the Certbot root before one controlled retry. Never move, delete, or
+revoke the `speak-up.top` Production lineage as part of Staging recovery.
 
 The recorded legacy Production renewal map may contain exactly
 `speak-up.top` and `www.speak-up.top` at `/var/www/certbot`. Only
@@ -234,6 +253,10 @@ up after downtime. The script uses a non-blocking `flock`, while Certbot's own
 random sleep is disabled because scheduling jitter belongs to systemd. The unit
 cannot pull an image; if the prepared digest is absent or wrong it fails and
 waits for an operator to run the separately audited `prepare-image` command.
+Let's Encrypt stopped its certificate-expiration email service in June 2025 and
+no longer stores new ACME account contact addresses. Email therefore cannot be
+the renewal safety net: production monitoring must independently alert on timer
+failure and certificate validity before the seven-day release threshold.
 
 ## 5. Verification, evidence, and recovery
 
@@ -301,6 +324,8 @@ Implementation references:
 - Docker [pull by digest and `--platform`](https://docs.docker.com/reference/cli/docker/image/pull/)
   and [`docker image inspect`](https://docs.docker.com/reference/cli/docker/image/inspect/)
 - Let's Encrypt [HTTP-01 challenge](https://letsencrypt.org/docs/challenge-types/)
+- Let's Encrypt [ending expiration notification emails](https://letsencrypt.org/2025/01/22/ending-expiration-emails.html)
+  and the current [expiration email status](https://letsencrypt.org/docs/expiration-emails/)
 - Nginx [configuration test and graceful reload](https://nginx.org/en/docs/control.html)
 - systemd [`systemd.service`](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html)
   and [`systemd.timer`](https://www.freedesktop.org/software/systemd/man/latest/systemd.timer.html)

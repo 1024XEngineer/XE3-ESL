@@ -26,7 +26,6 @@ chmod 0755 "$temporary_directory/staging-acme" "$temporary_directory/production-
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$temporary_directory/nginx"
 chmod 0755 "$temporary_directory/nginx"
 printf '%s\n' \
-  'TLS_CONTACT_EMAIL=tls-contact@example.invalid' \
   "TLS_CERTBOT_CONFIG_ROOT=$temporary_directory/certbot" \
   "TLS_STAGING_ACME_ROOT=$temporary_directory/staging-acme" \
   "TLS_PRODUCTION_ACME_ROOT=$temporary_directory/production-acme" \

@@ -5,6 +5,8 @@ set -euo pipefail
 readonly tls_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly manage="$tls_directory/manage.sh"
 readonly expected_certbot_image="certbot/certbot@sha256:34ee91d2f43008eb78a007d22f23ed4b2eaa9a454cb27ca2c042b49527a695b4"
+readonly production_account_id="0123456789abcdef0123456789abcdef"
+readonly secondary_account_id="abcdef0123456789abcdef0123456789"
 
 fail() {
   printf 'TLS lifecycle contract test: %s\n' "$*" >&2
@@ -24,6 +26,22 @@ readonly nginx_log="$temporary_directory/nginx.log"
 readonly nginx_dump="$temporary_directory/nginx.dump"
 readonly environment_file="$temporary_directory/tls.env"
 readonly command_output="$temporary_directory/command.out"
+
+write_account_fixture() {
+  local account_id=$1
+  local accounts_root="$certbot_root/accounts"
+  local server_root="$accounts_root/acme-v02.api.letsencrypt.org"
+  local directory_root="$server_root/directory"
+  local account_root="$directory_root/$account_id"
+
+  mkdir -p "$account_root"
+  chmod 0700 "$accounts_root" "$server_root" "$directory_root" "$account_root"
+  printf '%s\n' '{"kty":"RSA","fixture":true}' >"$account_root/private_key.json"
+  printf '%s\n' '{"body":{},"uri":"fixture"}' >"$account_root/regr.json"
+  printf '%s\n' '{"creation_host":"fixture"}' >"$account_root/meta.json"
+  chmod 0400 "$account_root/private_key.json"
+  chmod 0644 "$account_root/regr.json" "$account_root/meta.json"
+}
 
 mkdir -p \
   "$fake_bin" \
@@ -153,6 +171,7 @@ write_renewal_configuration() {
     "chain = /etc/letsencrypt/live/$name/chain.pem" \
     "fullchain = /etc/letsencrypt/live/$name/fullchain.pem" \
     "[renewalparams]" \
+    "account = ${FAKE_DOCKER_WRITTEN_ACCOUNT_ID:-$FAKE_ACME_ACCOUNT_ID}" \
     "authenticator = webroot" \
     "autorenew = True" \
     "server = https://acme-v02.api.letsencrypt.org/directory" \
@@ -227,6 +246,8 @@ cert_name=""
 domains=""
 dry_run=false
 webroot_path=""
+account_id=""
+server=""
 subcommand=""
 previous=""
 for argument in "$@"; do
@@ -238,6 +259,8 @@ for argument in "$@"; do
       ;;
     --cert-name) cert_name=$argument ;;
     --webroot-path) webroot_path=$argument ;;
+    --account) account_id=$argument ;;
+    --server) server=$argument ;;
     --domains)
       if [[ -n "$domains" ]]; then domains="$domains,$argument"
       else domains=$argument; fi
@@ -254,7 +277,8 @@ done
 
 case "$subcommand" in
   certonly)
-    [[ -n "$domains" ]] || exit 2
+    [[ -n "$domains" && "$account_id" == "$FAKE_ACME_ACCOUNT_ID" &&
+      "$server" == https://acme-v02.api.letsencrypt.org/directory ]] || exit 2
     write_lineage "$config_root" "$cert_name" "$domains" "$cert_name-key"
     ;;
   reconfigure)
@@ -290,7 +314,6 @@ if [[ "${1:-}" == -T ]]; then
 fi'
 
 cat >"$environment_file" <<EOF
-TLS_CONTACT_EMAIL=tls-contact@example.invalid
 TLS_CERTBOT_CONFIG_ROOT=$certbot_root
 TLS_STAGING_ACME_ROOT=$staging_webroot
 TLS_PRODUCTION_ACME_ROOT=$production_webroot
@@ -364,6 +387,7 @@ export PATH="$fake_bin:$PATH"
 export FAKE_DOCKER_LOG="$docker_log"
 export FAKE_DOCKER_IMAGE_STATE="$image_state"
 export FAKE_CERTBOT_IMAGE="$expected_certbot_image"
+export FAKE_ACME_ACCOUNT_ID="$production_account_id"
 export FAKE_NGINX_LOG="$nginx_log"
 export FAKE_NGINX_DUMP="$nginx_dump"
 
@@ -379,6 +403,18 @@ assert_no_reload() {
   if grep -Fxq -- '-s reload' "$nginx_log"; then
     fail "$1 unexpectedly reloaded Nginx"
   fi
+}
+
+expect_failure_before_docker() {
+  local label=$1
+  local docker_calls_before docker_calls_after
+  shift
+
+  docker_calls_before=$(wc -l <"$docker_log" | tr -d '[:space:]')
+  expect_failure "$label" "$@"
+  docker_calls_after=$(wc -l <"$docker_log" | tr -d '[:space:]')
+  [[ "$docker_calls_before" == "$docker_calls_after" ]] ||
+    fail "$label was rejected only after Docker ran"
 }
 
 expect_renewal_failure_before_docker() {
@@ -410,6 +446,7 @@ write_fixture_renewal_configuration() {
     "chain = /etc/letsencrypt/live/$name/chain.pem" \
     "fullchain = /etc/letsencrypt/live/$name/fullchain.pem" \
     '[renewalparams]' \
+    "account = $production_account_id" \
     'authenticator = webroot' \
     'autorenew = True' \
     'server = https://acme-v02.api.letsencrypt.org/directory' \
@@ -511,18 +548,83 @@ grep -Fq 'prepared=true' "$command_output" || fail "Certbot image preparation au
 grep -Fq "pull --platform linux/amd64 $expected_certbot_image" "$docker_log" ||
   fail "Certbot image preparation did not pull the fixed platform and digest"
 
-# Staging is first-issued once with the exact fixed SANs; Production requires the old lineage.
-expect_failure "missing Production lineage" \
+# Issuance requires the account explicitly referenced by the existing Production
+# renewal contract. Bootstrap rendering and image preparation above do not.
+expect_failure_before_docker "missing Production account material" \
+  "$manage" issue-staging --env-file "$environment_file"
+write_account_fixture "$production_account_id"
+write_account_fixture "$secondary_account_id"
+mkdir -p "$certbot_root/renewal"
+write_fixture_renewal_configuration \
+  speak-up.top 'speak-up.top,www.speak-up.top' /var/www/certbot
+expect_failure_before_docker "incomplete Production lineage" \
   "$manage" expand-production --env-file "$environment_file"
-assert_no_reload "missing Production lineage"
+assert_no_reload "incomplete Production lineage"
+
+write_fixture_lineage speak-up.top 'speak-up.top,www.speak-up.top' 1 /var/www/certbot
+production_renewal="$certbot_root/renewal/speak-up.top.conf"
+cp "$production_renewal" "$temporary_directory/valid-production-renewal.conf"
+
+mv "$certbot_root/renewal" "$certbot_root/renewal.real"
+ln -s renewal.real "$certbot_root/renewal"
+expect_failure_before_docker "symbolic Production renewal directory" \
+  "$manage" issue-staging --env-file "$environment_file"
+unlink "$certbot_root/renewal"
+mv "$certbot_root/renewal.real" "$certbot_root/renewal"
+
+sed '/^account = /d' "$temporary_directory/valid-production-renewal.conf" \
+  >"$production_renewal"
+expect_failure_before_docker "missing Production account reference" \
+  "$manage" issue-staging --env-file "$environment_file"
+sed 's|^account = .*$|account = ../unsafe|' \
+  "$temporary_directory/valid-production-renewal.conf" >"$production_renewal"
+expect_failure_before_docker "unsafe Production account reference" \
+  "$manage" issue-staging --env-file "$environment_file"
+sed "s|^server = .*$|server = https://example.invalid/directory|" \
+  "$temporary_directory/valid-production-renewal.conf" >"$production_renewal"
+expect_failure_before_docker "wrong Production account server" \
+  "$manage" issue-staging --env-file "$environment_file"
+awk -v duplicate="$secondary_account_id" '
+  { print }
+  /^account = / { print "account = " duplicate }
+' "$temporary_directory/valid-production-renewal.conf" >"$production_renewal"
+expect_failure_before_docker "duplicate Production account reference" \
+  "$manage" issue-staging --env-file "$environment_file"
+cp "$temporary_directory/valid-production-renewal.conf" "$production_renewal"
+
+production_account_root="$certbot_root/accounts/acme-v02.api.letsencrypt.org/directory/$production_account_id"
+chmod 0755 "$certbot_root/accounts/acme-v02.api.letsencrypt.org/directory"
+expect_failure_before_docker "permissive Production account parent" \
+  "$manage" issue-staging --env-file "$environment_file"
+chmod 0700 "$certbot_root/accounts/acme-v02.api.letsencrypt.org/directory"
+chmod 0644 "$production_account_root/private_key.json"
+expect_failure_before_docker "public Production account private key" \
+  "$manage" issue-staging --env-file "$environment_file"
+chmod 0400 "$production_account_root/private_key.json"
+
+reset_nginx_log
+FAKE_DOCKER_WRITTEN_ACCOUNT_ID="$secondary_account_id" \
+  expect_failure "Certbot persisted the wrong Staging account" \
+    "$manage" issue-staging --env-file "$environment_file"
+! grep -Fq 'issued=true' "$command_output" ||
+  fail "Wrong persisted Staging account produced a success audit"
+assert_no_reload "wrong persisted Staging account"
+mv "$certbot_root/live/staging.speak-up.top" \
+  "$temporary_directory/rejected-staging-live"
+mv "$certbot_root/archive/staging.speak-up.top" \
+  "$temporary_directory/rejected-staging-archive"
+mv "$certbot_root/renewal/staging.speak-up.top.conf" \
+  "$temporary_directory/rejected-staging-renewal.conf"
 
 "$manage" issue-staging --env-file "$environment_file" >"$command_output"
 grep -Fq 'issued=true reload=false' "$command_output" || fail "Staging issue audit is missing"
+grep -Fxq "account = $production_account_id" \
+  "$certbot_root/renewal/staging.speak-up.top.conf" ||
+  fail "Staging renewal did not persist the Production account"
 assert_no_reload "Staging issuance"
 expect_failure "duplicate Staging issuance" \
   "$manage" issue-staging --env-file "$environment_file"
 
-write_fixture_lineage speak-up.top 'speak-up.top,www.speak-up.top' 1 /var/www/certbot
 cp "$certbot_root/renewal/speak-up.top.conf" "$temporary_directory/legacy-production-renewal.conf"
 sed '/^www\.speak-up\.top = /d' \
   "$temporary_directory/legacy-production-renewal.conf" \
@@ -571,12 +673,30 @@ grep -Fq -- 'reconfigure --non-interactive --cert-name speak-up.top --webroot-pa
 "$manage" verify --environment production --env-file "$environment_file" >"$command_output"
 grep -Fq 'verified=true' "$command_output" || fail "Production verification audit is missing"
 
+staging_renewal="$certbot_root/renewal/staging.speak-up.top.conf"
+cp "$staging_renewal" "$temporary_directory/valid-staging-renewal.conf"
+sed "s|^account = .*$|account = $secondary_account_id|" \
+  "$temporary_directory/valid-staging-renewal.conf" >"$staging_renewal"
+reset_nginx_log
+expect_failure "mismatched Staging renewal account" \
+  "$manage" verify --environment staging --env-file "$environment_file"
+assert_no_reload "mismatched Staging renewal account verification"
+expect_renewal_failure_before_docker "mismatched Staging renewal account"
+cp "$temporary_directory/valid-staging-renewal.conf" "$staging_renewal"
+
 grep -Fq -- '--platform linux/amd64' "$docker_log" || fail "Certbot platform is not pinned"
 grep -Fq -- '--pull never' "$docker_log" || fail "Certbot runtime pull policy is not fail-closed"
 ! grep -Fq -- '--pull always' "$docker_log" || fail "Certbot runtime can still pull implicitly"
 grep -Fq "$expected_certbot_image" "$docker_log" || fail "Certbot image digest is not pinned"
 grep -Fq -- '--no-directory-hooks' "$docker_log" || fail "Certbot directory hooks are not disabled"
 grep -Fq -- '--config /dev/null' "$docker_log" || fail "Certbot global config is not isolated"
+grep -Fq -- "--server https://acme-v02.api.letsencrypt.org/directory --account $production_account_id" \
+  "$docker_log" || fail "Certbot issuance did not bind the existing Production account"
+! grep -Fq -- "--account $secondary_account_id" "$docker_log" ||
+  fail "Certbot selected an account that was not referenced by Production renewal"
+! grep -Fq -- '--email' "$docker_log" || fail "Certbot issuance still sends an obsolete email"
+! grep -Fq -- '--register-unsafely-without-email' "$docker_log" ||
+  fail "Certbot issuance can register an untracked account"
 grep -Fq -- '--domains staging.speak-up.top --domains staging-api.speak-up.top' "$docker_log" ||
   fail "Staging Certbot SAN arguments are not exact"
 grep -Fq -- '--webroot-map {"staging.speak-up.top":"/var/www/acme","staging-api.speak-up.top":"/var/www/acme"}' \
@@ -585,6 +705,9 @@ grep -Fq -- '--domains speak-up.top --domains www.speak-up.top --domains api.spe
   "$docker_log" || fail "Production Certbot SAN arguments are not exact"
 grep -Fq -- '--webroot-map {"speak-up.top":"/var/www/acme","www.speak-up.top":"/var/www/acme","api.speak-up.top":"/var/www/acme"}' \
   "$docker_log" || fail "Production Certbot webroot map argument is not exact"
+grep -Fxq "account = $production_account_id" \
+  "$certbot_root/renewal/speak-up.top.conf" ||
+  fail "Production renewal did not retain the selected account"
 
 # Expected certificate directives in an unrelated block cannot compensate for a
 # wrong certificate/key on the block that owns an expected hostname.
@@ -842,5 +965,10 @@ grep -Fq 'RandomizedDelaySec=30m' "$tls_directory/xe3-speakup-tls-renew.timer" |
   fail "systemd timer has no randomized delay"
 grep -Fq 'Persistent=true' "$tls_directory/xe3-speakup-tls-renew.timer" ||
   fail "systemd timer is not persistent"
+! grep -Fq 'TLS_CONTACT_EMAIL' \
+  "$manage" "$tls_directory/tls.env.example" "$tls_directory/README.md" ||
+  fail "TLS lifecycle still requires an obsolete contact email"
+grep -Fq "Let's Encrypt stopped its certificate-expiration email service" \
+  "$tls_directory/README.md" || fail "TLS documentation omits the independent expiry-monitoring requirement"
 
 printf '%s\n' 'TLS lifecycle contract tests passed'

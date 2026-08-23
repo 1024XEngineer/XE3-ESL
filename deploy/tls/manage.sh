@@ -5,6 +5,8 @@ umask 077
 
 readonly certbot_image="certbot/certbot@sha256:34ee91d2f43008eb78a007d22f23ed4b2eaa9a454cb27ca2c042b49527a695b4"
 readonly certbot_platform="linux/amd64"
+readonly letsencrypt_production_server="https://acme-v02.api.letsencrypt.org/directory"
+readonly letsencrypt_production_account_directory="accounts/acme-v02.api.letsencrypt.org/directory"
 readonly minimum_validity_seconds=604800
 readonly clock_skew_seconds=300
 readonly tls_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -79,6 +81,20 @@ require_private_directory() {
   (( (mode_value & 0077) == 0 )) || fail "$label must not grant group or other access"
 }
 
+require_nonwritable_directory() {
+  local label=$1
+  local path=$2
+  local mode mode_value
+
+  [[ -d "$path" && ! -L "$path" ]] || fail "$label must be a real directory"
+  require_owned_path "$label" "$path"
+  mode=$(file_mode "$path")
+  [[ "$mode" =~ ^[0-7]{3,4}$ ]] || fail "$label has an unreadable mode"
+  mode_value=$((8#$mode))
+  (( (mode_value & 0022) == 0 )) ||
+    fail "$label must not be group or other writable"
+}
+
 require_webroot_directory() {
   local label=$1
   local path=$2
@@ -98,7 +114,8 @@ require_secure_file() {
   local path=$2
   local mode mode_value
 
-  [[ -f "$path" && ! -L "$path" ]] || fail "$label must be a regular file"
+  [[ -f "$path" && ! -L "$path" && -s "$path" ]] ||
+    fail "$label must be a non-empty regular file"
   require_owned_path "$label" "$path"
   mode=$(file_mode "$path")
   [[ "$mode" =~ ^[0-7]{3,4}$ ]] || fail "$label has an unreadable mode"
@@ -106,10 +123,23 @@ require_secure_file() {
   (( (mode_value & 0077) == 0 )) || fail "$label must not grant group or other access"
 }
 
+require_nonwritable_file() {
+  local label=$1
+  local path=$2
+  local mode mode_value
+
+  [[ -f "$path" && ! -L "$path" && -s "$path" ]] ||
+    fail "$label must be a non-empty regular file"
+  require_owned_path "$label" "$path"
+  mode=$(file_mode "$path")
+  [[ "$mode" =~ ^[0-7]{3,4}$ ]] || fail "$label has an unreadable mode"
+  mode_value=$((8#$mode))
+  (( (mode_value & 0022) == 0 )) || fail "$label must not be group or other writable"
+}
+
 allowed_configuration_key() {
   case "$1" in
-    TLS_CONTACT_EMAIL | \
-      TLS_CERTBOT_CONFIG_ROOT | \
+    TLS_CERTBOT_CONFIG_ROOT | \
       TLS_STAGING_ACME_ROOT | \
       TLS_PRODUCTION_ACME_ROOT | \
       TLS_STATE_ROOT | \
@@ -130,7 +160,6 @@ load_configuration() {
   require_secure_file "TLS environment file" "$file"
 
   unset \
-    TLS_CONTACT_EMAIL \
     TLS_CERTBOT_CONFIG_ROOT \
     TLS_STAGING_ACME_ROOT \
     TLS_PRODUCTION_ACME_ROOT \
@@ -168,7 +197,6 @@ require_value() {
 validate_configuration() {
   local name canonical_certbot canonical_staging canonical_production canonical_state
   local required=(
-    TLS_CONTACT_EMAIL
     TLS_CERTBOT_CONFIG_ROOT
     TLS_STAGING_ACME_ROOT
     TLS_PRODUCTION_ACME_ROOT
@@ -179,9 +207,6 @@ validate_configuration() {
   for name in "${required[@]}"; do
     require_value "$name"
   done
-
-  [[ "$TLS_CONTACT_EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,63}$ ]] ||
-    fail "TLS_CONTACT_EMAIL must be a valid contact address"
 
   for name in \
     TLS_CERTBOT_CONFIG_ROOT \
@@ -409,6 +434,36 @@ renewal_parameter_values() {
   ' "$file"
 }
 
+resolve_production_acme_account_id() {
+  local renewal_root="$TLS_CERTBOT_CONFIG_ROOT/renewal"
+  local renewal_file="$renewal_root/speak-up.top.conf"
+  local server account_id accounts_root server_root directory_root account_directory
+
+  require_nonwritable_directory "Certbot renewal directory" "$renewal_root"
+  require_nonwritable_file "Production Certbot renewal configuration" "$renewal_file"
+  server=$(renewal_parameter_values "$renewal_file" server) ||
+    fail "Production Certbot server reference is malformed"
+  [[ "$server" == "$letsencrypt_production_server" ]] ||
+    fail "Production Certbot account is not bound to the expected production endpoint"
+  account_id=$(renewal_parameter_values "$renewal_file" account) ||
+    fail "Production Certbot account reference is malformed"
+  [[ "$account_id" =~ ^[0-9a-f]{32}$ ]] ||
+    fail "Production Certbot account reference is invalid"
+
+  accounts_root="$TLS_CERTBOT_CONFIG_ROOT/accounts"
+  server_root="$accounts_root/acme-v02.api.letsencrypt.org"
+  directory_root="$TLS_CERTBOT_CONFIG_ROOT/$letsencrypt_production_account_directory"
+  account_directory="$directory_root/$account_id"
+  require_private_directory "Certbot accounts directory" "$accounts_root"
+  require_private_directory "Let's Encrypt account server directory" "$server_root"
+  require_private_directory "Let's Encrypt production account directory" "$directory_root"
+  require_private_directory "Production ACME account directory" "$account_directory"
+  require_secure_file "Production ACME account private key" "$account_directory/private_key.json"
+  require_nonwritable_file "Production ACME registration" "$account_directory/regr.json"
+  require_nonwritable_file "Production ACME metadata" "$account_directory/meta.json"
+  printf '%s\n' "$account_id"
+}
+
 renewal_webroot_map_entries() {
   local file=$1
 
@@ -522,7 +577,7 @@ validate_renewal_webroot_map() {
 validate_renewal_configuration() {
   local contract=${1:-strict}
   local renewal_file="$TLS_CERTBOT_CONFIG_ROOT/renewal/$certificate_name.conf"
-  local mode mode_value authenticator autorenew server archive_dir cert_path key_path chain_path fullchain_path
+  local mode mode_value account expected_account authenticator autorenew server archive_dir cert_path key_path chain_path fullchain_path
 
   [[ -f "$renewal_file" && ! -L "$renewal_file" ]] ||
     fail "$selected_environment Certbot renewal configuration is missing"
@@ -536,11 +591,16 @@ validate_renewal_configuration() {
     "$renewal_file"; then
     fail "$selected_environment Certbot renewal hooks are not allowed"
   fi
+  expected_account=$(resolve_production_acme_account_id)
+  account=$(renewal_parameter_values "$renewal_file" account) ||
+    fail "$selected_environment Certbot account reference is malformed"
+  [[ "$account" == "$expected_account" ]] ||
+    fail "$selected_environment Certbot account must match the existing Production account"
   authenticator=$(renewal_configuration_value "$renewal_file" authenticator)
   [[ "$authenticator" == webroot ]] ||
     fail "$selected_environment Certbot renewal authenticator must be webroot"
   server=$(renewal_configuration_value "$renewal_file" server)
-  [[ "$server" == https://acme-v02.api.letsencrypt.org/directory ]] ||
+  [[ "$server" == "$letsencrypt_production_server" ]] ||
     fail "$selected_environment Certbot renewal CA is not the expected production endpoint"
   archive_dir=$(renewal_configuration_value "$renewal_file" archive_dir)
   cert_path=$(renewal_configuration_value "$renewal_file" cert)
@@ -792,11 +852,12 @@ migrate_legacy_production_webroot() {
 }
 
 issue_certificate() {
-  local before_sha="" expansion=false
+  local before_sha="" expansion=false production_account_id
   local -a domain_arguments=()
   local domain
 
   validate_certificate_runtime
+  production_account_id=$(resolve_production_acme_account_id)
   if lineage_exists; then
     [[ "$selected_environment" == production ]] ||
       fail "Staging certificate lineage already exists; use renew"
@@ -828,7 +889,8 @@ issue_certificate() {
     --non-interactive
     --agree-tos
     --no-eff-email
-    --email "$TLS_CONTACT_EMAIL"
+    --server "$letsencrypt_production_server"
+    --account "$production_account_id"
     --webroot
     --webroot-path /var/www/acme
     --webroot-map "$exact_webroot_map"
