@@ -299,6 +299,95 @@ func TestRunLoopForwardsFinalDeltaBeforeProviderCompletes(t *testing.T) {
 	}
 }
 
+func TestRunLoopHonorsConfiguredDeadline(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	generator := &deadlineTestGenerator{entered: entered, release: release}
+	service := newLoopTestService(t, generator)
+	service.loopLimits = normalizeLoopLimits(LoopLimits{
+		LoopTimeout: 25 * time.Millisecond,
+	})
+	if err := WithLoopLimits(LoopLimits{
+		LoopTimeout: 500 * time.Millisecond,
+	})(service); err != nil {
+		t.Fatalf("WithLoopLimits() error = %v", err)
+	}
+
+	type outcome struct {
+		result TextResult
+		err    error
+	}
+	completed := make(chan outcome, 1)
+	go func() {
+		result, err := service.generate(
+			context.Background(),
+			loopActor(),
+			loopRun(),
+			agentcontext.Manifest{},
+			loopRequest("请直接回答"),
+		)
+		completed <- outcome{result: result, err: err}
+	}()
+
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		close(release)
+		t.Fatal("final generation did not start")
+	}
+	// The production durations are scaled to milliseconds so this test proves
+	// work past the historical 25-unit cutoff without adding a slow test.
+	select {
+	case got := <-completed:
+		close(release)
+		t.Fatalf("generate() ended before release: %#v, %v", got.result, got.err)
+	case <-time.After(30 * time.Millisecond):
+	}
+	close(release)
+
+	select {
+	case got := <-completed:
+		if got.err != nil || got.result.Content != "completed in configured budget" {
+			t.Fatalf("generate() = %#v, %v", got.result, got.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("configured loop did not complete")
+	}
+}
+
+func TestRunLoopClassifiesConfiguredDeadline(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	defer close(release)
+	generator := &deadlineTestGenerator{entered: entered, release: release}
+	service := newLoopTestService(t, generator)
+	if err := WithLoopLimits(LoopLimits{
+		LoopTimeout: 25 * time.Millisecond,
+	})(service); err != nil {
+		t.Fatalf("WithLoopLimits() error = %v", err)
+	}
+
+	result, err := service.generate(
+		context.Background(),
+		loopActor(),
+		loopRun(),
+		agentcontext.Manifest{},
+		loopRequest("请直接回答"),
+	)
+	if err == nil {
+		t.Fatalf("generate() = %#v, nil; want deadline failure", result)
+	}
+	kind, retryable := classifyRunFailure(err)
+	if kind != string(ErrorTimeout) || !retryable {
+		t.Fatalf(
+			"classifyRunFailure() = (%q, %t), want (%q, true)",
+			kind,
+			retryable,
+			ErrorTimeout,
+		)
+	}
+}
+
 func TestRunLoopKeepsSourceRefsOutOfProviderMessagesAndInAudit(t *testing.T) {
 	generator := newScriptedGenerator(
 		toolLoopResult(
@@ -1424,6 +1513,31 @@ type scriptedGenerator struct {
 
 type blockingFinalGenerator struct {
 	release <-chan struct{}
+}
+
+type deadlineTestGenerator struct {
+	entered chan struct{}
+	release <-chan struct{}
+	once    sync.Once
+}
+
+func (generator *deadlineTestGenerator) Generate(
+	ctx context.Context,
+	request TextRequest,
+) (TextResult, error) {
+	if err := ValidateTextRequest(request); err != nil {
+		return TextResult{}, err
+	}
+	if request.ToolChoice.Mode == ToolChoiceRequired {
+		return finalResponseLoopResult(), nil
+	}
+	generator.once.Do(func() { close(generator.entered) })
+	select {
+	case <-ctx.Done():
+		return TextResult{}, ctx.Err()
+	case <-generator.release:
+		return finalLoopResult("completed in configured budget"), nil
+	}
 }
 
 func (*blockingFinalGenerator) Generate(

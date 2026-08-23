@@ -311,6 +311,10 @@ Docker
   server.env     # mode 600
 ```
 
+`server.env` 中的 `AGENT_RUN_LOOP_TIMEOUT` 是一次 Agent 工具循环的端到端预算，
+与文本 Provider 单次请求超时保持独立。当前部署值为 `150s`，并且必须严格大于
+当前启用的 `QIANWEN_TIMEOUT` 或 `QINIU_AI_TIMEOUT`，否则服务启动失败。
+
 生产 Workflow 不应以 root 身份执行任意 SSH 命令。后续应建立受限 deploy 身份，
 只允许执行审核过的部署入口。PostgreSQL、Go 端口和 Portal 内部端口不得直接暴露
 公网，公网只开放必要的 SSH、HTTP 和 HTTPS 入口，并同时核对主机防火墙与云安全组。

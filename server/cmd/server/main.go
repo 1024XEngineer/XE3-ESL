@@ -58,6 +58,11 @@ func run() int {
 		logger.Error("text generation configuration failed")
 		return 1
 	}
+	agentRunConfig, err := config.LoadAgentRun(textConfig.Timeout)
+	if err != nil {
+		logger.Error("Agent Run configuration failed")
+		return 1
+	}
 	modelProviders, err := app.NewAgentModelProviders(textConfig)
 	if err != nil {
 		logger.Error("text generation startup failed")
@@ -395,6 +400,9 @@ func run() int {
 				Model:              textConfig.Model,
 				MaxOutputTokens:    textConfig.MaxOutputTokens,
 				MaxInputCharacters: textConfig.MaxContextChars,
+			},
+			app.AgentRunRuntimeConfiguration{
+				LoopTimeout: agentRunConfig.LoopTimeout,
 			},
 			sceneCatalog,
 			ieltsQuestionBank,

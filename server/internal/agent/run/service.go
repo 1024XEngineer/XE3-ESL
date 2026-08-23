@@ -1588,6 +1588,12 @@ func classifyRunFailure(err error) (string, bool) {
 	if errors.As(err, &generationError) {
 		return string(generationError.Kind), generationError.Retryable()
 	}
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return string(ErrorTimeout), ErrorTimeout.Retryable()
+	case errors.Is(err, context.Canceled):
+		return string(ErrorCancelled), ErrorCancelled.Retryable()
+	}
 	return string(ErrorProviderUnavailable), true
 }
 
