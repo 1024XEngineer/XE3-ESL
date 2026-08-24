@@ -1,10 +1,17 @@
 name: xe3-speakup-staging
 
+x-speakup-logging: &speakup-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   postgres:
     image: postgres:18-bookworm@sha256:7d2695c3aa88e792e8b3b233e7e4adb296a20412c6c0ca361e3edaaacfada108
     pull_policy: always
     restart: unless-stopped
+    logging: *speakup-logging
     environment:
       POSTGRES_DB: ${STAGING_POSTGRES_DB:?STAGING_POSTGRES_DB is required}
       POSTGRES_USER: ${STAGING_POSTGRES_USER:?STAGING_POSTGRES_USER is required}
@@ -30,6 +37,7 @@ services:
     profiles:
       - migration
     restart: "no"
+    logging: *speakup-logging
     command:
       - /usr/local/bin/speakup-migrate
       - up
@@ -46,20 +54,24 @@ services:
     pull_policy: always
     restart: unless-stopped
     init: true
+    logging: *speakup-logging
     env_file:
       - ${STAGING_SERVER_ENV_FILE:?STAGING_SERVER_ENV_FILE is required}
     environment:
       DATABASE_URL: postgres://${STAGING_POSTGRES_USER:?STAGING_POSTGRES_USER is required}:${STAGING_POSTGRES_PASSWORD:?STAGING_POSTGRES_PASSWORD is required}@postgres:5432/${STAGING_POSTGRES_DB:?STAGING_POSTGRES_DB is required}?sslmode=disable
       SERVER_HOST: 0.0.0.0
       SERVER_PORT: "8080"
+      METRICS_HOST: 0.0.0.0
     ports:
       - "127.0.0.1:28083:8080"
     depends_on:
       postgres:
         condition: service_healthy
     networks:
-      - server_edge
-      - database
+      server_edge:
+        aliases:
+          - staging-api-metrics
+      database:
     healthcheck:
       test:
         [
@@ -81,6 +93,7 @@ services:
     pull_policy: always
     restart: unless-stopped
     init: true
+    logging: *speakup-logging
     environment:
       PORTAL_ADMIN_PASSWORD: ${PORTAL_ADMIN_PASSWORD:?PORTAL_ADMIN_PASSWORD is required}
       PORTAL_SQLITE_PATH: /app/.wrangler/portal.sqlite

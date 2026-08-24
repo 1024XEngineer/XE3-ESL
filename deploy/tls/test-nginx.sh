@@ -34,7 +34,7 @@ printf '%s\n' \
   >"$temporary_directory/tls.env"
 chmod 0600 "$temporary_directory/tls.env"
 
-for environment in staging production; do
+for environment in staging production monitor; do
   rendered="$temporary_directory/$environment.conf"
   "$manage" render-bootstrap \
     --environment "$environment" \

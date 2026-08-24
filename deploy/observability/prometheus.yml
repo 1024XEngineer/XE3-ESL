@@ -1,0 +1,73 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    product: speakup
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - prometheus:9090
+
+  - job_name: node
+    static_configs:
+      - targets:
+          - node-exporter:9100
+
+  - job_name: speakup-production-api
+    static_configs:
+      - targets:
+          - production-api-metrics:9090
+        labels:
+          environment: production
+
+  - job_name: speakup-staging-api
+    static_configs:
+      - targets:
+          - staging-api-metrics:9090
+        labels:
+          environment: staging
+
+  - job_name: blackbox-http
+    metrics_path: /probe
+    params:
+      module:
+        - http_2xx
+    static_configs:
+      - targets:
+          - https://speak-up.top/
+        labels:
+          environment: production
+          component: portal
+      - targets:
+          - https://api.speak-up.top/health
+        labels:
+          environment: production
+          component: api
+      - targets:
+          - https://speak-up.top/downloads/android/release.json
+        labels:
+          environment: production
+          component: android-release
+      - targets:
+          - https://staging-api.speak-up.top/health
+        labels:
+          environment: staging
+          component: api
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox:9115

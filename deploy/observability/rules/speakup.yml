@@ -1,0 +1,298 @@
+groups:
+  - name: speakup-endpoints
+    rules:
+      - alert: SpeakUpScrapeTargetDown
+        expr: up{job=~"prometheus|node|speakup-production-api|speakup-staging-api|blackbox-http"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "SpeakUp scrape target {{ $labels.job }} is down"
+          description: "Prometheus cannot scrape {{ $labels.instance }}."
+
+      - alert: SpeakUpScrapeTargetMissing
+        expr: |
+          absent(up{job="prometheus"})
+          or absent(up{job="node"})
+          or absent(up{job="speakup-production-api"})
+          or absent(up{job="speakup-staging-api"})
+          or absent(up{job="blackbox-http"})
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Required SpeakUp scrape job {{ $labels.job }} is absent"
+          description: "The expected scrape series disappeared instead of reporting a healthy or failed target."
+
+      - alert: SpeakUpEndpointDown
+        expr: probe_success{job="blackbox-http"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "SpeakUp {{ $labels.environment }} {{ $labels.component }} is unavailable"
+          description: "The HTTPS probe for {{ $labels.instance }} has failed for more than two minutes."
+
+      - alert: SpeakUpEndpointProbeMissing
+        expr: |
+          absent(probe_success{job="blackbox-http",environment="production",component="portal"})
+          or absent(probe_success{job="blackbox-http",environment="production",component="api"})
+          or absent(probe_success{job="blackbox-http",environment="production",component="android-release"})
+          or absent(probe_success{job="blackbox-http",environment="staging",component="api"})
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Required SpeakUp endpoint probe is absent"
+          description: "A configured public endpoint no longer produces probe_success."
+
+      - alert: SpeakUpAPIHigh5xxRate
+        expr: |
+          (
+            sum by (environment) (
+              increase(speakup_http_server_requests_total{status_class="5xx"}[5m])
+            ) >= 5
+          )
+          and
+          (
+            sum by (environment) (
+              increase(speakup_http_server_requests_total{status_class="5xx"}[5m])
+            )
+            /
+            clamp_min(
+              sum by (environment) (
+                increase(speakup_http_server_requests_total[5m])
+              ),
+              1
+            ) > 0.05
+          )
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "SpeakUp {{ $labels.environment }} API 5xx rate is above 5%"
+          description: "At least five server errors were observed and the five-minute error ratio remains above 5%."
+
+      - alert: SpeakUpAPIHighP95Latency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (environment, le) (
+              rate(speakup_http_server_request_duration_seconds_bucket[5m])
+            )
+          ) > 2
+          and
+          sum by (environment) (
+            increase(speakup_http_server_request_duration_seconds_count[5m])
+          ) >= 20
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "SpeakUp {{ $labels.environment }} API P95 latency is above 2 seconds"
+          description: "The five-minute request P95 has remained above two seconds with sufficient traffic."
+
+  - name: speakup-runtime
+    rules:
+      - alert: SpeakUpContainerDown
+        expr: speakup_container_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "SpeakUp {{ $labels.environment }} {{ $labels.service }} container is down"
+          description: "The expected SpeakUp container has not been running for more than two minutes."
+
+      - alert: SpeakUpContainerUnhealthy
+        expr: speakup_container_health == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "SpeakUp {{ $labels.environment }} {{ $labels.service }} container is unhealthy"
+          description: "The container health check has not reported healthy for more than five minutes."
+
+      - alert: SpeakUpContainerRestarting
+        expr: increase(speakup_container_restarts_total[15m]) >= 3
+        labels:
+          severity: warning
+        annotations:
+          summary: "SpeakUp {{ $labels.environment }} {{ $labels.service }} is repeatedly restarting"
+          description: "The container restarted at least three times in fifteen minutes."
+
+      - alert: SpeakUpHostMetricsStale
+        expr: time() - node_textfile_mtime_seconds{file=~".*/speakup\\.prom"} > 180
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "SpeakUp host metrics are stale"
+          description: "The bounded container, backup, and certificate collector has not refreshed for more than three minutes."
+
+      - alert: SpeakUpHostMetricsMissing
+        expr: absent(node_textfile_mtime_seconds{file=~".*/speakup\\.prom"})
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "SpeakUp host metrics file is missing"
+          description: "node_exporter has no textfile series for the reviewed SpeakUp host collector path."
+
+      - alert: SpeakUpDiskSpaceLow
+        expr: |
+          speakup_host_filesystem_avail_bytes{mountpoint="/"}
+          /
+          speakup_host_filesystem_size_bytes{mountpoint="/"} < 0.15
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Server filesystem {{ $labels.mountpoint }} has less than 15% free space"
+          description: "Free space is {{ $value | humanizePercentage }}."
+
+      - alert: SpeakUpDiskSpaceCritical
+        expr: |
+          speakup_host_filesystem_avail_bytes{mountpoint="/"}
+          /
+          speakup_host_filesystem_size_bytes{mountpoint="/"} < 0.08
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Server filesystem {{ $labels.mountpoint }} has less than 8% free space"
+          description: "Free space is {{ $value | humanizePercentage }}."
+
+      - alert: SpeakUpInodesLow
+        expr: |
+          speakup_host_filesystem_files_free{mountpoint="/"}
+          /
+          speakup_host_filesystem_files{mountpoint="/"} < 0.15
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Server filesystem {{ $labels.mountpoint }} has less than 15% free inodes"
+          description: "Free inodes are {{ $value | humanizePercentage }}."
+
+      - alert: SpeakUpInodesCritical
+        expr: |
+          speakup_host_filesystem_files_free{mountpoint="/"}
+          /
+          speakup_host_filesystem_files{mountpoint="/"} < 0.08
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Server filesystem {{ $labels.mountpoint }} has less than 8% free inodes"
+          description: "Free inodes are {{ $value | humanizePercentage }}."
+
+  - name: speakup-certificates-and-backups
+    rules:
+      - alert: SpeakUpCertificateExpiresWithin30Days
+        expr: |
+          speakup_tls_certificate_expiry_timestamp_seconds - time() < 30 * 24 * 60 * 60
+          and
+          speakup_tls_certificate_expiry_timestamp_seconds - time() >= 14 * 24 * 60 * 60
+        labels:
+          severity: warning
+        annotations:
+          summary: "SpeakUp {{ $labels.environment }} TLS certificate expires within 30 days"
+          description: "Certificate {{ $labels.lineage }} requires renewal tracking."
+
+      - alert: SpeakUpCertificateExpiresWithin14Days
+        expr: |
+          speakup_tls_certificate_expiry_timestamp_seconds - time() < 14 * 24 * 60 * 60
+          and
+          speakup_tls_certificate_expiry_timestamp_seconds - time() >= 7 * 24 * 60 * 60
+        labels:
+          severity: high
+        annotations:
+          summary: "SpeakUp {{ $labels.environment }} TLS certificate expires within 14 days"
+          description: "Certificate {{ $labels.lineage }} requires prompt renewal action."
+
+      - alert: SpeakUpCertificateExpiresWithin7Days
+        expr: speakup_tls_certificate_expiry_timestamp_seconds - time() < 7 * 24 * 60 * 60
+        labels:
+          severity: critical
+        annotations:
+          summary: "SpeakUp {{ $labels.environment }} TLS certificate expires within 7 days"
+          description: "Certificate {{ $labels.lineage }} is at immediate risk of expiry."
+
+      - alert: SpeakUpBackupStale
+        expr: time() - speakup_backup_last_success_timestamp_seconds > 30 * 60 * 60
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: "SpeakUp {{ $labels.database }} backup is stale"
+          description: "No verified successful backup has been recorded in the last 30 hours."
+
+      - alert: SpeakUpScheduledSafetyCheckFailed
+        expr: speakup_systemd_unit_last_run_success == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "SpeakUp {{ $labels.purpose }} last run failed"
+          description: "Systemd unit {{ $labels.unit }} did not finish successfully."
+
+      - alert: SpeakUpTLSRenewalNotRunRecently
+        expr: |
+          time()
+          - speakup_systemd_unit_last_run_timestamp_seconds{purpose="tls_renewal"}
+          > 18 * 60 * 60
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: "SpeakUp TLS renewal has not run within 18 hours"
+          description: "The twice-daily systemd renewal unit {{ $labels.unit }} is stale even if its previous run succeeded."
+
+      - alert: SpeakUpRestoreCheckNotRunMonthly
+        expr: |
+          (
+            time()
+            - speakup_systemd_unit_last_run_timestamp_seconds{purpose="postgres_restore_check"}
+            > 31 * 24 * 60 * 60
+          )
+          or
+          (
+            time()
+            - speakup_systemd_unit_last_run_timestamp_seconds{purpose="portal_restore_check"}
+            > 31 * 24 * 60 * 60
+          )
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: "SpeakUp {{ $labels.purpose }} has not run within 31 days"
+          description: "The monthly restore verification unit {{ $labels.unit }} is stale even if its previous run succeeded."
+
+  - name: speakup-providers
+    rules:
+      - alert: SpeakUpProviderFailureRateHigh
+        expr: |
+          (
+            sum by (environment, provider, capability) (
+              increase(speakup_provider_calls_total{outcome!="success"}[10m])
+            ) >= 5
+          )
+          and
+          (
+            sum by (environment, provider, capability) (
+              increase(speakup_provider_calls_total{outcome!="success"}[10m])
+            )
+            /
+            clamp_min(
+              sum by (environment, provider, capability) (
+                increase(speakup_provider_calls_total[10m])
+              ),
+              1
+            ) > 0.20
+          )
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "SpeakUp {{ $labels.provider }} {{ $labels.capability }} failures exceed 20%"
+          description: "At least five failures occurred and the ten-minute failure ratio remains above 20%."

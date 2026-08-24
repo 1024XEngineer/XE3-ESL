@@ -791,6 +791,11 @@ jq --exit-status \
       ("ghcr.io/1024xengineer/xe3-esl-server@" + $server_digest) and
     ([.services[] | has("build")] | any | not) and
     ([.services[] | has("container_name")] | any | not) and
+    ([.services[] |
+      .logging.driver == "json-file" and
+      .logging.options["max-size"] == "10m" and
+      .logging.options["max-file"] == "5"
+    ] | all) and
     .services.portal.ports[0].host_ip == "127.0.0.1" and
     (.services.portal.ports[0].published | tostring) == "18082" and
     .services.server.ports[0].host_ip == "127.0.0.1" and
@@ -803,6 +808,9 @@ jq --exit-status \
     (.services.postgres.networks | keys) == ["database"] and
     (.services.migrate.networks | keys) == ["database"] and
     (.services.server.networks | keys | sort) == ["database", "server_edge"] and
+    .services.server.networks.server_edge.aliases ==
+      ["production-api-metrics"] and
+    .services.server.environment.METRICS_HOST == "0.0.0.0" and
     .services.server.environment.TRUSTED_PROXY_CIDRS == "172.31.0.1/32" and
     .services.server.environment.TRUSTED_PROXY_HEADER == "x-forwarded-for" and
     .services.portal.healthcheck.test == [

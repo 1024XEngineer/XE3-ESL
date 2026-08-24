@@ -1,0 +1,178 @@
+# SpeakUp observability
+
+This directory defines the isolated production monitoring boundary for SpeakUp.
+It does not expose Prometheus, Alertmanager, node_exporter, blackbox_exporter, or
+application `/metrics` ports to the public network. Only Grafana is published on
+the host loopback interface; Nginx may expose it as `monitor.speak-up.top` after
+DNS and certificate validation.
+
+The shared server remains protected by three scope rules:
+
+- no Docker socket is mounted into an observability container;
+- host container metrics are exported by a fixed script that inspects only the
+  `xe3-speakup-production` and `xe3-speakup-staging` Compose projects;
+- log rotation lists exact SpeakUp files and never rotates another team's logs.
+
+## Components
+
+- Prometheus: 30-day/8-GB bounded retention.
+- Alertmanager: private SMTP configuration supplied by the server operator.
+- Grafana: provisioned Prometheus data source and SpeakUp overview dashboard.
+- blackbox_exporter: Portal, API, and Android release HTTPS probes.
+- node_exporter: only the bounded SpeakUp textfile collector. It has no host
+  root mount; the reviewed host-side exporter emits root disk and inode values.
+- GitHub Actions `Production probe`: an off-host five-minute public endpoint
+  check so a full server outage remains visible when the local stack is down.
+
+The provisioned dashboard keeps Portal, API, Android metadata, container,
+disk/inode, API, and provider status separate. Public probes expose both
+`probe_success` and per-target `probe_duration_seconds`. Safety-unit alerts are
+also time-bounded: the twice-daily TLS renewal becomes stale after 18 hours,
+while each explicitly named PostgreSQL or Portal restore check becomes stale
+after 31 days even when its previous run succeeded.
+
+All container images and runtime limits are explicit. Grafana is the only
+service with a published port, and that port is `127.0.0.1:13000`.
+
+## Application metrics boundary
+
+The production and Staging Server Compose definitions set `METRICS_HOST=0.0.0.0`
+inside their private Docker networks and give the services unique network
+aliases. There is still no host or public port for `9090`; Prometheus reaches it
+only through the existing SpeakUp networks. Nginx continues to return `404` for
+public `/metrics` requests.
+
+The exported HTTP series are bounded by method, route template, status class,
+and environment. Provider series must use only fixed `provider`, `capability`,
+`outcome`, `error_kind`, and `unit` labels. Never use user IDs, request IDs,
+models supplied by a caller, raw errors, text, audio, object keys, credentials,
+or session tokens as metric labels.
+
+## Private files
+
+Create these files on the server; never commit or paste their populated values:
+
+```text
+/etc/speakup/observability.env
+/etc/speakup/observability-metrics.env
+/etc/speakup/alertmanager.yml
+/etc/speakup/grafana-admin-password
+```
+
+Start from `observability.env.example`, `observability-metrics.env.example`, and
+`alertmanager.example.yml`. Standalone Compose bind mounts preserve host
+ownership. Install `observability.env` and `observability-metrics.env` as
+`root:root` mode `0600`, Alertmanager configuration as UID `65534` mode `0400`,
+and the one-line newline-terminated Grafana password as UID `472` mode `0400`.
+The two service UIDs match the pinned container images without making a secret
+group- or world-readable. Validate all four files before Compose reads them:
+
+```bash
+/usr/local/sbin/xe3-speakup-observability-validate-private-files \
+  --environment-file /etc/speakup/observability.env \
+  --metrics-environment-file /etc/speakup/observability-metrics.env
+```
+
+## DNS and TLS prerequisite
+
+Do not install `monitor-nginx.conf` until both conditions are true:
+
+1. `monitor.speak-up.top` resolves to the production server;
+2. the independent `monitor.speak-up.top` certificate lineage has exactly that
+   single SAN and has been activated after `nginx -t`.
+
+The monitor lineage reuses the reviewed Production ACME account and HTTP-01
+webroot but never changes the exact three-SAN `speak-up.top` Production lineage.
+Issue, verify, and activate it through `deploy/tls/manage.sh`:
+
+```bash
+/usr/local/sbin/xe3-speakup-tls issue-monitor --env-file /etc/speakup/tls.env
+/usr/local/sbin/xe3-speakup-tls verify --environment monitor --env-file /etc/speakup/tls.env
+/usr/local/sbin/xe3-speakup-tls activate --environment monitor --env-file /etc/speakup/tls.env
+```
+
+## Installation order
+
+Copy this reviewed directory to `/opt/xe3-speakup-observability/source`, then:
+
+1. Install the private files above, install `validate-private-files` as
+   `/usr/local/sbin/xe3-speakup-observability-validate-private-files`, and run
+   the validator.
+2. Install `xe3-speakup-export-metrics` as
+   `/usr/local/sbin/xe3-speakup-export-metrics` with mode `0755`.
+3. Install the metrics service/timer under `/etc/systemd/system`, reload systemd,
+   and start the timer.
+4. Install `xe3-speakup-nginx.logrotate` as
+   `/etc/logrotate.d/xe3-speakup-nginx` with mode `0644`.
+5. Recreate only the SpeakUp Staging and Production containers so their
+   per-container `json-file` limits and internal metrics listener take effect.
+6. Start the monitoring stack with the private environment file:
+
+   ```bash
+   docker compose \
+     --env-file /etc/speakup/observability.env \
+     --file /opt/xe3-speakup-observability/source/compose.yaml \
+     up --detach --pull always --wait
+   ```
+
+7. Confirm every Prometheus target is up from a loopback Grafana session.
+8. After DNS/TLS validation, install `monitor-nginx.conf`, run
+   `/usr/local/nginx/sbin/nginx -t`, and reload only after it succeeds.
+
+Do not use `docker compose down --volumes`; the three named observability volumes
+contain monitoring history, Alertmanager state, and Grafana configuration.
+
+## Verification
+
+Run repository contracts before touching the server:
+
+```bash
+make check-observability
+make check-staging-deploy
+make check-production-deploy
+```
+
+Then verify the installed runtime:
+
+```bash
+systemctl status xe3-speakup-observability-metrics.timer
+systemctl status xe3-speakup-observability-metrics.service
+docker compose \
+  --env-file /etc/speakup/observability.env \
+  --file /opt/xe3-speakup-observability/source/compose.yaml \
+  ps
+curl --fail http://127.0.0.1:13000/api/health
+curl --fail --location https://monitor.speak-up.top/api/health
+```
+
+Public `/metrics` must still return `404` on Portal, API, and monitor hosts.
+
+## Safe off-host alert drill
+
+The `Production probe` workflow provides two manual drill modes and does not
+stop, restart, or alter a production service:
+
+1. Dispatch `drill=firing`. The workflow intentionally finishes red after it
+   opens and assigns one `[production-probe drill]` GitHub Issue.
+2. Confirm the assignee received GitHub's native notification and record the
+   Issue and workflow-run URLs.
+3. Dispatch `drill=resolved`. The workflow comments with the resolved run and
+   closes the same Issue.
+
+The Issue history is the sanitized firing/resolved receipt and uses only the
+built-in `GITHUB_TOKEN`; no notification secret is required. Scheduled real
+probe failures use a separate Issue and resolve it after a successful run.
+Never make the Portal, API, or APK unavailable to exercise this path. The local
+Alertmanager receiver must be tested separately after its private SMTP settings
+are installed; do not commit those settings.
+
+## Rollback
+
+- If the stack fails, keep its volumes and stop only the
+  `xe3-speakup-observability` Compose project.
+- Restore the previous SpeakUp Compose files and recreate only those services if
+  the metrics-network or logging change is the cause.
+- Remove only the monitor Nginx vhost after `nginx -t` verifies the remaining
+  configuration.
+- Removing observability must not remove Production/Staging networks, databases,
+  Portal data, certificates, or another team's containers.
