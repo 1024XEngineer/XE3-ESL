@@ -133,6 +133,31 @@ void main() {
   });
 
   test(
+    'exposes conversation restoration separately from generic busy work',
+    () async {
+      final gate = Completer<void>();
+      final client = _HistoryAgentClient(
+        startsWithoutHistory: true,
+        initializationGate: gate,
+      );
+      final controller = ConversationController(client: client);
+      addTearDown(controller.dispose);
+
+      final restoration = controller.initialize();
+      await client.initialListStarted.future;
+
+      expect(controller.isBusy, isTrue);
+      expect(controller.isRestoring, isTrue);
+
+      gate.complete();
+      await restoration;
+
+      expect(controller.isBusy, isFalse);
+      expect(controller.isRestoring, isFalse);
+    },
+  );
+
+  test(
     'Fake client cancels old account work and reuses stable write IDs',
     () async {
       final client = FakeAgentClient(delay: const Duration(milliseconds: 20));
