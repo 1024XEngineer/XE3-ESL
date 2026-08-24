@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -120,12 +121,14 @@ class _VoiceCaptureControlState extends State<VoiceCaptureControl> {
 
   @override
   void dispose() {
+    _removePointerRoute();
     _holdTimer?.cancel();
     _operationGeneration++;
     super.dispose();
   }
 
   void _resetInteraction() {
+    _removePointerRoute();
     _holdTimer?.cancel();
     _holdTimer = null;
     _pointerOrigin = null;
@@ -184,6 +187,10 @@ class _VoiceCaptureControlState extends State<VoiceCaptureControl> {
       _pointerOrigin = event.position;
       _pointerPosition = event.position;
     });
+    GestureBinding.instance.pointerRouter.addRoute(
+      event.pointer,
+      _handleTrackedPointerEvent,
+    );
     if (!startingCapture || widget.mode == VoiceCaptureMode.tapToToggle) {
       return;
     }
@@ -235,12 +242,43 @@ class _VoiceCaptureControlState extends State<VoiceCaptureControl> {
     _finishPointer(VoiceCaptureReleaseIntent.cancel);
   }
 
+  void _handleTrackedPointerEvent(PointerEvent event) {
+    if (event.pointer != _activePointer) {
+      return;
+    }
+    switch (event) {
+      case final PointerMoveEvent move:
+        _handlePointerMove(move);
+        return;
+      case final PointerUpEvent up:
+        _handlePointerUp(up);
+        return;
+      case final PointerCancelEvent cancel:
+        _handlePointerCancel(cancel);
+        return;
+      default:
+        return;
+    }
+  }
+
+  void _removePointerRoute() {
+    final pointer = _activePointer;
+    if (pointer == null) {
+      return;
+    }
+    GestureBinding.instance.pointerRouter.removeRoute(
+      pointer,
+      _handleTrackedPointerEvent,
+    );
+  }
+
   void _finishPointer(VoiceCaptureReleaseIntent intent) {
     if (!mounted || !_pointerActive) {
       return;
     }
     _holdTimer?.cancel();
     _holdTimer = null;
+    _removePointerRoute();
     final holdStarted = _holdStarted;
     final endingTapCapture = _tapMode && _isCapturing;
     setState(() {

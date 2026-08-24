@@ -1888,6 +1888,8 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       onSendVoice: _sendShortVoice,
       onConvertToText: _convertShortVoice,
       onCancelRecording: _cancelShortVoice,
+      onRetryConfirmation: _confirmPendingTranscript,
+      onRerecord: widget.controller.rerecord,
       onSubmitConvertedAnswer: _submitConvertedAnswer,
       onCancelConvertedAnswer: _cancelConvertedAnswer,
       onOpenTextAnswer: _openTextAnswer,
