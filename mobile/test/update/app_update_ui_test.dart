@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -43,6 +44,46 @@ void main() {
 
     expect(find.byKey(const Key('app-update-dialog')), findsNothing);
     expect(metadataRequests, 1);
+  });
+
+  testWidgets('deferred update appears after a blocking modal closes', (
+    tester,
+  ) async {
+    final metadata = Completer<String>();
+    final requestStarted = Completer<void>();
+    final service = _service(
+      bodyLoader: (_) {
+        requestStarted.complete();
+        return metadata.future;
+      },
+    );
+
+    await tester.pumpWidget(SpeakUpApp.preview(appUpdateService: service));
+    await tester.pump();
+    await requestStarted.future;
+
+    final shellContext = tester.element(
+      find.byKey(const Key('primary-tab-agent')),
+    );
+    unawaited(
+      showModalBottomSheet<void>(
+        context: shellContext,
+        builder: (_) =>
+            const SizedBox(key: Key('blocking-update-modal'), height: 120),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    metadata.complete(jsonEncode(_metadata()));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('app-update-dialog')), findsNothing);
+
+    Navigator.of(
+      tester.element(find.byKey(const Key('blocking-update-modal'))),
+    ).pop();
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('app-update-dialog')), findsOneWidget);
   });
 
   testWidgets('profile shows the installed version and exposes manual check', (

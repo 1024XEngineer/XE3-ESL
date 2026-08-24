@@ -53,6 +53,7 @@ class SpeakUpShell extends StatefulWidget {
     this.speechFeedbackController,
     this.coachingProfileController,
     this.appUpdateService,
+    this.routeObserver,
     required this.conversationController,
     required this.composerController,
     this.messageAudioController,
@@ -79,13 +80,14 @@ class SpeakUpShell extends StatefulWidget {
   final SpeechFeedbackController? speechFeedbackController;
   final CoachingProfileController? coachingProfileController;
   final AppUpdateService? appUpdateService;
+  final RouteObserver<ModalRoute<Object?>>? routeObserver;
 
   @override
   State<SpeakUpShell> createState() => _SpeakUpShellState();
 }
 
 class _SpeakUpShellState extends State<SpeakUpShell>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, RouteAware {
   static const _destinations = [
     PlatformNavigationDestination(
       label: 'SpeakUp',
@@ -133,6 +135,7 @@ class _SpeakUpShellState extends State<SpeakUpShell>
   ({InstalledAppVersion installedVersion, AppRelease release})?
   _pendingAutomaticUpdate;
   int _navigationGeneration = 0;
+  ModalRoute<Object?>? _observedRoute;
 
   @override
   void initState() {
@@ -177,10 +180,22 @@ class _SpeakUpShellState extends State<SpeakUpShell>
       _feedbackPresenter?.dispose();
       _feedbackPresenter = _createFeedbackPresenter();
     }
+    if (oldWidget.routeObserver != widget.routeObserver) {
+      oldWidget.routeObserver?.unsubscribe(this);
+      _observedRoute = null;
+      _subscribeToRoute();
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _subscribeToRoute();
   }
 
   @override
   void dispose() {
+    widget.routeObserver?.unsubscribe(this);
     widget.authController?.removeListener(_handleAuthState);
     widget.conversationController.removeListener(_handleAgentInteractionState);
     widget.composerController.removeListener(_handleAgentInteractionState);
@@ -188,6 +203,22 @@ class _SpeakUpShellState extends State<SpeakUpShell>
     _feedbackPresenter?.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  void _subscribeToRoute() {
+    final observer = widget.routeObserver;
+    final route = ModalRoute.of<Object?>(context);
+    if (observer == null || route == null || identical(route, _observedRoute)) {
+      return;
+    }
+    observer.unsubscribe(this);
+    observer.subscribe(this, route);
+    _observedRoute = route;
+  }
+
+  @override
+  void didPopNext() {
+    _schedulePendingUpdatePresentation();
   }
 
   @override

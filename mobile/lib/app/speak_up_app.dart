@@ -209,6 +209,7 @@ class _AuthenticatedNavigator extends StatefulWidget {
 
 class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
   final _navigatorKey = GlobalKey<NavigatorState>();
+  final _routeObserver = RouteObserver<ModalRoute<Object?>>();
   late final ConversationController _conversationController;
   late final ComposerController _composerController;
   late final AgentMessageAudioController? _messageAudioController;
@@ -384,6 +385,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
   Widget build(BuildContext context) {
     return Navigator(
       key: _navigatorKey,
+      observers: [_routeObserver],
       initialRoute: AppRoutes.home,
       onGenerateRoute: (settings) {
         final page = switch (settings.name) {
@@ -406,6 +408,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             speechFeedbackController: widget.speechFeedbackController,
             coachingProfileController: widget.coachingProfileController,
             appUpdateService: widget.appUpdateService,
+            routeObserver: _routeObserver,
           ),
           AppRoutes.preparation => PreparationPage(
             showBackButton: true,
@@ -466,6 +469,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             speechFeedbackController: widget.speechFeedbackController,
             coachingProfileController: widget.coachingProfileController,
             appUpdateService: widget.appUpdateService,
+            routeObserver: _routeObserver,
           ),
           AppRoutes.review => ReviewPage(
             showBackButton: true,
