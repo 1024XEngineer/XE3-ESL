@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:speakup/features/coaching/practice/practice_audio_player.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/scenario/scenario_practice.dart';
 import 'package:speakup/features/coaching/practice/avatar/avatar.dart';
@@ -23,7 +25,7 @@ final class PracticeAvatarSessionView {
     required this.replayPlaying,
   });
 
-  final WidgetBuilder surfaceBuilder;
+  final WidgetBuilder? surfaceBuilder;
   final String? statusLabel;
   final Future<void> Function() interruptForUserTurn;
   final Future<void> Function()? onReplayQuestion;
@@ -118,6 +120,7 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
   bool _syncAgain = false;
   bool _foreground = true;
   bool _hasLiveAvatarController = true;
+  bool _hasUsableAvatarSurface = false;
   bool _disposed = false;
   int _connectionAttempts = 0;
   int _connectionOperationId = 0;
@@ -211,6 +214,7 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
       _connectionInFlight = false;
       _connectionAttemptedSessionId = null;
       _readinessExpired = false;
+      _hasUsableAvatarSurface = false;
       if (resetConnectionAttempts) {
         _connectionAttempts = 0;
       }
@@ -265,7 +269,16 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
     if (!_hasLiveAvatarController) {
       return;
     }
-    if (_avatarController.state.canUseAvatar) {
+    final avatarState = _avatarController.state;
+    if (switch (avatarState.renderer.connection) {
+      AvatarRendererConnection.surfaceReady ||
+      AvatarRendererConnection.connecting ||
+      AvatarRendererConnection.connected => true,
+      _ => false,
+    }) {
+      _hasUsableAvatarSurface = true;
+    }
+    if (avatarState.canUseAvatar) {
       _connectionAttempts = 0;
       _readinessTimer?.cancel();
       _readinessTimer = null;
@@ -347,9 +360,7 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
     }
     _autoHandledQuestionId = question.id;
     if (widget.practiceController.supportsRealtimeQuestionSpeech) {
-      // The shared Practice controller starts cloud PCM as soon as the new
-      // question is presented. Do not replace it with the avatar's slower
-      // complete-WAV path or the two players would race each other.
+      await _speakRealtimeQuestion(question);
       return;
     }
     await _speakQuestion(question);
@@ -547,6 +558,47 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
     }
   }
 
+  Future<void> _speakRealtimeQuestion(
+    PracticeQuestion question, {
+    bool replay = false,
+  }) async {
+    if (_speechInFlight || !_hasLiveAvatarController) {
+      return;
+    }
+    final sessionId = widget.practiceController.practiceSessionId;
+    if (sessionId == null || question.sessionId != sessionId) {
+      return;
+    }
+    final avatarController = _avatarController;
+    final nativeOutput = widget.practiceController.questionSpeechPlayer;
+    if (nativeOutput == null) {
+      return;
+    }
+    _speechInFlight = true;
+    if (replay) {
+      _replayLoading = true;
+    }
+    if (mounted) {
+      setState(() {});
+    }
+    try {
+      await widget.practiceController.playCurrentQuestionSpeech(
+        output: _AvatarOrNativeQuestionSpeechSink(
+          avatarController,
+          nativeOutput,
+          _readinessExpired,
+        ),
+      );
+    } finally {
+      _speechInFlight = false;
+      _replayLoading = false;
+      if (mounted) {
+        setState(() {});
+      }
+      _scheduleSync();
+    }
+  }
+
   bool _speechFenceMatches({
     required int generation,
     required String sessionId,
@@ -569,12 +621,17 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
     if (_replayLoading || !_canSpeakNow(widget.practiceController)) {
       return;
     }
-    if (_isAvatarSpeaking) {
+    if (_isAvatarSpeaking ||
+        widget.practiceController.isQuestionAudioLoading ||
+        widget.practiceController.isQuestionAudioPlaying) {
       await _interruptForUserTurn();
       return;
     }
     if (widget.practiceController.supportsRealtimeQuestionSpeech) {
-      await widget.practiceController.toggleQuestionAudio();
+      final question = widget.practiceController.currentQuestion;
+      if (question != null) {
+        await _speakRealtimeQuestion(question, replay: true);
+      }
       return;
     }
     final question = widget.practiceController.currentQuestion;
@@ -628,9 +685,9 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
     return widget.builder(
       context,
       PracticeAvatarSessionView(
-        surfaceBuilder: (_) => _hasLiveAvatarController
-            ? _avatarController.buildSurface(key: widget.surfaceKey)
-            : SizedBox.expand(key: widget.surfaceKey),
+        surfaceBuilder: _hasLiveAvatarController && _hasUsableAvatarSurface
+            ? (_) => _avatarController.buildSurface(key: widget.surfaceKey)
+            : null,
         statusLabel: _avatarStatusLabel,
         interruptForUserTurn: _interruptForUserTurn,
         onReplayQuestion: !widget.practiceController.canPlayQuestionAudio
@@ -661,6 +718,105 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
     }
     super.dispose();
   }
+}
+
+final class _AvatarOrNativeQuestionSpeechSink implements PracticePCMStreamSink {
+  _AvatarOrNativeQuestionSpeechSink(
+    this._avatarController,
+    this._nativeOutput,
+    this._readinessExpired,
+  );
+
+  final AvatarController _avatarController;
+  final PracticePCMStreamSink _nativeOutput;
+  final bool _readinessExpired;
+  PracticePCMStreamSink? _selectedOutput;
+  bool _stopped = false;
+
+  @override
+  Future<void> startPCMStream() async {
+    if (_selectedOutput != null) {
+      throw StateError('A realtime question output was already selected.');
+    }
+    if (_avatarController.state.canUseAvatar) {
+      _selectedOutput = _AvatarQuestionSpeechSink(_avatarController);
+      try {
+        await _selectedOutput!.startPCMStream();
+        if (_stopped) {
+          await _selectedOutput!.stopPCMStream();
+          throw const AvatarRendererException(
+            AvatarRendererFailure.unavailable,
+          );
+        }
+        developer.log(
+          'realtime_question_route output=avatar',
+          name: 'speakup.avatar',
+        );
+        return;
+      } catch (_) {
+        if (_stopped) {
+          rethrow;
+        }
+        await _bestEffort(_selectedOutput!.stopPCMStream);
+      }
+    }
+
+    final fallbackReason =
+        _avatarController.state.failure?.name ??
+        (_readinessExpired ? 'readiness_timeout' : 'not_ready');
+    _selectedOutput = _nativeOutput;
+    await _nativeOutput.startPCMStream();
+    if (_stopped) {
+      await _nativeOutput.stopPCMStream();
+      throw const AvatarRendererException(AvatarRendererFailure.unavailable);
+    }
+    developer.log(
+      'realtime_question_route output=native reason=$fallbackReason',
+      name: 'speakup.avatar',
+    );
+  }
+
+  @override
+  Future<void> appendPCM(Uint8List bytes) {
+    final output = _selectedOutput;
+    if (_stopped || output == null) {
+      throw const AvatarRendererException(AvatarRendererFailure.unavailable);
+    }
+    return output.appendPCM(bytes);
+  }
+
+  @override
+  Future<void> finishPCMStream() {
+    final output = _selectedOutput;
+    if (_stopped || output == null) {
+      throw const AvatarRendererException(AvatarRendererFailure.unavailable);
+    }
+    return output.finishPCMStream();
+  }
+
+  @override
+  Future<void> stopPCMStream() async {
+    _stopped = true;
+    await _selectedOutput?.stopPCMStream();
+  }
+}
+
+final class _AvatarQuestionSpeechSink implements PracticePCMStreamSink {
+  const _AvatarQuestionSpeechSink(this._controller);
+
+  final AvatarController _controller;
+
+  @override
+  Future<void> startPCMStream() => _controller.startPcmStream();
+
+  @override
+  Future<void> appendPCM(Uint8List bytes) => _controller.appendPcm(bytes);
+
+  @override
+  Future<void> finishPCMStream() => _controller.finishPcmStream();
+
+  @override
+  Future<void> stopPCMStream() => _controller.stopPcmStream();
 }
 
 bool _canSpeakNow(PracticeController controller) {

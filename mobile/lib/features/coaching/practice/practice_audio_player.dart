@@ -21,7 +21,12 @@ abstract interface class PracticeAudioPlayer {
   Future<void> dispose();
 }
 
-abstract interface class PracticePCMStreamPlayer {
+/// One selected destination for a single raw PCM utterance.
+///
+/// The caller selects the sink before [startPCMStream] and must not switch it
+/// until the utterance finishes or is stopped. Implementations copy each chunk
+/// before [appendPCM] completes.
+abstract interface class PracticePCMStreamSink {
   Future<void> startPCMStream();
 
   Future<void> appendPCM(Uint8List bytes);
@@ -29,7 +34,10 @@ abstract interface class PracticePCMStreamPlayer {
   Future<void> finishPCMStream();
 
   Future<void> stopPCMStream();
+}
 
+abstract interface class PracticePCMStreamPlayer
+    implements PracticePCMStreamSink {
   Future<void> disposePCMStream();
 }
 

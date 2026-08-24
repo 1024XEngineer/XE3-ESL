@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
@@ -46,6 +47,10 @@ final class AvatarController extends ChangeNotifier {
   bool _disposed = false;
   Future<void>? _interruptFuture;
   Future<void>? _closeFuture;
+  int? _realtimePcmGeneration;
+  Uint8List? _pendingRealtimePcm;
+  int _realtimePcmChunkCount = 0;
+  int _realtimePcmByteCount = 0;
 
   AvatarControllerState get state => _state;
 
@@ -216,10 +221,123 @@ final class AvatarController extends ChangeNotifier {
     }
   }
 
+  /// Starts one realtime PCM utterance owned by the avatar.
+  ///
+  /// One chunk is retained so the final non-empty SDK send can be marked with
+  /// `end: true`, as required by AvatarKit. A stream failure never starts the
+  /// local player halfway through the utterance.
+  Future<void> startPcmStream() async {
+    _ensureOpen();
+    await interrupt();
+    if (_closed || !_renderer.state.canAcceptAudio) {
+      throw AvatarRendererException(
+        _renderer.state.failure ?? AvatarRendererFailure.unavailable,
+      );
+    }
+    final generation = ++_generation;
+    _realtimePcmGeneration = generation;
+    _realtimePcmChunkCount = 0;
+    _realtimePcmByteCount = 0;
+    _setState(
+      AvatarControllerState(
+        phase: AvatarControllerPhase.speaking,
+        renderer: _renderer.state,
+      ),
+    );
+    developer.log(
+      'realtime_pcm_started sample_rate_hz=24000 channels=1 bits=16',
+      name: 'speakup.avatar',
+    );
+  }
+
+  Future<void> appendPcm(Uint8List pcmBytes) async {
+    _ensureOpen();
+    final generation = _realtimePcmGeneration;
+    if (generation == null ||
+        !_isCurrent(generation) ||
+        pcmBytes.isEmpty ||
+        pcmBytes.length.isOdd) {
+      throw const AvatarRendererException(
+        AvatarRendererFailure.invalidConfiguration,
+      );
+    }
+
+    final owned = Uint8List.fromList(pcmBytes);
+    final previous = _pendingRealtimePcm;
+    _pendingRealtimePcm = owned;
+    _realtimePcmChunkCount++;
+    _realtimePcmByteCount += owned.length;
+    if (previous == null) {
+      return;
+    }
+    try {
+      await _renderer.sendPcm(previous, end: false);
+    } catch (_) {
+      if (_isCurrent(generation)) {
+        _failRealtimePcmStream(
+          _renderer.state.failure ?? AvatarRendererFailure.rendering,
+        );
+      }
+      throw AvatarRendererException(
+        _renderer.state.failure ?? AvatarRendererFailure.rendering,
+      );
+    } finally {
+      previous.fillRange(0, previous.length, 0);
+    }
+    if (!_isCurrent(generation) || _realtimePcmGeneration != generation) {
+      throw const AvatarRendererException(AvatarRendererFailure.unavailable);
+    }
+  }
+
+  Future<void> finishPcmStream() async {
+    _ensureOpen();
+    final generation = _realtimePcmGeneration;
+    final finalChunk = _pendingRealtimePcm;
+    _pendingRealtimePcm = null;
+    if (generation == null || finalChunk == null || !_isCurrent(generation)) {
+      finalChunk?.fillRange(0, finalChunk.length, 0);
+      throw const AvatarRendererException(
+        AvatarRendererFailure.invalidConfiguration,
+      );
+    }
+    try {
+      await _renderer.sendPcm(finalChunk, end: true);
+    } catch (_) {
+      if (_isCurrent(generation)) {
+        _failRealtimePcmStream(
+          _renderer.state.failure ?? AvatarRendererFailure.rendering,
+        );
+      }
+      throw AvatarRendererException(
+        _renderer.state.failure ?? AvatarRendererFailure.rendering,
+      );
+    } finally {
+      finalChunk.fillRange(0, finalChunk.length, 0);
+    }
+    if (!_isCurrent(generation) || _realtimePcmGeneration != generation) {
+      return;
+    }
+    _realtimePcmGeneration = null;
+    developer.log(
+      'realtime_pcm_completed chunks=$_realtimePcmChunkCount '
+      'bytes=$_realtimePcmByteCount',
+      name: 'speakup.avatar',
+    );
+    _setState(
+      AvatarControllerState(
+        phase: AvatarControllerPhase.ready,
+        renderer: _renderer.state,
+      ),
+    );
+  }
+
+  Future<void> stopPcmStream() => interrupt();
+
   Future<void> interrupt() {
     if (_closed) {
       return Future<void>.value();
     }
+    _clearRealtimePcmStream();
     _generation++;
     final existing = _interruptFuture;
     if (existing != null) {
@@ -293,6 +411,7 @@ final class AvatarController extends ChangeNotifier {
       return Future<void>.value();
     }
     _closed = true;
+    _clearRealtimePcmStream();
     _generation++;
     final completion = _performClose();
     _closeFuture = completion;
@@ -382,6 +501,30 @@ final class AvatarController extends ChangeNotifier {
       ),
     );
     return AvatarSpeechResult.fallback;
+  }
+
+  void _failRealtimePcmStream(AvatarRendererFailure failure) {
+    _clearRealtimePcmStream();
+    developer.log(
+      'realtime_pcm_failed failure=${failure.name}',
+      name: 'speakup.avatar',
+    );
+    _setState(
+      AvatarControllerState(
+        phase: AvatarControllerPhase.failed,
+        renderer: _renderer.state,
+        failure: failure,
+      ),
+    );
+  }
+
+  void _clearRealtimePcmStream() {
+    final pending = _pendingRealtimePcm;
+    _pendingRealtimePcm = null;
+    pending?.fillRange(0, pending.length, 0);
+    _realtimePcmGeneration = null;
+    _realtimePcmChunkCount = 0;
+    _realtimePcmByteCount = 0;
   }
 
   void _onRendererState(AvatarRendererState rendererState) {
