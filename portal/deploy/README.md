@@ -86,10 +86,11 @@ systemd units 会在启动命令中把备份根目录固定为
 `/var/lib/speakup/portal-backups`；环境文件不能覆盖该路径。
 
 恢复检查 unit 还会由 `StateDirectory=` 创建 `root:root`、`0700` 的固定目录
-`/var/lib/speakup/safety-checks`。只有隔离恢复检查成功退出后，
-`ExecStartPost=` 才会以 `root:root`、`0600` 替换空标记
-`portal-sqlite-restore-check.success`；检查失败不会刷新 mtime。该状态目录在
-`ProtectSystem=strict` 下仍由 systemd 保持可写，并跨 `daemon-reload` 和主机重启保留。
+`/var/lib/speakup/safety-checks`。每次开始前，`ExecStartPre=` 只删除自己的
+`portal-sqlite-restore-check.success`，因此检查进行中或失败后标记保持缺失；只有
+隔离恢复检查成功退出后，`ExecStartPost=` 才会以 `root:root`、`0600` 替换空标记。
+该状态目录在 `ProtectSystem=strict` 下仍由 systemd 保持可写，并跨
+`daemon-reload` 和主机重启保留。
 
 已有安装升级时，重新安装 restore-check unit、执行 `systemctl daemon-reload`，再手动
 成功运行一次恢复检查后才能依赖相应监控。旧 journal/systemd 退出时间不会推断或迁移；

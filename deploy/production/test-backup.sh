@@ -83,6 +83,9 @@ assert_unit_contracts() {
   done
 
   assert_unit_directive \
+    "$restore_check_service" Service ExecStartPre \
+    '/usr/bin/rm --force -- /var/lib/speakup/safety-checks/postgres-restore-check.success'
+  assert_unit_directive \
     "$restore_check_service" Service ExecStartPost \
     '/usr/bin/install --no-target-directory --owner=root --group=root --mode=0600 /dev/null /var/lib/speakup/safety-checks/postgres-restore-check.success'
   ! grep -Fq 'safety-checks' "$backup_service" ||

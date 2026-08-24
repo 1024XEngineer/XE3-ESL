@@ -38,7 +38,9 @@ Safety-check success time comes only from the mtime of three fixed markers under
 on systemd's volatile exit timestamps. The directory must be `root:root` mode
 `0700`, and each empty marker must be `root:root` mode `0600`. A missing marker,
 non-regular file, ownership or mode mismatch, or future mtime exports both
-success and timestamp as zero for that check.
+success and timestamp as zero for that check. Each producer removes only its
+own marker before a new attempt and recreates it only after success, so an
+in-progress or failed later run cannot inherit an older success.
 
 All container images and runtime limits are explicit. Grafana is the only
 service with a published port, and that port is `127.0.0.1:13000`.

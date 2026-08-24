@@ -278,6 +278,9 @@ test("deployment units expose timer, failure, and isolated-check contracts", asy
     /^StateDirectory=speakup\/portal-backups speakup\/safety-checks$/m,
   );
   assert.match(restoreService, /^StateDirectoryMode=0700$/m);
+  assert.deepEqual(restoreService.match(/^ExecStartPre=.*$/gm), [
+    "ExecStartPre=/usr/bin/rm --force -- /var/lib/speakup/safety-checks/portal-sqlite-restore-check.success",
+  ]);
   assert.ok(
     restoreService.includes(
       "ExecStartPost=/usr/bin/install --no-target-directory --owner=root --group=root --mode=0600 /dev/null /var/lib/speakup/safety-checks/portal-sqlite-restore-check.success",

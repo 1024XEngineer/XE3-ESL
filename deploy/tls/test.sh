@@ -999,6 +999,11 @@ grep -Fxq 'StateDirectory=speakup/safety-checks' \
   "$tls_directory/xe3-speakup-tls-renew.service" || fail "systemd renewal state directory is wrong"
 grep -Fxq 'StateDirectoryMode=0700' \
   "$tls_directory/xe3-speakup-tls-renew.service" || fail "systemd renewal state directory is not root-only"
+[[ $(grep -c '^ExecStartPre=' "$tls_directory/xe3-speakup-tls-renew.service") -eq 1 ]] ||
+  fail "systemd renewal must invalidate exactly one success marker"
+grep -Fxq \
+  'ExecStartPre=/usr/bin/rm --force -- /var/lib/speakup/safety-checks/tls-renewal.success' \
+  "$tls_directory/xe3-speakup-tls-renew.service" || fail "systemd renewal marker invalidation is wrong"
 grep -Fxq \
   'ExecStartPost=/usr/bin/install --no-target-directory --owner=root --group=root --mode=0600 /dev/null /var/lib/speakup/safety-checks/tls-renewal.success' \
   "$tls_directory/xe3-speakup-tls-renew.service" || fail "systemd renewal success marker is wrong"

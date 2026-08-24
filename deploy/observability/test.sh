@@ -216,11 +216,28 @@ grep -Fq 'speakup_host_filesystem_avail_bytes{mountpoint="/"} 250000' "$metrics_
 grep -Fq 'speakup_host_filesystem_files_free{mountpoint="/"} 500' "$metrics_file" ||
   fail 'host root free inodes were not exported'
 
+# Each unit removes only its own previous success marker before a later run.
+# If that run fails, its metric fails closed while the other successes remain.
 MISSING_SAFETY_MARKER=postgres-restore-check.success \
   PATH="$temporary_directory/fake-bin:$PATH" \
   "$exporter" --output "$metrics_file"
 assert_safety_metric postgres_restore_check xe3-postgres-restore-check.service 0 0
 assert_safety_metric portal_restore_check xe3-portal-sqlite-restore-check.service 1 1787536984
+assert_safety_metric tls_renewal xe3-speakup-tls-renew.service 1 1787540585
+
+MISSING_SAFETY_MARKER=portal-sqlite-restore-check.success \
+  PATH="$temporary_directory/fake-bin:$PATH" \
+  "$exporter" --output "$metrics_file"
+assert_safety_metric postgres_restore_check xe3-postgres-restore-check.service 1 1787533323
+assert_safety_metric portal_restore_check xe3-portal-sqlite-restore-check.service 0 0
+assert_safety_metric tls_renewal xe3-speakup-tls-renew.service 1 1787540585
+
+MISSING_SAFETY_MARKER=tls-renewal.success \
+  PATH="$temporary_directory/fake-bin:$PATH" \
+  "$exporter" --output "$metrics_file"
+assert_safety_metric postgres_restore_check xe3-postgres-restore-check.service 1 1787533323
+assert_safety_metric portal_restore_check xe3-portal-sqlite-restore-check.service 1 1787536984
+assert_safety_metric tls_renewal xe3-speakup-tls-renew.service 0 0
 
 UNSAFE_SAFETY_MARKER=portal-sqlite-restore-check.success \
   PATH="$temporary_directory/fake-bin:$PATH" \
