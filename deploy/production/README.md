@@ -1,10 +1,12 @@
 # SpeakUp immutable Production contract
 
-This directory defines the host-side Production topology for an already built
-Release Candidate. It validates immutable inputs and renders Nginx, but it does
-not deploy containers, run a migration, alter Nginx, or connect to a server.
-Those state-changing steps remain unavailable until backup and rollback
-orchestration is reviewed separately.
+This directory defines the host-side Production topology and the reviewed
+promotion contract for an already built Release Candidate. It validates
+immutable inputs, captures the initial live baseline, gates a deployment on two
+restore-verified backups, publishes but does not activate the Android APK,
+installs the SpeakUp-only Nginx vhost, and records every successful state as an
+immutable receipt. Rollback changes only application images and Nginx; it never
+runs a down migration or restores Production data.
 
 ## Verified boundaries
 
@@ -30,7 +32,7 @@ release. Its one-time creation belongs to the audited server bootstrap.
 
 ## Prerequisites
 
-- Bash, `jq`, `curl`, Docker Engine, and Docker Compose.
+- Bash, `jq`, `curl`, `flock`, Docker Engine, and Docker Compose.
 - The two external volumes above already exist on the intended host.
 - The external Server edge network exists with an audited, non-conflicting
   subnet and fixed gateway.
@@ -42,6 +44,10 @@ release. Its one-time creation belongs to the audited server bootstrap.
   digests, or the verified offline bundle described below.
 - A real, current-UID-owned `PRODUCTION_PUBLIC_ROOT` that is not group- or
   world-writable.
+- The installed PostgreSQL and Portal backup programs, their mode `0600`
+  environment files, and successful isolated restore contracts described below.
+- The exact host Nginx binary and existing SpeakUp-only vhost file. Both must be
+  owned by the invoking user and must not be writable by another user.
 
 Do not copy local `.env` defaults into Production and do not commit any filled
 environment file. The Server environment file contains real provider
@@ -76,6 +82,24 @@ not be symbolic links.
 characters because it is inserted into a PostgreSQL URL. `PORTAL_ADMIN_PASSWORD`
 must contain at least 16 characters. Hostnames and file paths are validated and
 unknown configuration keys are rejected.
+
+The following paths are explicit trust boundaries rather than values discovered
+from `PATH` or the shared server:
+
+- `PRODUCTION_NGINX_BINARY` and `PRODUCTION_NGINX_CONFIG` identify the host
+  Nginx program and the one `xe3-speakup-*.conf` file this contract may replace.
+- `PRODUCTION_POSTGRES_BACKUP_PROGRAM` and
+  `PRODUCTION_POSTGRES_BACKUP_ENV_FILE` identify the audited PostgreSQL backup
+  program and its private policy/identity configuration.
+- `PRODUCTION_PORTAL_BACKUP_PROGRAM` and
+  `PRODUCTION_PORTAL_BACKUP_ENV_FILE` identify the corresponding Portal SQLite
+  program and configuration.
+
+The backup environment files must describe the currently deployed release.
+After a successful deploy or rollback, `manage.sh` atomically replaces each
+file with the new release identity, immutable image and container name while
+preserving its explicit retention and maximum-age policies. No database or
+Portal admin password is written to either backup file.
 
 Set `PRODUCTION_SERVER_EDGE_GATEWAY_CIDR` to the external network's exact IPv4
 gateway followed by `/32`. For example, if `docker network inspect` reports
@@ -214,13 +238,14 @@ mismatches, a missing exact PostgreSQL or application RepoDigest, a non-amd64
 image, or incorrect source/revision/version labels. It never pulls and never
 falls back to a tag, image ID, local Registry, `latest`, or a host-side build.
 
-The reviewed deployment orchestration must combine `compose.yaml` with
-`compose.offline.yaml` and still pass `--pull never` explicitly to every
-state-changing `docker compose up` invocation. The override changes only the
-four pull policies for `postgres`, `migrate`, `server`, and `portal`. This
-repository intentionally does not add a Production `deploy` command in this
-Issue; backup, migration, health, rollback, and approval sequencing remain
-mandatory before that command is enabled.
+The managed `deploy` command below is the registry-backed path: it deliberately
+pulls each digest before entering the migration window and does not silently
+switch to the offline override. `compose.offline.yaml` changes only the four
+pull policies for `postgres`, `migrate`, `server`, and `portal`, but authorizing
+that alternate state-changing path still requires its own reviewed command
+contract. Loading an offline archive alone does not authorize a Production
+deployment; if Registry access is unavailable, stop after validation rather
+than editing this script or its Compose arguments on the host.
 
 ## Render Nginx for review
 
@@ -264,9 +289,125 @@ After a later audited deployment has installed this stack:
 ```
 
 `verify` checks Portal `/`, Server `/health`, and Server `/readyz` over the
-loopback bindings. Public HTTPS and business-route smoke tests belong to the
-release smoke contract. There is intentionally no `deploy` or `down` command in
-this directory yet.
+loopback bindings, the exact runtime identities and image digests, and the clean
+database schema from the selected manifest. Public HTTPS and business-route
+smoke tests remain part of the higher-level release Workflow.
+
+## Capture the initial Production baseline
+
+Create the first receipt once, before the first automated promotion. The live
+containers, database schema, backup configurations and installed Nginx vhost
+must already match the selected release manifest and reviewed template:
+
+```sh
+./deploy/production/manage.sh baseline \
+  --manifest /opt/speakup/releases/v0.1.4/release-manifest.json \
+  --env-file /etc/speakup/production.env \
+  --receipt /opt/speakup/releases/v0.1.4/production-baseline-receipt.json
+```
+
+The receipt is strict v1 JSON created with mode `0444` and a no-clobber hard
+link. It binds the manifest SHA-256, version, Git SHA, schema, Portal/Server
+digests, signed APK identity, runtime container IDs, and the complete installed
+Nginx vhost plus its SHA-256. It contains no application Secret. Container IDs
+are audit evidence; a later container restart is accepted when the complete
+Compose identity, digest, mount, network, environment and health contract still
+matches.
+
+`baseline`, `deploy`, and `rollback` share the non-blocking lock at
+`/run/lock/xe3-speakup-production/deploy.lock`. A concurrent operation fails
+without waiting or changing Production. A successful receipt path can never be
+reused or overwritten. The root operator creates the private SpeakUp lock
+directory on first use; the backup locks remain the exact paths shared with the
+systemd units under root-owned `/run/lock`.
+
+## Promote one reviewed Release Candidate
+
+The Android bundle must be generated from the same release manifest and remain
+in its strict `bundle-manifest.json` layout. Run:
+
+```sh
+./deploy/production/manage.sh deploy \
+  --manifest /opt/speakup/releases/v0.1.5/release-manifest.json \
+  --env-file /etc/speakup/production.env \
+  --bundle /opt/speakup/releases/v0.1.5/android-download-bundle \
+  --current-receipt /opt/speakup/releases/v0.1.4/production-baseline-receipt.json \
+  --receipt /opt/speakup/releases/v0.1.5/production-deployment-receipt.json
+```
+
+The command revalidates all inputs after taking the lock, then:
+
+1. proves that the live runtime, schema, Nginx vhost and backup configuration
+   still match `--current-receipt`;
+2. takes the PostgreSQL backup lock, creates a `predeploy` logical backup, and
+   runs a second named isolated restore check;
+3. takes the Portal backup lock, creates a consistent SQLite Online Backup, and
+   confirms the same backup ID through an isolated restore check;
+4. pulls only the manifest-pinned PostgreSQL, migration, Server and Portal
+   images, starts PostgreSQL, runs `migrate up`, and requires the exact clean
+   manifest schema;
+5. starts Portal and Server with `--pull never --no-build`, then checks their
+   runtime identity, health and loopback endpoints;
+6. publishes the validated versioned APK, checksum and metadata under
+   `PRODUCTION_PUBLIC_ROOT`, without changing
+   `downloads/android/release.json`;
+7. installs the rendered SpeakUp Nginx vhost atomically, runs `nginx -t`, and
+   performs a graceful reload. A test or reload failure restores the previous
+   receipt's vhost;
+8. verifies the final deployment again, updates both backup configurations, and
+   writes the immutable deployment receipt.
+
+The public APK pointer is deliberately a later release step. After public HTTPS,
+API and business-route smoke tests pass, activate it explicitly:
+
+```sh
+./deploy/android-download/manage.sh activate \
+  --root /var/www/speakup-production-public \
+  --version 0.1.5
+```
+
+## Roll back application images and Nginx
+
+Select a previous immutable manifest and its receipt, and preserve the receipt
+for the currently live state:
+
+```sh
+./deploy/production/manage.sh rollback \
+  --manifest /opt/speakup/releases/v0.1.4/release-manifest.json \
+  --env-file /etc/speakup/production.env \
+  --current-receipt /opt/speakup/releases/v0.1.5/production-deployment-receipt.json \
+  --target-receipt /opt/speakup/releases/v0.1.4/production-baseline-receipt.json \
+  --receipt /opt/speakup/releases/rollback-v0.1.5-to-v0.1.4.json
+```
+
+Rollback takes both backup locks, uses only already present target images with
+`--pull never`, restores Portal and Server, validates the target runtime,
+restores the exact target Nginx vhost, refreshes backup release identity, and
+writes a new rollback receipt linked to both the previous live receipt and the
+selected rollback target receipt. It does not run a migration, restore either
+backup, alter PostgreSQL, remove a versioned APK, or change the active Android
+metadata.
+
+The current database schema must equal the target receipt schema. If the failed
+release advanced the schema, rollback stops before changing an application
+container. Resolve that case with a reviewed forward-compatible hotfix or a
+separate disaster-recovery procedure; this script never guesses that an older
+binary is compatible and never executes `migrate down`.
+
+## Failure boundaries
+
+- A manifest, receipt, bundle, lock, backup, restore check or migration failure
+  prevents all later steps and never creates a success receipt.
+- A failure after a successful `migrate up` leaves the advanced schema in place;
+  it is intentionally not reversed automatically.
+- APK publication is no-clobber and not publicly activated. If a later step
+  fails, inspect the unactivated version directory and failed operation before
+  retrying; never delete or replace it without reconciling its SHA-256 evidence.
+- A missing success receipt means the operation is incomplete even when some
+  host state changed. Verify the live manifest, schema, Nginx and backup files,
+  then capture a newly reviewed baseline or execute an allowed rollback.
+- Production data restoration is never part of image rollback. It requires the
+  separately reviewed outage and recovery procedure described below.
 
 ## PostgreSQL logical backup and isolated restore check
 
@@ -345,6 +486,21 @@ use a `0077` umask and a two-hour start timeout. Their process network namespace
 is private and only `AF_UNIX` is permitted so the Docker Unix socket remains
 usable without granting the unit IP network access.
 
+The restore-check unit additionally creates the root-only persistent state
+directory `/var/lib/speakup/safety-checks`. `ExecStartPre=` removes only
+`postgres-restore-check.success` before each attempt, so the marker remains
+absent while the check runs or after it fails. Only after the isolated check
+exits successfully does `ExecStartPost=` replace it as a `root:root` mode `0600`
+empty marker. `StateDirectory=` remains writable under this unit's
+`ProtectSystem=strict` sandbox and persists across daemon reloads and host
+reboots.
+
+When upgrading an existing host, reinstall the restore-check unit, run
+`systemctl daemon-reload`, and start the check once before relying on its
+observability series. The old journal/systemd exit time is deliberately not
+converted into a marker; monitoring remains fail-closed until a real check
+succeeds. Never create or touch the marker manually.
+
 The configured application database user is also the owner of objects created
 by the migration command. Dumps and isolated restores both use
 `--no-owner --no-privileges`: they preserve the application schema and data
@@ -401,8 +557,10 @@ the four pull policies, and fail-closed behavior without contacting Production.
 - [Docker Compose project names](https://docs.docker.com/compose/how-tos/project-name/)
 - [Docker Compose startup order](https://docs.docker.com/compose/how-tos/startup-order/)
 - [Docker image pull](https://docs.docker.com/reference/cli/docker/image/pull/)
+- [Linux `flock`](https://man7.org/linux/man-pages/man1/flock.1.html)
 - [GitHub workflow API](https://docs.github.com/en/rest/actions/workflows#get-a-workflow)
 - [GitHub workflow run API](https://docs.github.com/en/rest/actions/workflow-runs#get-a-workflow-run)
+- [Nginx command-line parameters](https://nginx.org/en/docs/switches.html)
 - [Nginx proxy module](https://nginx.org/en/docs/http/ngx_http_proxy_module.html)
 - [PostgreSQL SQL dump backup](https://www.postgresql.org/docs/18/backup-dump.html)
 - [PostgreSQL `pg_restore`](https://www.postgresql.org/docs/18/app-pgrestore.html)

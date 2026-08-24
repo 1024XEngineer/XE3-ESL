@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"net/http"
 	"net/url"
 	"strings"
 	"testing"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/providerobservability"
 )
 
 var fixedNow = time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)
@@ -36,6 +38,7 @@ type apiStub struct {
 	deleted    *s3.DeleteObjectInput
 	deleteErr  error
 	inspectPut func(*s3.PutObjectInput) error
+	headCall   func() (*s3.HeadObjectOutput, error)
 }
 
 func (stub *apiStub) GetBucketAcl(context.Context, *s3.GetBucketAclInput, ...func(*s3.Options)) (*s3.GetBucketAclOutput, error) {
@@ -52,6 +55,9 @@ func (stub *apiStub) PutObject(_ context.Context, input *s3.PutObjectInput, _ ..
 }
 
 func (stub *apiStub) HeadObject(context.Context, *s3.HeadObjectInput, ...func(*s3.Options)) (*s3.HeadObjectOutput, error) {
+	if stub.headCall != nil {
+		return stub.headCall()
+	}
 	return stub.head, stub.headErr
 }
 
@@ -109,6 +115,8 @@ func TestClientPutSignAndDelete(t *testing.T) {
 		URL: "https://s3.cn-east-1.qiniucs.com/private-bucket/" + key + "?X-Amz-Signature=signed",
 	}}
 	client := newTestClient(api, presigner)
+	recorder := &kodoProviderRecorder{}
+	client.observer = recorder
 	body := bytes.NewReader(payload)
 
 	result, err := client.Put(context.Background(), objectstore.PutRequest{
@@ -144,6 +152,18 @@ func TestClientPutSignAndDelete(t *testing.T) {
 		aws.ToString(api.deleted.Key) != key {
 		t.Fatalf("DeleteObject input = %#v", api.deleted)
 	}
+	if len(recorder.observations) != 2 {
+		t.Fatalf("local signing created a provider observation: %#v", recorder.observations)
+	}
+	for _, capability := range []providerobservability.Capability{
+		providerobservability.CapabilityObjectPut,
+		providerobservability.CapabilityObjectDelete,
+	} {
+		observation, found := recorder.find(capability)
+		if !found || observation.ErrorKind != providerobservability.ErrorNone {
+			t.Fatalf("observation for %q = %#v, found = %v", capability, observation, found)
+		}
+	}
 }
 
 func TestClientReconcilesMatchingExistingObject(t *testing.T) {
@@ -166,6 +186,119 @@ func TestClientReconcilesMatchingExistingObject(t *testing.T) {
 	})
 	if err != nil || result.ETag != "existing-etag" {
 		t.Fatalf("Put() = %#v, %v", result, err)
+	}
+}
+
+func TestClientReconcilesLostResponseAsOneLogicalCall(t *testing.T) {
+	payload := []byte("lost response")
+	digest := sha256.Sum256(payload)
+	checksum := hex.EncodeToString(digest[:])
+	headCalls := 0
+	stub := &apiStub{putErr: io.ErrUnexpectedEOF}
+	stub.headCall = func() (*s3.HeadObjectOutput, error) {
+		headCalls++
+		if headCalls == 1 {
+			return nil, &smithy.GenericAPIError{Code: "NotFound", Message: "not found"}
+		}
+		return &s3.HeadObjectOutput{
+			ContentLength: aws.Int64(int64(len(payload))),
+			ContentType:   aws.String("audio/wav"),
+			ETag:          aws.String("\"reconciled-etag\""),
+			Metadata:      map[string]string{"sha256": checksum},
+		}, nil
+	}
+	client := newTestClient(stub, &presignerStub{})
+	recorder := &kodoProviderRecorder{}
+	client.observer = recorder
+	result, err := client.Put(context.Background(), objectstore.PutRequest{
+		Key: "audio/v1/lost.wav", Body: bytes.NewReader(payload),
+		Size: int64(len(payload)), ContentType: "audio/wav",
+		ChecksumSHA256: checksum,
+	})
+	if err != nil || result.ETag != "reconciled-etag" || headCalls != 2 {
+		t.Fatalf("Put() = %#v, %v; head calls = %d", result, err, headCalls)
+	}
+	observation, found := recorder.find(providerobservability.CapabilityObjectPut)
+	if !found || len(recorder.observations) != 1 ||
+		observation.ErrorKind != providerobservability.ErrorNone ||
+		observation.Usage.Bytes != 0 {
+		t.Fatalf("observations = %#v", recorder.observations)
+	}
+}
+
+func TestClientRecordsPutOpenDeleteContextOutcome(t *testing.T) {
+	for causeName, cause := range map[string]error{
+		"cancelled": context.Canceled,
+		"timeout":   context.DeadlineExceeded,
+	} {
+		wantKind := providerobservability.ErrorCancelled
+		if errors.Is(cause, context.DeadlineExceeded) {
+			wantKind = providerobservability.ErrorTimeout
+		}
+		for operationName, capability := range map[string]providerobservability.Capability{
+			"put":    providerobservability.CapabilityObjectPut,
+			"open":   providerobservability.CapabilityObjectOpen,
+			"delete": providerobservability.CapabilityObjectDelete,
+		} {
+			t.Run(causeName+"/"+operationName, func(t *testing.T) {
+				stub := &apiStub{
+					headErr: &smithy.GenericAPIError{Code: "NotFound", Message: "not found"},
+				}
+				switch operationName {
+				case "put":
+					stub.putErr = cause
+				case "open":
+					stub.getErr = cause
+				case "delete":
+					stub.deleteErr = cause
+				}
+				client := newTestClient(stub, &presignerStub{})
+				recorder := &kodoProviderRecorder{}
+				client.observer = recorder
+				var err error
+				switch operationName {
+				case "put":
+					payload := []byte("context outcome")
+					digest := sha256.Sum256(payload)
+					_, err = client.Put(context.Background(), objectstore.PutRequest{
+						Key: "audio/v1/context.wav", Body: bytes.NewReader(payload),
+						Size: int64(len(payload)), ContentType: "audio/wav",
+						ChecksumSHA256: hex.EncodeToString(digest[:]),
+					})
+				case "open":
+					_, err = client.Open(context.Background(), "audio/v1/context.pdf")
+				case "delete":
+					err = client.Delete(context.Background(), "audio/v1/context.wav")
+				}
+				if !errors.Is(err, cause) {
+					t.Fatalf("operation error = %v, want context cause %v", err, cause)
+				}
+				observation, found := recorder.find(capability)
+				if !found || len(recorder.observations) != 1 ||
+					observation.ErrorKind != wantKind {
+					t.Fatalf("observations = %#v", recorder.observations)
+				}
+			})
+		}
+	}
+}
+
+func TestOperationErrorMapsBoundedProviderCategory(t *testing.T) {
+	tests := []struct {
+		code   string
+		status int
+		want   providerobservability.ErrorKind
+	}{
+		{code: "InvalidAccessKeyId", want: providerobservability.ErrorAuthentication},
+		{code: "AccessDenied", want: providerobservability.ErrorAuthorization},
+		{status: http.StatusTooManyRequests, want: providerobservability.ErrorRateLimited},
+		{status: http.StatusServiceUnavailable, want: providerobservability.ErrorProviderUnavailable},
+	}
+	for _, test := range tests {
+		err := &OperationError{Code: test.code, Status: test.status}
+		if got := objectstore.ProviderErrorKind(err); got != test.want {
+			t.Fatalf("ProviderErrorKind(%q, %d) = %q, want %q", test.code, test.status, got, test.want)
+		}
 	}
 }
 
@@ -238,4 +371,25 @@ func newTestClient(api s3API, presigner s3Presigner) *Client {
 		prefix: "audio/v1", signedURLTTL: 2 * time.Minute,
 		now: func() time.Time { return fixedNow },
 	}
+}
+
+type kodoProviderRecorder struct {
+	observations []providerobservability.Observation
+}
+
+func (recorder *kodoProviderRecorder) Record(
+	observation providerobservability.Observation,
+) {
+	recorder.observations = append(recorder.observations, observation)
+}
+
+func (recorder *kodoProviderRecorder) find(
+	capability providerobservability.Capability,
+) (providerobservability.Observation, bool) {
+	for _, observation := range recorder.observations {
+		if observation.Capability == capability {
+			return observation, true
+		}
+	}
+	return providerobservability.Observation{}, false
 }

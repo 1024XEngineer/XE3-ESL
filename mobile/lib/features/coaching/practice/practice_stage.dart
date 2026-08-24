@@ -45,14 +45,15 @@ class PracticeStageLayout extends StatelessWidget {
   );
 }
 
-/// Stable stage chrome. A live renderer may replace [fallback] later without
-/// changing the surrounding practice experience.
+/// Stable stage chrome. A live renderer stays mounted behind [fallback] until
+/// it is ready to be shown, so connecting and replacement do not flash.
 class PracticeRoleStage extends StatelessWidget {
   const PracticeRoleStage({
     required this.title,
     required this.fallback,
     required this.onExit,
     this.surfaceBuilder,
+    this.surfaceVisible = true,
     this.statusLabel,
     this.exitInFlight = false,
     this.exitButtonKey,
@@ -63,6 +64,7 @@ class PracticeRoleStage extends StatelessWidget {
   final Widget fallback;
   final VoidCallback onExit;
   final WidgetBuilder? surfaceBuilder;
+  final bool surfaceVisible;
   final String? statusLabel;
   final bool exitInFlight;
   final Key? exitButtonKey;
@@ -73,7 +75,8 @@ class PracticeRoleStage extends StatelessWidget {
     child: Stack(
       fit: StackFit.expand,
       children: [
-        if (surfaceBuilder case final builder?) builder(context) else fallback,
+        if (surfaceBuilder case final builder?) builder(context),
+        if (surfaceBuilder == null || !surfaceVisible) fallback,
         const Positioned.fill(
           child: IgnorePointer(
             child: DecoratedBox(

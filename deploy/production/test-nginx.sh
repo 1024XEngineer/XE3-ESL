@@ -82,9 +82,23 @@ assert_curl_succeeds() {
 }
 
 mkdir -p "$temporary_directory/acme"
+mkdir -p "$temporary_directory/host-nginx"
 mkdir -p "$temporary_directory/logs"
 mkdir -p "$temporary_directory/public/downloads/android/v0.1.0"
 printf '%s\n' 'TEXT_GENERATION_PROVIDER=test-fixture' >"$temporary_directory/server.env"
+printf '%s\n' '#!/usr/bin/env sh' 'exit 0' >"$temporary_directory/host-nginx/nginx"
+printf '%s\n' '#!/usr/bin/env sh' 'exit 0' >"$temporary_directory/postgres-backup"
+printf '%s\n' '#!/usr/bin/env sh' 'exit 0' >"$temporary_directory/portal-backup"
+printf '%s\n' 'placeholder' >"$temporary_directory/host-nginx/xe3-speakup-production.conf"
+printf '%s\n' 'POSTGRES_BACKUP_RETENTION_DAYS=14' >"$temporary_directory/postgres-backup.env"
+printf '%s\n' 'PORTAL_BACKUP_RETENTION_DAYS=14' >"$temporary_directory/portal-backup.env"
+chmod 0755 \
+  "$temporary_directory/host-nginx/nginx" \
+  "$temporary_directory/postgres-backup" \
+  "$temporary_directory/portal-backup"
+chmod 0600 \
+  "$temporary_directory/postgres-backup.env" \
+  "$temporary_directory/portal-backup.env"
 printf '%s\n' 'signed-production-apk-fixture' > \
   "$temporary_directory/public/downloads/android/v0.1.0/speakup-v0.1.0-production-arm64.apk"
 apk_sha=$(sha256sum \
@@ -144,6 +158,12 @@ printf '%s\n' \
   "PRODUCTION_TLS_CERTIFICATE_KEY=$temporary_directory/privkey.pem" \
   "PRODUCTION_ACME_ROOT=$temporary_directory/acme" \
   "PRODUCTION_PUBLIC_ROOT=$temporary_directory/public" \
+  "PRODUCTION_NGINX_BINARY=$temporary_directory/host-nginx/nginx" \
+  "PRODUCTION_NGINX_CONFIG=$temporary_directory/host-nginx/xe3-speakup-production.conf" \
+  "PRODUCTION_POSTGRES_BACKUP_PROGRAM=$temporary_directory/postgres-backup" \
+  "PRODUCTION_POSTGRES_BACKUP_ENV_FILE=$temporary_directory/postgres-backup.env" \
+  "PRODUCTION_PORTAL_BACKUP_PROGRAM=$temporary_directory/portal-backup" \
+  "PRODUCTION_PORTAL_BACKUP_ENV_FILE=$temporary_directory/portal-backup.env" \
   >"$temporary_directory/production.env"
 chmod 600 "$temporary_directory/production.env"
 

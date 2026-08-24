@@ -16,6 +16,7 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/providerobservability"
 )
 
 const (
@@ -39,6 +40,7 @@ type Client struct {
 	bucket       string
 	prefix       string
 	signedURLTTL time.Duration
+	observer     providerobservability.Recorder
 }
 
 // NewFromEnvironment is intended for explicit local and CI use. It reads an
@@ -113,6 +115,26 @@ func NewForPrefix(
 		nil,
 		true,
 	)
+}
+
+// NewForPrefixObserved creates a production client using the service-level
+// provider observer.
+func NewForPrefixObserved(
+	ctx context.Context,
+	storageConfig config.ObjectStorageConfig,
+	prefix string,
+	provider credentials.CredentialsProvider,
+	observer providerobservability.Recorder,
+) (*Client, error) {
+	if observer == nil {
+		return nil, errors.New("OSS provider observer is required")
+	}
+	client, err := NewForPrefix(ctx, storageConfig, prefix, provider)
+	if err != nil {
+		return nil, err
+	}
+	client.observer = observer
+	return client, nil
 }
 
 func newClient(
@@ -194,7 +216,7 @@ func (c *Client) Preflight(ctx context.Context) error {
 func (c *Client) Put(
 	ctx context.Context,
 	request objectstore.PutRequest,
-) (objectstore.PutResult, error) {
+) (callResult objectstore.PutResult, callErr error) {
 	if err := objectstore.ValidateKey(c.prefix, request.Key); err != nil {
 		return objectstore.PutResult{}, err
 	}
@@ -211,6 +233,18 @@ func (c *Client) Put(
 	}
 	defer func() {
 		_, _ = request.Body.Seek(startOffset, io.SeekStart)
+	}()
+	startedAt := time.Now()
+	storedBytes := int64(0)
+	defer func() {
+		objectstore.RecordProviderCall(
+			c.observer,
+			providerobservability.ProviderAliyunOSS,
+			providerobservability.CapabilityObjectPut,
+			startedAt,
+			callErr,
+			storedBytes,
+		)
 	}()
 
 	result, err := c.sdk.PutObject(ctx, &aliyunoss.PutObjectRequest{
@@ -234,6 +268,7 @@ func (c *Client) Put(
 		return objectstore.PutResult{}, safeError("put", err)
 	}
 
+	storedBytes = request.Size
 	return objectstore.PutResult{ETag: strings.Trim(aliyunoss.ToString(result.ETag), `"`)}, nil
 }
 
@@ -283,7 +318,6 @@ func (c *Client) SignedGet(
 	if c.signedURLTTL <= 0 || c.signedURLTTL > 2*time.Minute {
 		return objectstore.SignedGetResult{}, objectstore.ErrInvalidTTL
 	}
-
 	result, err := c.sdk.Presign(
 		ctx,
 		&aliyunoss.GetObjectRequest{
@@ -303,30 +337,63 @@ func (c *Client) SignedGet(
 }
 
 // Open 通过私有 OSS 客户端打开对象流，供服务端受控解析使用。
-func (c *Client) Open(ctx context.Context, key string) (io.ReadCloser, error) {
+func (c *Client) Open(
+	ctx context.Context,
+	key string,
+) (io.ReadCloser, error) {
 	if err := objectstore.ValidateKey(c.prefix, key); err != nil {
 		return nil, err
+	}
+	startedAt := time.Now()
+	recordFailure := func(err error) {
+		objectstore.RecordProviderCall(
+			c.observer,
+			providerobservability.ProviderAliyunOSS,
+			providerobservability.CapabilityObjectOpen,
+			startedAt,
+			err,
+			0,
+		)
 	}
 	result, err := c.sdk.GetObject(ctx, &aliyunoss.GetObjectRequest{
 		Bucket: aliyunoss.Ptr(c.bucket),
 		Key:    aliyunoss.Ptr(key),
 	})
 	if err != nil {
-		return nil, safeError("get", err)
+		callErr := safeError("get", err)
+		recordFailure(callErr)
+		return nil, callErr
 	}
 	if result.Body == nil || aliyunoss.ToString(result.ContentType) != "application/pdf" {
 		if result.Body != nil {
 			_ = result.Body.Close()
 		}
+		recordFailure(objectstore.ErrInvalidObject)
 		return nil, objectstore.ErrInvalidObject
 	}
-	return result.Body, nil
+	return objectstore.ObserveOpenReadCloser(
+		result.Body,
+		c.observer,
+		providerobservability.ProviderAliyunOSS,
+		startedAt,
+	), nil
 }
 
-func (c *Client) Delete(ctx context.Context, key string) error {
+func (c *Client) Delete(ctx context.Context, key string) (callErr error) {
 	if err := objectstore.ValidateKey(c.prefix, key); err != nil {
 		return err
 	}
+	startedAt := time.Now()
+	defer func() {
+		objectstore.RecordProviderCall(
+			c.observer,
+			providerobservability.ProviderAliyunOSS,
+			providerobservability.CapabilityObjectDelete,
+			startedAt,
+			callErr,
+			0,
+		)
+	}()
 
 	_, err := c.sdk.DeleteObject(ctx, &aliyunoss.DeleteObjectRequest{
 		Bucket: aliyunoss.Ptr(c.bucket),
@@ -343,6 +410,7 @@ type OperationError struct {
 	Code       string
 	StatusCode int
 	RequestID  string
+	cause      error
 }
 
 func (e *OperationError) Error() string {
@@ -359,14 +427,28 @@ func (e *OperationError) Error() string {
 	)
 }
 
-func (e *OperationError) Unwrap() error {
+func (e *OperationError) Unwrap() []error {
 	if e.Code == "FileAlreadyExists" {
-		return objectstore.ErrAlreadyExists
+		return []error{objectstore.ErrAlreadyExists}
 	}
-	return objectstore.ErrOperationFailed
+	causes := []error{objectstore.ErrOperationFailed}
+	if e.cause != nil {
+		causes = append(causes, e.cause)
+	}
+	return causes
+}
+
+// ProviderMetricErrorKind exposes only a bounded category, never provider
+// error text or identifiers.
+func (e *OperationError) ProviderMetricErrorKind() providerobservability.ErrorKind {
+	if e == nil {
+		return providerobservability.ErrorOperationFailed
+	}
+	return ossMetricErrorKind(e.Code, e.StatusCode, e.cause)
 }
 
 func safeError(operation string, err error) error {
+	cause := stableContextCause(err)
 	var serviceError *aliyunoss.ServiceError
 	if errors.As(err, &serviceError) {
 		return &OperationError{
@@ -374,7 +456,60 @@ func safeError(operation string, err error) error {
 			Code:       serviceError.Code,
 			StatusCode: serviceError.StatusCode,
 			RequestID:  serviceError.RequestID,
+			cause:      cause,
 		}
 	}
-	return &OperationError{Operation: operation}
+	return &OperationError{Operation: operation, cause: cause}
+}
+
+func stableContextCause(err error) error {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return context.DeadlineExceeded
+	case errors.Is(err, context.Canceled):
+		return context.Canceled
+	default:
+		return nil
+	}
+}
+
+func ossMetricErrorKind(
+	code string,
+	status int,
+	cause error,
+) providerobservability.ErrorKind {
+	switch {
+	case errors.Is(cause, context.DeadlineExceeded):
+		return providerobservability.ErrorTimeout
+	case errors.Is(cause, context.Canceled):
+		return providerobservability.ErrorCancelled
+	}
+	switch strings.ToLower(strings.TrimSpace(code)) {
+	case "filealreadyexists":
+		return providerobservability.ErrorAlreadyExists
+	case "invalidaccesskeyid", "signaturedoesnotmatch", "invalidsecuritytoken", "securitytokenexpired":
+		return providerobservability.ErrorAuthentication
+	case "accessdenied":
+		return providerobservability.ErrorAuthorization
+	case "requesttimeout":
+		return providerobservability.ErrorTimeout
+	case "toomanyrequests", "throttling", "slowdown":
+		return providerobservability.ErrorRateLimited
+	case "serviceunavailable", "internalerror":
+		return providerobservability.ErrorProviderUnavailable
+	}
+	switch {
+	case status == http.StatusUnauthorized:
+		return providerobservability.ErrorAuthentication
+	case status == http.StatusForbidden:
+		return providerobservability.ErrorAuthorization
+	case status == http.StatusRequestTimeout:
+		return providerobservability.ErrorTimeout
+	case status == http.StatusTooManyRequests:
+		return providerobservability.ErrorRateLimited
+	case status >= http.StatusInternalServerError:
+		return providerobservability.ErrorProviderUnavailable
+	default:
+		return providerobservability.ErrorOperationFailed
+	}
 }

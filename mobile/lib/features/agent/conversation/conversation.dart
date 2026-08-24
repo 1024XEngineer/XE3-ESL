@@ -64,6 +64,9 @@ class ConversationPage extends StatefulWidget {
     this.hasEarlierMessages = false,
     this.isLoadingEarlierMessages = false,
     this.isBusy = false,
+    this.isRestoring = false,
+    this.isReplyPending = false,
+    this.isComposerBlocked = false,
     this.errorMessage,
     this.onSubmitText,
     this.onRetryOperation,
@@ -104,6 +107,9 @@ class ConversationPage extends StatefulWidget {
   final bool hasEarlierMessages;
   final bool isLoadingEarlierMessages;
   final bool isBusy;
+  final bool isRestoring;
+  final bool isReplyPending;
+  final bool isComposerBlocked;
   final String? errorMessage;
   final Future<bool> Function(String)? onSubmitText;
   final VoidCallback? onRetryOperation;
@@ -148,7 +154,7 @@ class ConversationPage extends StatefulWidget {
       AgentVoiceComposerState.awaitingAssistant => true,
       _ => false,
     };
-    final replyPending = isBusy || voiceShowsReplyProgress;
+    final replyPending = isReplyPending || voiceShowsReplyProgress;
     const topContentInset = 65.0;
     const topOverlayExtent = 76.0;
     final bottomOverlayExtent = composerBottom + composerHeight + 16;
@@ -286,25 +292,27 @@ class ConversationPage extends StatefulWidget {
                                   : null,
                             ),
                           ],
-                          if (isBusy && !voiceShowsReplyProgress) ...[
+                          if ((isRestoring || isReplyPending) &&
+                              !voiceShowsReplyProgress) ...[
                             const SizedBox(height: 14),
                             Center(
                               child: Semantics(
-                                label: 'SpeakUp 正在处理',
-                                child: const Wrap(
-                                  key: Key('agent-operation-progress'),
+                                excludeSemantics: true,
+                                label: isRestoring ? '正在加载对话' : 'SpeakUp 正在处理',
+                                child: Wrap(
+                                  key: const Key('agent-operation-progress'),
                                   alignment: WrapAlignment.center,
                                   crossAxisAlignment: WrapCrossAlignment.center,
                                   spacing: 10,
                                   children: [
-                                    SizedBox.square(
+                                    const SizedBox.square(
                                       dimension: 18,
                                       child: CircularProgressIndicator(
                                         strokeWidth: 2,
                                       ),
                                     ),
                                     Text(
-                                      'SpeakUp 正在回复…',
+                                      isRestoring ? '正在加载对话…' : 'SpeakUp 正在回复…',
                                       style: SpeakUpDesign.meta,
                                     ),
                                   ],
@@ -404,10 +412,11 @@ class ConversationPage extends StatefulWidget {
                             acceptedUserMessageText: acceptedUserMessage?.text,
                             onStartVoice: onStartVoice,
                             voiceController: voiceController,
-                            voiceEnabled: voiceController != null && !isBusy,
+                            voiceEnabled:
+                                voiceController != null && !isComposerBlocked,
                             onSubmitText: onSubmitText,
                             enabled: canCompose,
-                            isBusy: isBusy,
+                            isBusy: isComposerBlocked,
                             pendingImages: pendingImages,
                             imageErrorMessage: imageErrorMessage,
                             imageSelectionInFlight: imageSelectionInFlight,

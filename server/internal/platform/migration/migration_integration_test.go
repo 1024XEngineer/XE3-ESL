@@ -74,6 +74,18 @@ func TestMigrationHistoryFreshUpDownUp(t *testing.T) {
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
+		t.Fatalf("DownOne to v8 Product health views = %t, %v", changed, err)
+	}
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables))
+
+	changed, err = runner.DownOne()
+	if err != nil || !changed {
+		t.Fatalf("DownOne to v7 Pending Practice actions = %t, %v", changed, err)
+	}
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables))
+
+	changed, err = runner.DownOne()
+	if err != nil || !changed {
 		t.Fatalf("DownOne to v6 User profile avatar = %t, %v", changed, err)
 	}
 	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-1)
@@ -132,6 +144,12 @@ func TestSceneSelectionSourceMigrationTransformsPlansAndPreservesSessions(
 	t.Cleanup(func() { _ = runner.Close() })
 	if changed, upErr := runner.Up(); upErr != nil || !changed {
 		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v8 Product health views = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v7 Pending Practice actions = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("DownOne to v6 User profile avatar = %t, %v", changed, downErr)
@@ -267,6 +285,12 @@ FROM practice_sessions WHERE session_id = $1
 	}
 
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("roll back v9 = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("roll back v8 = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("roll back v7 = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
@@ -304,6 +328,12 @@ func TestMigratedLegacyCatalogPlanCompletesThroughFormalReport(t *testing.T) {
 	t.Cleanup(func() { _ = runner.Close() })
 	if changed, upErr := runner.Up(); upErr != nil || !changed {
 		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v8 Product health views = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v7 Pending Practice actions = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("DownOne to v6 User profile avatar = %t, %v", changed, downErr)
@@ -402,11 +432,13 @@ INSERT INTO practice_plans (
 	evaluationComposition, err := app.NewEvaluationComposition(
 		pool,
 		migrationReportGenerator{},
+		migrationReportGenerator{},
 		migrationSpeechFeedbackGenerator{},
 		nil,
 		app.EvaluationConfiguration{
 			Provider:     "qianwen",
 			SessionModel: "qwen-plus",
+			ProfileModel: "qwen-plus",
 			SpeechModel:  "qwen-plus",
 			Worker:       migrationEvaluationWorkerConfiguration(),
 		},
@@ -419,6 +451,7 @@ INSERT INTO practice_plans (
 		pool,
 		schedulers.Completion,
 		schedulers.TurnFeedback,
+		schedulers.IELTSProfile,
 		ids,
 	)
 	if err != nil {
@@ -560,6 +593,12 @@ func TestSceneSelectionSourceMigrationRejectsDownWithCustomPlan(t *testing.T) {
 	t.Cleanup(func() { _ = runner.Close() })
 	if changed, upErr := runner.Up(); upErr != nil || !changed {
 		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v8 Product health views = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v7 Pending Practice actions = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("DownOne to v6 User profile avatar = %t, %v", changed, downErr)
@@ -919,6 +958,14 @@ func migrationEvaluationWorkerConfiguration() evaluation.WorkerConfiguration {
 			LeaseDuration: 3 * time.Minute,
 			MaxAttempts:   3,
 		},
+		ProfileLane: evaluation.ClaimLane{
+			Kinds: []evaluation.Kind{
+				evaluation.KindIELTSPart1Profile,
+				evaluation.KindIELTSPart2Profile,
+			},
+			LeaseDuration: 3 * time.Minute,
+			MaxAttempts:   3,
+		},
 		SpeechLane: evaluation.ClaimLane{
 			Kinds: []evaluation.Kind{
 				evaluation.KindPracticeTurnFeedback,
@@ -927,13 +974,16 @@ func migrationEvaluationWorkerConfiguration() evaluation.WorkerConfiguration {
 			LeaseDuration: 3 * time.Minute,
 			MaxAttempts:   3,
 		},
-		InterviewDeadline: 30 * time.Second,
-		IELTSDeadline:     110 * time.Second,
-		GeneralDeadline:   30 * time.Second,
-		SpeechDeadline:    30 * time.Second,
-		RetryDelay:        time.Second,
-		DependencyDelay:   time.Second,
-		FinalizeTimeout:   5 * time.Second,
+		InterviewDeadline:         30 * time.Second,
+		IELTSDeadline:             110 * time.Second,
+		GeneralDeadline:           30 * time.Second,
+		SpeechDeadline:            30 * time.Second,
+		ProfileDeadline:           30 * time.Second,
+		RetryDelay:                time.Second,
+		DependencyDelay:           time.Second,
+		AcousticDependencyMaxWait: 150 * time.Second,
+		ProfileDependencyMaxWait:  20 * time.Second,
+		FinalizeTimeout:           5 * time.Second,
 	}
 }
 

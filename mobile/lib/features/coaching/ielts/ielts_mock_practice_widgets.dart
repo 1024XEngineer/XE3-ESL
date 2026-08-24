@@ -263,6 +263,8 @@ class _RecorderDock extends StatelessWidget {
     required this.onSendVoice,
     required this.onConvertToText,
     required this.onCancelRecording,
+    required this.onRetryConfirmation,
+    required this.onRerecord,
     required this.onSubmitConvertedAnswer,
     required this.onCancelConvertedAnswer,
     required this.onOpenTextAnswer,
@@ -282,6 +284,8 @@ class _RecorderDock extends StatelessWidget {
   final FutureOr<void> Function() onSendVoice;
   final FutureOr<void> Function() onConvertToText;
   final FutureOr<void> Function() onCancelRecording;
+  final VoidCallback onRetryConfirmation;
+  final VoidCallback onRerecord;
   final FutureOr<void> Function() onSubmitConvertedAnswer;
   final VoidCallback onCancelConvertedAnswer;
   final VoidCallback onOpenTextAnswer;
@@ -298,7 +302,6 @@ class _RecorderDock extends StatelessWidget {
     };
     final working =
         state == PracticeRecordingState.transcribing ||
-        state == PracticeRecordingState.awaitingConfirmation ||
         state == PracticeRecordingState.submitting;
     final control = VoiceCaptureControl(
       phase: phase,
@@ -306,6 +309,7 @@ class _RecorderDock extends StatelessWidget {
           enabledOverride ??
           (!convertedAnswerMode &&
               !controller.hasPendingPracticeAudio &&
+              state != PracticeRecordingState.awaitingConfirmation &&
               !working),
       onStart: onStart,
       onSendVoice: onSendVoice,
@@ -320,6 +324,14 @@ class _RecorderDock extends StatelessWidget {
                 submitting: convertedAnswerSubmitting,
                 onSubmit: onSubmitConvertedAnswer,
                 onCancel: onCancelConvertedAnswer,
+              )
+            : state == PracticeRecordingState.awaitingConfirmation
+            ? PracticeTranscriptComposer(
+                transcript: controller.transcript ?? '',
+                keyPrefix: 'ielts-mock',
+                onRerecord: onRerecord,
+                onConfirm: onRetryConfirmation,
+                confirmLabel: controller.errorMessage == null ? '发送回答' : '重试提交',
               )
             : working
             ? _IeltsRecorderWorkingState(state: state)
@@ -404,8 +416,7 @@ class _IeltsRecorderWorkingState extends StatelessWidget {
   Widget build(BuildContext context) {
     final label = switch (state) {
       PracticeRecordingState.transcribing => '正在识别你的回答…',
-      PracticeRecordingState.awaitingConfirmation => '正在提交你的回答…',
-      PracticeRecordingState.submitting => '回答已发送，正在进入下一题…',
+      PracticeRecordingState.submitting => '正在提交你的回答…',
       _ => '正在处理…',
     };
     return KeyedSubtree(

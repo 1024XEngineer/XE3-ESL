@@ -365,6 +365,12 @@ server {
     ssl_certificate $certbot_root/live/speak-up.top/fullchain.pem;
     ssl_certificate_key $certbot_root/live/speak-up.top/privkey.pem;
 }
+server {
+    listen 443 ssl;
+    server_name monitor.speak-up.top;
+    ssl_certificate $certbot_root/live/monitor.speak-up.top/fullchain.pem;
+    ssl_certificate_key $certbot_root/live/monitor.speak-up.top/privkey.pem;
+}
 EOF
 
   if [[ -n "$unrelated_certificate" || -n "$unrelated_key" ]]; then
@@ -513,6 +519,17 @@ grep -Fq 'set $speakup_tls_bootstrap production;' "$temporary_directory/producti
 ! grep -Fq 'server_name www.speak-up.top' "$temporary_directory/production-http.conf" ||
   fail "Production bootstrap duplicates the legacy redirect hostname"
 
+"$manage" render-bootstrap \
+  --environment monitor \
+  --env-file "$environment_file" \
+  --output "$temporary_directory/monitor-http.conf" >"$command_output"
+grep -Fq 'server_name monitor.speak-up.top;' "$temporary_directory/monitor-http.conf" ||
+  fail "Monitor bootstrap hostname is wrong"
+grep -Fq "root $production_webroot;" "$temporary_directory/monitor-http.conf" ||
+  fail "Monitor bootstrap webroot is wrong"
+grep -Fq 'set $speakup_tls_bootstrap monitor;' "$temporary_directory/monitor-http.conf" ||
+  fail "Monitor bootstrap has no removable runtime marker"
+
 # Configuration parsing is strict and never prints values from rejected lines.
 cp "$environment_file" "$temporary_directory/secret.env"
 printf '%s\n' 'PORTAL_ADMIN_PASSWORD=do-not-print-this-value' >>"$temporary_directory/secret.env"
@@ -625,6 +642,15 @@ assert_no_reload "Staging issuance"
 expect_failure "duplicate Staging issuance" \
   "$manage" issue-staging --env-file "$environment_file"
 
+"$manage" issue-monitor --env-file "$environment_file" >"$command_output"
+grep -Fq 'environment=monitor certificate_name=monitor.speak-up.top' "$command_output" ||
+  fail "Monitor issue audit is missing"
+grep -Fxq "account = $production_account_id" \
+  "$certbot_root/renewal/monitor.speak-up.top.conf" ||
+  fail "Monitor renewal did not persist the Production account"
+expect_failure "duplicate Monitor issuance" \
+  "$manage" issue-monitor --env-file "$environment_file"
+
 cp "$certbot_root/renewal/speak-up.top.conf" "$temporary_directory/legacy-production-renewal.conf"
 sed '/^www\.speak-up\.top = /d' \
   "$temporary_directory/legacy-production-renewal.conf" \
@@ -671,6 +697,7 @@ grep -Fq -- 'reconfigure --non-interactive --cert-name speak-up.top --webroot-pa
   fail "Production renewal configuration still contains the legacy webroot"
 "$manage" verify --environment staging --env-file "$environment_file" >"$command_output"
 "$manage" verify --environment production --env-file "$environment_file" >"$command_output"
+"$manage" verify --environment monitor --env-file "$environment_file" >"$command_output"
 grep -Fq 'verified=true' "$command_output" || fail "Production verification audit is missing"
 
 staging_renewal="$certbot_root/renewal/staging.speak-up.top.conf"
@@ -705,6 +732,10 @@ grep -Fq -- '--domains speak-up.top --domains www.speak-up.top --domains api.spe
   "$docker_log" || fail "Production Certbot SAN arguments are not exact"
 grep -Fq -- '--webroot-map {"speak-up.top":"/var/www/acme","www.speak-up.top":"/var/www/acme","api.speak-up.top":"/var/www/acme"}' \
   "$docker_log" || fail "Production Certbot webroot map argument is not exact"
+grep -Fq -- '--domains monitor.speak-up.top' "$docker_log" ||
+  fail "Monitor Certbot SAN argument is not exact"
+grep -Fq -- '--webroot-map {"monitor.speak-up.top":"/var/www/acme"}' \
+  "$docker_log" || fail "Monitor Certbot webroot map argument is not exact"
 grep -Fxq "account = $production_account_id" \
   "$certbot_root/renewal/speak-up.top.conf" ||
   fail "Production renewal did not retain the selected account"
@@ -749,8 +780,13 @@ reset_nginx_log
 "$manage" activate --environment production --env-file "$environment_file" >"$command_output"
 grep -Fxq -- '-t' "$nginx_log" || fail "Production activation did not test Nginx"
 grep -Fxq -- '-s reload' "$nginx_log" || fail "Production activation did not gracefully reload"
+reset_nginx_log
+"$manage" activate --environment monitor --env-file "$environment_file" >"$command_output"
+grep -Fxq -- '-t' "$nginx_log" || fail "Monitor activation did not test Nginx"
+grep -Fxq -- '-s reload' "$nginx_log" || fail "Monitor activation did not gracefully reload"
 [[ -s "$state_root/staging.deployed.sha256" ]] || fail "Staging activation state is missing"
 [[ -s "$state_root/production.deployed.sha256" ]] || fail "Production activation state is missing"
+[[ -s "$state_root/monitor.deployed.sha256" ]] || fail "Monitor activation state is missing"
 
 # A certificate with six days left is rejected for serving but may still reach Certbot renewal.
 staging_certificate=$(realpath "$certbot_root/live/staging.speak-up.top/fullchain.pem")
@@ -794,7 +830,7 @@ docker_calls_after=$(wc -l <"$docker_log" | tr -d '[:space:]')
   fail "Expired certificate was rejected only after Docker ran"
 cp "$temporary_directory/production-expired.backup" "$production_certificate"
 
-# A successful no-op renewal verifies both lineages and never reloads.
+# A successful no-op renewal verifies all three lineages and never reloads.
 reset_nginx_log
 "$manage" renew --env-file "$environment_file" >"$command_output"
 grep -Fq 'renewed=true reload=false' "$command_output" || fail "No-op renewal audit is wrong"
@@ -851,7 +887,7 @@ docker_calls_after=$(wc -l <"$docker_log" | tr -d '[:space:]')
 sed -i.bak '/^renew_hook = /d' "$certbot_root/renewal/speak-up.top.conf"
 rm -f "$certbot_root/renewal/speak-up.top.conf.bak"
 
-# One changed lineage triggers one reload, but only after both lineages verify.
+# One changed lineage triggers one reload, but only after all lineages verify.
 reset_nginx_log
 FAKE_DOCKER_RENEW_CHANGE=staging.speak-up.top \
   "$manage" renew --env-file "$environment_file" >"$command_output"
@@ -912,9 +948,10 @@ assert_no_reload "still-loaded Staging bootstrap"
 sed -i.bak '/speakup_tls_bootstrap staging/d' "$nginx_dump"
 rm -f "$nginx_dump.bak"
 
-# Dry-run checks both renewal lineages and can neither change state nor reload.
+# Dry-run checks all renewal lineages and can neither change state nor reload.
 staging_state_before=$(<"$state_root/staging.deployed.sha256")
 production_state_before=$(<"$state_root/production.deployed.sha256")
+monitor_state_before=$(<"$state_root/monitor.deployed.sha256")
 reset_nginx_log
 FAKE_DOCKER_RENEW_CHANGE=staging.speak-up.top \
   "$manage" renew-dry-run --env-file "$environment_file" >"$command_output"
@@ -923,7 +960,9 @@ assert_no_reload "renewal dry-run"
   fail "Dry-run changed Staging deployed state"
 [[ "$(<"$state_root/production.deployed.sha256")" == "$production_state_before" ]] ||
   fail "Dry-run changed Production deployed state"
-[[ $(grep -Fc -- '--dry-run' "$docker_log") -ge 2 ]] || fail "Dry-run did not cover both lineages"
+[[ "$(<"$state_root/monitor.deployed.sha256")" == "$monitor_state_before" ]] ||
+  fail "Dry-run changed Monitor deployed state"
+[[ $(grep -Fc -- '--dry-run' "$docker_log") -ge 3 ]] || fail "Dry-run did not cover all lineages"
 
 # Key mismatch, unsafe key permissions, bad validity, Docker failure, and wrong host all fail closed.
 staging_key=$(realpath "$certbot_root/live/staging.speak-up.top/privkey.pem")
@@ -956,6 +995,18 @@ FAKE_UNAME_MACHINE=arm64 expect_failure "non-amd64 host" \
 # The unit is deterministic, locked by the script, and scheduled twice daily.
 grep -Fq 'ExecStart=/usr/local/sbin/xe3-speakup-tls renew --env-file /etc/speakup/tls.env' \
   "$tls_directory/xe3-speakup-tls-renew.service" || fail "systemd service entry point is wrong"
+grep -Fxq 'StateDirectory=speakup/safety-checks' \
+  "$tls_directory/xe3-speakup-tls-renew.service" || fail "systemd renewal state directory is wrong"
+grep -Fxq 'StateDirectoryMode=0700' \
+  "$tls_directory/xe3-speakup-tls-renew.service" || fail "systemd renewal state directory is not root-only"
+[[ $(grep -c '^ExecStartPre=' "$tls_directory/xe3-speakup-tls-renew.service") -eq 1 ]] ||
+  fail "systemd renewal must invalidate exactly one success marker"
+grep -Fxq \
+  'ExecStartPre=/usr/bin/rm --force -- /var/lib/speakup/safety-checks/tls-renewal.success' \
+  "$tls_directory/xe3-speakup-tls-renew.service" || fail "systemd renewal marker invalidation is wrong"
+grep -Fxq \
+  'ExecStartPost=/usr/bin/install --no-target-directory --owner=root --group=root --mode=0600 /dev/null /var/lib/speakup/safety-checks/tls-renewal.success' \
+  "$tls_directory/xe3-speakup-tls-renew.service" || fail "systemd renewal success marker is wrong"
 ! grep -Eq 'prepare-image|docker[[:space:]]+pull' \
   "$tls_directory/xe3-speakup-tls-renew.service" ||
   fail "systemd renewal can prepare or pull the Certbot image"

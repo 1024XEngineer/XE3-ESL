@@ -37,6 +37,7 @@ import 'package:speakup/features/coaching/review/session_evaluation_page.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
 import 'package:speakup/features/coaching/profile/coaching_profile.dart';
 import 'package:speakup/features/coaching/scenario/scenario_practice_session.dart';
+import 'package:speakup/features/update/app_update.dart';
 
 class SpeakUpApp extends StatelessWidget {
   const SpeakUpApp({
@@ -55,6 +56,7 @@ class SpeakUpApp extends StatelessWidget {
     this.sessionEvaluationController,
     this.speechFeedbackController,
     this.coachingProfileController,
+    this.appUpdateService,
     this.avatarControllerFactory,
     super.key,
   }) : _authentication = (controller: authController),
@@ -75,6 +77,7 @@ class SpeakUpApp extends StatelessWidget {
     this.sessionEvaluationController,
     this.speechFeedbackController,
     this.coachingProfileController,
+    this.appUpdateService,
     this.avatarControllerFactory,
     super.key,
   }) : _authentication = null,
@@ -95,6 +98,7 @@ class SpeakUpApp extends StatelessWidget {
   final SessionEvaluationController? sessionEvaluationController;
   final SpeechFeedbackController? speechFeedbackController;
   final CoachingProfileController? coachingProfileController;
+  final AppUpdateService? appUpdateService;
   final AvatarControllerFactory? avatarControllerFactory;
   final bool _allowFakePreview;
 
@@ -122,6 +126,7 @@ class SpeakUpApp extends StatelessWidget {
               sessionEvaluationController: sessionEvaluationController,
               speechFeedbackController: speechFeedbackController,
               coachingProfileController: coachingProfileController,
+              appUpdateService: appUpdateService,
               avatarControllerFactory: avatarControllerFactory,
               allowFakePreview: _allowFakePreview,
             )
@@ -145,6 +150,7 @@ class SpeakUpApp extends StatelessWidget {
                 sessionEvaluationController: sessionEvaluationController,
                 speechFeedbackController: speechFeedbackController,
                 coachingProfileController: coachingProfileController,
+                appUpdateService: appUpdateService,
                 avatarControllerFactory: avatarControllerFactory,
                 allowFakePreview: _allowFakePreview,
               ),
@@ -171,6 +177,7 @@ class _AuthenticatedNavigator extends StatefulWidget {
     this.sessionEvaluationController,
     this.speechFeedbackController,
     this.coachingProfileController,
+    this.appUpdateService,
     this.avatarControllerFactory,
     required this.allowFakePreview,
   });
@@ -191,6 +198,7 @@ class _AuthenticatedNavigator extends StatefulWidget {
   final SessionEvaluationController? sessionEvaluationController;
   final SpeechFeedbackController? speechFeedbackController;
   final CoachingProfileController? coachingProfileController;
+  final AppUpdateService? appUpdateService;
   final AvatarControllerFactory? avatarControllerFactory;
   final bool allowFakePreview;
 
@@ -201,6 +209,7 @@ class _AuthenticatedNavigator extends StatefulWidget {
 
 class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
   final _navigatorKey = GlobalKey<NavigatorState>();
+  final _routeObserver = RouteObserver<ModalRoute<Object?>>();
   late final ConversationController _conversationController;
   late final ComposerController _composerController;
   late final AgentMessageAudioController? _messageAudioController;
@@ -374,8 +383,9 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
 
   @override
   Widget build(BuildContext context) {
-    return Navigator(
+    final navigator = Navigator(
       key: _navigatorKey,
+      observers: [_routeObserver],
       initialRoute: AppRoutes.home,
       onGenerateRoute: (settings) {
         final page = switch (settings.name) {
@@ -397,6 +407,8 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             reviewHistoryController: widget.reviewHistoryController,
             speechFeedbackController: widget.speechFeedbackController,
             coachingProfileController: widget.coachingProfileController,
+            appUpdateService: widget.appUpdateService,
+            routeObserver: _routeObserver,
           ),
           AppRoutes.preparation => PreparationPage(
             showBackButton: true,
@@ -456,6 +468,8 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             reviewHistoryController: widget.reviewHistoryController,
             speechFeedbackController: widget.speechFeedbackController,
             coachingProfileController: widget.coachingProfileController,
+            appUpdateService: widget.appUpdateService,
+            routeObserver: _routeObserver,
           ),
           AppRoutes.review => ReviewPage(
             showBackButton: true,
@@ -473,6 +487,15 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
           builder: (_) => page,
         );
       },
+    );
+    return NavigatorPopHandler<Object?>(
+      onPopWithResult: (result) {
+        final navigatorState = _navigatorKey.currentState;
+        if (navigatorState != null) {
+          unawaited(navigatorState.maybePop<Object?>(result));
+        }
+      },
+      child: navigator,
     );
   }
 
@@ -549,6 +572,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
       reportStatusController: widget.sessionEvaluationController,
       speechFeedbackController: widget.speechFeedbackController,
       avatarSurfaceBuilder: avatar?.surfaceBuilder,
+      avatarSurfaceVisible: avatar?.surfaceVisible ?? true,
       avatarStatusLabel: avatar?.statusLabel,
       onBeforeUserTurn: avatar?.interruptForUserTurn,
       onReplayQuestionWithAvatar: avatar?.onReplayQuestion,

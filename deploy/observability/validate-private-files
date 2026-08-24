@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+fail() {
+  printf 'observability private files: %s\n' "$*" >&2
+  exit 1
+}
+
+[[ $# == 4 && "$1" == --environment-file && "$3" == --metrics-environment-file ]] ||
+  fail 'usage: validate-private-files --environment-file FILE --metrics-environment-file FILE'
+readonly environment_file=$2
+readonly metrics_environment_file=$4
+
+file_mode() {
+  stat -Lc '%a' "$1"
+}
+
+file_owner() {
+  stat -Lc '%u' "$1"
+}
+
+require_private_file() {
+  local label=$1 path=$2 owner=$3 mode=$4
+  [[ -f "$path" && ! -L "$path" && -s "$path" ]] ||
+    fail "$label must be a non-empty regular file"
+  [[ "$(file_owner "$path")" == "$owner" ]] ||
+    fail "$label must be owned by uid $owner"
+  [[ "$(file_mode "$path")" == "$mode" ]] ||
+    fail "$label must have mode $mode"
+}
+
+valid_absolute_path() {
+  local value=$1
+  [[ "$value" =~ ^/[A-Za-z0-9._/-]+$ ]] &&
+    [[ "$value" != *//* && "$value" != */../* && "$value" != */./* &&
+      "$value" != */.. && "$value" != */. ]]
+}
+
+load_environment() {
+  local line name value line_number=0
+  local seen=$'\n'
+  require_private_file 'observability environment file' "$environment_file" 0 600
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line_number=$((line_number + 1))
+    line=${line%$'\r'}
+    case "$line" in
+      '' | \#*) continue ;;
+    esac
+    [[ "$line" == *=* ]] || fail "invalid environment syntax at line $line_number"
+    name=${line%%=*}
+    value=${line#*=}
+    case "$name" in
+      OBSERVABILITY_ALERTMANAGER_CONFIG | \
+        OBSERVABILITY_GRAFANA_HOST | \
+        OBSERVABILITY_GRAFANA_ADMIN_USER | \
+        OBSERVABILITY_GRAFANA_ADMIN_PASSWORD_FILE | \
+        OBSERVABILITY_PRODUCT_HEALTH_DATABASE | \
+        OBSERVABILITY_PRODUCT_HEALTH_PGPASS_FILE)
+        ;;
+      *) fail "unsupported environment key: $name" ;;
+    esac
+    case "$seen" in
+      *$'\n'"$name"$'\n'*) fail "duplicate environment key: $name" ;;
+    esac
+    seen+="$name"$'\n'
+    [[ -n "$value" && "$value" != *$'\n'* && "$value" != *$'\r'* ]] ||
+      fail "$name must be a non-empty single-line value"
+    printf -v "$name" '%s' "$value"
+  done <"$environment_file"
+}
+
+load_metrics_environment() {
+  local line name value line_number=0
+  local seen=$'\n'
+  require_private_file 'metrics environment file' "$metrics_environment_file" 0 600
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line_number=$((line_number + 1))
+    line=${line%$'\r'}
+    case "$line" in
+      '' | \#*) continue ;;
+    esac
+    [[ "$line" == *=* ]] || fail "invalid metrics environment syntax at line $line_number"
+    name=${line%%=*}
+    value=${line#*=}
+    case "$name" in
+      OBSERVABILITY_PRODUCTION_CERTIFICATE | \
+        OBSERVABILITY_STAGING_CERTIFICATE | \
+        OBSERVABILITY_MONITOR_CERTIFICATE | \
+        OBSERVABILITY_POSTGRES_BACKUP_ROOT | \
+        OBSERVABILITY_PORTAL_BACKUP_ROOT)
+        ;;
+      *) fail "unsupported metrics environment key: $name" ;;
+    esac
+    case "$seen" in
+      *$'\n'"$name"$'\n'*) fail "duplicate metrics environment key: $name" ;;
+    esac
+    seen+="$name"$'\n'
+    valid_absolute_path "$value" || fail "$name must be a safe absolute path"
+    printf -v "$name" '%s' "$value"
+  done <"$metrics_environment_file"
+}
+
+load_environment
+load_metrics_environment
+for name in \
+  OBSERVABILITY_ALERTMANAGER_CONFIG \
+  OBSERVABILITY_GRAFANA_HOST \
+  OBSERVABILITY_GRAFANA_ADMIN_USER \
+  OBSERVABILITY_GRAFANA_ADMIN_PASSWORD_FILE \
+  OBSERVABILITY_PRODUCT_HEALTH_DATABASE \
+  OBSERVABILITY_PRODUCT_HEALTH_PGPASS_FILE; do
+  [[ -n "${!name:-}" ]] || fail "$name is required"
+done
+for name in \
+  OBSERVABILITY_PRODUCTION_CERTIFICATE \
+  OBSERVABILITY_STAGING_CERTIFICATE \
+  OBSERVABILITY_MONITOR_CERTIFICATE \
+  OBSERVABILITY_POSTGRES_BACKUP_ROOT \
+  OBSERVABILITY_PORTAL_BACKUP_ROOT; do
+  [[ -n "${!name:-}" ]] || fail "$name is required"
+done
+valid_absolute_path "$OBSERVABILITY_ALERTMANAGER_CONFIG" ||
+  fail 'OBSERVABILITY_ALERTMANAGER_CONFIG must be a safe absolute path'
+valid_absolute_path "$OBSERVABILITY_GRAFANA_ADMIN_PASSWORD_FILE" ||
+  fail 'OBSERVABILITY_GRAFANA_ADMIN_PASSWORD_FILE must be a safe absolute path'
+valid_absolute_path "$OBSERVABILITY_PRODUCT_HEALTH_PGPASS_FILE" ||
+  fail 'OBSERVABILITY_PRODUCT_HEALTH_PGPASS_FILE must be a safe absolute path'
+[[ "$OBSERVABILITY_GRAFANA_HOST" == monitor.speak-up.top ]] ||
+  fail 'OBSERVABILITY_GRAFANA_HOST must be monitor.speak-up.top'
+[[ "$OBSERVABILITY_GRAFANA_ADMIN_USER" =~ ^[A-Za-z0-9_.-]{3,64}$ ]] ||
+  fail 'OBSERVABILITY_GRAFANA_ADMIN_USER is invalid'
+[[ "$OBSERVABILITY_PRODUCT_HEALTH_DATABASE" =~ ^[a-z][a-z0-9_]{0,62}$ ]] ||
+  fail 'OBSERVABILITY_PRODUCT_HEALTH_DATABASE is invalid'
+
+# Standalone Compose bind mounts preserve host ownership. Match each image's
+# non-root runtime UID while denying group and other access.
+require_private_file 'Alertmanager configuration' "$OBSERVABILITY_ALERTMANAGER_CONFIG" 65534 400
+require_private_file 'Grafana admin password' "$OBSERVABILITY_GRAFANA_ADMIN_PASSWORD_FILE" 472 400
+[[ $(wc -l <"$OBSERVABILITY_GRAFANA_ADMIN_PASSWORD_FILE" | tr -d '[:space:]') == 1 ]] ||
+  fail 'Grafana admin password must contain exactly one newline-terminated line'
+require_private_file 'product health PGPASSFILE' "$OBSERVABILITY_PRODUCT_HEALTH_PGPASS_FILE" 472 600
+[[ $(wc -l <"$OBSERVABILITY_PRODUCT_HEALTH_PGPASS_FILE" | tr -d '[:space:]') == 1 ]] ||
+  fail 'product health PGPASSFILE must contain exactly one newline-terminated line'
+pg_host=''
+pg_port=''
+pg_database=''
+pg_user=''
+pg_password=''
+pg_extra=''
+IFS=: read -r pg_host pg_port pg_database pg_user pg_password pg_extra \
+  <"$OBSERVABILITY_PRODUCT_HEALTH_PGPASS_FILE" ||
+  fail 'product health PGPASSFILE must be newline terminated'
+[[ "$pg_host" == postgres && "$pg_port" == 5432 &&
+  "$pg_database" == "$OBSERVABILITY_PRODUCT_HEALTH_DATABASE" &&
+  "$pg_user" == speakup_product_health_reader && -z "$pg_extra" ]] ||
+  fail 'product health PGPASSFILE scope is invalid'
+[[ "$pg_password" =~ ^[A-Za-z0-9_-]{32,128}$ ]] ||
+  fail 'product health PGPASSFILE password must be 32-128 base64url characters'
+
+printf 'observability private files valid=true\n'

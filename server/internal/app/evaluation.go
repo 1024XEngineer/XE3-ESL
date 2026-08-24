@@ -5,6 +5,7 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 	evaluationapi "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/api"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/ieltsprofile"
 	evaluationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/postgres"
 	evaluationpracticeinteraction "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/practiceturn"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/sessionevaluation"
@@ -18,6 +19,7 @@ import (
 type EvaluationConfiguration struct {
 	Provider     string
 	SessionModel string
+	ProfileModel string
 	SpeechModel  string
 	Worker       evaluation.WorkerConfiguration
 }
@@ -25,11 +27,13 @@ type EvaluationConfiguration struct {
 type PracticeEvaluationSchedulers struct {
 	Completion     practicepostgres.CompletionScheduler
 	TurnFeedback   practicepostgres.TurnFeedbackScheduler
+	IELTSProfile   practicepostgres.IELTSProfileScheduler
 	FeedbackReader practiceinteraction.TurnFeedbackStatusReader
 }
 
 func (schedulers PracticeEvaluationSchedulers) valid() bool {
 	return schedulers.Completion != nil && schedulers.TurnFeedback != nil &&
+		schedulers.IELTSProfile != nil &&
 		schedulers.FeedbackReader != nil
 }
 
@@ -46,12 +50,15 @@ type EvaluationComposition struct {
 func NewEvaluationComposition(
 	database *pgxpool.Pool,
 	sessionGenerator textgeneration.Generator,
+	profileGenerator textgeneration.Generator,
 	speechGenerator speechfeedback.TextGenerator,
 	acoustics evaluation.AcousticEvaluator,
 	configuration EvaluationConfiguration,
 ) (*EvaluationComposition, error) {
-	if database == nil || sessionGenerator == nil || speechGenerator == nil ||
+	if database == nil || sessionGenerator == nil || profileGenerator == nil ||
+		speechGenerator == nil ||
 		configuration.Provider == "" || configuration.SessionModel == "" ||
+		configuration.ProfileModel == "" ||
 		configuration.SpeechModel == "" ||
 		!configuration.Worker.Valid() ||
 		(configuration.Worker.AcousticsEnabled && acoustics == nil) {
@@ -75,6 +82,12 @@ func NewEvaluationComposition(
 	if err != nil {
 		return nil, err
 	}
+	profileLineage, err := ieltsprofile.Lineage(
+		configuration.Provider, configuration.ProfileModel,
+	)
+	if err != nil {
+		return nil, err
+	}
 	sessionBuilder, err := evaluation.NewSessionCommandBuilder(
 		sessionLineages,
 		configuration.Worker.AcousticsEnabled,
@@ -83,6 +96,18 @@ func NewEvaluationComposition(
 		return nil, err
 	}
 	completion, err := evaluationpostgres.NewSessionScheduler(store, sessionBuilder)
+	if err != nil {
+		return nil, err
+	}
+	profileBuilder, err := evaluation.NewIELTSProfileCommandBuilder(
+		profileLineage, configuration.Worker.AcousticsEnabled,
+	)
+	if err != nil {
+		return nil, err
+	}
+	profileScheduler, err := evaluationpostgres.NewIELTSProfileScheduler(
+		store, profileBuilder,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -115,6 +140,10 @@ func NewEvaluationComposition(
 	if err != nil {
 		return nil, err
 	}
+	profileEvaluator, err := ieltsprofile.New(profileGenerator)
+	if err != nil {
+		return nil, err
+	}
 	speechEvaluator, err := speechfeedback.NewCompactEvaluator(speechGenerator)
 	if err != nil {
 		return nil, err
@@ -122,6 +151,7 @@ func NewEvaluationComposition(
 	worker, err := evaluation.NewWorker(
 		store,
 		sessionEvaluator,
+		profileEvaluator,
 		speechEvaluator,
 		acoustics,
 		store,
@@ -141,6 +171,7 @@ func NewEvaluationComposition(
 	schedulers := PracticeEvaluationSchedulers{
 		Completion:     completion,
 		TurnFeedback:   turnFeedback,
+		IELTSProfile:   profileScheduler,
 		FeedbackReader: feedbackReader,
 	}
 	if !schedulers.valid() {

@@ -60,17 +60,19 @@ assert_unit_directive() {
 }
 
 assert_unit_contracts() {
-  local service command
+  local service command state_directories
   for service in "$backup_service" "$restore_check_service"; do
     if [[ "$service" == "$backup_service" ]]; then
       command='backup daily'
+      state_directories='speakup/postgres-backups'
     else
       command='check'
+      state_directories='speakup/postgres-backups speakup/safety-checks'
     fi
     assert_unit_directive "$service" Service TimeoutStartSec 2h
     assert_unit_directive \
       "$service" Service EnvironmentFile /etc/speakup/postgres-backup.env
-    assert_unit_directive "$service" Service StateDirectory speakup/postgres-backups
+    assert_unit_directive "$service" Service StateDirectory "$state_directories"
     assert_unit_directive "$service" Service StateDirectoryMode 0700
     assert_unit_directive "$service" Service UMask 0077
     assert_unit_directive \
@@ -79,6 +81,15 @@ assert_unit_contracts() {
     assert_unit_directive "$service" Service PrivateNetwork true
     assert_unit_directive "$service" Service RestrictAddressFamilies AF_UNIX
   done
+
+  assert_unit_directive \
+    "$restore_check_service" Service ExecStartPre \
+    '/usr/bin/rm --force -- /var/lib/speakup/safety-checks/postgres-restore-check.success'
+  assert_unit_directive \
+    "$restore_check_service" Service ExecStartPost \
+    '/usr/bin/install --no-target-directory --owner=root --group=root --mode=0600 /dev/null /var/lib/speakup/safety-checks/postgres-restore-check.success'
+  ! grep -Fq 'safety-checks' "$backup_service" ||
+    fail 'the backup unit must not write the restore-check success marker'
 
   assert_unit_directive "$backup_timer" Timer OnCalendar daily
   assert_unit_directive "$backup_timer" Timer Persistent true

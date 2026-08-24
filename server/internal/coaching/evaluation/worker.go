@@ -9,6 +9,8 @@ import (
 
 const MinimumIELTSTwoRoundDeadline = 2*45*time.Second + 10*time.Second
 
+const acousticDependencyTimeoutReason = "ACOUSTIC_DEPENDENCY_TIMEOUT"
+
 var ErrAcousticDependencyFailed error = acousticDependencyFailure{}
 
 type acousticDependencyFailure struct{}
@@ -48,6 +50,15 @@ type SessionEvaluators interface {
 	EvaluateGeneral(context.Context, Record, SessionInputSnapshot, ConfigLineage) (json.RawMessage, error)
 }
 
+type IELTSProfileEvaluators interface {
+	EvaluateProfile(
+		context.Context,
+		Record,
+		IELTSProfileInputSnapshot,
+		ConfigLineage,
+	) (json.RawMessage, error)
+}
+
 type SpeechEvaluators interface {
 	EvaluatePracticeTurn(
 		context.Context,
@@ -80,22 +91,30 @@ type SessionAcousticSource interface {
 }
 
 type WorkerConfiguration struct {
-	SessionLane       ClaimLane
-	SpeechLane        ClaimLane
-	AcousticsEnabled  bool
-	InterviewDeadline time.Duration
-	IELTSDeadline     time.Duration
-	GeneralDeadline   time.Duration
-	SpeechDeadline    time.Duration
-	RetryDelay        time.Duration
-	DependencyDelay   time.Duration
-	FinalizeTimeout   time.Duration
+	SessionLane               ClaimLane
+	ProfileLane               ClaimLane
+	SpeechLane                ClaimLane
+	AcousticsEnabled          bool
+	InterviewDeadline         time.Duration
+	IELTSDeadline             time.Duration
+	GeneralDeadline           time.Duration
+	SpeechDeadline            time.Duration
+	ProfileDeadline           time.Duration
+	RetryDelay                time.Duration
+	DependencyDelay           time.Duration
+	AcousticDependencyMaxWait time.Duration
+	ProfileDependencyMaxWait  time.Duration
+	FinalizeTimeout           time.Duration
 }
 
 func (configuration WorkerConfiguration) Valid() bool {
 	return configuration.SessionLane.Valid() &&
 		len(configuration.SessionLane.Kinds) == 1 &&
 		configuration.SessionLane.Kinds[0] == KindSessionReport &&
+		configuration.ProfileLane.Valid() &&
+		len(configuration.ProfileLane.Kinds) == 2 &&
+		containsKind(configuration.ProfileLane.Kinds, KindIELTSPart1Profile) &&
+		containsKind(configuration.ProfileLane.Kinds, KindIELTSPart2Profile) &&
 		configuration.SpeechLane.Valid() &&
 		len(configuration.SpeechLane.Kinds) == 2 &&
 		containsKind(configuration.SpeechLane.Kinds, KindPracticeTurnFeedback) &&
@@ -108,9 +127,15 @@ func (configuration WorkerConfiguration) Valid() bool {
 		configuration.GeneralDeadline < configuration.SessionLane.LeaseDuration &&
 		configuration.SpeechDeadline > 0 &&
 		configuration.SpeechDeadline < configuration.SpeechLane.LeaseDuration &&
+		configuration.ProfileDeadline > 0 &&
+		configuration.ProfileDeadline < configuration.ProfileLane.LeaseDuration &&
 		configuration.RetryDelay >= 0 && configuration.RetryDelay <= time.Hour &&
 		configuration.DependencyDelay >= time.Second &&
 		configuration.DependencyDelay <= time.Minute &&
+		configuration.AcousticDependencyMaxWait >= configuration.DependencyDelay &&
+		configuration.AcousticDependencyMaxWait <= 5*time.Minute &&
+		configuration.ProfileDependencyMaxWait >= configuration.DependencyDelay &&
+		configuration.ProfileDependencyMaxWait <= 5*time.Minute &&
 		configuration.FinalizeTimeout >= time.Second &&
 		configuration.FinalizeTimeout <= 30*time.Second
 }
@@ -118,6 +143,7 @@ func (configuration WorkerConfiguration) Valid() bool {
 type Worker struct {
 	store         Store
 	sessions      SessionEvaluators
+	profiles      IELTSProfileEvaluators
 	speech        SpeechEvaluators
 	acoustics     AcousticEvaluator
 	sessionAudio  SessionAcousticSource
@@ -127,12 +153,13 @@ type Worker struct {
 func NewWorker(
 	store Store,
 	sessions SessionEvaluators,
+	profiles IELTSProfileEvaluators,
 	speech SpeechEvaluators,
 	acoustics AcousticEvaluator,
 	sessionAudio SessionAcousticSource,
 	configuration WorkerConfiguration,
 ) (*Worker, error) {
-	if store == nil || sessions == nil || speech == nil ||
+	if store == nil || sessions == nil || profiles == nil || speech == nil ||
 		(configuration.AcousticsEnabled &&
 			(acoustics == nil || sessionAudio == nil)) ||
 		!configuration.Valid() {
@@ -141,11 +168,174 @@ func NewWorker(
 	return &Worker{
 		store:         store,
 		sessions:      sessions,
+		profiles:      profiles,
 		speech:        speech,
 		acoustics:     acoustics,
 		sessionAudio:  sessionAudio,
 		configuration: configuration,
 	}, nil
+}
+
+func (worker *Worker) ProcessProfile(ctx context.Context) (bool, error) {
+	if worker == nil || worker.store == nil || ctx == nil {
+		return false, ErrInvalidRequest
+	}
+	claim, err := worker.store.ClaimNext(ctx, worker.configuration.ProfileLane)
+	if errors.Is(err, ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	result, deferred, err := worker.evaluateProfile(ctx, &claim)
+	if deferred {
+		return true, err
+	}
+	if err != nil {
+		return true, worker.fail(ctx, claim, err)
+	}
+	if err := worker.complete(ctx, claim, result, nil); err != nil {
+		return true, err
+	}
+	return true, nil
+}
+
+func (worker *Worker) evaluateProfile(
+	ctx context.Context,
+	claim *Claim,
+) (json.RawMessage, bool, error) {
+	if claim == nil || (claim.Kind != KindIELTSPart1Profile &&
+		claim.Kind != KindIELTSPart2Profile) {
+		return nil, false, ErrInvalidRequest
+	}
+	var snapshot IELTSProfileInputSnapshot
+	var lineage ConfigLineage
+	if DecodeStrict(claim.InputSnapshot, &snapshot) != nil || !snapshot.Valid() ||
+		DecodeStrict(claim.ConfigLineage, &lineage) != nil || !lineage.Valid() {
+		return nil, false, ErrInvalidRequest
+	}
+	if snapshot.Stage == IELTSProfileStagePart2 &&
+		snapshot.DependencyResolution == IELTSProfileDependencyPending {
+		deferred, err := worker.resolvePreviousProfile(ctx, claim, &snapshot)
+		if err != nil || deferred {
+			return nil, deferred, err
+		}
+	}
+	if worker.configuration.AcousticsEnabled {
+		deferred, err := worker.resolveProfileAcoustics(ctx, claim, &snapshot)
+		if err != nil || deferred {
+			return nil, deferred, err
+		}
+	}
+	evaluationContext, cancel := context.WithTimeout(
+		ctx, worker.configuration.ProfileDeadline,
+	)
+	defer cancel()
+	result, err := worker.profiles.EvaluateProfile(
+		evaluationContext, claim.Record, snapshot, lineage,
+	)
+	return result, false, err
+}
+
+func (worker *Worker) resolvePreviousProfile(
+	ctx context.Context,
+	claim *Claim,
+	snapshot *IELTSProfileInputSnapshot,
+) (bool, error) {
+	record, err := worker.store.GetRecordBySource(
+		ctx, claim.UserID, KindIELTSPart1Profile, snapshot.SessionID,
+	)
+	if err == nil && (record.Status == JobQueued || record.Status == JobRunning) &&
+		time.Since(claim.CreatedAt) < worker.configuration.ProfileDependencyMaxWait {
+		finalizeContext, cancel := worker.finalizeContext(ctx)
+		defer cancel()
+		return true, worker.store.DeferClaim(finalizeContext, Deferral{
+			UserID: claim.UserID, ID: claim.ID, LeaseToken: claim.LeaseToken,
+			AvailableAt: time.Now().UTC().Add(worker.configuration.DependencyDelay),
+		})
+	}
+	if err == nil && record.Status == JobReady {
+		var profile IELTSCumulativeProfile
+		if DecodeStrict(record.Result, &profile) == nil && profile.Valid() &&
+			profile.SessionID == snapshot.SessionID && len(profile.CompletedParts) == 1 {
+			snapshot.PreviousProfile = &profile
+			snapshot.DependencyResolution = IELTSProfileDependencyResolved
+		} else {
+			snapshot.DependencyResolution = IELTSProfileDependencyFallback
+		}
+	} else if errors.Is(err, ErrNotFound) || err == nil {
+		snapshot.DependencyResolution = IELTSProfileDependencyFallback
+	} else {
+		return false, err
+	}
+	return false, worker.checkpointProfileSnapshot(ctx, claim, *snapshot)
+}
+
+func (worker *Worker) resolveProfileAcoustics(
+	ctx context.Context,
+	claim *Claim,
+	snapshot *IELTSProfileInputSnapshot,
+) (bool, error) {
+	turnIDs := make([]string, 0, len(snapshot.Turns))
+	for _, turn := range snapshot.Turns {
+		if turn.AudioAssetID != "" && turn.Acoustic == nil {
+			turnIDs = append(turnIDs, turn.ID)
+		}
+	}
+	if len(turnIDs) == 0 {
+		return false, nil
+	}
+	read, err := worker.sessionAudio.ReadSessionAcoustics(
+		ctx, claim.UserID, snapshot.SessionID, turnIDs,
+	)
+	if err != nil {
+		return false, err
+	}
+	timedOut := acousticDependencyTimedOut(
+		claim.CreatedAt,
+		worker.configuration.AcousticDependencyMaxWait,
+	)
+	if read.Pending && !timedOut {
+		finalizeContext, cancel := worker.finalizeContext(ctx)
+		defer cancel()
+		return true, worker.store.DeferClaim(finalizeContext, Deferral{
+			UserID: claim.UserID, ID: claim.ID, LeaseToken: claim.LeaseToken,
+			AvailableAt: time.Now().UTC().Add(worker.configuration.DependencyDelay),
+		})
+	}
+	if err := applyAcousticDependencies(
+		snapshot.Turns,
+		turnIDs,
+		read,
+		read.Pending && timedOut,
+	); err != nil {
+		return false, err
+	}
+	return false, worker.checkpointProfileSnapshot(ctx, claim, *snapshot)
+}
+
+func (worker *Worker) checkpointProfileSnapshot(
+	ctx context.Context,
+	claim *Claim,
+	snapshot IELTSProfileInputSnapshot,
+) error {
+	if !snapshot.Valid() {
+		return ErrInvalidRequest
+	}
+	encoded, digest, err := EncodeStrict(snapshot)
+	if err != nil {
+		return err
+	}
+	finalizeContext, cancel := worker.finalizeContext(ctx)
+	updated, err := worker.store.CheckpointSnapshot(finalizeContext, SnapshotCheckpoint{
+		UserID: claim.UserID, ID: claim.ID, LeaseToken: claim.LeaseToken,
+		InputSnapshot: encoded, InputHash: digest,
+	})
+	cancel()
+	if err == nil {
+		claim.Record = updated
+	}
+	return err
 }
 
 func (worker *Worker) ProcessSession(ctx context.Context) (bool, error) {
@@ -216,6 +406,13 @@ func (worker *Worker) evaluateSession(
 			return nil, deferred, err
 		}
 	}
+	if lineage.StrategyRef == IELTSStrategyRef &&
+		snapshot.PracticeMode == "FULL_MOCK" && snapshot.ProfileResolution == "" {
+		deferred, err := worker.resolveFinalProfile(ctx, claim, &snapshot)
+		if err != nil || deferred {
+			return nil, deferred, err
+		}
+	}
 	var deadline time.Duration
 	var evaluate func(context.Context) (json.RawMessage, error)
 	switch lineage.StrategyRef {
@@ -249,6 +446,56 @@ func (worker *Worker) evaluateSession(
 	return result, false, nil
 }
 
+func (worker *Worker) resolveFinalProfile(
+	ctx context.Context,
+	claim *Claim,
+	snapshot *SessionInputSnapshot,
+) (bool, error) {
+	record, err := worker.store.GetRecordBySource(
+		ctx, claim.UserID, KindIELTSPart2Profile, snapshot.SessionID,
+	)
+	if err == nil && (record.Status == JobQueued || record.Status == JobRunning) &&
+		time.Since(claim.CreatedAt) < worker.configuration.ProfileDependencyMaxWait {
+		finalizeContext, cancel := worker.finalizeContext(ctx)
+		defer cancel()
+		return true, worker.store.DeferClaim(finalizeContext, Deferral{
+			UserID: claim.UserID, ID: claim.ID, LeaseToken: claim.LeaseToken,
+			AvailableAt: time.Now().UTC().Add(worker.configuration.DependencyDelay),
+		})
+	}
+	if err == nil && record.Status == JobReady {
+		var profile IELTSCumulativeProfile
+		if DecodeStrict(record.Result, &profile) == nil && profile.Valid() &&
+			profile.SessionID == snapshot.SessionID && len(profile.CompletedParts) == 2 {
+			snapshot.CumulativeProfile = &profile
+			snapshot.ProfileResolution = IELTSFinalProfileResolved
+		} else {
+			snapshot.ProfileResolution = IELTSFinalProfileFallback
+		}
+	} else if errors.Is(err, ErrNotFound) || err == nil {
+		snapshot.ProfileResolution = IELTSFinalProfileFallback
+	} else {
+		return false, err
+	}
+	if !snapshot.Valid() {
+		return false, ErrInvalidRequest
+	}
+	encoded, digest, err := EncodeStrict(*snapshot)
+	if err != nil {
+		return false, err
+	}
+	finalizeContext, cancel := worker.finalizeContext(ctx)
+	updated, err := worker.store.CheckpointSnapshot(finalizeContext, SnapshotCheckpoint{
+		UserID: claim.UserID, ID: claim.ID, LeaseToken: claim.LeaseToken,
+		InputSnapshot: encoded, InputHash: digest,
+	})
+	cancel()
+	if err == nil {
+		claim.Record = updated
+	}
+	return false, err
+}
+
 func (worker *Worker) resolveSessionAcoustics(
 	ctx context.Context,
 	claim *Claim,
@@ -269,7 +516,11 @@ func (worker *Worker) resolveSessionAcoustics(
 	if err != nil {
 		return false, err
 	}
-	if read.Pending {
+	timedOut := acousticDependencyTimedOut(
+		claim.CreatedAt,
+		worker.configuration.AcousticDependencyMaxWait,
+	)
+	if read.Pending && !timedOut {
 		finalizeContext, cancel := worker.finalizeContext(ctx)
 		defer cancel()
 		err := worker.store.DeferClaim(finalizeContext, Deferral{
@@ -280,18 +531,13 @@ func (worker *Worker) resolveSessionAcoustics(
 		})
 		return true, err
 	}
-	if len(read.Checkpoints) != len(turnIDs) {
-		return false, ErrInvalidRequest
-	}
-	for index := range snapshot.Turns {
-		checkpoint, exists := read.Checkpoints[snapshot.Turns[index].ID]
-		if !exists {
-			continue
-		}
-		if !checkpoint.Valid() {
-			return false, ErrInvalidRequest
-		}
-		snapshot.Turns[index].Acoustic = &checkpoint
+	if err := applyAcousticDependencies(
+		snapshot.Turns,
+		turnIDs,
+		read,
+		read.Pending && timedOut,
+	); err != nil {
+		return false, err
 	}
 	encoded, digest, err := EncodeStrict(*snapshot)
 	if err != nil {
@@ -498,10 +744,61 @@ func stableJobError(err error) JobError {
 }
 
 func maxAttemptsFor(kind Kind, configuration WorkerConfiguration) int {
-	if kind == KindSessionReport {
+	switch kind {
+	case KindSessionReport:
 		return configuration.SessionLane.MaxAttempts
+	case KindIELTSPart1Profile, KindIELTSPart2Profile:
+		return configuration.ProfileLane.MaxAttempts
+	case KindPracticeTurnFeedback, KindAgentMessageFeedback:
+		return configuration.SpeechLane.MaxAttempts
+	default:
+		return 0
 	}
-	return configuration.SpeechLane.MaxAttempts
+}
+
+func acousticDependencyTimedOut(createdAt time.Time, maxWait time.Duration) bool {
+	return !time.Now().UTC().Before(createdAt.Add(maxWait))
+}
+
+func applyAcousticDependencies(
+	turns []SessionEvidenceTurn,
+	turnIDs []string,
+	read SessionAcousticRead,
+	markPendingNotAssessed bool,
+) error {
+	pending := make(map[string]struct{}, len(turnIDs))
+	for _, turnID := range turnIDs {
+		pending[turnID] = struct{}{}
+	}
+	for turnID := range read.Checkpoints {
+		if _, expected := pending[turnID]; !expected {
+			return ErrInvalidRequest
+		}
+	}
+	for index := range turns {
+		if _, exists := pending[turns[index].ID]; !exists {
+			continue
+		}
+		checkpoint, exists := read.Checkpoints[turns[index].ID]
+		if !exists {
+			if !markPendingNotAssessed {
+				return ErrInvalidRequest
+			}
+			checkpoint = AcousticCheckpoint{
+				Status: AcousticNotAssessed,
+				Reason: acousticDependencyTimeoutReason,
+			}
+		}
+		if !checkpoint.Valid() {
+			return ErrInvalidRequest
+		}
+		turns[index].Acoustic = &checkpoint
+		delete(pending, turns[index].ID)
+	}
+	if len(pending) != 0 {
+		return ErrInvalidRequest
+	}
+	return nil
 }
 
 func containsKind(kinds []Kind, expected Kind) bool {

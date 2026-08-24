@@ -20,14 +20,17 @@ const (
 )
 
 type SessionLineages struct {
-	Interview ConfigLineage
-	IELTS     ConfigLineage
-	General   ConfigLineage
+	Interview     ConfigLineage
+	IELTSPractice ConfigLineage
+	IELTS         ConfigLineage
+	General       ConfigLineage
 }
 
 func (lineages SessionLineages) Valid() bool {
 	return lineages.Interview.Valid() &&
 		lineages.Interview.StrategyRef == InterviewStrategyRef &&
+		lineages.IELTSPractice.Valid() &&
+		lineages.IELTSPractice.StrategyRef == IELTSStrategyRef &&
 		lineages.IELTS.Valid() && lineages.IELTS.StrategyRef == IELTSStrategyRef &&
 		lineages.General.Valid() && lineages.General.StrategyRef == GeneralStrategyRef
 }
@@ -129,8 +132,9 @@ func (builder *SessionCommandBuilder) lineageFor(
 	switch policyRef {
 	case InterviewEvaluationPolicyRef:
 		return builder.lineages.Interview, nil
-	case IELTSSpeakingPracticeEvaluationPolicyRef,
-		IELTSSpeakingFullMockEvaluationPolicyRef:
+	case IELTSSpeakingPracticeEvaluationPolicyRef:
+		return builder.lineages.IELTSPractice, nil
+	case IELTSSpeakingFullMockEvaluationPolicyRef:
 		return builder.lineages.IELTS, nil
 	case WorkplaceEvaluationPolicyRef, DailyEvaluationPolicyRef:
 		return builder.lineages.General, nil

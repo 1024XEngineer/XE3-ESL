@@ -13,6 +13,7 @@ import (
 	preparationagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/agentcapability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/interviewresume/fieldextractor"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/providerobservability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen"
 	sharedtranslation "github.com/1024XEngineer/XE3-ESL/server/internal/translation"
 )
@@ -26,10 +27,39 @@ type AgentModelProviders struct {
 	PracticeTurnIntent preparationagentcapability.PracticeTurnIntentGenerator
 }
 
+// ProviderFactory supplies one required service-level observer to every
+// production provider adapter. Direct constructors remain available for
+// deterministic tests and non-serving tools.
+type ProviderFactory struct {
+	observer providerobservability.Recorder
+}
+
+func NewProviderFactory(
+	observer providerobservability.Recorder,
+) (*ProviderFactory, error) {
+	if observer == nil {
+		return nil, errors.New("bootstrap: provider observer is required")
+	}
+	return &ProviderFactory{observer: observer}, nil
+}
+
 func NewAgentModelProviders(
 	configuration config.TextGenerationConfig,
 ) (AgentModelProviders, error) {
-	providerConfig, apiKey, err := textProvider(configuration)
+	return newAgentModelProviders(configuration, nil)
+}
+
+func (factory *ProviderFactory) AgentModelProviders(
+	configuration config.TextGenerationConfig,
+) (AgentModelProviders, error) {
+	return newAgentModelProviders(configuration, factory.observer)
+}
+
+func newAgentModelProviders(
+	configuration config.TextGenerationConfig,
+	observer providerobservability.Recorder,
+) (AgentModelProviders, error) {
+	providerConfig, apiKey, err := textProvider(configuration, observer)
 	if err != nil {
 		return AgentModelProviders{}, err
 	}
@@ -63,7 +93,20 @@ func NewAgentModelProviders(
 func NewPreparationJobTargetGenerator(
 	configuration config.TextGenerationConfig,
 ) (preparation.JobTargetGenerator, error) {
-	providerConfig, apiKey, err := textProvider(configuration)
+	return newPreparationJobTargetGenerator(configuration, nil)
+}
+
+func (factory *ProviderFactory) PreparationJobTargetGenerator(
+	configuration config.TextGenerationConfig,
+) (preparation.JobTargetGenerator, error) {
+	return newPreparationJobTargetGenerator(configuration, factory.observer)
+}
+
+func newPreparationJobTargetGenerator(
+	configuration config.TextGenerationConfig,
+	observer providerobservability.Recorder,
+) (preparation.JobTargetGenerator, error) {
+	providerConfig, apiKey, err := textProvider(configuration, observer)
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +116,20 @@ func NewPreparationJobTargetGenerator(
 func NewIELTSAnswerGenerator(
 	configuration config.TextGenerationConfig,
 ) (ielts.AnswerGenerator, error) {
-	providerConfig, apiKey, err := textProvider(configuration)
+	return newIELTSAnswerGenerator(configuration, nil)
+}
+
+func (factory *ProviderFactory) IELTSAnswerGenerator(
+	configuration config.TextGenerationConfig,
+) (ielts.AnswerGenerator, error) {
+	return newIELTSAnswerGenerator(configuration, factory.observer)
+}
+
+func newIELTSAnswerGenerator(
+	configuration config.TextGenerationConfig,
+	observer providerobservability.Recorder,
+) (ielts.AnswerGenerator, error) {
+	providerConfig, apiKey, err := textProvider(configuration, observer)
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +139,20 @@ func NewIELTSAnswerGenerator(
 func NewEvaluationScoringGenerator(
 	configuration config.TextGenerationConfig,
 ) (textgeneration.Generator, error) {
-	providerConfig, apiKey, err := textProvider(configuration)
+	return newEvaluationScoringGenerator(configuration, nil)
+}
+
+func (factory *ProviderFactory) EvaluationScoringGenerator(
+	configuration config.TextGenerationConfig,
+) (textgeneration.Generator, error) {
+	return newEvaluationScoringGenerator(configuration, factory.observer)
+}
+
+func newEvaluationScoringGenerator(
+	configuration config.TextGenerationConfig,
+	observer providerobservability.Recorder,
+) (textgeneration.Generator, error) {
+	providerConfig, apiKey, err := textProvider(configuration, observer)
 	if err != nil {
 		return nil, err
 	}
@@ -91,10 +160,34 @@ func NewEvaluationScoringGenerator(
 	return qianwen.NewEvaluationScoringGenerator(providerConfig, apiKey)
 }
 
+func (factory *ProviderFactory) EvaluationProfileGenerator(
+	configuration config.TextGenerationConfig,
+) (textgeneration.Generator, error) {
+	providerConfig, apiKey, err := textProvider(configuration, factory.observer)
+	if err != nil {
+		return nil, err
+	}
+	providerConfig.Model = configuration.EvaluationModel
+	return qianwen.NewEvaluationProfileGenerator(providerConfig, apiKey)
+}
+
 func NewEvaluationSpeechFeedbackGenerator(
 	configuration config.TextGenerationConfig,
 ) (speechfeedback.TextGenerator, error) {
-	providerConfig, apiKey, err := textProvider(configuration)
+	return newEvaluationSpeechFeedbackGenerator(configuration, nil)
+}
+
+func (factory *ProviderFactory) EvaluationSpeechFeedbackGenerator(
+	configuration config.TextGenerationConfig,
+) (speechfeedback.TextGenerator, error) {
+	return newEvaluationSpeechFeedbackGenerator(configuration, factory.observer)
+}
+
+func newEvaluationSpeechFeedbackGenerator(
+	configuration config.TextGenerationConfig,
+	observer providerobservability.Recorder,
+) (speechfeedback.TextGenerator, error) {
+	providerConfig, apiKey, err := textProvider(configuration, observer)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +198,20 @@ func NewEvaluationSpeechFeedbackGenerator(
 func NewResumeFieldGenerator(
 	configuration config.TextGenerationConfig,
 ) (fieldextractor.Generator, error) {
-	providerConfig, apiKey, err := textProvider(configuration)
+	return newResumeFieldGenerator(configuration, nil)
+}
+
+func (factory *ProviderFactory) ResumeFieldGenerator(
+	configuration config.TextGenerationConfig,
+) (fieldextractor.Generator, error) {
+	return newResumeFieldGenerator(configuration, factory.observer)
+}
+
+func newResumeFieldGenerator(
+	configuration config.TextGenerationConfig,
+	observer providerobservability.Recorder,
+) (fieldextractor.Generator, error) {
+	providerConfig, apiKey, err := textProvider(configuration, observer)
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +226,20 @@ func NewResumeFieldGenerator(
 func NewPracticeQuestionGenerator(
 	configuration config.TextGenerationConfig,
 ) (practiceinteraction.QuestionGenerator, error) {
-	providerConfig, apiKey, err := textProvider(configuration)
+	return newPracticeQuestionGenerator(configuration, nil)
+}
+
+func (factory *ProviderFactory) PracticeQuestionGenerator(
+	configuration config.TextGenerationConfig,
+) (practiceinteraction.QuestionGenerator, error) {
+	return newPracticeQuestionGenerator(configuration, factory.observer)
+}
+
+func newPracticeQuestionGenerator(
+	configuration config.TextGenerationConfig,
+	observer providerobservability.Recorder,
+) (practiceinteraction.QuestionGenerator, error) {
+	providerConfig, apiKey, err := textProvider(configuration, observer)
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +250,20 @@ func NewPracticeQuestionGenerator(
 func NewPracticeAnswerTipGenerator(
 	configuration config.TextGenerationConfig,
 ) (practiceinteraction.AnswerTipGenerator, error) {
-	providerConfig, apiKey, err := textProvider(configuration)
+	return newPracticeAnswerTipGenerator(configuration, nil)
+}
+
+func (factory *ProviderFactory) PracticeAnswerTipGenerator(
+	configuration config.TextGenerationConfig,
+) (practiceinteraction.AnswerTipGenerator, error) {
+	return newPracticeAnswerTipGenerator(configuration, factory.observer)
+}
+
+func newPracticeAnswerTipGenerator(
+	configuration config.TextGenerationConfig,
+	observer providerobservability.Recorder,
+) (practiceinteraction.AnswerTipGenerator, error) {
+	providerConfig, apiKey, err := textProvider(configuration, observer)
 	if err != nil {
 		return nil, err
 	}
@@ -140,6 +272,7 @@ func NewPracticeAnswerTipGenerator(
 
 func textProvider(
 	configuration config.TextGenerationConfig,
+	observer providerobservability.Recorder,
 ) (qianwen.TextConfig, string, error) {
 	if configuration.Provider != config.TextProviderQianwen &&
 		configuration.Provider != config.TextProviderQiniu {
@@ -153,5 +286,6 @@ func textProvider(
 		Model:           configuration.Model,
 		Timeout:         configuration.Timeout,
 		MaxOutputTokens: configuration.MaxOutputTokens,
+		Observer:        observer,
 	}, configuration.APIKey.Reveal(), nil
 }

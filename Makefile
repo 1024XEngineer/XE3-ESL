@@ -28,6 +28,7 @@ SHELL := /bin/bash
 	check-offline-release \
 	check-android-download \
 	check-tls-lifecycle \
+	check-observability \
 	check-production-deploy \
 	check-production-nginx \
 	check-staging-deploy \
@@ -58,6 +59,7 @@ help:
 		'  make check-offline-release  Validate offline image build/load contracts' \
 		'  make check-android-download  Validate the public Android bundle and publish contract' \
 		'  make check-tls-lifecycle  Validate TLS issuance and renewal contracts' \
+		'  make check-observability  Validate monitoring, alert, and log rotation contracts' \
 		'  make check-production-deploy  Validate the immutable Production contract' \
 		'  make check-production-nginx  Run nginx -t against the Production template' \
 		'  make check-staging-deploy  Validate Staging runtime, schema, lock, and receipt contracts' \
@@ -319,6 +321,10 @@ check-android-download:
 check-tls-lifecycle:
 	./deploy/tls/test.sh
 	./deploy/tls/test-nginx.sh
+
+check-observability:
+	./deploy/observability/test.sh
+	./deploy/observability/test-nginx.sh
 
 check-production-deploy:
 	./deploy/production/test.sh

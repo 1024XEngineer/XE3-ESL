@@ -21,6 +21,7 @@ type Repository struct {
 	afterRecordingLock func()
 	completion         CompletionScheduler
 	turnFeedback       TurnFeedbackScheduler
+	profile            IELTSProfileScheduler
 	ids                practice.PracticeResourceIDGenerator
 }
 
@@ -34,13 +35,23 @@ type TurnFeedbackScheduler interface {
 	ScheduleConfirmedTurn(context.Context, pgx.Tx, practice.TurnFeedbackEvidence) error
 }
 
+type IELTSProfileScheduler interface {
+	ScheduleCompletedPart(
+		context.Context,
+		pgx.Tx,
+		practice.IELTSPartProfileEvidence,
+	) error
+}
+
 func New(
 	pool *pgxpool.Pool,
 	completion CompletionScheduler,
 	turnFeedback TurnFeedbackScheduler,
+	profile IELTSProfileScheduler,
 	ids practice.PracticeResourceIDGenerator,
 ) (*Repository, error) {
-	if pool == nil || completion == nil || turnFeedback == nil || ids == nil {
+	if pool == nil || completion == nil || turnFeedback == nil ||
+		profile == nil || ids == nil {
 		return nil, errors.New("practice postgres dependencies are required")
 	}
 	return &Repository{
@@ -48,6 +59,7 @@ func New(
 		now:          time.Now,
 		completion:   completion,
 		turnFeedback: turnFeedback,
+		profile:      profile,
 		ids:          ids,
 	}, nil
 }

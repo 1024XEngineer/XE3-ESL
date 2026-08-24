@@ -3,8 +3,10 @@ package qianwen
 import (
 	"context"
 	"errors"
+	"time"
 
 	practiceinteraction "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/interaction"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/providerobservability"
 	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 )
 
@@ -53,9 +55,18 @@ func (recognizer *PracticeVoiceRecognizer) Transcribe(
 				errors.New("Qianwen Practice Voice recognizer is required"),
 			)
 	}
+	startedAt := time.Now()
 	result, err := recognizer.recognizer.Transcribe(
 		ctx,
 		protocol.TranscriptionRequest{Audio: request.Audio},
+	)
+	recordSpeechCall(
+		recognizer.recognizer.observer,
+		providerobservability.CapabilitySpeechRecognition,
+		startedAt,
+		result.Usage,
+		err,
+		0,
 	)
 	if err != nil {
 		return practiceinteraction.TranscriptionResult{},
@@ -88,11 +99,20 @@ func (recognizer *PracticeVoiceRecognizer) TranscribeStream(
 				errors.New("Qianwen streaming Practice Voice recognizer is required"),
 			)
 	}
+	startedAt := time.Now()
 	result, err := recognizer.recognizer.transcribeRealtimePCM(
 		ctx,
 		request.PCM,
 		request.SampleRate,
 		practiceVoiceTranscriptionObserver{observer: observer},
+	)
+	recordSpeechCall(
+		recognizer.recognizer.observer,
+		providerobservability.CapabilitySpeechRecognition,
+		startedAt,
+		result.Usage,
+		err,
+		0,
 	)
 	if err != nil {
 		return practiceinteraction.TranscriptionResult{},
@@ -118,12 +138,15 @@ func (observer practiceVoiceTranscriptionObserver) OnTranscriptionUpdate(
 	ctx context.Context,
 	update protocol.TranscriptionUpdate,
 ) error {
-	return observer.observer.OnTranscriptionUpdate(
-		ctx,
-		practiceinteraction.TranscriptionUpdate{
-			Transcript: update.Transcript,
-			Final:      update.Final,
-		},
+	return downstreamSpeechCallbackError(
+		protocol.SpeechOperationTranscription,
+		observer.observer.OnTranscriptionUpdate(
+			ctx,
+			practiceinteraction.TranscriptionUpdate{
+				Transcript: update.Transcript,
+				Final:      update.Final,
+			},
+		),
 	)
 }
 
@@ -155,9 +178,19 @@ func (synthesizer *PracticeVoiceSynthesizer) Synthesize(
 				errors.New("Qianwen Practice Voice synthesizer is required"),
 			)
 	}
+	startedAt := time.Now()
 	result, err := synthesizer.synthesizer.Synthesize(
 		ctx,
 		protocol.SynthesisRequest{Text: request.Text},
+	)
+	characters := observedSynthesisCharacters(request.Text, err)
+	recordSpeechCall(
+		synthesizer.synthesizer.observer,
+		providerobservability.CapabilitySpeechSynthesis,
+		startedAt,
+		result.Usage,
+		err,
+		characters,
 	)
 	if err != nil {
 		return practiceinteraction.SynthesisResult{},

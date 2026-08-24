@@ -2071,6 +2071,95 @@ void main() {
     expect(find.text('1 题'), findsOneWidget);
   });
 
+  testWidgets('Part 3 confirmation failure exposes a recoverable retry', (
+    tester,
+  ) async {
+    final practice = _IeltsPracticeClient(initialCompleted: 0, turnLimit: 2)
+      ..confirmFailure = const PracticeClientException(
+        kind: PracticeClientFailureKind.network,
+        retryable: true,
+      );
+    final controller = PracticeController(
+      client: practice,
+      recorder: _Recorder(),
+    );
+    addTearDown(controller.dispose);
+    await _activatePractice(
+      controller,
+      practice,
+      _ieltsScene,
+      mode: PracticeMode.part3,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: _MemoryProgressStore(),
+          examinerSpeaker: _ImmediateExaminerSpeaker(),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('ielts-mock-record')));
+    for (
+      var attempt = 0;
+      attempt < 20 &&
+          controller.recordingState != PracticeRecordingState.recording;
+      attempt++
+    ) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+    await tester.tap(find.byKey(const Key('ielts-mock-record')));
+    for (
+      var attempt = 0;
+      attempt < 20 && controller.errorMessage == null;
+      attempt++
+    ) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+
+    expect(
+      controller.recordingState,
+      PracticeRecordingState.awaitingConfirmation,
+    );
+    expect(find.text('网络连接不稳定，这一轮尚未确认，请重试。'), findsOneWidget);
+    expect(find.text('正在提交你的回答…'), findsNothing);
+    expect(find.byKey(const Key('ielts-mock-confirm-turn')), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.byKey(const Key('ielts-mock-confirm-turn')),
+          )
+          .onPressed,
+      isNotNull,
+    );
+    expect(find.text('重试提交'), findsOneWidget);
+    expect(find.byKey(const Key('ielts-mock-rerecord')), findsOneWidget);
+    expect(
+      tester
+          .widget<OutlinedButton>(find.byKey(const Key('ielts-mock-rerecord')))
+          .onPressed,
+      isNotNull,
+    );
+    expect(practice.confirmationIdempotencyKeys, hasLength(1));
+
+    practice.confirmFailure = null;
+    await tester.tap(find.byKey(const Key('ielts-mock-confirm-turn')));
+    for (
+      var attempt = 0;
+      attempt < 20 && controller.completedTurns == 0;
+      attempt++
+    ) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+
+    expect(controller.completedTurns, 1);
+    expect(practice.confirmationIdempotencyKeys, hasLength(2));
+    expect(practice.confirmationIdempotencyKeys.toSet(), hasLength(1));
+  });
+
   testWidgets('section PracticeOption modes open the matching IELTS flow', (
     tester,
   ) async {

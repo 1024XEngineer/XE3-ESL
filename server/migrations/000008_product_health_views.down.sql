@@ -1,0 +1,9 @@
+BEGIN;
+
+DROP VIEW product_health_daily_scoreability;
+DROP VIEW product_health_daily_evaluation_health;
+DROP VIEW product_health_daily_artifact_coverage;
+DROP VIEW product_health_daily_session_outcomes;
+DROP VIEW product_health_daily_practice_activity;
+
+COMMIT;

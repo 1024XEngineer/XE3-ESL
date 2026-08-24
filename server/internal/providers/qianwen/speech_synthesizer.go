@@ -16,6 +16,7 @@ import (
 	"time"
 
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/providerobservability"
 	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 )
 
@@ -35,6 +36,7 @@ type TTSConfig struct {
 	LanguageHint  string
 	Timeout       time.Duration
 	TempDirectory string
+	Observer      providerobservability.Recorder
 }
 
 type speechSynthesizer struct {
@@ -48,6 +50,7 @@ type speechSynthesizer struct {
 	tempDirectory    string
 	apiKey           providerSecret
 	client           httpDoer
+	observer         providerobservability.Recorder
 	now              func() time.Time
 }
 
@@ -130,6 +133,7 @@ func newSynthesizerWithClient(
 		tempDirectory:    strings.TrimSpace(config.TempDirectory),
 		apiKey:           newProviderSecret(apiKey),
 		client:           client,
+		observer:         config.Observer,
 		now:              time.Now,
 	}, nil
 }

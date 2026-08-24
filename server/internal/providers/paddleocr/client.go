@@ -11,6 +11,7 @@ import (
 	paddleapi "github.com/PaddlePaddle/PaddleOCR/api_sdk/go"
 
 	resumeocr "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/interviewresume/ocr"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/providerobservability"
 )
 
 // Config contains the server-only PaddleOCR settings.
@@ -19,6 +20,7 @@ type Config struct {
 	BaseURL     string
 	Model       string
 	Timeout     time.Duration
+	Observer    providerobservability.Recorder
 }
 
 type parseDocumentCall func(
@@ -28,8 +30,9 @@ type parseDocumentCall func(
 
 // Client calls PaddleOCR without exposing its response DTOs to Resume.
 type Client struct {
-	config Config
-	parse  parseDocumentCall
+	config   Config
+	parse    parseDocumentCall
+	observer providerobservability.Recorder
 }
 
 // New creates a PaddleOCR hosted document parsing client.
@@ -54,8 +57,9 @@ func New(configuration Config) (*Client, error) {
 		return nil, errors.New("PaddleOCR Resume OCR client initialization failed")
 	}
 	return &Client{
-		config: configuration,
-		parse:  sdkClient.ParseDocument,
+		config:   configuration,
+		parse:    sdkClient.ParseDocument,
+		observer: configuration.Observer,
 	}, nil
 }
 
@@ -63,13 +67,32 @@ func New(configuration Config) (*Client, error) {
 func (client *Client) RecognizePDF(
 	ctx context.Context,
 	sourceURL string,
-) (resumeocr.Result, error) {
+) (callResult resumeocr.Result, callErr error) {
 	if client == nil || client.parse == nil || ctx == nil || ctx.Err() != nil ||
 		strings.TrimSpace(sourceURL) == "" {
 		return resumeocr.Result{}, resumeocr.NewFailure(resumeocr.FailureProvider)
 	}
 	callCtx, cancel := context.WithTimeout(ctx, client.config.Timeout)
 	defer cancel()
+	startedAt := time.Now()
+	providerErr := error(nil)
+	reportedPages := 0
+	defer func() {
+		if client.observer == nil {
+			return
+		}
+		metricErr := callErr
+		if providerErr != nil {
+			metricErr = providerErr
+		}
+		client.observer.Record(providerobservability.Observation{
+			Provider:   providerobservability.ProviderPaddleOCR,
+			Capability: providerobservability.CapabilityDocumentOCR,
+			Duration:   time.Since(startedAt),
+			ErrorKind:  observedOCRFailure(metricErr),
+			Usage:      providerobservability.Usage{Pages: float64(reportedPages)},
+		})
+	}()
 	result, err := client.parse(callCtx, &paddleapi.DocParsingRequest{
 		Model:   client.config.Model,
 		FileURL: sourceURL,
@@ -81,10 +104,66 @@ func (client *Client) RecognizePDF(
 			ReturnMarkdownImages:      paddleapi.Bool(false),
 		},
 	})
+	if result != nil {
+		reportedPages = len(result.Pages)
+	}
 	if err != nil {
+		providerErr = err
+		if ctx.Err() != nil {
+			providerErr = ctx.Err()
+		} else if callCtx.Err() != nil {
+			providerErr = callCtx.Err()
+		}
 		return resumeocr.Result{}, mapProviderFailure(err)
 	}
 	return mapResponse(result)
+}
+
+func observedOCRFailure(err error) providerobservability.ErrorKind {
+	switch {
+	case err == nil:
+		return providerobservability.ErrorNone
+	case errors.Is(err, context.Canceled):
+		return providerobservability.ErrorCancelled
+	case errors.Is(err, context.DeadlineExceeded):
+		return providerobservability.ErrorTimeout
+	}
+	var auth *paddleapi.AuthError
+	if errors.As(err, &auth) {
+		return providerobservability.ErrorAuthentication
+	}
+	var invalidRequest *paddleapi.InvalidRequestError
+	if errors.As(err, &invalidRequest) {
+		return providerobservability.ErrorInvalidRequest
+	}
+	var rateLimit *paddleapi.RateLimitError
+	if errors.As(err, &rateLimit) {
+		return providerobservability.ErrorRateLimited
+	}
+	var responseFormat *paddleapi.ResponseFormatError
+	var resultParse *paddleapi.ResultParseError
+	if errors.As(err, &responseFormat) || errors.As(err, &resultParse) {
+		return providerobservability.ErrorInvalidResponse
+	}
+	var requestTimeout *paddleapi.RequestTimeoutError
+	var pollTimeout *paddleapi.PollTimeoutError
+	if errors.As(err, &requestTimeout) || errors.As(err, &pollTimeout) {
+		return providerobservability.ErrorTimeout
+	}
+	var failure *resumeocr.Failure
+	if !errors.As(err, &failure) {
+		return providerobservability.ErrorProviderUnavailable
+	}
+	switch failure.FailureCode() {
+	case resumeocr.FailureTimeout:
+		return providerobservability.ErrorTimeout
+	case resumeocr.FailureOutputInvalid:
+		return providerobservability.ErrorInvalidResponse
+	case resumeocr.FailurePageLimit:
+		return providerobservability.ErrorPageLimitExceeded
+	default:
+		return providerobservability.ErrorProviderUnavailable
+	}
 }
 
 func mapResponse(result *paddleapi.DocParsingResult) (resumeocr.Result, error) {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/apperror"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpobservability"
@@ -71,15 +72,49 @@ func NewObservableRouterWithReadinessAndRoutes(
 	return newRouter(logger, readiness, routes, modules...)
 }
 
+// NewObservableRouterWithRegistry mounts HTTP metrics in the same service
+// registry already used by provider instrumentation.
+func NewObservableRouterWithRegistry(
+	logger *slog.Logger,
+	readiness ReadinessChecker,
+	registry *prometheus.Registry,
+	routes []RouteRegistrar,
+	modules ...Module,
+) (*gin.Engine, http.Handler, error) {
+	observer, err := httpobservability.NewWithRegistry(logger, registry)
+	if err != nil {
+		return nil, nil, err
+	}
+	router, metrics := buildRouter(
+		logger, readiness, routes, observer, modules...,
+	)
+	return router, metrics, nil
+}
+
 func newRouter(
 	logger *slog.Logger,
 	readiness ReadinessChecker,
 	routes []RouteRegistrar,
 	modules ...Module,
 ) (*gin.Engine, http.Handler) {
+	return buildRouter(
+		logger,
+		readiness,
+		routes,
+		httpobservability.New(logger),
+		modules...,
+	)
+}
+
+func buildRouter(
+	logger *slog.Logger,
+	readiness ReadinessChecker,
+	routes []RouteRegistrar,
+	observer *httpobservability.Observer,
+	modules ...Module,
+) (*gin.Engine, http.Handler) {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
-	observer := httpobservability.New(logger)
 	router.Use(observer.Middleware(), gin.RecoveryWithWriter(io.Discard))
 	errorRenderer := httpresponse.NewRenderer(nil)
 

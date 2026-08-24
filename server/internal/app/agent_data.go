@@ -371,6 +371,7 @@ func buildIdentityAgentComposition(
 				voiceConfigurations[0].PracticeInteraction,
 				schedulers.Completion,
 				schedulers.TurnFeedback,
+				schedulers.IELTSProfile,
 				schedulers.FeedbackReader,
 				ids,
 				agentMedia,

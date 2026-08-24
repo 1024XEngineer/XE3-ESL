@@ -26,6 +26,7 @@ class ScenarioPracticePage extends StatefulWidget {
   const ScenarioPracticePage({
     required this.practiceController,
     this.avatarSurfaceBuilder,
+    this.avatarSurfaceVisible = true,
     this.avatarStatusLabel,
     this.onBeforeStartRecording,
     this.onBeforeSubmitText,
@@ -43,6 +44,7 @@ class ScenarioPracticePage extends StatefulWidget {
 
   final PracticeController practiceController;
   final ScenarioAvatarSurfaceBuilder? avatarSurfaceBuilder;
+  final bool avatarSurfaceVisible;
   final String? avatarStatusLabel;
   final ScenarioAsyncAction? onBeforeStartRecording;
   final ScenarioAsyncAction? onBeforeSubmitText;
@@ -637,6 +639,7 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
                       imageKey: const Key('scenario-role-placeholder'),
                     ),
                     surfaceBuilder: widget.avatarSurfaceBuilder,
+                    surfaceVisible: widget.avatarSurfaceVisible,
                     statusLabel: widget.avatarStatusLabel,
                     exitInFlight: _exitInFlight,
                     exitButtonKey: const Key('scenario-exit'),

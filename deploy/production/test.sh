@@ -9,7 +9,8 @@ readonly portal_digest="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 readonly server_digest="sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 readonly git_sha="cccccccccccccccccccccccccccccccccccccccc"
 readonly staging_apk_sha="dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
-readonly production_apk_sha="eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+production_apk_sha=""
+production_apk_size=""
 readonly certificate_sha="ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 
 fail() {
@@ -44,7 +45,13 @@ write_environment() {
     "PRODUCTION_TLS_CERTIFICATE=$certificate" \
     "PRODUCTION_TLS_CERTIFICATE_KEY=$certificate_key" \
     "PRODUCTION_ACME_ROOT=$temporary_directory/acme" \
-    "PRODUCTION_PUBLIC_ROOT=$temporary_directory/public" > "$destination"
+    "PRODUCTION_PUBLIC_ROOT=$temporary_directory/public" \
+    "PRODUCTION_NGINX_BINARY=$temporary_directory/fake-bin/nginx" \
+    "PRODUCTION_NGINX_CONFIG=$temporary_directory/nginx/xe3-speakup-production.conf" \
+    "PRODUCTION_POSTGRES_BACKUP_PROGRAM=$temporary_directory/fake-bin/postgres-backup" \
+    "PRODUCTION_POSTGRES_BACKUP_ENV_FILE=$temporary_directory/postgres-backup.env" \
+    "PRODUCTION_PORTAL_BACKUP_PROGRAM=$temporary_directory/fake-bin/portal-backup" \
+    "PRODUCTION_PORTAL_BACKUP_ENV_FILE=$temporary_directory/portal-backup.env" > "$destination"
   chmod 0600 "$destination"
 }
 
@@ -65,7 +72,7 @@ write_manifest() {
     '  "staging_apk_file": "speakup-v0.1.1-staging-arm64.apk",' \
     "  \"staging_apk_sha256\": \"$staging_apk_sha\"," \
     '  "production_apk_file": "speakup-v0.1.1-production-arm64.apk",' \
-    '  "production_apk_size_bytes": 123456,' \
+    "  \"production_apk_size_bytes\": $production_apk_size," \
     "  \"production_apk_sha256\": \"$production_apk_sha\"," \
     '  "application_id": "com.xengineer.speakup",' \
     '  "minimum_android_api": 24,' \
@@ -74,6 +81,98 @@ write_manifest() {
     '  "database_schema_version": 7,' \
     '  "quality_run_url": "https://github.com/1024XEngineer/XE3-ESL/actions/runs/123456"' \
     '}' > "$destination"
+  }
+
+test_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum -- "$1" | awk '{print $1}'
+  else
+    shasum -a 256 -- "$1" | awk '{print $1}'
+  fi
+}
+
+test_file_size() {
+  if stat -c '%s' -- "$1" >/dev/null 2>&1; then
+    stat -c '%s' -- "$1"
+  else
+    stat -f '%z' "$1"
+  fi
+}
+
+write_android_bundle() {
+  local destination=$1
+  local manifest=$2
+  local apk_source=$3
+  local version_directory="$destination/downloads/android/v0.1.1"
+  local apk_name="speakup-v0.1.1-production-arm64.apk"
+  local apk="$version_directory/$apk_name"
+  local checksum="$apk.sha256"
+  local metadata="$version_directory/release.json"
+  local manifest_sha apk_sha checksum_sha metadata_sha
+  local apk_size checksum_size metadata_size
+
+  mkdir -p "$version_directory"
+  install -m 0644 "$apk_source" "$apk"
+  apk_sha=$(test_sha256 "$apk")
+  apk_size=$(test_file_size "$apk")
+  printf '%s  %s\n' "$apk_sha" "$apk_name" >"$checksum"
+  jq --null-input \
+    --arg version '0.1.1' \
+    --arg file "$apk_name" \
+    --arg sha "$apk_sha" \
+    --arg certificate "$certificate_sha" \
+    --argjson size "$apk_size" '
+      {
+        metadata_version: 1,
+        version: $version,
+        version_code: 2,
+        published_at: "2026-08-24T00:00:00Z",
+        file_name: $file,
+        download_path: ("/downloads/android/v" + $version + "/" + $file),
+        size_bytes: $size,
+        minimum_android_api: 24,
+        abis: ["arm64-v8a"],
+        apk_sha256: $sha,
+        apk_certificate_sha256: $certificate
+      }
+    ' >"$metadata"
+  manifest_sha=$(test_sha256 "$manifest")
+  checksum_sha=$(test_sha256 "$checksum")
+  metadata_sha=$(test_sha256 "$metadata")
+  checksum_size=$(test_file_size "$checksum")
+  metadata_size=$(test_file_size "$metadata")
+  jq --null-input \
+    --arg manifest_sha "$manifest_sha" \
+    --arg apk_sha "$apk_sha" \
+    --arg checksum_sha "$checksum_sha" \
+    --arg metadata_sha "$metadata_sha" \
+    --argjson apk_size "$apk_size" \
+    --argjson checksum_size "$checksum_size" \
+    --argjson metadata_size "$metadata_size" '
+      {
+        bundle_version: 1,
+        version: "0.1.1",
+        published_at: "2026-08-24T00:00:00Z",
+        release_manifest_sha256: $manifest_sha,
+        files: [
+          {
+            path: "downloads/android/v0.1.1/speakup-v0.1.1-production-arm64.apk",
+            size_bytes: $apk_size,
+            sha256: $apk_sha
+          },
+          {
+            path: "downloads/android/v0.1.1/speakup-v0.1.1-production-arm64.apk.sha256",
+            size_bytes: $checksum_size,
+            sha256: $checksum_sha
+          },
+          {
+            path: "downloads/android/v0.1.1/release.json",
+            size_bytes: $metadata_size,
+            sha256: $metadata_sha
+          }
+        ]
+      }
+    ' >"$destination/bundle-manifest.json"
 }
 
 temporary_directory=$(mktemp -d)
@@ -83,13 +182,49 @@ trap 'rm -rf "$temporary_directory"' EXIT
 mkdir -p \
   "$temporary_directory/acme" \
   "$temporary_directory/fake-bin" \
-  "$temporary_directory/public"
+  "$temporary_directory/locks/production" \
+  "$temporary_directory/locks/postgres" \
+  "$temporary_directory/locks/portal" \
+  "$temporary_directory/nginx" \
+  "$temporary_directory/public" \
+  "$temporary_directory/receipts"
+printf '%s\n' 'signed-production-apk-fixture' >"$temporary_directory/production.apk"
+production_apk_size=$(test_file_size "$temporary_directory/production.apk")
+production_apk_sha=$(test_sha256 "$temporary_directory/production.apk")
 printf '%s\n' 'TEXT_GENERATION_PROVIDER=test-fixture' > "$temporary_directory/server.env"
 printf '%s\n' 'test-certificate-placeholder' > "$temporary_directory/fullchain.pem"
 printf '%s\n' 'test-key-placeholder' > "$temporary_directory/privkey.pem"
+printf '%s\n' 'placeholder' >"$temporary_directory/nginx/xe3-speakup-production.conf"
+printf '%s\n' \
+  "POSTGRES_BACKUP_IMAGE=postgres:18-bookworm@sha256:7d2695c3aa88e792e8b3b233e7e4adb296a20412c6c0ca361e3edaaacfada108" \
+  'POSTGRES_BACKUP_DATABASE=speakup' \
+  'POSTGRES_BACKUP_USER=speakup' \
+  'POSTGRES_BACKUP_SOURCE_VOLUME=xe3-speakup-postgres-data' \
+  'POSTGRES_BACKUP_DEPLOYMENT_VERSION=0.1.1' \
+  "POSTGRES_BACKUP_GIT_SHA=$git_sha" \
+  'POSTGRES_BACKUP_RETENTION_DAYS=14' \
+  'POSTGRES_BACKUP_MAX_AGE_SECONDS=172800' >"$temporary_directory/postgres-backup.env"
+printf '%s\n' \
+  'PORTAL_BACKUP_CONTAINER=xe3-speakup-production-portal-1' \
+  'PORTAL_BACKUP_SOURCE_VOLUME=xe3-speakup-portal-data' \
+  "PORTAL_BACKUP_IMAGE=ghcr.io/1024xengineer/xe3-esl-portal@$portal_digest" \
+  'PORTAL_BACKUP_DEPLOYMENT_VERSION=0.1.1' \
+  'PORTAL_BACKUP_RETENTION_DAYS=14' \
+  'PORTAL_BACKUP_MAX_AGE_SECONDS=172800' >"$temporary_directory/portal-backup.env"
 chmod 0600 "$temporary_directory/server.env" "$temporary_directory/privkey.pem"
+chmod 0600 \
+  "$temporary_directory/postgres-backup.env" \
+  "$temporary_directory/portal-backup.env"
 write_environment "$temporary_directory/production.env" "$temporary_directory/server.env"
 write_manifest "$temporary_directory/release-manifest.json"
+write_android_bundle \
+  "$temporary_directory/android-bundle" \
+  "$temporary_directory/release-manifest.json" \
+  "$temporary_directory/production.apk"
+
+export SPEAKUP_PRODUCTION_LOCK_FILE="$temporary_directory/locks/production/deploy.lock"
+export SPEAKUP_POSTGRES_BACKUP_LOCK_FILE="$temporary_directory/locks/postgres/backup.lock"
+export SPEAKUP_PORTAL_BACKUP_LOCK_FILE="$temporary_directory/locks/portal/backup.lock"
 
 real_docker="$(command -v docker)"
 readonly real_docker
@@ -98,6 +233,32 @@ readonly real_stat
 cat > "$temporary_directory/fake-bin/docker" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "${1:-}" == compose ]]; then
+  operation=""
+  for argument in "$@"; do
+    case "$argument" in
+      config | pull | up | run | ps) operation=$argument; break ;;
+    esac
+  done
+  case "$operation" in
+    config) exec "$TEST_REAL_DOCKER" "$@" ;;
+    run)
+      [[ -z "${COMMAND_LOG:-}" ]] || printf 'docker %s\n' "$*" >>"$COMMAND_LOG"
+      if [[ " $* " == *' /usr/local/bin/speakup-migrate version '* ]]; then
+        printf 'version=%s dirty=%s\n' \
+          "${TEST_SCHEMA_VERSION:-7}" "${TEST_SCHEMA_DIRTY:-false}"
+      elif [[ "${FAIL_MIGRATION:-0}" == 1 ]]; then
+        exit 1
+      fi
+      exit
+      ;;
+    pull | up | ps)
+      [[ -z "${COMMAND_LOG:-}" ]] || printf 'docker %s\n' "$*" >>"$COMMAND_LOG"
+      [[ "${FAIL_COMPOSE_OPERATION:-}" != "$operation" ]]
+      exit
+      ;;
+  esac
+fi
 if [[ "${1:-}" == volume && "${2:-}" == inspect ]]; then
   volume=${3:-}
   [[ "$volume" == xe3-speakup-portal-data || "$volume" == xe3-speakup-postgres-data ]] || exit 1
@@ -200,6 +361,7 @@ if [[ "${1:-}" == inspect && "$#" == 2 ]]; then
   fi
   jq --null-input \
     --arg id "$2" \
+    --arg name "/xe3-speakup-production-${service}-1" \
     --arg project "${TEST_RUNTIME_PROJECT:-xe3-speakup-production}" \
     --arg service "$service" \
     --arg image "$image" \
@@ -210,6 +372,7 @@ if [[ "${1:-}" == inspect && "$#" == 2 ]]; then
     --argjson networks "$networks" '
       [{
         Id: $id,
+        Name: $name,
         Config: {
           Image: $image,
           Env: $environment,
@@ -230,7 +393,7 @@ EOF
 cat > "$temporary_directory/fake-bin/curl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-printf 'curl %s\n' "$*" >> "$COMMAND_LOG"
+[[ -z "${COMMAND_LOG:-}" ]] || printf 'curl %s\n' "$*" >>"$COMMAND_LOG"
 [[ "${FAIL_HEALTH:-0}" != 1 ]]
 EOF
 cat > "$temporary_directory/fake-bin/sleep" <<'EOF'
@@ -250,11 +413,63 @@ if [[ "${TEST_TLS_KEY_OWNER_MISMATCH:-0}" == 1 ]]; then
 fi
 exec "$TEST_REAL_STAT" "$@"
 EOF
+cat >"$temporary_directory/fake-bin/nginx" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ -z "${COMMAND_LOG:-}" ]] || printf 'nginx %s\n' "$*" >>"$COMMAND_LOG"
+case "${1:-}" in
+  -t) [[ "${FAIL_NGINX_TEST:-0}" != 1 ]] ;;
+  -s) [[ "${2:-}" == reload && "${FAIL_NGINX_RELOAD:-0}" != 1 ]] ;;
+  *) exit 2 ;;
+esac
+EOF
+cat >"$temporary_directory/fake-bin/postgres-backup" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ -z "${COMMAND_LOG:-}" ]] || printf 'postgres-backup %s\n' "$*" >>"$COMMAND_LOG"
+if [[ "${FAIL_POSTGRES_BACKUP:-0}" == 1 ]]; then exit 1; fi
+case "${1:-}" in
+  backup)
+    [[ "${2:-}" == predeploy ]]
+    printf '%s\n' 'backup_id=20260824T010203Z-predeploy restore=verified'
+    ;;
+  check)
+    [[ "${2:-}" == 20260824T010203Z-predeploy ]]
+    printf 'backup_id=%s restore=verified\n' "$2"
+    ;;
+  *) exit 2 ;;
+esac
+EOF
+cat >"$temporary_directory/fake-bin/portal-backup" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ -z "${COMMAND_LOG:-}" ]] || printf 'portal-backup %s\n' "$*" >>"$COMMAND_LOG"
+if [[ "${FAIL_PORTAL_BACKUP:-0}" == 1 ]]; then exit 1; fi
+case "${1:-}" in
+  backup)
+    printf '%s\n' 'Portal SQLite backup completed: 20260824T010203000Z (1024 bytes, SHA-256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)'
+    ;;
+  check)
+    printf '%s\n' 'Portal SQLite restore check passed: 20260824T010203000Z (1024 bytes, SHA-256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)'
+    ;;
+  *) exit 2 ;;
+esac
+EOF
+cat >"$temporary_directory/fake-bin/flock" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ -z "${COMMAND_LOG:-}" ]] || printf 'flock %s\n' "$*" >>"$COMMAND_LOG"
+if [[ "${TEST_LOCK_BUSY:-0}" == 1 ]]; then exit 1; fi
+EOF
 chmod +x \
   "$temporary_directory/fake-bin/docker" \
   "$temporary_directory/fake-bin/curl" \
   "$temporary_directory/fake-bin/sleep" \
-  "$temporary_directory/fake-bin/stat"
+  "$temporary_directory/fake-bin/stat" \
+  "$temporary_directory/fake-bin/nginx" \
+  "$temporary_directory/fake-bin/postgres-backup" \
+  "$temporary_directory/fake-bin/portal-backup" \
+  "$temporary_directory/fake-bin/flock"
 
 export TEST_REAL_DOCKER="$real_docker"
 export TEST_REAL_STAT="$real_stat"
@@ -576,6 +791,11 @@ jq --exit-status \
       ("ghcr.io/1024xengineer/xe3-esl-server@" + $server_digest) and
     ([.services[] | has("build")] | any | not) and
     ([.services[] | has("container_name")] | any | not) and
+    ([.services[] |
+      .logging.driver == "json-file" and
+      .logging.options["max-size"] == "10m" and
+      .logging.options["max-file"] == "5"
+    ] | all) and
     .services.portal.ports[0].host_ip == "127.0.0.1" and
     (.services.portal.ports[0].published | tostring) == "18082" and
     .services.server.ports[0].host_ip == "127.0.0.1" and
@@ -588,6 +808,9 @@ jq --exit-status \
     (.services.postgres.networks | keys) == ["database"] and
     (.services.migrate.networks | keys) == ["database"] and
     (.services.server.networks | keys | sort) == ["database", "server_edge"] and
+    .services.server.networks.server_edge.aliases ==
+      ["production-api-metrics"] and
+    .services.server.environment.METRICS_HOST == "0.0.0.0" and
     .services.server.environment.TRUSTED_PROXY_CIDRS == "172.31.0.1/32" and
     .services.server.environment.TRUSTED_PROXY_HEADER == "x-forwarded-for" and
     .services.portal.healthcheck.test == [
@@ -723,9 +946,204 @@ expect_failure "missing Production PostgreSQL container" \
 [[ ! -s "$temporary_directory/missing-postgres.log" ]] ||
   fail "endpoint checks ran before all Production services were identified"
 
-expect_failure "unsupported deployment mutation" \
+install -m 0644 \
+  "$temporary_directory/production.conf" \
+  "$temporary_directory/nginx/xe3-speakup-production.conf"
+
+baseline_receipt="$temporary_directory/receipts/production-baseline.json"
+expect_failure "busy Production deployment lock" \
+  env \
+    COMMAND_LOG="$temporary_directory/busy-lock.log" \
+    TEST_LOCK_BUSY=1 \
+  "$manage" baseline \
+    --manifest "$temporary_directory/release-manifest.json" \
+    --env-file "$temporary_directory/production.env" \
+    --receipt "$temporary_directory/receipts/busy-baseline.json"
+[[ ! -e "$temporary_directory/receipts/busy-baseline.json" ]] ||
+  fail "busy Production lock wrote a baseline receipt"
+COMMAND_LOG="$temporary_directory/baseline.log" \
+  "$manage" baseline \
+    --manifest "$temporary_directory/release-manifest.json" \
+    --env-file "$temporary_directory/production.env" \
+    --receipt "$baseline_receipt" \
+    >"$temporary_directory/baseline.out"
+[[ -f "$baseline_receipt" ]] || fail "Production baseline did not write a receipt"
+jq --exit-status '
+  .receipt_version == 1 and
+  .environment == "production" and
+  .operation == "baseline" and
+  .version == "0.1.1" and
+  .version_code == 2 and
+  .database_schema_version == 7 and
+  .postgres_backup_id == null and
+  .portal_backup_id == null and
+  .android_bundle_manifest_sha256 == null and
+  .previous_receipt_sha256 == null and
+  .rollback_target_receipt_sha256 == null
+' "$baseline_receipt" >/dev/null || fail "Production baseline receipt is incomplete"
+if grep -Fq \
+  -e 'portal-admin-password-for-tests' \
+  -e '0123456789abcdef0123456789abcdef' \
+  "$baseline_receipt"; then
+  fail "Production baseline receipt exposed a Secret"
+fi
+
+: >"$temporary_directory/existing-receipt.log"
+expect_failure "existing baseline receipt" \
+  env COMMAND_LOG="$temporary_directory/existing-receipt.log" \
+  "$manage" baseline \
+    --manifest "$temporary_directory/release-manifest.json" \
+    --env-file "$temporary_directory/production.env" \
+    --receipt "$baseline_receipt"
+[[ ! -s "$temporary_directory/existing-receipt.log" ]] ||
+  fail "existing baseline receipt was rejected only after a side effect"
+
+failed_deploy_receipt="$temporary_directory/receipts/failed-deploy.json"
+expect_failure "PostgreSQL pre-deploy backup failure" \
+  env \
+    COMMAND_LOG="$temporary_directory/failed-backup.log" \
+    FAIL_POSTGRES_BACKUP=1 \
   "$manage" deploy \
     --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/production.env"
+    --env-file "$temporary_directory/production.env" \
+    --bundle "$temporary_directory/android-bundle" \
+    --current-receipt "$baseline_receipt" \
+    --receipt "$failed_deploy_receipt"
+[[ ! -e "$failed_deploy_receipt" ]] ||
+  fail "failed backup gate wrote a Production receipt"
+[[ ! -e "$temporary_directory/public/downloads/android/v0.1.1" ]] ||
+  fail "failed backup gate published the Android bundle"
+if grep -Fq \
+  -e ' portal-backup ' \
+  -e 'nginx -s reload' \
+  "$temporary_directory/failed-backup.log"; then
+  fail "failed backup gate allowed a deployment side effect"
+fi
+if grep -Eq 'docker compose .* (pull|up) ' \
+  "$temporary_directory/failed-backup.log"; then
+  fail "failed backup gate changed the Production Compose project"
+fi
+
+failed_portal_receipt="$temporary_directory/receipts/failed-portal-backup.json"
+expect_failure "Portal pre-deploy backup failure" \
+  env \
+    COMMAND_LOG="$temporary_directory/failed-portal-backup.log" \
+    FAIL_PORTAL_BACKUP=1 \
+  "$manage" deploy \
+    --manifest "$temporary_directory/release-manifest.json" \
+    --env-file "$temporary_directory/production.env" \
+    --bundle "$temporary_directory/android-bundle" \
+    --current-receipt "$baseline_receipt" \
+    --receipt "$failed_portal_receipt"
+[[ ! -e "$failed_portal_receipt" ]] ||
+  fail "failed Portal backup gate wrote a Production receipt"
+[[ ! -e "$temporary_directory/public/downloads/android/v0.1.1" ]] ||
+  fail "failed Portal backup gate published the Android bundle"
+if grep -Fq 'nginx -s reload' "$temporary_directory/failed-portal-backup.log" ||
+  grep -Eq 'docker compose .* (pull|up) ' \
+    "$temporary_directory/failed-portal-backup.log"; then
+  fail "failed Portal backup gate allowed a deployment side effect"
+fi
+
+deploy_receipt="$temporary_directory/receipts/production-deploy.json"
+COMMAND_LOG="$temporary_directory/deploy.log" \
+  "$manage" deploy \
+    --manifest "$temporary_directory/release-manifest.json" \
+    --env-file "$temporary_directory/production.env" \
+    --bundle "$temporary_directory/android-bundle" \
+    --current-receipt "$baseline_receipt" \
+    --receipt "$deploy_receipt" \
+    >"$temporary_directory/deploy.out"
+[[ -f "$deploy_receipt" ]] || fail "Production deploy did not write a receipt"
+jq --exit-status \
+  --arg previous "$(test_sha256 "$baseline_receipt")" '
+    .operation == "deploy" and
+    .postgres_backup_id == "20260824T010203Z-predeploy" and
+    .portal_backup_id == "20260824T010203000Z" and
+    (.android_bundle_manifest_sha256 | type == "string" and length == 64) and
+    .previous_receipt_sha256 == $previous and
+    .rollback_target_receipt_sha256 == null
+  ' "$deploy_receipt" >/dev/null || fail "Production deployment receipt is incomplete"
+for evidence in \
+  'postgres-backup backup predeploy' \
+  'postgres-backup check 20260824T010203Z-predeploy' \
+  'portal-backup backup' \
+  'portal-backup check' \
+  'docker compose --env-file /dev/null --project-name xe3-speakup-production' \
+  'nginx -s reload'; do
+  grep -Fq "$evidence" "$temporary_directory/deploy.log" ||
+    fail "Production deploy did not record required evidence: $evidence"
+done
+[[ -f "$temporary_directory/public/downloads/android/v0.1.1/release.json" ]] ||
+  fail "Production deploy did not publish the versioned Android metadata"
+[[ ! -e "$temporary_directory/public/downloads/android/release.json" ]] ||
+  fail "Production deploy activated the public Android release"
+
+: >"$temporary_directory/reused-receipt.log"
+expect_failure "reused deployment receipt" \
+  env COMMAND_LOG="$temporary_directory/reused-receipt.log" \
+  "$manage" deploy \
+    --manifest "$temporary_directory/release-manifest.json" \
+    --env-file "$temporary_directory/production.env" \
+    --bundle "$temporary_directory/android-bundle" \
+    --current-receipt "$deploy_receipt" \
+    --receipt "$deploy_receipt"
+[[ ! -s "$temporary_directory/reused-receipt.log" ]] ||
+  fail "reused deployment receipt was rejected only after a side effect"
+
+rollback_receipt="$temporary_directory/receipts/production-rollback.json"
+COMMAND_LOG="$temporary_directory/rollback.log" \
+  "$manage" rollback \
+    --manifest "$temporary_directory/release-manifest.json" \
+    --env-file "$temporary_directory/production.env" \
+    --current-receipt "$deploy_receipt" \
+    --target-receipt "$baseline_receipt" \
+    --receipt "$rollback_receipt" \
+    >"$temporary_directory/rollback.out"
+jq --exit-status \
+  --arg previous "$(test_sha256 "$deploy_receipt")" \
+  --arg target "$(test_sha256 "$baseline_receipt")" '
+    .operation == "rollback" and
+    .database_schema_version == 7 and
+    .postgres_backup_id == null and
+    .portal_backup_id == null and
+    .android_bundle_manifest_sha256 == null and
+    .previous_receipt_sha256 == $previous and
+    .rollback_target_receipt_sha256 == $target
+  ' "$rollback_receipt" >/dev/null || fail "Production rollback receipt is incomplete"
+if grep -Eq 'migrate (up|down)|android-download.*(publish|activate)' \
+  "$temporary_directory/rollback.log"; then
+  fail "Production rollback changed the database schema or Android publication"
+fi
+if grep -Eq 'docker compose .* pull ' "$temporary_directory/rollback.log"; then
+  fail "Production rollback pulled an image"
+fi
+grep -Eq 'docker compose .* up --pull never .* portal server$' \
+  "$temporary_directory/rollback.log" ||
+  fail "Production rollback did not use the local target images only"
+[[ "$(grep -Fc 'flock --nonblock' "$temporary_directory/rollback.log")" == 3 ]] ||
+  fail "Production rollback did not hold deployment and both backup locks"
+
+jq '.database_schema_version = 6' \
+  "$temporary_directory/release-manifest.json" >"$temporary_directory/schema-6-manifest.json"
+schema_6_manifest_sha=$(test_sha256 "$temporary_directory/schema-6-manifest.json")
+jq --arg manifest_sha "$schema_6_manifest_sha" '
+  .database_schema_version = 6 |
+  .manifest_sha256 = $manifest_sha
+' "$baseline_receipt" >"$temporary_directory/receipts/schema-6-target.json"
+chmod 0444 "$temporary_directory/receipts/schema-6-target.json"
+expect_failure "rollback across a database schema change" \
+  env COMMAND_LOG="$temporary_directory/schema-rollback.log" \
+  "$manage" rollback \
+    --manifest "$temporary_directory/schema-6-manifest.json" \
+    --env-file "$temporary_directory/production.env" \
+    --current-receipt "$rollback_receipt" \
+    --target-receipt "$temporary_directory/receipts/schema-6-target.json" \
+    --receipt "$temporary_directory/receipts/schema-rollback.json"
+[[ ! -e "$temporary_directory/receipts/schema-rollback.json" ]] ||
+  fail "schema-incompatible rollback wrote a receipt"
+if grep -Eq 'migrate (up|down)' "$temporary_directory/schema-rollback.log"; then
+  fail "schema-incompatible rollback attempted a migration"
+fi
 
 printf '%s\n' 'Production contract tests passed'

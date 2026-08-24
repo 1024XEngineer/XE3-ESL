@@ -47,6 +47,25 @@ func TestBusinessGeneratorsMapOwnedRequests(t *testing.T) {
 			},
 		},
 		{
+			name:           "IELTS profile JSON",
+			systemPrompt:   "update provisional IELTS profile",
+			userPrompt:     "frozen Part evidence",
+			responseFormat: protocol.TextResponseFormatJSONSchema,
+			schemaName:     "ielts_cumulative_profile",
+			generate: func(client *textClient) (string, string, string, error) {
+				result, err := (&EvaluationProfileGenerator{
+					generator: client,
+				}).Generate(
+					context.Background(),
+					textgeneration.Request{
+						SystemPrompt: "update provisional IELTS profile",
+						UserPrompt:   "frozen Part evidence",
+					},
+				)
+				return result.Provider, result.Model, result.Content, err
+			},
+		},
+		{
 			name:           "Summary JSON",
 			systemPrompt:   "summarize the thread",
 			userPrompt:     "thread transcript",

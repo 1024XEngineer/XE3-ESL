@@ -27,18 +27,35 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/logging"
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/providerobservability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/providers/spatius"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 const (
 	shutdownTimeout                = 5 * time.Second
 	voiceAudioUploadLease          = 2 * time.Minute
 	voiceASRFinalizationTimeMargin = 15 * time.Second
+	evaluationDependencyDelay      = 5 * time.Second
+	// defaultAcousticDependencyMaxWait matches the default ISE request timeout and
+	// remains above media.MaxAudioDuration (122s), so a valid two-minute
+	// Part 2 answer is not degraded while its paced ISE stream is still active.
+	defaultAcousticDependencyMaxWait = 150 * time.Second
 )
 
 type httpServerResult struct {
 	name string
 	err  error
+}
+
+func evaluationAcousticDependencyMaxWait(
+	acousticsEnabled bool,
+	providerTimeout time.Duration,
+) time.Duration {
+	if acousticsEnabled {
+		return max(providerTimeout, evaluationDependencyDelay)
+	}
+	return defaultAcousticDependencyMaxWait
 }
 
 func main() {
@@ -53,6 +70,17 @@ func run() int {
 	cfg := config.Load()
 	logger := logging.New(cfg.LogLevel)
 	slog.SetDefault(logger)
+	metricsRegistry := prometheus.NewRegistry()
+	providerObserver, err := providerobservability.New(metricsRegistry)
+	if err != nil {
+		logger.Error("provider observability startup failed")
+		return 1
+	}
+	providerFactory, err := app.NewProviderFactory(providerObserver)
+	if err != nil {
+		logger.Error("provider composition startup failed")
+		return 1
+	}
 	textConfig, err := config.LoadTextGeneration()
 	if err != nil {
 		logger.Error("text generation configuration failed")
@@ -63,25 +91,31 @@ func run() int {
 		logger.Error("Agent Run configuration failed")
 		return 1
 	}
-	modelProviders, err := app.NewAgentModelProviders(textConfig)
+	modelProviders, err := providerFactory.AgentModelProviders(textConfig)
 	if err != nil {
 		logger.Error("text generation startup failed")
 		return 1
 	}
 	preparationJobTargets, err :=
-		app.NewPreparationJobTargetGenerator(textConfig)
+		providerFactory.PreparationJobTargetGenerator(textConfig)
 	if err != nil {
 		logger.Error("Preparation job target generation startup failed")
 		return 1
 	}
 	evaluationScoringGenerator, err :=
-		app.NewEvaluationScoringGenerator(textConfig)
+		providerFactory.EvaluationScoringGenerator(textConfig)
 	if err != nil {
 		logger.Error("evaluation scoring startup failed")
 		return 1
 	}
+	evaluationProfileGenerator, err :=
+		providerFactory.EvaluationProfileGenerator(textConfig)
+	if err != nil {
+		logger.Error("evaluation profile startup failed")
+		return 1
+	}
 	evaluationSpeechFeedbackGenerator, err :=
-		app.NewEvaluationSpeechFeedbackGenerator(textConfig)
+		providerFactory.EvaluationSpeechFeedbackGenerator(textConfig)
 	if err != nil {
 		logger.Error("evaluation speech feedback startup failed")
 		return 1
@@ -96,38 +130,38 @@ func run() int {
 		logger.Error("speech synthesis configuration failed")
 		return 1
 	}
-	recognizer, err := app.NewAgentSpeechRecognizer(asrConfig)
+	recognizer, err := providerFactory.AgentSpeechRecognizer(asrConfig)
 	if err != nil {
 		logger.Error("speech recognition startup failed")
 		return 1
 	}
-	synthesizer, err := app.NewAgentSpeechSynthesizer(ttsConfig)
+	synthesizer, err := providerFactory.AgentSpeechSynthesizer(ttsConfig)
 	if err != nil {
 		logger.Error("speech synthesis startup failed")
 		return 1
 	}
-	practiceRecognizer, err := app.NewPracticeSpeechRecognizer(asrConfig)
+	practiceRecognizer, err := providerFactory.PracticeSpeechRecognizer(asrConfig)
 	if err != nil {
 		logger.Error("Practice speech recognition startup failed")
 		return 1
 	}
 	practiceRecordedRecognizer, err :=
-		app.NewPracticeRecordedSpeechRecognizer(asrConfig)
+		providerFactory.PracticeRecordedSpeechRecognizer(asrConfig)
 	if err != nil {
 		logger.Error("recorded Practice speech recognition startup failed")
 		return 1
 	}
-	practiceSynthesizer, err := app.NewPracticeSpeechSynthesizer(ttsConfig)
+	practiceSynthesizer, err := providerFactory.PracticeSpeechSynthesizer(ttsConfig)
 	if err != nil {
 		logger.Error("Practice speech synthesis startup failed")
 		return 1
 	}
-	practiceQuestions, err := app.NewPracticeQuestionGenerator(textConfig)
+	practiceQuestions, err := providerFactory.PracticeQuestionGenerator(textConfig)
 	if err != nil {
 		logger.Error("Practice question generation startup failed")
 		return 1
 	}
-	practiceAnswerTips, err := app.NewPracticeAnswerTipGenerator(textConfig)
+	practiceAnswerTips, err := providerFactory.PracticeAnswerTipGenerator(textConfig)
 	if err != nil {
 		logger.Error("Practice answer Tip generation startup failed")
 		return 1
@@ -229,7 +263,7 @@ func run() int {
 		logger.Error("IELTS speech HTTP startup failed")
 		return 1
 	}
-	ieltsAnswerGenerator, err := app.NewIELTSAnswerGenerator(textConfig)
+	ieltsAnswerGenerator, err := providerFactory.IELTSAnswerGenerator(textConfig)
 	if err != nil {
 		logger.Error("IELTS answer generator startup failed", slog.String("error_kind", "dependency"))
 		return 1
@@ -250,6 +284,8 @@ func run() int {
 		storageConfig,
 		textConfig,
 		resumeOCRConfig,
+		providerFactory,
+		providerObserver,
 	)
 	if err != nil {
 		logger.Error(
@@ -269,6 +305,7 @@ func run() int {
 			ctx,
 			storageConfig,
 			storageConfig.AudioPrefix,
+			providerObserver,
 		)
 		if err != nil {
 			logger.Error(
@@ -277,7 +314,11 @@ func run() int {
 			)
 			return 1
 		}
-		imageStore, err = newAgentImageStore(ctx, storageConfig)
+		imageStore, err = newAgentImageStore(
+			ctx,
+			storageConfig,
+			providerObserver,
+		)
 		if err != nil {
 			logger.Error(
 				"image object storage startup failed",
@@ -313,7 +354,7 @@ func run() int {
 		}
 		acousticProviderTimeout = iseConfig.Timeout
 		acousticEvaluator, err =
-			app.NewEvaluationAcousticEvaluator(
+			providerFactory.EvaluationAcousticEvaluator(
 				databasePool.Native(),
 				recordingStore,
 				iseConfig,
@@ -331,6 +372,10 @@ func run() int {
 			slog.String("reason", "ISE_NOT_CONFIGURED"),
 		)
 	}
+	acousticDependencyMaxWait := evaluationAcousticDependencyMaxWait(
+		acousticsEnabled,
+		acousticProviderTimeout,
+	)
 	singleRoundDeadline := textConfig.Timeout + 10*time.Second
 	ieltsDeadline := max(
 		2*textConfig.Timeout+10*time.Second,
@@ -345,17 +390,27 @@ func run() int {
 	evaluationComposition, err := app.NewEvaluationComposition(
 		databasePool.Native(),
 		evaluationScoringGenerator,
+		evaluationProfileGenerator,
 		evaluationSpeechFeedbackGenerator,
 		acousticEvaluator,
 		app.EvaluationConfiguration{
 			Provider:     textConfig.Provider,
 			SessionModel: textConfig.EvaluationModel,
+			ProfileModel: textConfig.EvaluationModel,
 			SpeechModel:  textConfig.SpeechFeedbackModel,
 			Worker: evaluation.WorkerConfiguration{
 				SessionLane: evaluation.ClaimLane{
 					Kinds:         []evaluation.Kind{evaluation.KindSessionReport},
 					LeaseDuration: sessionLease,
 					MaxAttempts:   3,
+				},
+				ProfileLane: evaluation.ClaimLane{
+					Kinds: []evaluation.Kind{
+						evaluation.KindIELTSPart1Profile,
+						evaluation.KindIELTSPart2Profile,
+					},
+					LeaseDuration: 90 * time.Second,
+					MaxAttempts:   2,
 				},
 				SpeechLane: evaluation.ClaimLane{
 					Kinds: []evaluation.Kind{
@@ -365,14 +420,17 @@ func run() int {
 					LeaseDuration: speechLease,
 					MaxAttempts:   3,
 				},
-				AcousticsEnabled:  acousticsEnabled,
-				InterviewDeadline: singleRoundDeadline,
-				IELTSDeadline:     ieltsDeadline,
-				GeneralDeadline:   singleRoundDeadline,
-				SpeechDeadline:    speechDeadline,
-				RetryDelay:        time.Second,
-				DependencyDelay:   5 * time.Second,
-				FinalizeTimeout:   5 * time.Second,
+				AcousticsEnabled:          acousticsEnabled,
+				InterviewDeadline:         singleRoundDeadline,
+				IELTSDeadline:             ieltsDeadline,
+				GeneralDeadline:           singleRoundDeadline,
+				SpeechDeadline:            speechDeadline,
+				ProfileDeadline:           45 * time.Second,
+				RetryDelay:                time.Second,
+				DependencyDelay:           evaluationDependencyDelay,
+				AcousticDependencyMaxWait: acousticDependencyMaxWait,
+				ProfileDependencyMaxWait:  20 * time.Second,
+				FinalizeTimeout:           5 * time.Second,
 			},
 		},
 	)
@@ -454,6 +512,7 @@ func run() int {
 		avatarProvider, err = spatius.NewClient(spatius.Config{
 			Enabled: true, ConsoleBaseURL: spatiusConfig.ConsoleBaseURL,
 			APIKey: spatiusConfig.APIKey.Reveal(), Timeout: spatiusConfig.Timeout,
+			Observer: providerObserver,
 		})
 		if err != nil {
 			logger.Error("Practice avatar provider startup failed")
@@ -564,9 +623,10 @@ func run() int {
 		evaluationWorkers.Run(ctx)
 	}()
 
-	router, metricsHandler := app.NewObservableRouterWithReadinessAndRoutes(
+	router, metricsHandler, err := app.NewObservableRouterWithRegistry(
 		logger,
 		databasePool,
+		metricsRegistry,
 		[]app.RouteRegistrar{
 			applicationComposition.IdentityModule(),
 			applicationComposition.AgentModule(),
@@ -575,6 +635,10 @@ func run() int {
 		preparation.New(),
 		practice.New(),
 	)
+	if err != nil {
+		logger.Error("HTTP observability startup failed")
+		return 1
+	}
 	app.RegisterSceneCatalog(router, sceneCatalog)
 	app.RegisterIELTSQuestionBank(router, ieltsQuestionBank)
 

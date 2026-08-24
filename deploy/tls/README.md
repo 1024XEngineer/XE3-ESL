@@ -1,7 +1,7 @@
 # SpeakUp TLS lifecycle contract
 
 This directory defines the audited HTTP-01 issuance, verification, activation,
-and renewal path for the two SpeakUp certificate lineages. Committing or merging
+and renewal path for the three SpeakUp certificate lineages. Committing or merging
 these files does **not** connect to a server, contact a certificate authority,
 change DNS, install Nginx configuration, or switch any traffic.
 
@@ -24,11 +24,14 @@ change DNS, install Nginx configuration, or switch any traffic.
   expanded exact three-name certificate is accepted idempotently. A missing
   lineage, a partial lineage, or any other SAN is rejected. The result must
   contain exactly `speak-up.top`, `www.speak-up.top`, and `api.speak-up.top`.
-- New issuance never registers or guesses an ACME account. Both Staging issue
-  and Production expansion reuse the exact account referenced by the existing
+- Monitor is a separate lineage named `monitor.speak-up.top` with exactly that
+  one SAN. It reuses the reviewed Production ACME account and webroot but never
+  expands or otherwise changes the Production three-name lineage.
+- New issuance never registers or guesses an ACME account. Staging and monitor
+  issuance plus Production expansion reuse the exact account referenced by the existing
   Production renewal configuration, validate its fixed Let's Encrypt storage
   path and file permissions, pass it explicitly with `--account`, and require
-  both saved renewal configurations to retain that same account.
+  all three saved renewal configurations to retain that same account.
 - Both Production's existing Portal hosts and its new API host use the same
   operator-provided Production webroot during expansion and renewal.
 - A certificate is usable only when the Certbot live paths resolve inside the
@@ -40,13 +43,13 @@ change DNS, install Nginx configuration, or switch any traffic.
   at least five minutes remain. This fail-closed clock-skew window never treats
   an expired or imminently expiring certificate as valid. Any certificate checked
   after a live renewal must again have at least seven days remaining.
-- Before activation, every final Staging or Production hostname must occur in
+- Before activation, every final Staging, Production, or monitor hostname must occur in
   exactly one `443 ssl` server block. That block itself must contain exactly one
   direct certificate and key directive for the current lineage; directives in
   nested or unrelated blocks cannot satisfy the check. A still-installed HTTP
   bootstrap or legacy Portal-only vhost therefore cannot be recorded as the
   final activated state.
-- `renew` validates both lineages before and after Certbot runs. Nginx reloads
+- `renew` validates all three lineages before and after Certbot runs. Nginx reloads
   once only when a verified certificate differs from the last successfully
   activated SHA-256 and `nginx -t` succeeds. A dry-run never reloads.
 - Renewal configuration must still use the webroot authenticator and Let's
@@ -104,12 +107,13 @@ result unless `docker image inspect` reports `linux/amd64` and includes that
 exact digest in `RepoDigests`. Repeat it only after an approved digest update;
 scheduled renewal never upgrades software implicitly.
 
-The final Staging and Production deployment environment files must reference
-the same live paths derived from this root:
+The final Staging, Production, and monitor configurations must reference the
+live paths derived from this root:
 
 ```text
 <TLS_CERTBOT_CONFIG_ROOT>/live/staging.speak-up.top/{fullchain,privkey}.pem
 <TLS_CERTBOT_CONFIG_ROOT>/live/speak-up.top/{fullchain,privkey}.pem
+<TLS_CERTBOT_CONFIG_ROOT>/live/monitor.speak-up.top/{fullchain,privkey}.pem
 ```
 
 ## 2. Install HTTP-01 bootstrap vhosts
@@ -143,18 +147,32 @@ blocks; those existing blocks must already serve the same Production webroot.
 /usr/local/nginx/sbin/nginx -s reload
 ```
 
+Monitor has one independent hostname but uses the reviewed Production webroot:
+
+```sh
+/usr/local/sbin/xe3-speakup-tls render-bootstrap \
+  --environment monitor \
+  --env-file /etc/speakup/tls.env \
+  --output /usr/local/nginx/conf/vhost/xe3-speakup-monitor-bootstrap.conf
+/usr/local/nginx/sbin/nginx -t
+/usr/local/nginx/sbin/nginx -s reload
+```
+
 Before contacting the CA, place a temporary non-secret file below each
 webroot's `.well-known/acme-challenge/` directory and verify that every selected
 hostname returns that exact file on HTTP while an unrelated path returns `404`.
 Remove the file after verification. Do not issue while an AAAA record points to
 an unreachable or differently configured host.
 
-## 3. Issue Staging and expand Production
+## 3. Issue Staging and monitor, then expand Production
 
 After DNS and public port 80 have been independently verified:
 
 ```sh
 /usr/local/sbin/xe3-speakup-tls issue-staging \
+  --env-file /etc/speakup/tls.env
+
+/usr/local/sbin/xe3-speakup-tls issue-monitor \
   --env-file /etc/speakup/tls.env
 
 /usr/local/sbin/xe3-speakup-tls expand-production \
@@ -168,11 +186,10 @@ certificate and persisted renewal account and prints a small audit record
 containing its environment, lineage, SHA-256, expiry, and `reload=false`. It does
 not print the environment file, account identifier, account key, or private key.
 
-If `issue-staging` exits after Certbot has already reported a saved certificate,
-do not rerun it blindly: the exact Staging lineage may now exist and rate limits
-still apply. Record hashes and permissions for
-`live/staging.speak-up.top`, `archive/staging.speak-up.top`, and
-`renewal/staging.speak-up.top.conf`, then run `verify --environment staging`.
+If either issue command exits after Certbot has already reported a saved
+certificate, do not rerun it blindly: the exact new lineage may now exist and
+rate limits still apply. Record hashes and permissions for its exact `live`,
+`archive`, and `renewal` paths, then run `verify` for that environment.
 Repair a local permission or renewal-account mismatch in place when the
 certificate itself is valid. If the lineage is incomplete or irreparably wrong,
 move only those three exact Staging paths to a root-owned timestamped quarantine
@@ -205,6 +222,10 @@ the same `server_name`. Test and atomically activate each verified certificate:
 /usr/local/sbin/xe3-speakup-tls activate \
   --environment production \
   --env-file /etc/speakup/tls.env
+
+/usr/local/sbin/xe3-speakup-tls activate \
+  --environment monitor \
+  --env-file /etc/speakup/tls.env
 ```
 
 `activate` runs all certificate and renewal checks, `nginx -t`, and a private
@@ -218,7 +239,7 @@ Production cutover. This Issue and its PR stop at the tested host-side contract.
 
 ## 4. Dry-run and automatic renewal
 
-Only after both final HTTPS vhosts have been activated, test both lineages
+Only after all final HTTPS vhosts have been activated, test all three lineages
 against Certbot's renewal staging flow:
 
 ```sh
@@ -248,6 +269,20 @@ systemctl start xe3-speakup-tls-renew.service
 systemctl enable --now xe3-speakup-tls-renew.timer
 ```
 
+The renewal unit uses `StateDirectory=speakup/safety-checks` to create the
+shared `/var/lib/speakup/safety-checks` directory as `root:root` mode `0700`.
+Before each attempt, `ExecStartPre=` removes only `tls-renewal.success`, leaving
+it absent while renewal runs or after it fails. Only after the complete
+three-lineage renewal and verification command succeeds does `ExecStartPost=`
+replace the empty marker as `root:root` mode `0600`. The marker persists across
+daemon reloads and host reboots.
+
+For an existing installation, reinstall the service and timer, run
+`systemctl daemon-reload`, and manually start the renewal service once before
+relying on the new observability series. No previous journal/systemd timestamp
+is migrated, so monitoring remains fail-closed until a real renewal check
+succeeds. Never create or touch the marker manually.
+
 The timer runs twice daily with up to 30 minutes of randomized delay and catches
 up after downtime. The script uses a non-blocking `flock`, while Certbot's own
 random sleep is disabled because scheduling jitter belongs to systemd. The unit
@@ -260,7 +295,7 @@ failure and certificate validity before the seven-day release threshold.
 
 ## 5. Verification, evidence, and recovery
 
-After activation, verify all five public HTTPS hostnames from outside the server,
+After activation, verify all six public HTTPS hostnames from outside the server,
 including their expected redirects, Portal/API health behavior, certificate SANs,
 and expiry. Record only non-secret evidence:
 
@@ -270,6 +305,7 @@ curl --fail https://staging-api.speak-up.top/health
 curl --fail --location https://speak-up.top/
 curl --silent --show-error --head https://www.speak-up.top/
 curl --fail https://api.speak-up.top/health
+curl --fail https://monitor.speak-up.top/api/health
 
 openssl s_client \
   -connect staging.speak-up.top:443 \
@@ -281,17 +317,24 @@ openssl s_client \
   -servername speak-up.top \
   -verify_return_error </dev/null 2>/dev/null |
   openssl x509 -noout -ext subjectAltName -dates -fingerprint -sha256
+openssl s_client \
+  -connect monitor.speak-up.top:443 \
+  -servername monitor.speak-up.top \
+  -verify_return_error </dev/null 2>/dev/null |
+  openssl x509 -noout -ext subjectAltName -dates -fingerprint -sha256
 
 /usr/local/sbin/xe3-speakup-tls verify \
   --environment staging --env-file /etc/speakup/tls.env
 /usr/local/sbin/xe3-speakup-tls verify \
   --environment production --env-file /etc/speakup/tls.env
+/usr/local/sbin/xe3-speakup-tls verify \
+  --environment monitor --env-file /etc/speakup/tls.env
 systemctl list-timers xe3-speakup-tls-renew.timer
 systemctl status xe3-speakup-tls-renew.service
 journalctl -u xe3-speakup-tls-renew.service --since today
 ```
 
-If Certbot fails, either lineage fails verification, or `nginx -t` fails,
+If Certbot fails, any lineage fails verification, or `nginx -t` fails,
 `renew` exits nonzero without a reload and the existing Nginx workers continue
 using their previously loaded certificate. Fix the CA, DNS, file permission,
 certificate, or Nginx error and run `renew` again. If Certbot had already updated
@@ -301,7 +344,7 @@ certificate rather than silently skipping it.
 
 Local and CI verification never contacts a real CA or writes a server. It runs
 the lifecycle boundaries against fake Docker/OpenSSL/Nginx tools, then syntax
-checks both rendered bootstrap fragments in the same pinned Docker Official
+checks all three rendered bootstrap fragments in the same pinned Docker Official
 Nginx image used by the deployment contracts:
 
 ```sh

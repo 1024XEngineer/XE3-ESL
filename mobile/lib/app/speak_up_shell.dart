@@ -35,6 +35,8 @@ import 'package:speakup/features/coaching/evaluation/agent_conversation_feedback
 import 'package:speakup/features/coaching/profile/coaching_profile.dart';
 import 'package:speakup/features/profile/profile_page.dart';
 import 'package:speakup/features/profile/profile_avatar_view.dart';
+import 'package:speakup/features/update/app_update.dart';
+import 'package:speakup/features/update/app_update_ui.dart';
 
 class SpeakUpShell extends StatefulWidget {
   const SpeakUpShell({
@@ -50,6 +52,8 @@ class SpeakUpShell extends StatefulWidget {
     this.reviewHistoryController,
     this.speechFeedbackController,
     this.coachingProfileController,
+    this.appUpdateService,
+    this.routeObserver,
     required this.conversationController,
     required this.composerController,
     this.messageAudioController,
@@ -75,12 +79,15 @@ class SpeakUpShell extends StatefulWidget {
   final ReviewHistoryController? reviewHistoryController;
   final SpeechFeedbackController? speechFeedbackController;
   final CoachingProfileController? coachingProfileController;
+  final AppUpdateService? appUpdateService;
+  final RouteObserver<ModalRoute<Object?>>? routeObserver;
 
   @override
   State<SpeakUpShell> createState() => _SpeakUpShellState();
 }
 
-class _SpeakUpShellState extends State<SpeakUpShell> {
+class _SpeakUpShellState extends State<SpeakUpShell>
+    with WidgetsBindingObserver, RouteAware {
   static const _destinations = [
     PlatformNavigationDestination(
       label: 'SpeakUp',
@@ -122,7 +129,13 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
   bool _practiceRouteInFlight = false;
   bool _clientActionInFlight = false;
   bool _conversationDrawerOpen = false;
+  bool _updateCheckInFlight = false;
+  bool _updateDialogVisible = false;
+  bool _updatePresentationScheduled = false;
+  ({InstalledAppVersion installedVersion, AppRelease release})?
+  _pendingAutomaticUpdate;
   int _navigationGeneration = 0;
+  ModalRoute<Object?>? _observedRoute;
 
   @override
   void initState() {
@@ -132,6 +145,12 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
     widget.composerController.addListener(_handleAgentInteractionState);
     widget.practiceController.addListener(_handlePracticeState);
     _feedbackPresenter = _createFeedbackPresenter();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        unawaited(_checkForUpdate(automatic: true));
+      }
+    });
   }
 
   @override
@@ -161,16 +180,52 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       _feedbackPresenter?.dispose();
       _feedbackPresenter = _createFeedbackPresenter();
     }
+    if (oldWidget.routeObserver != widget.routeObserver) {
+      oldWidget.routeObserver?.unsubscribe(this);
+      _observedRoute = null;
+      _subscribeToRoute();
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _subscribeToRoute();
   }
 
   @override
   void dispose() {
+    widget.routeObserver?.unsubscribe(this);
     widget.authController?.removeListener(_handleAuthState);
     widget.conversationController.removeListener(_handleAgentInteractionState);
     widget.composerController.removeListener(_handleAgentInteractionState);
     widget.practiceController.removeListener(_handlePracticeState);
     _feedbackPresenter?.dispose();
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  void _subscribeToRoute() {
+    final observer = widget.routeObserver;
+    final route = ModalRoute.of<Object?>(context);
+    if (observer == null || route == null || identical(route, _observedRoute)) {
+      return;
+    }
+    observer.unsubscribe(this);
+    observer.subscribe(this, route);
+    _observedRoute = route;
+  }
+
+  @override
+  void didPopNext() {
+    _schedulePendingUpdatePresentation();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_checkForUpdate(automatic: true));
+    }
   }
 
   void _handleAuthState() {
@@ -271,6 +326,110 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _checkForUpdate({required bool automatic}) async {
+    final service = widget.appUpdateService;
+    if (service == null || _updateCheckInFlight) {
+      return;
+    }
+    if (!automatic) {
+      _pendingAutomaticUpdate = null;
+    }
+    setState(() => _updateCheckInFlight = true);
+    late final AppUpdateCheckResult result;
+    try {
+      result = await service.check(automatic: automatic);
+    } finally {
+      if (mounted) {
+        setState(() => _updateCheckInFlight = false);
+      }
+    }
+    if (!mounted) {
+      return;
+    }
+    switch (result.status) {
+      case AppUpdateCheckStatus.available:
+        final installedVersion = result.installedVersion!;
+        final release = result.release!;
+        if (automatic) {
+          _pendingAutomaticUpdate = (
+            installedVersion: installedVersion,
+            release: release,
+          );
+          _schedulePendingUpdatePresentation();
+        } else {
+          await _presentAvailableUpdate(installedVersion, release);
+        }
+      case AppUpdateCheckStatus.upToDate:
+        if (!automatic) {
+          _showMockNotice('已是最新版本 v${result.installedVersion!.version}');
+        }
+      case AppUpdateCheckStatus.failed:
+        if (!automatic) {
+          _showMockNotice('暂时无法检查更新，请检查网络后重试');
+        }
+      case AppUpdateCheckStatus.skipped:
+        break;
+    }
+  }
+
+  void _schedulePendingUpdatePresentation() {
+    if (_updatePresentationScheduled || _pendingAutomaticUpdate == null) {
+      return;
+    }
+    _updatePresentationScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _updatePresentationScheduled = false;
+      if (!mounted || !_canPresentAutomaticUpdate) {
+        return;
+      }
+      final pending = _pendingAutomaticUpdate;
+      if (pending == null) {
+        return;
+      }
+      _pendingAutomaticUpdate = null;
+      unawaited(
+        _presentAvailableUpdate(pending.installedVersion, pending.release),
+      );
+    });
+  }
+
+  bool get _canPresentAutomaticUpdate {
+    return !_updateDialogVisible &&
+        canPresentAutomaticAppUpdate(
+          routeCurrent: ModalRoute.of(context)?.isCurrent ?? false,
+          practiceRouteInFlight: _practiceRouteInFlight,
+          conversationBusy: widget.conversationController.isBusy,
+          composerActiveWorkflow: widget.composerController.hasActiveWorkflow,
+          practiceBusy: widget.practiceController.isBusy,
+          practiceRecordingIdle:
+              widget.practiceController.recordingState ==
+              PracticeRecordingState.idle,
+        );
+  }
+
+  Future<void> _presentAvailableUpdate(
+    InstalledAppVersion installedVersion,
+    AppRelease release,
+  ) async {
+    final service = widget.appUpdateService;
+    if (service == null || _updateDialogVisible || !mounted) {
+      return;
+    }
+    _updateDialogVisible = true;
+    final openDownload = await showAppUpdateDialog(
+      context,
+      installedVersion: installedVersion,
+      release: release,
+    );
+    _updateDialogVisible = false;
+    if (!mounted || openDownload != true) {
+      return;
+    }
+    if (!await service.openDownload(release) && mounted) {
+      _showMockNotice('无法打开下载页面，请稍后重试');
+    }
   }
 
   Future<void> _openPractice() => _openPracticeRoute();
@@ -457,6 +616,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       }
     } finally {
       _practiceRouteInFlight = false;
+      _schedulePendingUpdatePresentation();
     }
   }
 
@@ -465,6 +625,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       return;
     }
     setState(() {});
+    _schedulePendingUpdatePresentation();
   }
 
   void _handlePracticeState() {
@@ -472,6 +633,7 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
       return;
     }
     setState(() {});
+    _schedulePendingUpdatePresentation();
   }
 
   @override
@@ -552,6 +714,9 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         isLoadingEarlierMessages:
             widget.conversationController.isLoadingEarlierMessages,
         isBusy: widget.conversationController.isBusy,
+        isRestoring: widget.conversationController.isRestoring,
+        isReplyPending: widget.conversationController.isReplyPending,
+        isComposerBlocked: widget.conversationController.isComposerBlocked,
         errorMessage:
             widget.conversationController.errorMessage ??
             widget.conversationController.threadHistoryErrorMessage,
@@ -605,6 +770,11 @@ class _SpeakUpShellState extends State<SpeakUpShell> {
         onLogout: widget.authController?.logout,
         reviewHistoryController: widget.reviewHistoryController,
         coachingProfileController: widget.coachingProfileController,
+        appUpdateService: widget.appUpdateService,
+        updateCheckInProgress: _updateCheckInFlight,
+        onCheckForUpdate: widget.appUpdateService == null
+            ? null
+            : () => _checkForUpdate(automatic: false),
       ),
     ];
 

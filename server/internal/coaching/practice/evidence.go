@@ -58,3 +58,25 @@ type TurnFeedbackEvidence struct {
 	SceneCategory           string
 	PracticeMode            string
 }
+
+type IELTSProfileStage string
+
+const (
+	IELTSProfileStagePart1 IELTSProfileStage = "PART_1"
+	IELTSProfileStagePart2 IELTSProfileStage = "PART_2"
+)
+
+// IELTSPartProfileEvidence is cumulative confirmed FULL_MOCK evidence frozen
+// at a Part boundary. Part 2 deliberately includes Part 1 so Evaluation can
+// rebuild when the earlier profile is unavailable.
+type IELTSPartProfileEvidence struct {
+	UserID         string
+	SessionID      string
+	SessionVersion int
+	Stage          IELTSProfileStage
+	CompletedAt    time.Time
+	Part1Boundary  int
+	Part2Boundary  int
+	Questions      []EvidenceQuestion
+	Turns          []EvidenceTurn
+}

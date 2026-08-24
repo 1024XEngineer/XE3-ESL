@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/providerobservability"
 )
 
 const testResultXML = `<?xml version="1.0" encoding="UTF-8"?>
@@ -131,6 +133,91 @@ func TestEvaluatorReportsProviderFailureWithoutFallback(t *testing.T) {
 		!strings.Contains(err.Error(), "code=10105") ||
 		!strings.Contains(err.Error(), "ise-failed") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestEvaluatorRecordsStableExternalCallOutcome(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		recorder := &iseProviderRecorder{}
+		evaluator := newTestEvaluator(t, &fakeConnection{responses: []responseMessage{{
+			SessionID: "ise-session",
+			Data:      &responseData{Status: 2, Data: base64.StdEncoding.EncodeToString([]byte(testResultXML))},
+		}}})
+		evaluator.frameInterval = 0
+		evaluator.observer = recorder
+		_, err := evaluator.Evaluate(context.Background(), validEvaluationRequest())
+		if err != nil {
+			t.Fatalf("Evaluate: %v", err)
+		}
+		observation := onlyISEObservation(t, recorder)
+		if observation.Provider != providerobservability.ProviderXFYunISE ||
+			observation.Capability != providerobservability.CapabilitySpeechEvaluation ||
+			observation.ErrorKind != providerobservability.ErrorNone ||
+			observation.Usage != (providerobservability.Usage{}) {
+			t.Fatalf("observation = %#v", observation)
+		}
+	})
+
+	t.Run("bounded provider code", func(t *testing.T) {
+		recorder := &iseProviderRecorder{}
+		evaluator := newTestEvaluator(t, &fakeConnection{responses: []responseMessage{{
+			Code: 10313, Message: "private provider detail", SessionID: "private-session",
+		}}})
+		evaluator.frameInterval = 0
+		evaluator.observer = recorder
+		_, _ = evaluator.Evaluate(context.Background(), validEvaluationRequest())
+		if observation := onlyISEObservation(t, recorder); observation.ErrorKind !=
+			providerobservability.ErrorAuthentication {
+			t.Fatalf("observation = %#v", observation)
+		}
+	})
+
+	t.Run("caller cancellation", func(t *testing.T) {
+		recorder := &iseProviderRecorder{}
+		evaluator := newTestEvaluator(t, &fakeConnection{})
+		evaluator.observer = recorder
+		evaluator.dial = func(context.Context, string) (websocketConnection, *http.Response, error) {
+			return nil, nil, context.Canceled
+		}
+		_, _ = evaluator.Evaluate(context.Background(), validEvaluationRequest())
+		if observation := onlyISEObservation(t, recorder); observation.ErrorKind !=
+			providerobservability.ErrorCancelled {
+			t.Fatalf("observation = %#v", observation)
+		}
+	})
+
+	t.Run("invalid input is not an external call", func(t *testing.T) {
+		recorder := &iseProviderRecorder{}
+		evaluator := newTestEvaluator(t, &fakeConnection{})
+		evaluator.observer = recorder
+		_, _ = evaluator.Evaluate(context.Background(), EvaluationRequest{})
+		if len(recorder.observations) != 0 {
+			t.Fatalf("observations = %#v", recorder.observations)
+		}
+	})
+}
+
+func TestISEErrorMappingsAreBounded(t *testing.T) {
+	for code, want := range map[int]providerobservability.ErrorKind{
+		10313: providerobservability.ErrorAuthentication,
+		11200: providerobservability.ErrorAuthorization,
+		42306: providerobservability.ErrorQuotaExhausted,
+		10200: providerobservability.ErrorTimeout,
+		40007: providerobservability.ErrorInvalidRequest,
+		99999: providerobservability.ErrorProviderUnavailable,
+	} {
+		if got := iseProviderCodeKind(code); got != want {
+			t.Fatalf("iseProviderCodeKind(%d) = %q, want %q", code, got, want)
+		}
+	}
+	if got := iseHandshakeErrorKind(
+		context.Background(), &http.Response{StatusCode: http.StatusForbidden}, errors.New("private"),
+	); got != providerobservability.ErrorAuthorization {
+		t.Fatalf("handshake kind = %q", got)
+	}
+	if got := iseTransportErrorKind(context.Background(), context.DeadlineExceeded); got !=
+		providerobservability.ErrorTimeout {
+		t.Fatalf("transport timeout kind = %q", got)
 	}
 }
 
@@ -334,6 +421,33 @@ func TestEvaluatorNormalizesTypographicPunctuationInTopicPaper(t *testing.T) {
 		"1.1. How would you describe the role you're applying for?" {
 		t.Fatalf("unexpected normalized topic business: %#v", business)
 	}
+}
+
+func validEvaluationRequest() EvaluationRequest {
+	return EvaluationRequest{
+		Audio: []byte{1}, ReferenceText: "Hello.", Category: CategoryReadSentence,
+	}
+}
+
+type iseProviderRecorder struct {
+	observations []providerobservability.Observation
+}
+
+func (recorder *iseProviderRecorder) Record(
+	observation providerobservability.Observation,
+) {
+	recorder.observations = append(recorder.observations, observation)
+}
+
+func onlyISEObservation(
+	t *testing.T,
+	recorder *iseProviderRecorder,
+) providerobservability.Observation {
+	t.Helper()
+	if len(recorder.observations) != 1 {
+		t.Fatalf("observations = %#v", recorder.observations)
+	}
+	return recorder.observations[0]
 }
 
 func newTestEvaluator(

@@ -17,7 +17,8 @@ func TestEvaluationRuntimeUsesIndependentSpeechWorkers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(runtime.workers) != 1+evaluationSpeechConcurrency {
+	if len(runtime.workers) != 1+evaluationProfileConcurrency+
+		evaluationSpeechConcurrency {
 		t.Fatalf("workers = %d", len(runtime.workers))
 	}
 	speechWorkers := 0
@@ -57,6 +58,10 @@ func TestEvaluationFailureAttributesExposeSafeDiagnosticMetadata(t *testing.T) {
 type evaluationProcessorStub struct{}
 
 func (evaluationProcessorStub) ProcessSession(context.Context) (bool, error) {
+	return false, nil
+}
+
+func (evaluationProcessorStub) ProcessProfile(context.Context) (bool, error) {
 	return false, nil
 }
 

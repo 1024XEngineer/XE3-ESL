@@ -1,0 +1,22 @@
+[Unit]
+Description=Export bounded SpeakUp production metrics for node_exporter
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0022
+EnvironmentFile=/etc/speakup/observability-metrics.env
+StateDirectory=xe3-speakup-observability
+ExecStart=/usr/local/sbin/xe3-speakup-export-metrics --output /var/lib/xe3-speakup-observability/textfile/speakup.prom
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/xe3-speakup-observability
+RestrictSUIDSGID=true
