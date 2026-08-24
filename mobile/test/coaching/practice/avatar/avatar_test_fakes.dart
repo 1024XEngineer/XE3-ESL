@@ -9,11 +9,13 @@ final class FakeAvatarRenderer implements AvatarRenderer {
     this.connectOnPrepare = true,
     this.prepareFailure,
     this.prepareGate,
+    this.surfaceBuilder,
   });
 
   final bool connectOnPrepare;
   final AvatarRendererFailure? prepareFailure;
   final Completer<void>? prepareGate;
+  final Widget Function(Key? key)? surfaceBuilder;
   final StreamController<AvatarRendererState> _states =
       StreamController<AvatarRendererState>.broadcast(sync: true);
 
@@ -65,7 +67,8 @@ final class FakeAvatarRenderer implements AvatarRenderer {
   }
 
   @override
-  Widget buildSurface({Key? key}) => SizedBox(key: key);
+  Widget buildSurface({Key? key}) =>
+      surfaceBuilder?.call(key) ?? SizedBox(key: key);
 
   @override
   Future<void> sendPcm(Uint8List pcmBytes, {required bool end}) async {

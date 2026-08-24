@@ -547,7 +547,9 @@ final class AvatarController extends ChangeNotifier {
       AvatarControllerState(
         phase: phase,
         renderer: rendererState,
-        failure: rendererState.failure ?? _state.failure,
+        failure: rendererState.connection == AvatarRendererConnection.connected
+            ? rendererState.failure
+            : rendererState.failure ?? _state.failure,
       ),
     );
   }

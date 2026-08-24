@@ -572,6 +572,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
       reportStatusController: widget.sessionEvaluationController,
       speechFeedbackController: widget.speechFeedbackController,
       avatarSurfaceBuilder: avatar?.surfaceBuilder,
+      avatarSurfaceVisible: avatar?.surfaceVisible ?? true,
       avatarStatusLabel: avatar?.statusLabel,
       onBeforeUserTurn: avatar?.interruptForUserTurn,
       onReplayQuestionWithAvatar: avatar?.onReplayQuestion,
