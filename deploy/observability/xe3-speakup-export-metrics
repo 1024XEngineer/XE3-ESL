@@ -1,0 +1,193 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly required_environment=(
+  OBSERVABILITY_PRODUCTION_CERTIFICATE
+  OBSERVABILITY_STAGING_CERTIFICATE
+  OBSERVABILITY_MONITOR_CERTIFICATE
+  OBSERVABILITY_POSTGRES_BACKUP_ROOT
+  OBSERVABILITY_PORTAL_BACKUP_ROOT
+)
+
+fail() {
+  printf 'speakup metrics export: %s\n' "$*" >&2
+  exit 1
+}
+
+require_absolute_path() {
+  local name=$1
+  local value=${!name:-}
+  [[ -n "$value" ]] || fail "$name is required"
+  [[ "$value" == /* && "$value" != *$'\n'* && "$value" != *$'\r'* ]] ||
+    fail "$name must be an absolute single-line path"
+}
+
+for name in "${required_environment[@]}"; do
+  require_absolute_path "$name"
+done
+
+[[ $# == 2 && "$1" == --output ]] ||
+  fail 'usage: xe3-speakup-export-metrics --output FILE'
+readonly output_path=$2
+[[ "$output_path" == /* && "$output_path" != *$'\n'* && "$output_path" != *$'\r'* ]] ||
+  fail '--output must be an absolute single-line path'
+readonly output_directory=${output_path%/*}
+[[ "$output_directory" != "$output_path" ]] || fail '--output must include a directory'
+install -d -m 0755 "$output_directory"
+
+temporary_file=$(mktemp "$output_directory/.speakup.prom.XXXXXX")
+readonly temporary_file
+trap 'rm -f "$temporary_file"' EXIT
+chmod 0644 "$temporary_file"
+
+emit_container_metrics() {
+  local environment=$1
+  local project=$2
+  local service ids id inspect_json running health restarts
+
+  for service in portal server postgres; do
+    ids=()
+    while IFS= read -r id; do
+      [[ -z "$id" ]] || ids+=("$id")
+    done < <(
+        docker ps --all --quiet \
+          --filter "label=com.docker.compose.project=$project" \
+          --filter "label=com.docker.compose.service=$service"
+      )
+    running=0
+    health=0
+    restarts=0
+    if ((${#ids[@]} == 1)); then
+      id=${ids[0]}
+      inspect_json=$(docker inspect "$id")
+      running=$(jq -r 'if .[0].State.Running == true then 1 else 0 end' <<<"$inspect_json")
+      health=$(jq -r 'if .[0].State.Health.Status == "healthy" then 1 else 0 end' <<<"$inspect_json")
+      restarts=$(jq -r '.[0].RestartCount // 0' <<<"$inspect_json")
+      [[ "$running" =~ ^[01]$ && "$health" =~ ^[01]$ && "$restarts" =~ ^[0-9]+$ ]] ||
+        fail "invalid Docker state for $environment/$service"
+    fi
+    printf 'speakup_container_up{environment="%s",service="%s"} %s\n' \
+      "$environment" "$service" "$running" >>"$temporary_file"
+    printf 'speakup_container_health{environment="%s",service="%s"} %s\n' \
+      "$environment" "$service" "$health" >>"$temporary_file"
+    printf 'speakup_container_restarts_total{environment="%s",service="%s"} %s\n' \
+      "$environment" "$service" "$restarts" >>"$temporary_file"
+  done
+}
+
+certificate_expiry() {
+  local environment=$1
+  local lineage=$2
+  local certificate=$3
+  local not_after timestamp
+
+  timestamp=0
+  if [[ -f "$certificate" ]]; then
+    not_after=$(openssl x509 -in "$certificate" -noout -enddate)
+    not_after=${not_after#notAfter=}
+    timestamp=$(date --utc --date="$not_after" +%s)
+    [[ "$timestamp" =~ ^[0-9]+$ ]] || fail "invalid TLS expiry for $lineage"
+  fi
+  printf 'speakup_tls_certificate_expiry_timestamp_seconds{environment="%s",lineage="%s"} %s\n' \
+    "$environment" "$lineage" "$timestamp" >>"$temporary_file"
+}
+
+latest_backup_timestamp() {
+  local database=$1
+  local root=$2
+  local metadata timestamp candidate
+
+  timestamp=0
+  if [[ -d "$root" ]]; then
+    while IFS= read -r metadata; do
+      candidate=$(jq -er '.created_at | fromdateiso8601' "$metadata")
+      [[ "$candidate" =~ ^[0-9]+$ ]] ||
+        fail "invalid backup timestamp for $database"
+      if ((candidate > timestamp)); then
+        timestamp=$candidate
+      fi
+    done < <(find "$root" -mindepth 2 -maxdepth 2 -type f -name metadata.json -print)
+  fi
+  printf 'speakup_backup_last_success_timestamp_seconds{database="%s"} %s\n' \
+    "$database" "$timestamp" >>"$temporary_file"
+}
+
+unit_success() {
+  local purpose=$1
+  local unit=$2
+  local result status last_run last_run_timestamp=0 success=0
+
+  result=$(systemctl show --property=Result --value "$unit" 2>/dev/null || true)
+  status=$(systemctl show --property=ExecMainStatus --value "$unit" 2>/dev/null || true)
+  last_run=$(systemctl show --property=ExecMainExitTimestamp --value "$unit" 2>/dev/null || true)
+  if [[ -n "$last_run" && "$last_run" != n/a ]]; then
+    last_run_timestamp=$(date --utc --date="$last_run" +%s)
+    [[ "$last_run_timestamp" =~ ^[0-9]+$ ]] || fail "invalid last-run time for $unit"
+  fi
+  if [[ "$result" == success && "$status" == 0 && "$last_run_timestamp" -gt 0 ]]; then
+    success=1
+  fi
+  printf 'speakup_systemd_unit_last_run_success{purpose="%s",unit="%s"} %s\n' \
+    "$purpose" "$unit" "$success" >>"$temporary_file"
+  printf 'speakup_systemd_unit_last_run_timestamp_seconds{purpose="%s",unit="%s"} %s\n' \
+    "$purpose" "$unit" "$last_run_timestamp" >>"$temporary_file"
+}
+
+emit_host_filesystem_metrics() {
+  local size available mountpoint files files_free inode_mountpoint
+
+  read -r size available mountpoint < <(df --block-size=1 --output=size,avail,target / | tail -n 1)
+  read -r files files_free inode_mountpoint < <(df --output=itotal,iavail,target / | tail -n 1)
+  [[ "$size" =~ ^[0-9]+$ && "$available" =~ ^[0-9]+$ && "$mountpoint" == / ]] ||
+    fail 'invalid root filesystem capacity from df'
+  [[ "$files" =~ ^[0-9]+$ && "$files_free" =~ ^[0-9]+$ && "$inode_mountpoint" == / ]] ||
+    fail 'invalid root filesystem inode capacity from df'
+  ((size > 0 && available <= size && files > 0 && files_free <= files)) ||
+    fail 'root filesystem metrics are outside their valid range'
+
+  printf 'speakup_host_filesystem_size_bytes{mountpoint="/"} %s\n' "$size" >>"$temporary_file"
+  printf 'speakup_host_filesystem_avail_bytes{mountpoint="/"} %s\n' "$available" >>"$temporary_file"
+  printf 'speakup_host_filesystem_files{mountpoint="/"} %s\n' "$files" >>"$temporary_file"
+  printf 'speakup_host_filesystem_files_free{mountpoint="/"} %s\n' "$files_free" >>"$temporary_file"
+}
+
+cat >>"$temporary_file" <<'EOF'
+# HELP speakup_container_up Whether the expected SpeakUp container is running.
+# TYPE speakup_container_up gauge
+# HELP speakup_container_health Whether the expected SpeakUp container is healthy.
+# TYPE speakup_container_health gauge
+# HELP speakup_container_restarts_total Docker restart count for the expected SpeakUp container.
+# TYPE speakup_container_restarts_total counter
+# HELP speakup_tls_certificate_expiry_timestamp_seconds Unix timestamp when a SpeakUp TLS certificate expires.
+# TYPE speakup_tls_certificate_expiry_timestamp_seconds gauge
+# HELP speakup_backup_last_success_timestamp_seconds Unix timestamp of the newest verified SpeakUp backup metadata.
+# TYPE speakup_backup_last_success_timestamp_seconds gauge
+# HELP speakup_systemd_unit_last_run_success Whether the last relevant systemd unit run succeeded.
+# TYPE speakup_systemd_unit_last_run_success gauge
+# HELP speakup_systemd_unit_last_run_timestamp_seconds Unix timestamp when the relevant systemd unit last exited.
+# TYPE speakup_systemd_unit_last_run_timestamp_seconds gauge
+# HELP speakup_host_filesystem_size_bytes Total bytes on the host root filesystem.
+# TYPE speakup_host_filesystem_size_bytes gauge
+# HELP speakup_host_filesystem_avail_bytes Available bytes on the host root filesystem.
+# TYPE speakup_host_filesystem_avail_bytes gauge
+# HELP speakup_host_filesystem_files Total inodes on the host root filesystem.
+# TYPE speakup_host_filesystem_files gauge
+# HELP speakup_host_filesystem_files_free Free inodes on the host root filesystem.
+# TYPE speakup_host_filesystem_files_free gauge
+EOF
+
+emit_container_metrics production xe3-speakup-production
+emit_container_metrics staging xe3-speakup-staging
+certificate_expiry production speak-up.top "$OBSERVABILITY_PRODUCTION_CERTIFICATE"
+certificate_expiry staging staging.speak-up.top "$OBSERVABILITY_STAGING_CERTIFICATE"
+certificate_expiry production monitor.speak-up.top "$OBSERVABILITY_MONITOR_CERTIFICATE"
+latest_backup_timestamp postgres "$OBSERVABILITY_POSTGRES_BACKUP_ROOT"
+latest_backup_timestamp portal_sqlite "$OBSERVABILITY_PORTAL_BACKUP_ROOT"
+emit_host_filesystem_metrics
+unit_success postgres_restore_check xe3-postgres-restore-check.service
+unit_success portal_restore_check xe3-portal-sqlite-restore-check.service
+unit_success tls_renewal xe3-speakup-tls-renew.service
+
+mv -f "$temporary_file" "$output_path"
+trap - EXIT

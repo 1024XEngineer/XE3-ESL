@@ -1,0 +1,26 @@
+/usr/local/nginx/logs/xe3-speakup-production-portal.access.log
+/usr/local/nginx/logs/xe3-speakup-production-portal.error.log
+/usr/local/nginx/logs/xe3-speakup-production-api.access.log
+/usr/local/nginx/logs/xe3-speakup-production-api.error.log
+/usr/local/nginx/logs/xe3-speakup-staging-portal.access.log
+/usr/local/nginx/logs/xe3-speakup-staging-portal.error.log
+/usr/local/nginx/logs/xe3-speakup-staging-api.access.log
+/usr/local/nginx/logs/xe3-speakup-staging-api.error.log
+/usr/local/nginx/logs/xe3-speakup-monitor.access.log
+/usr/local/nginx/logs/xe3-speakup-monitor.error.log {
+    daily
+    rotate 14
+    maxsize 50M
+    missingok
+    notifempty
+    compress
+    delaycompress
+    dateext
+    create 0600 root root
+    sharedscripts
+    postrotate
+        if [ -s /usr/local/nginx/logs/nginx.pid ]; then
+            kill -USR1 "$(cat /usr/local/nginx/logs/nginx.pid)"
+        fi
+    endscript
+}

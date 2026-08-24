@@ -582,6 +582,11 @@ jq --exit-status \
       ("ghcr.io/1024xengineer/xe3-esl-server@" + $server_digest) and
     ([.services[] | has("build")] | any | not) and
     ([.services[] | has("container_name")] | any | not) and
+    ([.services[] |
+      .logging.driver == "json-file" and
+      .logging.options["max-size"] == "10m" and
+      .logging.options["max-file"] == "5"
+    ] | all) and
     .services.portal.ports[0].host_ip == "127.0.0.1" and
     (.services.portal.ports[0].published | tostring) == "28082" and
     .services.server.ports[0].host_ip == "127.0.0.1" and
@@ -592,6 +597,9 @@ jq --exit-status \
     (.services.postgres.networks | keys) == ["database"] and
     (.services.migrate.networks | keys) == ["database"] and
     (.services.server.networks | keys | sort) == ["database", "server_edge"] and
+    .services.server.networks.server_edge.aliases ==
+      ["staging-api-metrics"] and
+    .services.server.environment.METRICS_HOST == "0.0.0.0" and
     (.volumes | keys | sort) == ["portal_data", "postgres_data"]
   ' "$temporary_directory/compose.json" >/dev/null ||
   fail "resolved Compose model violates the isolation contract"

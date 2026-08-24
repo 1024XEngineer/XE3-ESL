@@ -16,11 +16,12 @@ usage() {
   cat >&2 <<'EOF'
 Usage:
   manage.sh prepare-image --env-file FILE
-  manage.sh render-bootstrap --environment staging|production --env-file FILE --output FILE
+  manage.sh render-bootstrap --environment staging|production|monitor --env-file FILE --output FILE
   manage.sh issue-staging --env-file FILE
+  manage.sh issue-monitor --env-file FILE
   manage.sh expand-production --env-file FILE
-  manage.sh verify --environment staging|production --env-file FILE
-  manage.sh activate --environment staging|production --env-file FILE
+  manage.sh verify --environment staging|production|monitor --env-file FILE
+  manage.sh activate --environment staging|production|monitor --env-file FILE
   manage.sh renew --env-file FILE
   manage.sh renew-dry-run --env-file FILE
 EOF
@@ -341,8 +342,15 @@ select_environment() {
       # The temporary bootstrap include must not duplicate those server names.
       bootstrap_domains=(api.speak-up.top)
       ;;
+    monitor)
+      certificate_name="monitor.speak-up.top"
+      acme_root=$TLS_PRODUCTION_ACME_ROOT
+      expected_domains=(monitor.speak-up.top)
+      exact_webroot_map='{"monitor.speak-up.top":"/var/www/acme"}'
+      bootstrap_domains=(monitor.speak-up.top)
+      ;;
     *)
-      fail "environment must be staging or production"
+      fail "environment must be staging, production, or monitor"
       ;;
   esac
   certificate="$TLS_CERTBOT_CONFIG_ROOT/live/$certificate_name/fullchain.pem"
@@ -860,7 +868,7 @@ issue_certificate() {
   production_account_id=$(resolve_production_acme_account_id)
   if lineage_exists; then
     [[ "$selected_environment" == production ]] ||
-      fail "Staging certificate lineage already exists; use renew"
+      fail "$selected_environment certificate lineage already exists; use renew"
     [[ (-e "$certificate" || -L "$certificate") &&
       (-e "$certificate_key" || -L "$certificate_key") ]] ||
       fail "Production certificate lineage is incomplete"
@@ -1143,7 +1151,7 @@ activate_selected_certificate() {
 
 renew_all_certificates() {
   local environment
-  local -a environments=(staging production)
+  local -a environments=(staging production monitor)
   local -a changed_environments=()
   local -a changed_shas=()
   local -a final_shas=()
@@ -1187,16 +1195,16 @@ renew_all_certificates() {
   done
 
   if ((${#changed_environments[@]} == 0)); then
-    printf 'certificates=staging,production renewed=true reload=false\n'
+    printf 'certificates=staging,production,monitor renewed=true reload=false\n'
     return
   fi
 
-  test_and_reload_nginx staging production
+  test_and_reload_nginx staging production monitor
   for ((index = 0; index < ${#changed_environments[@]}; index++)); do
     select_environment "${changed_environments[$index]}"
     write_deployed_sha "${changed_shas[$index]}"
   done
-  printf 'certificates=staging,production renewed=true reload=true\n'
+  printf 'certificates=staging,production,monitor renewed=true reload=true\n'
 }
 
 renew_dry_run_selected() {
@@ -1221,7 +1229,7 @@ renew_dry_run_selected() {
 
 renew_dry_run_all() {
   local environment
-  for environment in staging production; do
+  for environment in staging production monitor; do
     select_environment "$environment"
     renew_dry_run_selected
   done
@@ -1282,7 +1290,7 @@ main() {
   validate_configuration
 
   case "$command" in
-    prepare-image | issue-staging | expand-production | renew | renew-dry-run)
+    prepare-image | issue-staging | issue-monitor | expand-production | renew | renew-dry-run)
       [[ -z "$environment" ]] || fail "$command does not accept --environment"
       ;;
     render-bootstrap | verify | activate)
@@ -1308,6 +1316,12 @@ main() {
     issue-staging)
       [[ -z "$output" ]] || fail "issue-staging does not accept --output"
       select_environment staging
+      acquire_lock
+      issue_certificate
+      ;;
+    issue-monitor)
+      [[ -z "$output" ]] || fail "issue-monitor does not accept --output"
+      select_environment monitor
       acquire_lock
       issue_certificate
       ;;

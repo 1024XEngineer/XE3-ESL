@@ -1,0 +1,149 @@
+name: Production probe
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+    inputs:
+      drill:
+        description: Create or resolve an isolated notification drill incident
+        required: true
+        default: none
+        type: choice
+        options:
+          - none
+          - firing
+          - resolved
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: production-probe
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    name: Portal, API, and Android release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Probe public endpoints
+        id: public-probe
+        if: github.event_name != 'workflow_dispatch' || inputs.drill == 'none'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          probe() {
+            local name=$1
+            local url=$2
+            local output=$3
+            local started_at elapsed_ms status
+            started_at=$(date +%s%3N)
+            status=$(curl \
+              --silent \
+              --show-error \
+              --location \
+              --max-time 10 \
+              --retry 1 \
+              --retry-delay 1 \
+              --retry-all-errors \
+              --output "$output" \
+              --write-out '%{http_code}' \
+              "$url")
+            elapsed_ms=$(($(date +%s%3N) - started_at))
+            [[ "$status" == 200 ]] || {
+              printf '%s returned HTTP %s\n' "$name" "$status" >&2
+              return 1
+            }
+            printf '| %s | %s | %s ms |\n' "$name" "$status" "$elapsed_ms" \
+              >>"$GITHUB_STEP_SUMMARY"
+          }
+
+          printf '%s\n' '| Target | HTTP | Elapsed |' '|---|---:|---:|' \
+            >>"$GITHUB_STEP_SUMMARY"
+          probe Portal https://speak-up.top/ "$RUNNER_TEMP/portal.html"
+          probe API https://api.speak-up.top/health "$RUNNER_TEMP/health.json"
+          probe Android https://speak-up.top/downloads/android/release.json \
+            "$RUNNER_TEMP/release.json"
+
+          jq --exit-status '
+            type == "object" and
+            keys == [
+              "abis", "apk_certificate_sha256", "apk_sha256", "download_path",
+              "file_name", "metadata_version", "minimum_android_api",
+              "published_at", "size_bytes", "version", "version_code"
+            ] and
+            .metadata_version == 1 and
+            (.version_code | type == "number" and . > 0) and
+            (.size_bytes | type == "number" and . > 0) and
+            (.download_path | test("^/downloads/android/v[0-9]+\\.[0-9]+\\.[0-9]+/speakup-v[0-9]+\\.[0-9]+\\.[0-9]+-production-arm64\\.apk$")) and
+            (.apk_sha256 | test("^[0-9a-f]{64}$")) and
+            (.apk_certificate_sha256 | test("^[0-9a-f]{64}$"))
+          ' "$RUNNER_TEMP/release.json" >/dev/null
+
+          download_path=$(jq -r '.download_path' "$RUNNER_TEMP/release.json")
+          expected_size=$(jq -r '.size_bytes' "$RUNNER_TEMP/release.json")
+          apk_headers="$RUNNER_TEMP/apk.headers"
+          apk_status=$(curl \
+            --silent \
+            --show-error \
+            --head \
+            --max-time 10 \
+            --retry 1 \
+            --retry-delay 1 \
+            --retry-all-errors \
+            --dump-header "$apk_headers" \
+            --output /dev/null \
+            --write-out '%{http_code}' \
+            "https://speak-up.top$download_path")
+          [[ "$apk_status" == 200 ]]
+          grep -Eiq '^content-type:[[:space:]]*application/vnd\.android\.package-archive' \
+            "$apk_headers"
+          grep -Eiq "^content-length:[[:space:]]*$expected_size([[:space:]]|$)" \
+            "$apk_headers"
+          printf '| APK | %s | headers only |\n' "$apk_status" \
+            >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Record failure or resolution in GitHub Issues
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRILL_MODE: ${{ inputs.drill || 'none' }}
+          PROBE_OUTCOME: ${{ steps.public-probe.outcome }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$DRILL_MODE" in
+            firing)
+              deploy/observability/github-probe-incident.sh firing drill
+              ;;
+            resolved)
+              deploy/observability/github-probe-incident.sh resolved drill
+              ;;
+            none)
+              deploy/observability/github-probe-incident.sh \
+                "$PROBE_OUTCOME" production
+              ;;
+            *)
+              printf 'Unsupported drill mode: %s\n' "$DRILL_MODE" >&2
+              exit 2
+              ;;
+          esac
+
+      - name: Preserve failing probe status
+        if: >-
+          always() &&
+          (inputs.drill == 'firing' ||
+          ((github.event_name != 'workflow_dispatch' || inputs.drill == 'none') &&
+          steps.public-probe.outcome == 'failure'))
+        shell: bash
+        run: exit 1
