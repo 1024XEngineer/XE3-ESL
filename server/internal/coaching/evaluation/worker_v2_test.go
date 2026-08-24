@@ -74,6 +74,59 @@ func TestWorkerPart2ProfileReusesReadyPart1Profile(t *testing.T) {
 	}
 }
 
+func TestWorkerPart2ProfileDefersWhilePart1IsRunning(t *testing.T) {
+	now := time.Now().UTC()
+	claim := profileClaimFixture(t, now, IELTSProfileStagePart2)
+	claim.CreatedAt = now
+	store := &workerStoreFake{
+		claims: []Claim{claim},
+		records: map[Kind]Record{
+			KindIELTSPart1Profile: {Status: JobRunning},
+		},
+	}
+	profiles := &profileEvaluatorsFake{}
+	worker, err := NewWorker(
+		store, &sessionEvaluatorsFake{}, profiles, &speechEvaluatorsFake{},
+		&acousticEvaluatorFake{}, store, workerConfigurationFixture(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	processed, err := worker.ProcessProfile(context.Background())
+	if err != nil || !processed || profiles.calls != 0 ||
+		len(store.deferrals) != 1 || len(store.checkpoints) != 0 ||
+		len(store.completions) != 0 {
+		t.Fatalf("ProcessProfile=(%t,%v), calls=%d deferrals=%d checkpoints=%d completions=%d",
+			processed, err, profiles.calls, len(store.deferrals),
+			len(store.checkpoints), len(store.completions))
+	}
+}
+
+func TestWorkerPart2ProfileFallsBackWhenPart1IsMissing(t *testing.T) {
+	now := time.Now().UTC()
+	claim := profileClaimFixture(t, now, IELTSProfileStagePart2)
+	store := &workerStoreFake{claims: []Claim{claim}}
+	profiles := &profileEvaluatorsFake{}
+	worker, err := NewWorker(
+		store, &sessionEvaluatorsFake{}, profiles, &speechEvaluatorsFake{},
+		&acousticEvaluatorFake{}, store, workerConfigurationFixture(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	processed, err := worker.ProcessProfile(context.Background())
+	if err != nil || !processed || profiles.calls != 1 ||
+		profiles.last.DependencyResolution != IELTSProfileDependencyFallback ||
+		profiles.last.PreviousProfile != nil || len(store.checkpoints) != 1 ||
+		len(store.completions) != 1 {
+		t.Fatalf("ProcessProfile=(%t,%v), calls=%d snapshot=%#v checkpoints=%d completions=%d",
+			processed, err, profiles.calls, profiles.last,
+			len(store.checkpoints), len(store.completions))
+	}
+}
+
 func TestWorkerFinalReportReusesReadyPart2Profile(t *testing.T) {
 	now := time.Now().UTC()
 	claim := sessionClaimFixture(t, now, IELTSStrategyRef)
