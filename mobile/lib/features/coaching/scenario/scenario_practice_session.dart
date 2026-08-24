@@ -440,8 +440,7 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
             controller.state.canUseAvatar) {
           return;
         }
-        _readinessExpired = true;
-        _reconnecting = false;
+        _scheduleReconnect(sessionId);
         _scheduleSync();
         if (mounted) {
           setState(() {});
@@ -453,8 +452,8 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
         operationId: operationId,
         sessionId: sessionId,
       )) {
-        _readinessExpired = true;
-        _reconnecting = false;
+        retry = true;
+        _readinessExpired = false;
       }
     } catch (_) {
       if (_connectionFenceMatches(
@@ -507,6 +506,7 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
     }
     if (_connectionAttempts >= _maximumConnectionAttempts) {
       _reconnecting = false;
+      _readinessExpired = true;
       if (_lastExhaustedAttemptSequence != _connectionAttemptSequence) {
         _lastExhaustedAttemptSequence = _connectionAttemptSequence;
         developer.log(

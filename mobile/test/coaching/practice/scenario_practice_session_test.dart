@@ -617,6 +617,84 @@ void main() {
     expect(nativePlayer.events.length, 4);
   });
 
+  for (final timeoutCase in <({String name, bool stallPrepare})>[
+    (name: 'connect future', stallPrepare: true),
+    (name: 'connected readiness', stallPrepare: false),
+  ]) {
+    testWidgets('retries ${timeoutCase.name} timeout exactly three times', (
+      tester,
+    ) async {
+      final media = _RealtimeQuestionMediaClient();
+      media.release();
+      final practiceController = PracticeController(
+        client: FakePracticeClient(),
+        mediaClient: media,
+        audioPlayer: _SilentPracticeAudioPlayer(),
+        questionSpeechPlayer: _RecordingPCMStreamPlayer(),
+        automaticQuestionSpeechEnabled: false,
+      );
+      addTearDown(practiceController.dispose);
+      await activateTestPractice(
+        controller: practiceController,
+        scene: testScenes[2],
+      );
+      final prepareGates = List<Completer<void>>.generate(
+        3,
+        (_) => Completer<void>(),
+      );
+      final renderers = List<FakeAvatarRenderer>.generate(
+        3,
+        (index) => FakeAvatarRenderer(
+          connectOnPrepare: false,
+          prepareGate: timeoutCase.stallPrepare ? prepareGates[index] : null,
+        ),
+      );
+      final controllers = renderers.map(_avatarController).toList();
+      var factoryCalls = 0;
+      PracticeAvatarSessionView? sessionView;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PracticeAvatarSession(
+            practiceController: practiceController,
+            avatarControllerFactory: () => controllers[factoryCalls++],
+            surfaceKey: const Key('test-avatar-surface'),
+            builder: (context, avatar) {
+              sessionView = avatar;
+              return _avatarStage(avatar);
+            },
+          ),
+        ),
+      );
+
+      for (var attempt = 0; attempt < 3; attempt++) {
+        await _pumpUntil(
+          tester,
+          () => renderers[attempt].preparedGrant != null,
+        );
+        await tester.pump();
+        await tester.pump(const Duration(seconds: 15));
+        await tester.pump();
+
+        if (attempt < 2) {
+          expect(find.text('正在重新连接情景角色'), findsOneWidget);
+          expect(find.text('画面暂不可用，语音仍可继续'), findsNothing);
+          await tester.pump(Duration(milliseconds: 1000 + attempt * 500));
+          await _flushControllerReplacement(tester);
+        }
+      }
+
+      expect(factoryCalls, 3);
+      expect(sessionView?.surfaceVisible, isFalse);
+      expect(find.byKey(const Key('static-fallback')), findsOneWidget);
+      expect(find.text('正在重新连接情景角色'), findsNothing);
+      expect(find.text('画面暂不可用，语音仍可继续'), findsOneWidget);
+
+      await tester.pump(const Duration(seconds: 2));
+      expect(factoryCalls, 3);
+    });
+  }
+
   testWidgets('reveals only the connected replacement after a retry succeeds', (
     tester,
   ) async {
