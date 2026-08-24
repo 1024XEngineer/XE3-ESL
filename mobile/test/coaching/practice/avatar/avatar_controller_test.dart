@@ -58,6 +58,96 @@ void main() {
     expect(renderer.sends.where((send) => send.end), hasLength(1));
   });
 
+  test(
+    'avatar owns a realtime PCM utterance and marks only its last chunk',
+    () async {
+      final renderer = FakeAvatarRenderer();
+      var fallbackCount = 0;
+      final controller = AvatarController(
+        renderer: renderer,
+        tokenClient: FakeAvatarSessionTokenClient(),
+        fallbackPlayback: (_) async => fallbackCount++,
+        fallbackStop: () async {},
+        delay: (_) async {},
+      );
+      addTearDown(controller.close);
+      await controller.connect(practiceSessionId: 'practice-1');
+
+      await controller.startPcmStream();
+      await controller.appendPcm(Uint8List.fromList(<int>[1, 2, 3, 4]));
+      expect(renderer.sends, isEmpty);
+      await controller.appendPcm(Uint8List.fromList(<int>[5, 6, 7, 8]));
+      expect(renderer.sends.map((send) => send.end), <bool>[false]);
+      await controller.finishPcmStream();
+
+      expect(renderer.sends.map((send) => send.bytes), <Uint8List>[
+        Uint8List.fromList(<int>[1, 2, 3, 4]),
+        Uint8List.fromList(<int>[5, 6, 7, 8]),
+      ]);
+      expect(renderer.sends.map((send) => send.end), <bool>[false, true]);
+      expect(fallbackCount, 0);
+      expect(controller.state.phase, AvatarControllerPhase.ready);
+    },
+  );
+
+  test(
+    'realtime PCM failure never starts a second local player mid-utterance',
+    () async {
+      final renderer = FakeAvatarRenderer()..failSendAt = 0;
+      var fallbackCount = 0;
+      final controller = AvatarController(
+        renderer: renderer,
+        tokenClient: FakeAvatarSessionTokenClient(),
+        fallbackPlayback: (_) async => fallbackCount++,
+        fallbackStop: () async {},
+        delay: (_) async {},
+      );
+      addTearDown(controller.close);
+      await controller.connect(practiceSessionId: 'practice-1');
+      await controller.startPcmStream();
+      await controller.appendPcm(Uint8List.fromList(<int>[1, 2, 3, 4]));
+
+      await expectLater(
+        controller.appendPcm(Uint8List.fromList(<int>[5, 6, 7, 8])),
+        throwsA(isA<AvatarRendererException>()),
+      );
+
+      expect(renderer.sends, hasLength(1));
+      expect(fallbackCount, 0);
+      expect(controller.state.phase, AvatarControllerPhase.failed);
+    },
+  );
+
+  test(
+    'interrupt fences a realtime PCM utterance without sending its tail',
+    () async {
+      final renderer = FakeAvatarRenderer()..holdSends = true;
+      final controller = AvatarController(
+        renderer: renderer,
+        tokenClient: FakeAvatarSessionTokenClient(),
+        fallbackPlayback: (_) async {},
+        fallbackStop: () async {},
+        delay: (_) async {},
+      );
+      addTearDown(controller.close);
+      await controller.connect(practiceSessionId: 'practice-1');
+      await controller.startPcmStream();
+      await controller.appendPcm(Uint8List.fromList(<int>[1, 2, 3, 4]));
+      final append = controller.appendPcm(
+        Uint8List.fromList(<int>[5, 6, 7, 8]),
+      );
+      await _until(() => renderer.pendingSends.isNotEmpty);
+
+      await controller.stopPcmStream();
+      renderer.pendingSends.single.complete();
+      await expectLater(append, throwsA(isA<AvatarRendererException>()));
+
+      expect(renderer.sends, hasLength(1));
+      expect(renderer.sends.single.end, isFalse);
+      expect(controller.state.phase, AvatarControllerPhase.ready);
+    },
+  );
+
   test('invalid WAV exclusively falls back without sending PCM', () async {
     final renderer = FakeAvatarRenderer();
     final fallbackWaves = <Uint8List>[];

@@ -25,6 +25,7 @@ final class PracticeController extends ChangeNotifier
     this.mediaClient,
     this.audioPlayer,
     this.questionSpeechPlayer,
+    this.automaticQuestionSpeechEnabled = true,
     PracticeClientIdFactory? clientIdFactory,
     Duration recordingLimit = const Duration(seconds: 58),
   }) : recorder = recorder ?? FakePracticeRecorder(),
@@ -67,6 +68,7 @@ final class PracticeController extends ChangeNotifier
   final PracticeMediaClient? mediaClient;
   final PracticeAudioPlayer? audioPlayer;
   final PracticePCMStreamPlayer? questionSpeechPlayer;
+  final bool automaticQuestionSpeechEnabled;
   late final CoachingSpeechPlayer promptSpeaker;
   final PracticeClientIdFactory _clientIdFactory;
   final Duration _recordingLimit;
@@ -124,6 +126,7 @@ final class PracticeController extends ChangeNotifier
   Future<void>? _mediaOperation;
   Future<void>? _questionSpeechOperation;
   StreamIterator<Uint8List>? _questionSpeechIterator;
+  PracticePCMStreamSink? _activeQuestionSpeechOutput;
   String? _autoPlayedQuestionId;
   String? get practiceSessionId => _practiceSessionId;
   String? get practicePlanId => _practicePlanId;
@@ -458,6 +461,19 @@ final class PracticeController extends ChangeNotifier
     );
   }
 
+  /// Plays the current question through one output selected for the complete
+  /// realtime utterance. Supplying [output] lets an avatar own both audio and
+  /// lip animation without racing the default device player.
+  Future<void> playCurrentQuestionSpeech({
+    PracticePCMStreamSink? output,
+  }) async {
+    final question = _currentQuestion;
+    if (question == null || !supportsRealtimeQuestionSpeech) {
+      return;
+    }
+    await _playRealtimeQuestionSpeech(question, output: output);
+  }
+
   Future<void> toggleRecordingAudio(String audioAssetId) async {
     if (!_recordings.any(
       (recording) => recording.audioAssetId == audioAssetId,
@@ -552,6 +568,8 @@ final class PracticeController extends ChangeNotifier
     _mediaGeneration++;
     _playingMediaKey = null;
     _loadingMediaKey = null;
+    final activeQuestionSpeechOutput = _activeQuestionSpeechOutput;
+    _activeQuestionSpeechOutput = null;
     if (notify && !_disposed) {
       notifyListeners();
     }
@@ -559,16 +577,32 @@ final class PracticeController extends ChangeNotifier
       final iterator = _questionSpeechIterator;
       _questionSpeechIterator = null;
       await iterator?.cancel();
-      await questionSpeechPlayer?.stopPCMStream();
+      await _stopQuestionSpeechOutputs(activeQuestionSpeechOutput);
       await audioPlayer?.stop();
     } catch (_) {
       // The private UI is already cleared; native cleanup remains best effort.
     }
   }
 
-  Future<void> _playRealtimeQuestionSpeech(PracticeQuestion question) async {
+  Future<void> _stopQuestionSpeechOutputs(
+    PracticePCMStreamSink? activeOutput,
+  ) async {
+    if (activeOutput != null) {
+      await activeOutput.stopPCMStream();
+    }
+    final defaultOutput = questionSpeechPlayer;
+    if (defaultOutput != null &&
+        (activeOutput == null || !identical(activeOutput, defaultOutput))) {
+      await defaultOutput.stopPCMStream();
+    }
+  }
+
+  Future<void> _playRealtimeQuestionSpeech(
+    PracticeQuestion question, {
+    PracticePCMStreamSink? output,
+  }) async {
     final speechClient = mediaClient;
-    final player = questionSpeechPlayer;
+    final player = output ?? questionSpeechPlayer;
     if (speechClient is! PracticeQuestionSpeechClient ||
         player == null ||
         _disposed ||
@@ -689,9 +723,10 @@ final class PracticeController extends ChangeNotifier
     required String key,
     required PracticeQuestion question,
     required PracticeQuestionSpeechClient client,
-    required PracticePCMStreamPlayer player,
+    required PracticePCMStreamSink player,
   }) async {
     var started = false;
+    var streamEnded = false;
     final iterator = StreamIterator<Uint8List>(
       client.streamQuestionSpeech(question.id),
     );
@@ -704,9 +739,13 @@ final class PracticeController extends ChangeNotifier
           return;
         }
         if (!started) {
+          _activeQuestionSpeechOutput = player;
           await player.startPCMStream();
           if (!_isCurrentMedia(generation) ||
               _currentQuestion?.id != question.id) {
+            if (identical(_activeQuestionSpeechOutput, player)) {
+              _activeQuestionSpeechOutput = null;
+            }
             await player.stopPCMStream();
             return;
           }
@@ -721,6 +760,7 @@ final class PracticeController extends ChangeNotifier
           bytes.fillRange(0, bytes.length, 0);
         }
       }
+      streamEnded = true;
       if (started && _isCurrentMedia(generation)) {
         await player.finishPCMStream();
       }
@@ -739,10 +779,17 @@ final class PracticeController extends ChangeNotifier
         await player.stopPCMStream();
       }
     } finally {
+      if (identical(_activeQuestionSpeechOutput, player)) {
+        _activeQuestionSpeechOutput = null;
+      }
       if (identical(_questionSpeechIterator, iterator)) {
         _questionSpeechIterator = null;
       }
-      await iterator.cancel();
+      // A naturally exhausted StreamIterator is already detached. Cancelling
+      // it again can keep this operation alive and delay the next question.
+      if (!streamEnded) {
+        await iterator.cancel();
+      }
       if (_isCurrentMedia(generation)) {
         notifyListeners();
       }
@@ -752,7 +799,8 @@ final class PracticeController extends ChangeNotifier
   void _scheduleAutomaticQuestionSpeech() {
     final question = _currentQuestion;
     final experience = _practiceExperience;
-    if (!supportsRealtimeQuestionSpeech ||
+    if (!automaticQuestionSpeechEnabled ||
+        !supportsRealtimeQuestionSpeech ||
         question == null ||
         _sessionCompleted ||
         _autoPlayedQuestionId == question.id ||
@@ -2147,6 +2195,8 @@ final class PracticeController extends ChangeNotifier
   /// Invalidates private UI state synchronously, then removes temporary audio
   /// and waits for all account-scoped transports to stop.
   Future<void> clearPrivateState() async {
+    final activeQuestionSpeechOutput = _activeQuestionSpeechOutput;
+    _activeQuestionSpeechOutput = null;
     _cancelRecordingLimit();
     _epoch++;
     _practiceGeneration++;
@@ -2201,12 +2251,12 @@ final class PracticeController extends ChangeNotifier
         Future<void>.sync(media.clearAccountState),
       if (audioPlayer case final player?)
         Future<void>.sync(player.clearAccountState),
-      if (questionSpeechPlayer case final player?)
+      if (questionSpeechPlayer != null)
         Future<void>.sync(() async {
           final iterator = _questionSpeechIterator;
           _questionSpeechIterator = null;
           await iterator?.cancel();
-          await player.stopPCMStream();
+          await _stopQuestionSpeechOutputs(activeQuestionSpeechOutput);
         }),
     ]);
     _accountCleanupFuture = cleanup;
@@ -2227,6 +2277,8 @@ final class PracticeController extends ChangeNotifier
   void dispose() {
     final pendingPracticeAudio = _pendingPracticeAudio;
     final practiceAudioOperation = _stopRecordingFuture;
+    final activeQuestionSpeechOutput = _activeQuestionSpeechOutput;
+    _activeQuestionSpeechOutput = null;
     _pendingPracticeAudio = null;
     _disposed = true;
     if (mediaClient != null || questionSpeechPlayer != null) {
@@ -2259,6 +2311,7 @@ final class PracticeController extends ChangeNotifier
     unawaited(
       Future<void>.sync(() async {
         await _questionSpeechIterator?.cancel();
+        await _stopQuestionSpeechOutputs(activeQuestionSpeechOutput);
         await questionSpeechPlayer?.disposePCMStream();
       }),
     );
@@ -2287,6 +2340,8 @@ final class PracticeController extends ChangeNotifier
         'Pending Practice audio must be resolved before replacing its snapshot.',
       );
     }
+    final activeQuestionSpeechOutput = _activeQuestionSpeechOutput;
+    _activeQuestionSpeechOutput = null;
     final previousSessionId = _practiceSessionId;
     _cancelRecordingLimit();
     _practiceGeneration++;
@@ -2304,7 +2359,7 @@ final class PracticeController extends ChangeNotifier
     _mediaGeneration++;
     _autoPlayedQuestionId = null;
     unawaited(audioPlayer?.stop());
-    unawaited(questionSpeechPlayer?.stopPCMStream());
+    unawaited(_stopQuestionSpeechOutputs(activeQuestionSpeechOutput));
     if (snapshot == null) {
       _practiceSessionId = null;
       _practicePlanId = null;

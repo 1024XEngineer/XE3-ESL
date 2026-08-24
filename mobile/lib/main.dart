@@ -61,7 +61,10 @@ void main() {
     isAndroid: defaultTargetPlatform == TargetPlatform.android,
     explicitBaseUrl: explicitApiBaseUrl,
   );
-  final dependencies = createProductionAppDependencies(baseUri: apiBaseUri);
+  final dependencies = createProductionAppDependencies(
+    baseUri: apiBaseUri,
+    avatarEnabled: avatarEnabled,
+  );
   runApp(
     SpeakUpApp(
       authController: dependencies.authController,
@@ -127,6 +130,7 @@ final class ProductionAppDependencies {
 
 ProductionAppDependencies createProductionAppDependencies({
   required Uri baseUri,
+  bool avatarEnabled = false,
   IdentityHttpTransport? identityTransport,
   IdentityHttpTransport? agentTransport,
   AgentVoiceWireTransport? agentVoiceTransport,
@@ -299,6 +303,7 @@ ProductionAppDependencies createProductionAppDependencies({
         resolvedPracticeMediaClient is PracticeQuestionSpeechClient
         ? MethodChannelPracticePCMStreamPlayer()
         : null,
+    automaticQuestionSpeechEnabled: !avatarEnabled,
   );
   final reviewHistoryController = ReviewHistoryController(
     client: WireReviewHistoryClient(
