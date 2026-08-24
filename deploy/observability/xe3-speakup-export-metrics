@@ -9,6 +9,7 @@ readonly required_environment=(
   OBSERVABILITY_POSTGRES_BACKUP_ROOT
   OBSERVABILITY_PORTAL_BACKUP_ROOT
 )
+readonly safety_check_state_directory=/var/lib/speakup/safety-checks
 
 fail() {
   printf 'speakup metrics export: %s\n' "$*" >&2
@@ -117,20 +118,37 @@ latest_backup_timestamp() {
     "$database" "$timestamp" >>"$temporary_file"
 }
 
-unit_success() {
+safety_check_success() {
   local purpose=$1
   local unit=$2
-  local result status last_run last_run_timestamp=0 success=0
+  local marker_name=$3
+  local marker="$safety_check_state_directory/$marker_name"
+  local directory_attributes directory_raw_mode directory_owner directory_group directory_mode
+  local directory_mode_value marker_attributes marker_raw_mode
+  local marker_owner marker_group marker_mode marker_timestamp now
+  local marker_mode_value
+  local last_run_timestamp=0 success=0
 
-  result=$(systemctl show --property=Result --value "$unit" 2>/dev/null || true)
-  status=$(systemctl show --property=ExecMainStatus --value "$unit" 2>/dev/null || true)
-  last_run=$(systemctl show --property=ExecMainExitTimestamp --value "$unit" 2>/dev/null || true)
-  if [[ -n "$last_run" && "$last_run" != n/a ]]; then
-    last_run_timestamp=$(date --utc --date="$last_run" +%s)
-    [[ "$last_run_timestamp" =~ ^[0-9]+$ ]] || fail "invalid last-run time for $unit"
-  fi
-  if [[ "$result" == success && "$status" == 0 && "$last_run_timestamp" -gt 0 ]]; then
+  if directory_attributes=$(stat -c '%f:%u:%g:%a' -- "$safety_check_state_directory" 2>/dev/null) &&
+    IFS=: read -r directory_raw_mode directory_owner directory_group directory_mode \
+      <<<"$directory_attributes" &&
+    [[ "$directory_raw_mode" =~ ^[0-9a-fA-F]+$ ]] &&
+    directory_mode_value=$((16#$directory_raw_mode)) &&
+    (((directory_mode_value & 0170000) == 0040000)) &&
+    [[ "$directory_owner" == 0 && "$directory_group" == 0 && "$directory_mode" == 700 ]] &&
+    marker_attributes=$(stat -c '%f:%u:%g:%a:%Y' -- "$marker" 2>/dev/null) &&
+    IFS=: read -r marker_raw_mode marker_owner marker_group marker_mode marker_timestamp \
+      <<<"$marker_attributes" &&
+    [[ "$marker_raw_mode" =~ ^[0-9a-fA-F]+$ ]] &&
+    marker_mode_value=$((16#$marker_raw_mode)) &&
+    (((marker_mode_value & 0170000) == 0100000)) &&
+    [[ "$marker_owner" == 0 && "$marker_group" == 0 && "$marker_mode" == 600 ]] &&
+    [[ "$marker_timestamp" =~ ^[0-9]+$ ]] &&
+    now=$(date --utc +%s) &&
+    [[ "$now" =~ ^[0-9]+$ ]] &&
+    ((marker_timestamp > 0 && marker_timestamp <= now)); then
     success=1
+    last_run_timestamp=$marker_timestamp
   fi
   printf 'speakup_systemd_unit_last_run_success{purpose="%s",unit="%s"} %s\n' \
     "$purpose" "$unit" "$success" >>"$temporary_file"
@@ -167,9 +185,9 @@ cat >>"$temporary_file" <<'EOF'
 # TYPE speakup_tls_certificate_expiry_timestamp_seconds gauge
 # HELP speakup_backup_last_success_timestamp_seconds Unix timestamp of the newest verified SpeakUp backup metadata.
 # TYPE speakup_backup_last_success_timestamp_seconds gauge
-# HELP speakup_systemd_unit_last_run_success Whether the last relevant systemd unit run succeeded.
+# HELP speakup_systemd_unit_last_run_success Whether the last relevant safety check completed successfully.
 # TYPE speakup_systemd_unit_last_run_success gauge
-# HELP speakup_systemd_unit_last_run_timestamp_seconds Unix timestamp when the relevant systemd unit last exited.
+# HELP speakup_systemd_unit_last_run_timestamp_seconds Unix timestamp from the relevant persistent success marker.
 # TYPE speakup_systemd_unit_last_run_timestamp_seconds gauge
 # HELP speakup_host_filesystem_size_bytes Total bytes on the host root filesystem.
 # TYPE speakup_host_filesystem_size_bytes gauge
@@ -189,9 +207,9 @@ certificate_expiry production monitor.speak-up.top "$OBSERVABILITY_MONITOR_CERTI
 latest_backup_timestamp postgres "$OBSERVABILITY_POSTGRES_BACKUP_ROOT"
 latest_backup_timestamp portal_sqlite "$OBSERVABILITY_PORTAL_BACKUP_ROOT"
 emit_host_filesystem_metrics
-unit_success postgres_restore_check xe3-postgres-restore-check.service
-unit_success portal_restore_check xe3-portal-sqlite-restore-check.service
-unit_success tls_renewal xe3-speakup-tls-renew.service
+safety_check_success postgres_restore_check xe3-postgres-restore-check.service postgres-restore-check.success
+safety_check_success portal_restore_check xe3-portal-sqlite-restore-check.service portal-sqlite-restore-check.success
+safety_check_success tls_renewal xe3-speakup-tls-renew.service tls-renewal.success
 
 mv -f "$temporary_file" "$output_path"
 trap - EXIT

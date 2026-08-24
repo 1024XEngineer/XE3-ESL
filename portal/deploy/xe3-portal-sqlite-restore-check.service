@@ -6,10 +6,11 @@ After=docker.service
 [Service]
 Type=oneshot
 EnvironmentFile=/etc/speakup/portal-backup.env
-StateDirectory=speakup/portal-backups
+StateDirectory=speakup/portal-backups speakup/safety-checks
 StateDirectoryMode=0700
 UMask=0077
 ExecStart=/usr/bin/flock --nonblock /run/lock/xe3-portal-sqlite-backup.lock /usr/bin/env PORTAL_BACKUP_ROOT=/var/lib/speakup/portal-backups /usr/local/sbin/xe3-portal-sqlite-backup check
+ExecStartPost=/usr/bin/install --no-target-directory --owner=root --group=root --mode=0600 /dev/null /var/lib/speakup/safety-checks/portal-sqlite-restore-check.success
 PrivateTmp=true
 PrivateDevices=true
 PrivateNetwork=true

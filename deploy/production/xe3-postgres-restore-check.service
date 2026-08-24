@@ -7,10 +7,11 @@ After=docker.service
 Type=oneshot
 TimeoutStartSec=2h
 EnvironmentFile=/etc/speakup/postgres-backup.env
-StateDirectory=speakup/postgres-backups
+StateDirectory=speakup/postgres-backups speakup/safety-checks
 StateDirectoryMode=0700
 UMask=0077
 ExecStart=/usr/bin/flock --nonblock /run/lock/xe3-postgres-backup.lock /usr/bin/env POSTGRES_BACKUP_ROOT=/var/lib/speakup/postgres-backups /usr/local/sbin/xe3-postgres-backup check
+ExecStartPost=/usr/bin/install --no-target-directory --owner=root --group=root --mode=0600 /dev/null /var/lib/speakup/safety-checks/postgres-restore-check.success
 PrivateTmp=true
 PrivateDevices=true
 PrivateNetwork=true

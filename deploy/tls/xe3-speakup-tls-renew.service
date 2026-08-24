@@ -10,7 +10,10 @@ User=root
 Group=root
 UMask=0077
 TimeoutStartSec=15min
+StateDirectory=speakup/safety-checks
+StateDirectoryMode=0700
 ExecStart=/usr/local/sbin/xe3-speakup-tls renew --env-file /etc/speakup/tls.env
+ExecStartPost=/usr/bin/install --no-target-directory --owner=root --group=root --mode=0600 /dev/null /var/lib/speakup/safety-checks/tls-renewal.success
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true

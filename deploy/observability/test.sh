@@ -104,17 +104,48 @@ set -euo pipefail
 printf '%s\n' '1795219200'
 EOF
 
-cat >"$temporary_directory/fake-bin/systemctl" <<'EOF'
+cat >"$temporary_directory/fake-bin/stat" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-case "$*" in
-  *--property=Result*) printf '%s\n' success ;;
-  *--property=ExecMainStatus*) printf '%s\n' 0 ;;
-  *--property=ExecMainExitTimestamp*)
-    [[ "${NEVER_RUN_UNITS:-0}" == 1 ]] || printf '%s\n' 'Sun 2026-08-24 01:02:03 UTC'
-    ;;
+
+[[ $# == 4 && "$1" == -c && "$3" == -- ]] || exit 2
+readonly format=$2
+readonly path=$4
+readonly state_directory=/var/lib/speakup/safety-checks
+
+if [[ "$path" == "$state_directory" && "$format" == '%f:%u:%g:%a' ]]; then
+  [[ "${MISSING_SAFETY_DIRECTORY:-0}" != 1 ]] || exit 1
+  if [[ "${UNSAFE_SAFETY_DIRECTORY:-0}" == 1 ]]; then
+    printf '%s\n' '41ed:0:0:755'
+  else
+    printf '%s\n' '41c0:0:0:700'
+  fi
+  exit
+fi
+
+[[ "$path" == "$state_directory/"* && "$format" == '%f:%u:%g:%a:%Y' ]] || exit 2
+readonly marker=${path##*/}
+[[ "$marker" != "${MISSING_SAFETY_MARKER:-}" ]] || exit 1
+
+case "$marker" in
+  postgres-restore-check.success) timestamp=1787533323 ;;
+  portal-sqlite-restore-check.success) timestamp=1787536984 ;;
+  tls-renewal.success) timestamp=1787540585 ;;
   *) exit 2 ;;
 esac
+
+if [[ "$marker" == "${UNSAFE_SAFETY_MARKER:-}" ]]; then
+  printf '81b6:0:0:666:'
+elif [[ "$marker" == "${NONREGULAR_SAFETY_MARKER:-}" ]]; then
+  printf 'a1ff:0:0:777:'
+else
+  printf '8180:0:0:600:'
+fi
+if [[ "$marker" == "${FUTURE_SAFETY_MARKER:-}" ]]; then
+  printf '%s\n' '1893456000'
+else
+  printf '%s\n' "$timestamp"
+fi
 EOF
 
 cat >"$temporary_directory/fake-bin/df" <<'EOF'
@@ -144,6 +175,19 @@ export OBSERVABILITY_PORTAL_BACKUP_ROOT="$temporary_directory/portal-backups"
 readonly metrics_file="$temporary_directory/textfile/speakup.prom"
 PATH="$temporary_directory/fake-bin:$PATH" "$exporter" --output "$metrics_file"
 
+assert_safety_metric() {
+  local purpose=$1
+  local unit=$2
+  local success=$3
+  local timestamp=$4
+  grep -Fq \
+    "speakup_systemd_unit_last_run_success{purpose=\"$purpose\",unit=\"$unit\"} $success" \
+    "$metrics_file" || fail "$purpose success metric is wrong"
+  grep -Fq \
+    "speakup_systemd_unit_last_run_timestamp_seconds{purpose=\"$purpose\",unit=\"$unit\"} $timestamp" \
+    "$metrics_file" || fail "$purpose timestamp metric is wrong"
+}
+
 [[ $(grep -c '^speakup_container_up{' "$metrics_file") -eq 6 ]] ||
   fail 'expected six bounded container-up series'
 [[ $(grep -c '^speakup_container_health{' "$metrics_file") -eq 6 ]] ||
@@ -162,17 +206,43 @@ grep -Fq 'speakup_backup_last_success_timestamp_seconds{database="portal_sqlite"
   fail 'expected three bounded systemd safety series'
 [[ $(grep -c '^speakup_systemd_unit_last_run_timestamp_seconds{' "$metrics_file") -eq 3 ]] ||
   fail 'expected three bounded systemd last-run timestamps'
+assert_safety_metric postgres_restore_check xe3-postgres-restore-check.service 1 1787533323
+assert_safety_metric portal_restore_check xe3-portal-sqlite-restore-check.service 1 1787536984
+assert_safety_metric tls_renewal xe3-speakup-tls-renew.service 1 1787540585
+! grep -Eq 'systemctl|journalctl' "$exporter" ||
+  fail 'safety-check metrics still depend on volatile systemd state or logs'
 grep -Fq 'speakup_host_filesystem_avail_bytes{mountpoint="/"} 250000' "$metrics_file" ||
   fail 'host root free bytes were not exported'
 grep -Fq 'speakup_host_filesystem_files_free{mountpoint="/"} 500' "$metrics_file" ||
   fail 'host root free inodes were not exported'
 
-NEVER_RUN_UNITS=1 PATH="$temporary_directory/fake-bin:$PATH" \
+MISSING_SAFETY_MARKER=postgres-restore-check.success \
+  PATH="$temporary_directory/fake-bin:$PATH" \
+  "$exporter" --output "$metrics_file"
+assert_safety_metric postgres_restore_check xe3-postgres-restore-check.service 0 0
+assert_safety_metric portal_restore_check xe3-portal-sqlite-restore-check.service 1 1787536984
+
+UNSAFE_SAFETY_MARKER=portal-sqlite-restore-check.success \
+  PATH="$temporary_directory/fake-bin:$PATH" \
+  "$exporter" --output "$metrics_file"
+assert_safety_metric portal_restore_check xe3-portal-sqlite-restore-check.service 0 0
+
+NONREGULAR_SAFETY_MARKER=postgres-restore-check.success \
+  PATH="$temporary_directory/fake-bin:$PATH" \
+  "$exporter" --output "$metrics_file"
+assert_safety_metric postgres_restore_check xe3-postgres-restore-check.service 0 0
+
+FUTURE_SAFETY_MARKER=tls-renewal.success \
+  PATH="$temporary_directory/fake-bin:$PATH" \
+  "$exporter" --output "$metrics_file"
+assert_safety_metric tls_renewal xe3-speakup-tls-renew.service 0 0
+
+UNSAFE_SAFETY_DIRECTORY=1 PATH="$temporary_directory/fake-bin:$PATH" \
   "$exporter" --output "$metrics_file"
 [[ $(grep -c '^speakup_systemd_unit_last_run_success{.*} 0$' "$metrics_file") -eq 3 ]] ||
-  fail 'never-run systemd units did not fail closed'
+  fail 'unsafe safety-check state directory did not fail closed'
 [[ $(grep -c '^speakup_systemd_unit_last_run_timestamp_seconds{.*} 0$' "$metrics_file") -eq 3 ]] ||
-  fail 'never-run systemd unit timestamps were not explicit'
+  fail 'unsafe safety-check state directory timestamps were not explicit'
 
 MISSING_SERVICE=portal PATH="$temporary_directory/fake-bin:$PATH" \
   "$exporter" --output "$metrics_file"
