@@ -230,6 +230,38 @@ services, image digests and OCI labels, networks, ports, and volumes; it then
 runs the migration image with `--pull never` to confirm the live schema before
 checking the three loopback endpoints.
 
+## Release business UAT
+
+Preview the immutable five-session matrix without making any network request:
+
+```sh
+node deploy/staging/uat.mjs
+```
+
+After the candidate is deployed, create a private receipt directory and opt in
+to the real Staging-only run explicitly:
+
+```sh
+receipt_directory="$(mktemp -d)"
+receipt_directory="$(cd "$receipt_directory" && pwd -P)"
+UAT_ENV=staging node deploy/staging/uat.mjs \
+  --execute \
+  --base-url https://staging-api.speak-up.top \
+  --receipt "$receipt_directory/receipt.json"
+```
+
+The executor creates a one-time account, dynamically freezes the current IELTS
+question assignments, and exercises PART 1 text/voice, PART 2 voice, PART 3
+voice, and FULL MOCK text through the terminal session report. Voice cases use
+the repository's fixed WAV fixture only as transport/ASR evidence. The `0600`
+receipt contains hashed resource references and status/timing metadata; it
+does not persist credentials, account identifiers, questions, answers,
+transcripts, audio, or provider payloads. Redirects, non-Staging origins,
+disabled TLS verification, failed evaluations, invalid evidence, and bounded
+polling timeouts fail closed.
+The receipt directory must already exist, be owned by the invoking user, have
+mode `0700`, and resolve without symbolic-link ancestors.
+
 ## 6. Stop or clean up Staging
 
 ```sh
