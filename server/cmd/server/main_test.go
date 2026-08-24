@@ -5,7 +5,49 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
+	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
 )
+
+func TestAcousticDependencyWaitCoversMaximumAcceptedAudio(t *testing.T) {
+	wait := evaluationAcousticDependencyMaxWait(
+		true,
+		defaultAcousticDependencyMaxWait,
+	)
+	if wait <= platformmedia.MaxAudioDuration {
+		t.Fatalf(
+			"acoustic dependency wait = %s, must exceed maximum audio duration %s",
+			wait,
+			platformmedia.MaxAudioDuration,
+		)
+	}
+}
+
+func TestAcousticDependencyWaitUsesConfiguredProviderAttempt(t *testing.T) {
+	providerTimeout := 175 * time.Second
+	if got := evaluationAcousticDependencyMaxWait(true, providerTimeout); got != providerTimeout {
+		t.Fatalf("acoustic dependency wait = %s, want %s", got, providerTimeout)
+	}
+	if got := evaluationAcousticDependencyMaxWait(false, 0); got !=
+		defaultAcousticDependencyMaxWait {
+		t.Fatalf(
+			"disabled acoustic dependency wait = %s, want %s",
+			got,
+			defaultAcousticDependencyMaxWait,
+		)
+	}
+}
+
+func TestAcousticDependencyWaitClampsShortProviderAttempt(t *testing.T) {
+	providerTimeout := time.Second
+	if got := evaluationAcousticDependencyMaxWait(true, providerTimeout); got !=
+		evaluationDependencyDelay {
+		t.Fatalf(
+			"acoustic dependency wait = %s, want minimum %s",
+			got,
+			evaluationDependencyDelay,
+		)
+	}
+}
 
 func TestVoiceASRLeaseCoversUploadRecognitionAndFinalization(t *testing.T) {
 	for _, test := range []struct {

@@ -157,6 +157,68 @@ func TestWorkerFinalReportReusesReadyPart2Profile(t *testing.T) {
 	}
 }
 
+func TestWorkerFinalReportFallsBackWhenPart2ProfileIsUnavailable(t *testing.T) {
+	tests := []struct {
+		name     string
+		record   Record
+		timedOut bool
+	}{
+		{
+			name:     "dependency timeout",
+			record:   Record{Status: JobRunning},
+			timedOut: true,
+		},
+		{
+			name:   "failed dependency",
+			record: Record{Status: JobFailed},
+		},
+		{
+			name: "malformed ready dependency",
+			record: Record{
+				Status: JobReady,
+				Result: json.RawMessage(`{"schema_version":"ielts-cumulative-profile/v1"}`),
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			now := time.Now().UTC()
+			claim := sessionClaimFixture(t, now, IELTSStrategyRef)
+			claim.CreatedAt = now
+			if test.timedOut {
+				claim.CreatedAt = now.Add(
+					-workerConfigurationFixture().ProfileDependencyMaxWait - time.Second,
+				)
+			}
+			store := &workerStoreFake{
+				claims: []Claim{claim},
+				records: map[Kind]Record{
+					KindIELTSPart2Profile: test.record,
+				},
+			}
+			sessions := &sessionEvaluatorsFake{}
+			worker := workerFixture(
+				t, store, sessions, &speechEvaluatorsFake{}, &acousticEvaluatorFake{},
+			)
+
+			processed, err := worker.ProcessSession(context.Background())
+			if err != nil || !processed || sessions.ieltsCalls != 1 ||
+				sessions.lastIELTSSnapshot.ProfileResolution != IELTSFinalProfileFallback ||
+				sessions.lastIELTSSnapshot.CumulativeProfile != nil ||
+				len(store.deferrals) != 0 || len(store.checkpoints) != 1 ||
+				len(store.completions) != 1 || len(store.failures) != 0 {
+				t.Fatalf(
+					"ProcessSession=(%t,%v), calls=%d snapshot=%#v deferrals=%d checkpoints=%d completions=%d failures=%d",
+					processed, err, sessions.ieltsCalls, sessions.lastIELTSSnapshot,
+					len(store.deferrals), len(store.checkpoints), len(store.completions),
+					len(store.failures),
+				)
+			}
+		})
+	}
+}
+
 func TestWorkerReusesAcousticCheckpointAfterTextEvaluationRetry(t *testing.T) {
 	now := time.Now().UTC()
 	first := speechClaimFixture(t, now, KindPracticeTurnFeedback, nil)
@@ -272,132 +334,319 @@ func TestWorkerFallsBackToTextAfterTerminalAcousticFailure(t *testing.T) {
 }
 
 func TestWorkerIELTSReportReusesTurnAcousticsAfterTextRetry(t *testing.T) {
-	now := time.Now().UTC()
-	first := sessionClaimFixture(t, now, IELTSStrategyRef)
-	var snapshot SessionInputSnapshot
-	if err := DecodeStrict(first.InputSnapshot, &snapshot); err != nil {
-		t.Fatal(err)
-	}
-	snapshot.Turns[0].AudioAssetID = "audio-1"
-	input, digest, err := EncodeStrict(snapshot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	first.InputSnapshot = input
-	first.InputHash = digest
-	second := first
-	second.AttemptCount = 2
-	second.LeaseToken = "44444444-4444-4444-8444-444444444444"
-	second.UpdatedAt = now.Add(time.Second)
-	second.LeaseExpiresAt = timePointer(now.Add(3 * time.Minute))
-	pronunciation := 84.0
-	store := &workerStoreFake{
-		claims: []Claim{first, second},
-		sessionAcoustics: SessionAcousticRead{Checkpoints: map[string]AcousticCheckpoint{
-			"30000000-0000-4000-8000-000000000001": {
-				Status:          AcousticAssessed,
-				Pronunciation:   &pronunciation,
-				Provider:        "xfyun-ise",
-				ProviderSession: "ise-session-1",
-			},
-		}},
-	}
-	sessions := &sessionEvaluatorsFake{failFirstIELTS: true}
-	worker := workerFixture(
-		t, store, sessions, &speechEvaluatorsFake{}, &acousticEvaluatorFake{},
-	)
+	for _, mode := range []string{"PART_1", "PART_2", "PART_3", "FULL_MOCK"} {
+		t.Run(mode, func(t *testing.T) {
+			now := time.Now().UTC()
+			first := ieltsSessionClaimWithAudio(t, now, mode, 1)
+			second := first
+			second.AttemptCount = 2
+			second.LeaseToken = "44444444-4444-4444-8444-444444444444"
+			second.UpdatedAt = now.Add(time.Second)
+			second.LeaseExpiresAt = timePointer(now.Add(3 * time.Minute))
+			pronunciation := 84.0
+			store := &workerStoreFake{
+				claims: []Claim{first, second},
+				sessionAcoustics: SessionAcousticRead{Checkpoints: map[string]AcousticCheckpoint{
+					"30000000-0000-4000-8000-000000000001": {
+						Status:          AcousticAssessed,
+						Pronunciation:   &pronunciation,
+						Provider:        "xfyun-ise",
+						ProviderSession: "ise-session-1",
+					},
+				}},
+			}
+			sessions := &sessionEvaluatorsFake{failFirstIELTS: true}
+			worker := workerFixture(
+				t, store, sessions, &speechEvaluatorsFake{}, &acousticEvaluatorFake{},
+			)
 
-	processed, err := worker.ProcessSession(context.Background())
-	if !processed || err == nil || len(store.checkpoints) != 2 ||
-		store.sessionAcousticCalls != 1 {
-		t.Fatalf(
-			"first ProcessSession = (%v, %v), checkpoints=%d reads=%d",
-			processed, err, len(store.checkpoints), store.sessionAcousticCalls,
-		)
-	}
-	latestCheckpoint := store.checkpoints[len(store.checkpoints)-1]
-	store.claims[1].InputSnapshot = latestCheckpoint.InputSnapshot
-	store.claims[1].InputHash = latestCheckpoint.InputHash
+			processed, err := worker.ProcessSession(context.Background())
+			if !processed || err == nil || len(store.checkpoints) == 0 ||
+				store.sessionAcousticCalls != 1 {
+				t.Fatalf(
+					"first ProcessSession = (%v, %v), checkpoints=%d reads=%d",
+					processed, err, len(store.checkpoints), store.sessionAcousticCalls,
+				)
+			}
+			latestCheckpoint := store.checkpoints[len(store.checkpoints)-1]
+			store.claims[1].InputSnapshot = latestCheckpoint.InputSnapshot
+			store.claims[1].InputHash = latestCheckpoint.InputHash
 
-	processed, err = worker.ProcessSession(context.Background())
-	if err != nil {
-		t.Fatalf("retry ProcessSession() error = %v", err)
-	}
-	if !processed || store.sessionAcousticCalls != 1 ||
-		sessions.ieltsCalls != 2 || len(store.completions) != 1 ||
-		sessions.lastIELTSSnapshot.Turns[0].Acoustic == nil ||
-		sessions.lastIELTSSnapshot.Turns[0].Acoustic.Status != AcousticAssessed {
-		t.Fatalf(
-			"processed=%v reads=%d IELTS calls=%d completions=%d snapshot=%#v",
-			processed, store.sessionAcousticCalls, sessions.ieltsCalls,
-			len(store.completions), sessions.lastIELTSSnapshot,
-		)
+			processed, err = worker.ProcessSession(context.Background())
+			if err != nil {
+				t.Fatalf("retry ProcessSession() error = %v", err)
+			}
+			if !processed || store.sessionAcousticCalls != 1 ||
+				sessions.ieltsCalls != 2 || len(store.completions) != 1 ||
+				sessions.lastIELTSSnapshot.Turns[0].Acoustic == nil ||
+				sessions.lastIELTSSnapshot.Turns[0].Acoustic.Status != AcousticAssessed {
+				t.Fatalf(
+					"processed=%v reads=%d IELTS calls=%d completions=%d snapshot=%#v",
+					processed, store.sessionAcousticCalls, sessions.ieltsCalls,
+					len(store.completions), sessions.lastIELTSSnapshot,
+				)
+			}
+		})
 	}
 }
 
-func TestWorkerDefersIELTSReportWithoutConsumingFailureAttempt(t *testing.T) {
-	now := time.Now().UTC()
-	claim := sessionClaimFixture(t, now, IELTSStrategyRef)
-	var snapshot SessionInputSnapshot
-	if err := DecodeStrict(claim.InputSnapshot, &snapshot); err != nil {
-		t.Fatal(err)
-	}
-	snapshot.Turns[0].AudioAssetID = "audio-1"
-	claim.InputSnapshot, claim.InputHash, _ = EncodeStrict(snapshot)
-	store := &workerStoreFake{
-		claims:           []Claim{claim},
-		sessionAcoustics: SessionAcousticRead{Pending: true},
-	}
-	worker := workerFixture(
-		t, store, &sessionEvaluatorsFake{}, &speechEvaluatorsFake{},
-		&acousticEvaluatorFake{},
-	)
+func TestWorkerUsesReadyIELTSAcousticsForEveryPracticeMode(t *testing.T) {
+	for _, mode := range []string{"PART_1", "PART_2", "PART_3", "FULL_MOCK"} {
+		t.Run(mode, func(t *testing.T) {
+			now := time.Now().UTC()
+			claim := ieltsSessionClaimWithAudio(t, now, mode, 1)
+			pronunciation := 84.0
+			store := &workerStoreFake{
+				claims: []Claim{claim},
+				sessionAcoustics: SessionAcousticRead{Checkpoints: map[string]AcousticCheckpoint{
+					"30000000-0000-4000-8000-000000000001": {
+						Status:          AcousticAssessed,
+						Pronunciation:   &pronunciation,
+						Provider:        "xfyun-ise",
+						ProviderSession: "ise-session-ready",
+					},
+				}},
+			}
+			sessions := &sessionEvaluatorsFake{}
+			worker := workerFixture(
+				t, store, sessions, &speechEvaluatorsFake{},
+				&acousticEvaluatorFake{},
+			)
 
-	processed, err := worker.ProcessSession(context.Background())
-	if err != nil || !processed || len(store.deferrals) != 1 ||
-		len(store.failures) != 0 || len(store.completions) != 0 {
-		t.Fatalf(
-			"ProcessSession=(%v,%v) deferrals=%d failures=%d completions=%d",
-			processed, err, len(store.deferrals), len(store.failures),
-			len(store.completions),
-		)
+			processed, err := worker.ProcessSession(context.Background())
+			if err != nil || !processed || sessions.ieltsCalls != 1 ||
+				len(store.completions) != 1 || len(store.deferrals) != 0 ||
+				sessions.lastIELTSSnapshot.Turns[0].Acoustic == nil ||
+				sessions.lastIELTSSnapshot.Turns[0].Acoustic.Status != AcousticAssessed {
+				t.Fatalf(
+					"ProcessSession=(%v,%v) calls=%d deferrals=%d completions=%d snapshot=%#v",
+					processed, err, sessions.ieltsCalls, len(store.deferrals),
+					len(store.completions), sessions.lastIELTSSnapshot,
+				)
+			}
+		})
+	}
+}
+
+func TestWorkerDefersIELTSAcousticsForEveryPracticeMode(t *testing.T) {
+	for _, mode := range []string{"PART_1", "PART_2", "PART_3", "FULL_MOCK"} {
+		t.Run(mode, func(t *testing.T) {
+			now := time.Now().UTC()
+			claim := ieltsSessionClaimWithAudio(t, now, mode, 1)
+			claim.CreatedAt = now
+			store := &workerStoreFake{
+				claims:           []Claim{claim},
+				sessionAcoustics: SessionAcousticRead{Pending: true},
+			}
+			worker := workerFixture(
+				t, store, &sessionEvaluatorsFake{}, &speechEvaluatorsFake{},
+				&acousticEvaluatorFake{},
+			)
+
+			processed, err := worker.ProcessSession(context.Background())
+			if err != nil || !processed || len(store.deferrals) != 1 ||
+				len(store.failures) != 0 || len(store.completions) != 0 {
+				t.Fatalf(
+					"ProcessSession=(%v,%v) deferrals=%d failures=%d completions=%d",
+					processed, err, len(store.deferrals), len(store.failures),
+					len(store.completions),
+				)
+			}
+		})
+	}
+}
+
+func TestWorkerTimesOutIELTSAcousticsForEveryPracticeMode(t *testing.T) {
+	for _, mode := range []string{"PART_1", "PART_2", "PART_3", "FULL_MOCK"} {
+		t.Run(mode, func(t *testing.T) {
+			now := time.Now().UTC()
+			claim := ieltsSessionClaimWithAudio(t, now, mode, 2)
+			claim.CreatedAt = now.Add(
+				-workerConfigurationFixture().AcousticDependencyMaxWait - time.Second,
+			)
+			pronunciation := 84.0
+			store := &workerStoreFake{
+				claims: []Claim{claim},
+				sessionAcoustics: SessionAcousticRead{
+					Pending: true,
+					Checkpoints: map[string]AcousticCheckpoint{
+						"30000000-0000-4000-8000-000000000001": {
+							Status:          AcousticAssessed,
+							Pronunciation:   &pronunciation,
+							Provider:        "xfyun-ise",
+							ProviderSession: "ise-session-complete",
+						},
+					},
+				},
+			}
+			sessions := &sessionEvaluatorsFake{}
+			worker := workerFixture(
+				t, store, sessions, &speechEvaluatorsFake{},
+				&acousticEvaluatorFake{},
+			)
+
+			processed, err := worker.ProcessSession(context.Background())
+			if err != nil || !processed || sessions.ieltsCalls != 1 ||
+				len(store.deferrals) != 0 || len(store.completions) != 1 ||
+				len(sessions.lastIELTSSnapshot.Turns) != 2 {
+				t.Fatalf(
+					"ProcessSession=(%v,%v) calls=%d deferrals=%d completions=%d snapshot=%#v",
+					processed, err, sessions.ieltsCalls, len(store.deferrals),
+					len(store.completions), sessions.lastIELTSSnapshot,
+				)
+			}
+			first := sessions.lastIELTSSnapshot.Turns[0].Acoustic
+			second := sessions.lastIELTSSnapshot.Turns[1].Acoustic
+			if first == nil || first.Status != AcousticAssessed ||
+				second == nil || second.Status != AcousticNotAssessed ||
+				second.Reason != acousticDependencyTimeoutReason {
+				t.Fatalf("timed out acoustics = %#v, %#v", first, second)
+			}
+		})
+	}
+}
+
+func TestWorkerDefersProfileAcousticsForBothStages(t *testing.T) {
+	for _, stage := range []IELTSProfileStage{
+		IELTSProfileStagePart1,
+		IELTSProfileStagePart2,
+	} {
+		t.Run(string(stage), func(t *testing.T) {
+			now := time.Now().UTC()
+			claim := profileClaimWithAudio(t, now, stage)
+			claim.CreatedAt = now
+			store := &workerStoreFake{
+				claims:           []Claim{claim},
+				sessionAcoustics: SessionAcousticRead{Pending: true},
+			}
+			profiles := &profileEvaluatorsFake{}
+			worker, err := NewWorker(
+				store,
+				&sessionEvaluatorsFake{},
+				profiles,
+				&speechEvaluatorsFake{},
+				&acousticEvaluatorFake{},
+				store,
+				workerConfigurationFixture(),
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			processed, err := worker.ProcessProfile(context.Background())
+			if err != nil || !processed || profiles.calls != 0 ||
+				store.sessionAcousticCalls != 1 || len(store.deferrals) != 1 ||
+				len(store.failures) != 0 || len(store.completions) != 0 {
+				t.Fatalf(
+					"ProcessProfile=(%v,%v) calls=%d reads=%d deferrals=%d failures=%d completions=%d",
+					processed, err, profiles.calls, store.sessionAcousticCalls,
+					len(store.deferrals), len(store.failures), len(store.completions),
+				)
+			}
+		})
+	}
+}
+
+func TestWorkerTimesOutProfileAcousticsForBothStages(t *testing.T) {
+	for _, stage := range []IELTSProfileStage{
+		IELTSProfileStagePart1,
+		IELTSProfileStagePart2,
+	} {
+		t.Run(string(stage), func(t *testing.T) {
+			now := time.Now().UTC()
+			claim := profileClaimWithAudio(t, now, stage)
+			claim.CreatedAt = now.Add(
+				-workerConfigurationFixture().AcousticDependencyMaxWait - time.Second,
+			)
+			checkpoints := map[string]AcousticCheckpoint{}
+			if stage == IELTSProfileStagePart2 {
+				pronunciation := 84.0
+				checkpoints["30000000-0000-4000-8000-000000000001"] =
+					AcousticCheckpoint{
+						Status:          AcousticAssessed,
+						Pronunciation:   &pronunciation,
+						Provider:        "xfyun-ise",
+						ProviderSession: "ise-session-complete",
+					}
+			}
+			store := &workerStoreFake{
+				claims: []Claim{claim},
+				sessionAcoustics: SessionAcousticRead{
+					Pending:     true,
+					Checkpoints: checkpoints,
+				},
+			}
+			profiles := &profileEvaluatorsFake{}
+			worker, err := NewWorker(
+				store,
+				&sessionEvaluatorsFake{},
+				profiles,
+				&speechEvaluatorsFake{},
+				&acousticEvaluatorFake{},
+				store,
+				workerConfigurationFixture(),
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			processed, err := worker.ProcessProfile(context.Background())
+			if err != nil || !processed || profiles.calls != 1 ||
+				store.sessionAcousticCalls != 1 || len(store.deferrals) != 0 ||
+				len(store.completions) != 1 {
+				t.Fatalf(
+					"ProcessProfile=(%v,%v) calls=%d reads=%d deferrals=%d completions=%d snapshot=%#v",
+					processed, err, profiles.calls, store.sessionAcousticCalls,
+					len(store.deferrals), len(store.completions), profiles.last,
+				)
+			}
+			last := profiles.last.Turns[len(profiles.last.Turns)-1].Acoustic
+			if last == nil || last.Status != AcousticNotAssessed ||
+				last.Reason != acousticDependencyTimeoutReason {
+				t.Fatalf("timed out acoustic = %#v", last)
+			}
+			if stage == IELTSProfileStagePart2 {
+				first := profiles.last.Turns[0].Acoustic
+				if first == nil || first.Status != AcousticAssessed {
+					t.Fatalf("completed acoustic was not preserved: %#v", first)
+				}
+			}
+		})
 	}
 }
 
 func TestWorkerCompletesIELTSReportAfterTerminalAcousticFailure(t *testing.T) {
-	now := time.Now().UTC()
-	claim := sessionClaimFixture(t, now, IELTSStrategyRef)
-	var snapshot SessionInputSnapshot
-	if err := DecodeStrict(claim.InputSnapshot, &snapshot); err != nil {
-		t.Fatal(err)
-	}
-	snapshot.Turns[0].AudioAssetID = "audio-1"
-	claim.InputSnapshot, claim.InputHash, _ = EncodeStrict(snapshot)
-	store := &workerStoreFake{
-		claims: []Claim{claim},
-		sessionAcoustics: SessionAcousticRead{Checkpoints: map[string]AcousticCheckpoint{
-			"30000000-0000-4000-8000-000000000001": {
-				Status: AcousticNotAssessed,
-				Reason: "ACOUSTIC_ASSESSMENT_FAILED",
-			},
-		}},
-	}
-	sessions := &sessionEvaluatorsFake{}
-	worker := workerFixture(
-		t, store, sessions, &speechEvaluatorsFake{}, &acousticEvaluatorFake{},
-	)
+	for _, mode := range []string{"PART_1", "PART_2", "PART_3", "FULL_MOCK"} {
+		t.Run(mode, func(t *testing.T) {
+			now := time.Now().UTC()
+			claim := ieltsSessionClaimWithAudio(t, now, mode, 1)
+			store := &workerStoreFake{
+				claims: []Claim{claim},
+				sessionAcoustics: SessionAcousticRead{Checkpoints: map[string]AcousticCheckpoint{
+					"30000000-0000-4000-8000-000000000001": {
+						Status: AcousticNotAssessed,
+						Reason: "ACOUSTIC_ASSESSMENT_FAILED",
+					},
+				}},
+			}
+			sessions := &sessionEvaluatorsFake{}
+			worker := workerFixture(
+				t, store, sessions, &speechEvaluatorsFake{}, &acousticEvaluatorFake{},
+			)
 
-	processed, err := worker.ProcessSession(context.Background())
-	if err != nil || !processed || sessions.ieltsCalls != 1 ||
-		len(store.completions) != 1 || len(store.failures) != 0 ||
-		sessions.lastIELTSSnapshot.Turns[0].Acoustic == nil ||
-		sessions.lastIELTSSnapshot.Turns[0].Acoustic.Reason !=
-			"ACOUSTIC_ASSESSMENT_FAILED" {
-		t.Fatalf(
-			"ProcessSession=(%v,%v) IELTS=%d completions=%d failures=%d snapshot=%#v",
-			processed, err, sessions.ieltsCalls, len(store.completions),
-			len(store.failures), sessions.lastIELTSSnapshot,
-		)
+			processed, err := worker.ProcessSession(context.Background())
+			if err != nil || !processed || sessions.ieltsCalls != 1 ||
+				len(store.completions) != 1 || len(store.failures) != 0 ||
+				sessions.lastIELTSSnapshot.Turns[0].Acoustic == nil ||
+				sessions.lastIELTSSnapshot.Turns[0].Acoustic.Reason !=
+					"ACOUSTIC_ASSESSMENT_FAILED" {
+				t.Fatalf(
+					"ProcessSession=(%v,%v) IELTS=%d completions=%d failures=%d snapshot=%#v",
+					processed, err, sessions.ieltsCalls, len(store.completions),
+					len(store.failures), sessions.lastIELTSSnapshot,
+				)
+			}
+		})
 	}
 }
 
@@ -437,6 +686,42 @@ func TestWorkerSendsFinalAttemptFailureToAtomicStateTransition(t *testing.T) {
 		t.Fatalf("ProcessSession() = (%v, %v), failures=%d", processed, err, len(store.failures))
 	}
 	if store.failures[0].MaxAttempts != 3 || store.failures[0].ID != claim.ID ||
+		store.failures[0].LeaseToken != claim.LeaseToken {
+		t.Fatalf("failure = %#v", store.failures[0])
+	}
+}
+
+func TestWorkerProfileSecondFailureUsesProfileLaneTerminalAttempt(t *testing.T) {
+	now := time.Now().UTC()
+	claim := profileClaimFixture(t, now, IELTSProfileStagePart1)
+	claim.AttemptCount = 2
+	store := &workerStoreFake{claims: []Claim{claim}}
+	profiles := &profileEvaluatorsFake{err: errors.New("provider down")}
+	worker, err := NewWorker(
+		store,
+		&sessionEvaluatorsFake{},
+		profiles,
+		&speechEvaluatorsFake{},
+		&acousticEvaluatorFake{},
+		store,
+		workerConfigurationFixture(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	processed, err := worker.ProcessProfile(context.Background())
+	if !processed || err == nil || profiles.calls != 1 || len(store.failures) != 1 {
+		t.Fatalf(
+			"ProcessProfile() = (%v, %v), calls=%d failures=%d",
+			processed,
+			err,
+			profiles.calls,
+			len(store.failures),
+		)
+	}
+	if store.failures[0].MaxAttempts != 2 ||
+		store.failures[0].ID != claim.ID ||
 		store.failures[0].LeaseToken != claim.LeaseToken {
 		t.Fatalf("failure = %#v", store.failures[0])
 	}
@@ -680,22 +965,24 @@ func workerConfigurationFixture() WorkerConfiguration {
 			LeaseDuration: 13 * time.Minute,
 			MaxAttempts:   3,
 		},
-		AcousticsEnabled:         true,
-		InterviewDeadline:        45 * time.Second,
-		IELTSDeadline:            110 * time.Second,
-		GeneralDeadline:          45 * time.Second,
-		SpeechDeadline:           11*time.Minute + 30*time.Second,
-		ProfileDeadline:          45 * time.Second,
-		RetryDelay:               time.Second,
-		DependencyDelay:          5 * time.Second,
-		ProfileDependencyMaxWait: 20 * time.Second,
-		FinalizeTimeout:          5 * time.Second,
+		AcousticsEnabled:          true,
+		InterviewDeadline:         45 * time.Second,
+		IELTSDeadline:             110 * time.Second,
+		GeneralDeadline:           45 * time.Second,
+		SpeechDeadline:            11*time.Minute + 30*time.Second,
+		ProfileDeadline:           45 * time.Second,
+		RetryDelay:                time.Second,
+		DependencyDelay:           5 * time.Second,
+		AcousticDependencyMaxWait: 150 * time.Second,
+		ProfileDependencyMaxWait:  20 * time.Second,
+		FinalizeTimeout:           5 * time.Second,
 	}
 }
 
 type profileEvaluatorsFake struct {
 	calls int
 	last  IELTSProfileInputSnapshot
+	err   error
 }
 
 func (evaluator *profileEvaluatorsFake) EvaluateProfile(
@@ -706,6 +993,9 @@ func (evaluator *profileEvaluatorsFake) EvaluateProfile(
 ) (json.RawMessage, error) {
 	evaluator.calls++
 	evaluator.last = snapshot
+	if evaluator.err != nil {
+		return nil, evaluator.err
+	}
 	return json.RawMessage(`{"schema_version":"ielts-cumulative-profile/v1"}`), nil
 }
 
@@ -779,6 +1069,29 @@ func profileClaimFixture(
 		LeaseExpiresAt: &leaseExpiry, AvailableAt: now.Add(-time.Minute),
 		CreatedAt: now.Add(-time.Minute), UpdatedAt: now, StartedAt: &started,
 	}, LeaseDuration: 90 * time.Second}
+}
+
+func profileClaimWithAudio(
+	t *testing.T,
+	now time.Time,
+	stage IELTSProfileStage,
+) Claim {
+	t.Helper()
+	claim := profileClaimFixture(t, now, stage)
+	var snapshot IELTSProfileInputSnapshot
+	if err := DecodeStrict(claim.InputSnapshot, &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	for index := range snapshot.Turns {
+		snapshot.Turns[index].AudioAssetID = []string{"audio-1", "audio-2"}[index]
+	}
+	input, digest, err := EncodeStrict(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim.InputSnapshot = input
+	claim.InputHash = digest
+	return claim
 }
 
 func cumulativeProfileFixture(sessionID string, parts []int) IELTSCumulativeProfile {
@@ -869,6 +1182,56 @@ func sessionClaimFixture(t *testing.T, now time.Time, strategy string) Claim {
 		},
 		LeaseDuration: 3 * time.Minute,
 	}
+}
+
+func ieltsSessionClaimWithAudio(
+	t *testing.T,
+	now time.Time,
+	practiceMode string,
+	turnCount int,
+) Claim {
+	t.Helper()
+	claim := sessionClaimFixture(t, now, IELTSStrategyRef)
+	var snapshot SessionInputSnapshot
+	if err := DecodeStrict(claim.InputSnapshot, &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	snapshot.PracticeMode = practiceMode
+	if practiceMode == "FULL_MOCK" {
+		snapshot.EvaluationPolicyRef = IELTSSpeakingFullMockEvaluationPolicyRef
+	} else {
+		snapshot.EvaluationPolicyRef = IELTSSpeakingPracticeEvaluationPolicyRef
+	}
+	snapshot.Turns[0].AudioAssetID = "audio-1"
+	if turnCount == 2 {
+		snapshot.Questions = append(snapshot.Questions, SessionEvidenceQuestion{
+			ID:                      "40000000-0000-4000-8000-000000000002",
+			Position:                2,
+			Text:                    "Why is it useful?",
+			SpeakerParticipantID:    "assistant-1",
+			AddresseeParticipantIDs: []string{"user-1"},
+		})
+		snapshot.Turns = append(snapshot.Turns, SessionEvidenceTurn{
+			ID:                      "30000000-0000-4000-8000-000000000002",
+			Position:                2,
+			QuestionID:              "40000000-0000-4000-8000-000000000002",
+			RespondentParticipantID: "user-1",
+			Transcript:              "It helps me communicate clearly.",
+			Effective:               true,
+			ConfirmedAt:             now.Add(-time.Minute),
+			AudioAssetID:            "audio-2",
+		})
+	}
+	if turnCount < 1 || turnCount > 2 {
+		t.Fatalf("unsupported turn count %d", turnCount)
+	}
+	input, digest, err := EncodeStrict(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim.InputSnapshot = input
+	claim.InputHash = digest
+	return claim
 }
 
 func speechClaimFixture(

@@ -9,6 +9,8 @@ import (
 
 const MinimumIELTSTwoRoundDeadline = 2*45*time.Second + 10*time.Second
 
+const acousticDependencyTimeoutReason = "ACOUSTIC_DEPENDENCY_TIMEOUT"
+
 var ErrAcousticDependencyFailed error = acousticDependencyFailure{}
 
 type acousticDependencyFailure struct{}
@@ -89,19 +91,20 @@ type SessionAcousticSource interface {
 }
 
 type WorkerConfiguration struct {
-	SessionLane              ClaimLane
-	ProfileLane              ClaimLane
-	SpeechLane               ClaimLane
-	AcousticsEnabled         bool
-	InterviewDeadline        time.Duration
-	IELTSDeadline            time.Duration
-	GeneralDeadline          time.Duration
-	SpeechDeadline           time.Duration
-	ProfileDeadline          time.Duration
-	RetryDelay               time.Duration
-	DependencyDelay          time.Duration
-	ProfileDependencyMaxWait time.Duration
-	FinalizeTimeout          time.Duration
+	SessionLane               ClaimLane
+	ProfileLane               ClaimLane
+	SpeechLane                ClaimLane
+	AcousticsEnabled          bool
+	InterviewDeadline         time.Duration
+	IELTSDeadline             time.Duration
+	GeneralDeadline           time.Duration
+	SpeechDeadline            time.Duration
+	ProfileDeadline           time.Duration
+	RetryDelay                time.Duration
+	DependencyDelay           time.Duration
+	AcousticDependencyMaxWait time.Duration
+	ProfileDependencyMaxWait  time.Duration
+	FinalizeTimeout           time.Duration
 }
 
 func (configuration WorkerConfiguration) Valid() bool {
@@ -129,6 +132,8 @@ func (configuration WorkerConfiguration) Valid() bool {
 		configuration.RetryDelay >= 0 && configuration.RetryDelay <= time.Hour &&
 		configuration.DependencyDelay >= time.Second &&
 		configuration.DependencyDelay <= time.Minute &&
+		configuration.AcousticDependencyMaxWait >= configuration.DependencyDelay &&
+		configuration.AcousticDependencyMaxWait <= 5*time.Minute &&
 		configuration.ProfileDependencyMaxWait >= configuration.DependencyDelay &&
 		configuration.ProfileDependencyMaxWait <= 5*time.Minute &&
 		configuration.FinalizeTimeout >= time.Second &&
@@ -286,7 +291,11 @@ func (worker *Worker) resolveProfileAcoustics(
 	if err != nil {
 		return false, err
 	}
-	if read.Pending {
+	timedOut := acousticDependencyTimedOut(
+		claim.CreatedAt,
+		worker.configuration.AcousticDependencyMaxWait,
+	)
+	if read.Pending && !timedOut {
 		finalizeContext, cancel := worker.finalizeContext(ctx)
 		defer cancel()
 		return true, worker.store.DeferClaim(finalizeContext, Deferral{
@@ -294,14 +303,13 @@ func (worker *Worker) resolveProfileAcoustics(
 			AvailableAt: time.Now().UTC().Add(worker.configuration.DependencyDelay),
 		})
 	}
-	if len(read.Checkpoints) != len(turnIDs) {
-		return false, ErrInvalidRequest
-	}
-	for index := range snapshot.Turns {
-		checkpoint, exists := read.Checkpoints[snapshot.Turns[index].ID]
-		if exists {
-			snapshot.Turns[index].Acoustic = &checkpoint
-		}
+	if err := applyAcousticDependencies(
+		snapshot.Turns,
+		turnIDs,
+		read,
+		read.Pending && timedOut,
+	); err != nil {
+		return false, err
 	}
 	return false, worker.checkpointProfileSnapshot(ctx, claim, *snapshot)
 }
@@ -508,7 +516,11 @@ func (worker *Worker) resolveSessionAcoustics(
 	if err != nil {
 		return false, err
 	}
-	if read.Pending {
+	timedOut := acousticDependencyTimedOut(
+		claim.CreatedAt,
+		worker.configuration.AcousticDependencyMaxWait,
+	)
+	if read.Pending && !timedOut {
 		finalizeContext, cancel := worker.finalizeContext(ctx)
 		defer cancel()
 		err := worker.store.DeferClaim(finalizeContext, Deferral{
@@ -519,18 +531,13 @@ func (worker *Worker) resolveSessionAcoustics(
 		})
 		return true, err
 	}
-	if len(read.Checkpoints) != len(turnIDs) {
-		return false, ErrInvalidRequest
-	}
-	for index := range snapshot.Turns {
-		checkpoint, exists := read.Checkpoints[snapshot.Turns[index].ID]
-		if !exists {
-			continue
-		}
-		if !checkpoint.Valid() {
-			return false, ErrInvalidRequest
-		}
-		snapshot.Turns[index].Acoustic = &checkpoint
+	if err := applyAcousticDependencies(
+		snapshot.Turns,
+		turnIDs,
+		read,
+		read.Pending && timedOut,
+	); err != nil {
+		return false, err
 	}
 	encoded, digest, err := EncodeStrict(*snapshot)
 	if err != nil {
@@ -737,10 +744,61 @@ func stableJobError(err error) JobError {
 }
 
 func maxAttemptsFor(kind Kind, configuration WorkerConfiguration) int {
-	if kind == KindSessionReport {
+	switch kind {
+	case KindSessionReport:
 		return configuration.SessionLane.MaxAttempts
+	case KindIELTSPart1Profile, KindIELTSPart2Profile:
+		return configuration.ProfileLane.MaxAttempts
+	case KindPracticeTurnFeedback, KindAgentMessageFeedback:
+		return configuration.SpeechLane.MaxAttempts
+	default:
+		return 0
 	}
-	return configuration.SpeechLane.MaxAttempts
+}
+
+func acousticDependencyTimedOut(createdAt time.Time, maxWait time.Duration) bool {
+	return !time.Now().UTC().Before(createdAt.Add(maxWait))
+}
+
+func applyAcousticDependencies(
+	turns []SessionEvidenceTurn,
+	turnIDs []string,
+	read SessionAcousticRead,
+	markPendingNotAssessed bool,
+) error {
+	pending := make(map[string]struct{}, len(turnIDs))
+	for _, turnID := range turnIDs {
+		pending[turnID] = struct{}{}
+	}
+	for turnID := range read.Checkpoints {
+		if _, expected := pending[turnID]; !expected {
+			return ErrInvalidRequest
+		}
+	}
+	for index := range turns {
+		if _, exists := pending[turns[index].ID]; !exists {
+			continue
+		}
+		checkpoint, exists := read.Checkpoints[turns[index].ID]
+		if !exists {
+			if !markPendingNotAssessed {
+				return ErrInvalidRequest
+			}
+			checkpoint = AcousticCheckpoint{
+				Status: AcousticNotAssessed,
+				Reason: acousticDependencyTimeoutReason,
+			}
+		}
+		if !checkpoint.Valid() {
+			return ErrInvalidRequest
+		}
+		turns[index].Acoustic = &checkpoint
+		delete(pending, turns[index].ID)
+	}
+	if len(pending) != 0 {
+		return ErrInvalidRequest
+	}
+	return nil
 }
 
 func containsKind(kinds []Kind, expected Kind) bool {

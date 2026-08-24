@@ -37,6 +37,25 @@ void main() {
     },
   );
 
+  test('stops at the polling bound and shows refresh guidance', () async {
+    final client = _EvaluationClient(<SessionEvaluation>[
+      _evaluation(SessionEvaluationStatus.running),
+    ]);
+    final controller = SessionEvaluationController(
+      client: client,
+      pollInterval: const Duration(milliseconds: 1),
+      maximumPolls: 2,
+    );
+    addTearDown(controller.dispose);
+
+    await controller.load(_sessionId);
+
+    expect(client.calls, 2);
+    expect(controller.isLoading, isFalse);
+    expect(controller.evaluation?.status, SessionEvaluationStatus.running);
+    expect(controller.errorMessage, '复盘仍在生成中，请稍后刷新。');
+  });
+
   for (final sceneType in <EvaluationReportSceneType>[
     EvaluationReportSceneType.ieltsSpeaking,
     EvaluationReportSceneType.interview,
