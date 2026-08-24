@@ -18,7 +18,9 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/app"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/providerobservability"
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 type readinessChecker func(context.Context) error
@@ -378,6 +380,41 @@ func TestDynamicPathUsesRouteTemplateInLogAndMetrics(t *testing.T) {
 		`speakup_http_server_request_duration_seconds_count{method="GET",route="/users/:user_id"} 1`,
 	) {
 		t.Fatalf("metrics missing templated duration histogram: %s", metricsOutput)
+	}
+}
+
+func TestSharedRegistryExportsHTTPAndProviderMetricsFromOneHandler(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	providerObserver, err := providerobservability.New(registry)
+	if err != nil {
+		t.Fatalf("provider observability: %v", err)
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	router, metrics, err := app.NewObservableRouterWithRegistry(
+		logger,
+		nil,
+		registry,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewObservableRouterWithRegistry: %v", err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/health", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	providerObserver.Record(providerobservability.Observation{
+		Provider:   providerobservability.ProviderQianwen,
+		Capability: providerobservability.CapabilityTextGeneration,
+		ErrorKind:  providerobservability.ErrorNone,
+	})
+	output := scrapeMetrics(t, metrics)
+	for _, name := range []string{
+		"speakup_http_server_requests_total",
+		"speakup_provider_calls_total",
+	} {
+		if !strings.Contains(output, name) {
+			t.Fatalf("shared metrics endpoint missing %q: %s", name, output)
+		}
 	}
 }
 

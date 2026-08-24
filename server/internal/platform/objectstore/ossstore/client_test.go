@@ -20,6 +20,7 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/providerobservability"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -82,6 +83,8 @@ func TestClientPutSignAndDelete(t *testing.T) {
 	}
 
 	client := newTestClient(t, httpClient)
+	recorder := &objectProviderRecorder{}
+	client.observer = recorder
 	putResult, err := client.Put(context.Background(), objectstore.PutRequest{
 		Key:            key,
 		Body:           bytes.NewReader(payload),
@@ -127,6 +130,11 @@ func TestClientPutSignAndDelete(t *testing.T) {
 	if strings.Join(methods, ",") != "PUT,DELETE" {
 		t.Fatalf("unexpected provider calls: %v", methods)
 	}
+	putObservation, found := recorder.find(providerobservability.CapabilityObjectPut)
+	if !found || putObservation.ErrorKind != providerobservability.ErrorNone ||
+		putObservation.Usage.Bytes != float64(len(payload)) {
+		t.Fatalf("put observation = %#v, found = %v", putObservation, found)
+	}
 }
 
 func TestClientPutReconcilesLostResponse(t *testing.T) {
@@ -157,6 +165,8 @@ func TestClientPutReconcilesLostResponse(t *testing.T) {
 			}
 		}),
 	})
+	recorder := &objectProviderRecorder{}
+	client.observer = recorder
 
 	body := bytes.NewReader(payload)
 	result, err := client.Put(context.Background(), objectstore.PutRequest{
@@ -174,6 +184,14 @@ func TestClientPutReconcilesLostResponse(t *testing.T) {
 	}
 	if offset, seekErr := body.Seek(0, io.SeekCurrent); seekErr != nil || offset != 0 {
 		t.Fatalf("body offset after Put = %d, err = %v", offset, seekErr)
+	}
+	observation, found := recorder.find(providerobservability.CapabilityObjectPut)
+	if !found || observation.ErrorKind != providerobservability.ErrorNone ||
+		observation.Usage.Bytes != 0 || recorder.retries != 1 {
+		t.Fatalf(
+			"reconciled observation = %#v, found = %v, retries = %d",
+			observation, found, recorder.retries,
+		)
 	}
 }
 
@@ -614,4 +632,33 @@ func response(status int, header http.Header, body string) *http.Response {
 		Header:     header,
 		Body:       io.NopCloser(strings.NewReader(body)),
 	}
+}
+
+type objectProviderRecorder struct {
+	observations []providerobservability.Observation
+	retries      int
+}
+
+func (recorder *objectProviderRecorder) Record(
+	observation providerobservability.Observation,
+) {
+	recorder.observations = append(recorder.observations, observation)
+}
+
+func (recorder *objectProviderRecorder) RecordRetry(
+	providerobservability.Provider,
+	providerobservability.Capability,
+) {
+	recorder.retries++
+}
+
+func (recorder *objectProviderRecorder) find(
+	capability providerobservability.Capability,
+) (providerobservability.Observation, bool) {
+	for _, observation := range recorder.observations {
+		if observation.Capability == capability {
+			return observation, true
+		}
+	}
+	return providerobservability.Observation{}, false
 }

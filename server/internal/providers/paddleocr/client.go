@@ -11,6 +11,7 @@ import (
 	paddleapi "github.com/PaddlePaddle/PaddleOCR/api_sdk/go"
 
 	resumeocr "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/interviewresume/ocr"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/providerobservability"
 )
 
 // Config contains the server-only PaddleOCR settings.
@@ -19,6 +20,7 @@ type Config struct {
 	BaseURL     string
 	Model       string
 	Timeout     time.Duration
+	Observer    providerobservability.Recorder
 }
 
 type parseDocumentCall func(
@@ -28,8 +30,9 @@ type parseDocumentCall func(
 
 // Client calls PaddleOCR without exposing its response DTOs to Resume.
 type Client struct {
-	config Config
-	parse  parseDocumentCall
+	config   Config
+	parse    parseDocumentCall
+	observer providerobservability.Recorder
 }
 
 // New creates a PaddleOCR hosted document parsing client.
@@ -54,8 +57,9 @@ func New(configuration Config) (*Client, error) {
 		return nil, errors.New("PaddleOCR Resume OCR client initialization failed")
 	}
 	return &Client{
-		config: configuration,
-		parse:  sdkClient.ParseDocument,
+		config:   configuration,
+		parse:    sdkClient.ParseDocument,
+		observer: configuration.Observer,
 	}, nil
 }
 
@@ -63,13 +67,30 @@ func New(configuration Config) (*Client, error) {
 func (client *Client) RecognizePDF(
 	ctx context.Context,
 	sourceURL string,
-) (resumeocr.Result, error) {
+) (callResult resumeocr.Result, callErr error) {
 	if client == nil || client.parse == nil || ctx == nil || ctx.Err() != nil ||
 		strings.TrimSpace(sourceURL) == "" {
 		return resumeocr.Result{}, resumeocr.NewFailure(resumeocr.FailureProvider)
 	}
 	callCtx, cancel := context.WithTimeout(ctx, client.config.Timeout)
 	defer cancel()
+	startedAt := time.Now()
+	defer func() {
+		if client.observer == nil {
+			return
+		}
+		pages := 0
+		if callErr == nil {
+			pages = callResult.PageCount
+		}
+		client.observer.Record(providerobservability.Observation{
+			Provider:   providerobservability.ProviderPaddleOCR,
+			Capability: providerobservability.CapabilityDocumentOCR,
+			Duration:   time.Since(startedAt),
+			ErrorKind:  observedOCRFailure(callErr),
+			Usage:      providerobservability.Usage{Pages: float64(pages)},
+		})
+	}()
 	result, err := client.parse(callCtx, &paddleapi.DocParsingRequest{
 		Model:   client.config.Model,
 		FileURL: sourceURL,
@@ -85,6 +106,26 @@ func (client *Client) RecognizePDF(
 		return resumeocr.Result{}, mapProviderFailure(err)
 	}
 	return mapResponse(result)
+}
+
+func observedOCRFailure(err error) providerobservability.ErrorKind {
+	if err == nil {
+		return providerobservability.ErrorNone
+	}
+	var failure *resumeocr.Failure
+	if !errors.As(err, &failure) {
+		return providerobservability.ErrorProviderUnavailable
+	}
+	switch failure.FailureCode() {
+	case resumeocr.FailureTimeout:
+		return providerobservability.ErrorTimeout
+	case resumeocr.FailureOutputInvalid:
+		return providerobservability.ErrorInvalidResponse
+	case resumeocr.FailurePageLimit:
+		return providerobservability.ErrorPageLimitExceeded
+	default:
+		return providerobservability.ErrorProviderUnavailable
+	}
 }
 
 func mapResponse(result *paddleapi.DocParsingResult) (resumeocr.Result, error) {

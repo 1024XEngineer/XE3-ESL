@@ -9,6 +9,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore/kodostore"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore/ossstore"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/providerobservability"
 )
 
 type protectedObjectStore interface {
@@ -20,6 +21,7 @@ func newProtectedObjectStore(
 	ctx context.Context,
 	storageConfig config.ObjectStorageConfig,
 	prefix string,
+	observer providerobservability.Recorder,
 ) (protectedObjectStore, error) {
 	switch storageConfig.Provider {
 	case "", config.ObjectStorageProviderAliyunOSS:
@@ -27,9 +29,13 @@ func newProtectedObjectStore(
 		if err != nil {
 			return nil, err
 		}
-		return ossstore.NewForPrefix(ctx, storageConfig, prefix, provider)
+		return ossstore.NewForPrefixObserved(
+			ctx, storageConfig, prefix, provider, observer,
+		)
 	case config.ObjectStorageProviderQiniuKodo:
-		return kodostore.NewForPrefix(ctx, storageConfig, prefix)
+		return kodostore.NewForPrefixObserved(
+			ctx, storageConfig, prefix, observer,
+		)
 	default:
 		return nil, errors.New("object storage provider is not registered")
 	}

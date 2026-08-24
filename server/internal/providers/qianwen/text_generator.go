@@ -15,6 +15,7 @@ import (
 	"unicode"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/modelid"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/providerobservability"
 	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 )
 
@@ -46,6 +47,7 @@ type TextConfig struct {
 	Model           string
 	Timeout         time.Duration
 	MaxOutputTokens int
+	Observer        providerobservability.Recorder
 }
 
 type textClient struct {
@@ -57,6 +59,7 @@ type textClient struct {
 	maxOutputTokens int
 	apiKey          providerSecret
 	client          httpDoer
+	observer        providerobservability.Recorder
 }
 
 func (generator *textClient) String() string {
@@ -129,13 +132,14 @@ func newWithClient(config TextConfig, apiKey string, client httpDoer) (*textClie
 		maxOutputTokens: config.MaxOutputTokens,
 		apiKey:          newProviderSecret(apiKey),
 		client:          client,
+		observer:        config.Observer,
 	}, nil
 }
 
 func (generator *textClient) Generate(
 	ctx context.Context,
 	request protocol.TextRequest,
-) (protocol.TextResult, error) {
+) (callResult protocol.TextResult, callErr error) {
 	if ctx == nil {
 		return protocol.TextResult{}, protocol.NewGenerationError(
 			protocol.ErrorInvalidRequest,
@@ -206,6 +210,16 @@ func (generator *textClient) Generate(
 	httpRequest.Header.Set("Content-Type", "application/json")
 	httpRequest.Header.Set("Accept", "application/json")
 
+	startedAt := time.Now()
+	defer func() {
+		recordTextCall(
+			generator.observer,
+			generator.provider,
+			startedAt,
+			callResult.Usage,
+			callErr,
+		)
+	}()
 	response, err := generator.client.Do(httpRequest)
 	if err != nil {
 		return protocol.TextResult{}, transportError(callContext, err)
@@ -292,7 +306,7 @@ func (generator *textClient) GenerateStream(
 	ctx context.Context,
 	request protocol.TextRequest,
 	observer protocol.TextDeltaObserver,
-) (protocol.TextResult, error) {
+) (callResult protocol.TextResult, callErr error) {
 	if ctx == nil || observer == nil {
 		return protocol.TextResult{}, protocol.NewGenerationError(
 			protocol.ErrorInvalidRequest, 0, "", "",
@@ -337,6 +351,16 @@ func (generator *textClient) GenerateStream(
 	httpRequest.Header.Set(authorizationHeaderName, "Bearer "+generator.apiKey.reveal())
 	httpRequest.Header.Set("Content-Type", "application/json")
 	httpRequest.Header.Set("Accept", "text/event-stream")
+	startedAt := time.Now()
+	defer func() {
+		recordTextCall(
+			generator.observer,
+			generator.provider,
+			startedAt,
+			callResult.Usage,
+			callErr,
+		)
+	}()
 	response, err := generator.client.Do(httpRequest)
 	if err != nil {
 		return protocol.TextResult{}, transportError(callContext, err)

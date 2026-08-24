@@ -3,9 +3,12 @@ package qianwen
 import (
 	"context"
 	"errors"
+	"time"
+	"unicode/utf8"
 
 	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/providerobservability"
 	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 )
 
@@ -26,7 +29,26 @@ func (synthesizer *AgentVoiceSynthesizer) OpenAssistantSpeech(
 			"qianwen: Agent assistant speech synthesizer is required",
 		)
 	}
-	return synthesizer.synthesizer.openRealtimeSpeech(ctx, consume)
+	startedAt := time.Now()
+	session, err := synthesizer.synthesizer.openRealtimeSpeech(ctx, consume)
+	if err != nil {
+		recordSpeechCall(
+			synthesizer.synthesizer.observer,
+			providerobservability.CapabilitySpeechSynthesis,
+			startedAt,
+			protocol.SpeechUsage{},
+			err,
+			0,
+		)
+		return nil, err
+	}
+	if synthesizer.synthesizer.observer == nil {
+		return session, nil
+	}
+	return &observedAssistantSpeechSession{
+		delegate: session, recorder: synthesizer.synthesizer.observer,
+		startedAt: startedAt,
+	}, nil
 }
 
 func NewAgentVoiceRecognizer(
@@ -60,9 +82,18 @@ func (recognizer *AgentVoiceRecognizer) Transcribe(
 			errors.New("qianwen: Agent Voice recognizer is required"),
 		)
 	}
+	startedAt := time.Now()
 	result, err := recognizer.recognizer.Transcribe(
 		ctx,
 		protocol.TranscriptionRequest{Audio: request.Audio},
+	)
+	recordSpeechCall(
+		recognizer.recognizer.observer,
+		providerobservability.CapabilitySpeechRecognition,
+		startedAt,
+		result.Usage,
+		err,
+		0,
 	)
 	if err != nil {
 		return agentvoice.TranscriptionResult{}, mapAgentVoiceError(
@@ -88,10 +119,19 @@ func (recognizer *AgentVoiceRecognizer) TranscribeStream(
 			errors.New("qianwen: streaming Agent Voice recognizer is required"),
 		)
 	}
+	startedAt := time.Now()
 	result, err := recognizer.recognizer.TranscribeStream(
 		ctx,
 		protocol.TranscriptionRequest{Audio: request.Audio},
 		agentVoiceTranscriptionObserver{observer: observer},
+	)
+	recordSpeechCall(
+		recognizer.recognizer.observer,
+		providerobservability.CapabilitySpeechRecognition,
+		startedAt,
+		result.Usage,
+		err,
+		0,
 	)
 	if err != nil {
 		return agentvoice.TranscriptionResult{}, mapAgentVoiceError(
@@ -119,11 +159,20 @@ func (recognizer *agentRealtimeVoiceRecognizer) TranscribePCMStream(
 			errors.New("qianwen: realtime Agent Voice recognizer is required"),
 		)
 	}
+	startedAt := time.Now()
 	result, err := recognizer.recognizer.transcribeRealtimePCM(
 		ctx,
 		request.PCM,
 		request.SampleRate,
 		agentVoiceTranscriptionObserver{observer: observer},
+	)
+	recordSpeechCall(
+		recognizer.recognizer.observer,
+		providerobservability.CapabilitySpeechRecognition,
+		startedAt,
+		result.Usage,
+		err,
+		0,
 	)
 	if err != nil {
 		return agentvoice.TranscriptionResult{}, mapAgentVoiceError(
@@ -180,9 +229,22 @@ func (synthesizer *AgentVoiceSynthesizer) Synthesize(
 			errors.New("qianwen: Agent Voice synthesizer is required"),
 		)
 	}
+	startedAt := time.Now()
 	result, err := synthesizer.synthesizer.Synthesize(
 		ctx,
 		protocol.SynthesisRequest{Text: request.Text},
+	)
+	characters := 0
+	if err == nil {
+		characters = utf8.RuneCountInString(request.Text)
+	}
+	recordSpeechCall(
+		synthesizer.synthesizer.observer,
+		providerobservability.CapabilitySpeechSynthesis,
+		startedAt,
+		result.Usage,
+		err,
+		characters,
 	)
 	if err != nil {
 		return agentvoice.SynthesisResult{}, mapAgentVoiceError(

@@ -9,6 +9,7 @@ import (
 	paddleapi "github.com/PaddlePaddle/PaddleOCR/api_sdk/go"
 
 	resumeocr "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/interviewresume/ocr"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/providerobservability"
 )
 
 func TestClientMapsDocumentParsingResponseWithoutLeakingURL(t *testing.T) {
@@ -95,6 +96,65 @@ func TestNewRejectsMissingTokenAndNonDocumentModel(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestClientRecordsPagesAndStableFailureOnly(t *testing.T) {
+	for name, test := range map[string]struct {
+		call      parseDocumentCall
+		wantKind  providerobservability.ErrorKind
+		wantPages float64
+	}{
+		"success": {
+			call: func(context.Context, *paddleapi.DocParsingRequest) (*paddleapi.DocParsingResult, error) {
+				return &paddleapi.DocParsingResult{Pages: []paddleapi.DocParsingPage{
+					{MarkdownText: "page one"}, {MarkdownText: "page two"},
+				}}, nil
+			},
+			wantKind: providerobservability.ErrorNone, wantPages: 2,
+		},
+		"timeout": {
+			call: func(context.Context, *paddleapi.DocParsingRequest) (*paddleapi.DocParsingResult, error) {
+				return nil, &paddleapi.PollTimeoutError{}
+			},
+			wantKind: providerobservability.ErrorTimeout,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			recorder := &paddleProviderRecorder{}
+			client := testClient()
+			client.parse = test.call
+			client.observer = recorder
+			_, _ = client.RecognizePDF(
+				context.Background(), "https://private.example/file.pdf?secret",
+			)
+			if len(recorder.observations) != 1 {
+				t.Fatalf("observations = %#v", recorder.observations)
+			}
+			observation := recorder.observations[0]
+			if observation.Provider != providerobservability.ProviderPaddleOCR ||
+				observation.Capability != providerobservability.CapabilityDocumentOCR ||
+				observation.ErrorKind != test.wantKind ||
+				observation.Usage.Pages != test.wantPages {
+				t.Fatalf("observation = %#v", observation)
+			}
+		})
+	}
+}
+
+type paddleProviderRecorder struct {
+	observations []providerobservability.Observation
+}
+
+func (recorder *paddleProviderRecorder) Record(
+	observation providerobservability.Observation,
+) {
+	recorder.observations = append(recorder.observations, observation)
+}
+
+func (*paddleProviderRecorder) RecordRetry(
+	providerobservability.Provider,
+	providerobservability.Capability,
+) {
 }
 
 func testClient() *Client {

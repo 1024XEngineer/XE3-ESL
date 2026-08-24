@@ -12,6 +12,7 @@ import (
 	resumefieldextractor "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/interviewresume/fieldextractor"
 	resumeparser "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/interviewresume/parser"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/providerobservability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/providers/paddleocr"
 )
 
@@ -20,6 +21,8 @@ func buildInterviewResumeConfiguration(
 	storageConfig config.ObjectStorageConfig,
 	textConfig config.TextGenerationConfig,
 	ocrConfig config.ResumeOCRConfig,
+	providerFactory *app.ProviderFactory,
+	providerObserver providerobservability.Recorder,
 ) (*app.InterviewResumeConfiguration, error) {
 	if !storageConfig.Enabled {
 		if ocrConfig.Enabled {
@@ -27,7 +30,7 @@ func buildInterviewResumeConfiguration(
 		}
 		return nil, nil
 	}
-	generator, err := app.NewResumeFieldGenerator(textConfig)
+	generator, err := providerFactory.ResumeFieldGenerator(textConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -46,6 +49,7 @@ func buildInterviewResumeConfiguration(
 		client, clientErr := paddleocr.New(paddleocr.Config{
 			AccessToken: ocrConfig.AccessToken, BaseURL: ocrConfig.BaseURL,
 			Model: ocrConfig.Model, Timeout: ocrConfig.Timeout,
+			Observer: providerObserver,
 		})
 		if clientErr != nil {
 			return nil, clientErr
@@ -66,7 +70,7 @@ func buildInterviewResumeConfiguration(
 		return nil, err
 	}
 	store, err := newProtectedObjectStore(
-		ctx, storageConfig, storageConfig.ResumePrefix,
+		ctx, storageConfig, storageConfig.ResumePrefix, providerObserver,
 	)
 	if err != nil {
 		return nil, err

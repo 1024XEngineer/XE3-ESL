@@ -24,6 +24,7 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/providerobservability"
 )
 
 const maxSignedURLTTL = 2 * time.Minute
@@ -52,6 +53,7 @@ type Client struct {
 	prefix       string
 	signedURLTTL time.Duration
 	now          func() time.Time
+	observer     providerobservability.Recorder
 }
 
 func New(ctx context.Context, storageConfig config.ObjectStorageConfig) (*Client, error) {
@@ -117,6 +119,25 @@ func NewForPrefix(
 	return client, nil
 }
 
+// NewForPrefixObserved creates a production client using the service-level
+// provider observer.
+func NewForPrefixObserved(
+	ctx context.Context,
+	storageConfig config.ObjectStorageConfig,
+	prefix string,
+	observer providerobservability.Recorder,
+) (*Client, error) {
+	if observer == nil {
+		return nil, errors.New("Kodo provider observer is required")
+	}
+	client, err := NewForPrefix(ctx, storageConfig, prefix)
+	if err != nil {
+		return nil, err
+	}
+	client.observer = observer
+	return client, nil
+}
+
 func (client *Client) Preflight(ctx context.Context) error {
 	if client == nil || client.api == nil || ctx == nil {
 		return objectstore.ErrOperationFailed
@@ -150,7 +171,7 @@ func bucketHasPublicGrant(grants []types.Grant) bool {
 func (client *Client) Put(
 	ctx context.Context,
 	request objectstore.PutRequest,
-) (objectstore.PutResult, error) {
+) (callResult objectstore.PutResult, callErr error) {
 	if client == nil || client.api == nil || ctx == nil {
 		return objectstore.PutResult{}, objectstore.ErrOperationFailed
 	}
@@ -167,6 +188,18 @@ func (client *Client) Put(
 		return objectstore.PutResult{}, objectstore.ErrInvalidObject
 	}
 	defer func() { _, _ = request.Body.Seek(startOffset, io.SeekStart) }()
+	startedAt := time.Now()
+	storedBytes := int64(0)
+	defer func() {
+		objectstore.RecordProviderCall(
+			client.observer,
+			providerobservability.ProviderQiniuKodo,
+			providerobservability.CapabilityObjectPut,
+			startedAt,
+			callErr,
+			storedBytes,
+		)
+	}()
 
 	existing, found, err := client.findExisting(ctx, request)
 	if err != nil {
@@ -190,6 +223,12 @@ func (client *Client) Put(
 		Metadata:      map[string]string{"sha256": request.ChecksumSHA256},
 	})
 	if err != nil {
+		if client.observer != nil {
+			client.observer.RecordRetry(
+				providerobservability.ProviderQiniuKodo,
+				providerobservability.CapabilityObjectPut,
+			)
+		}
 		if existing, matches := client.reconcileExisting(ctx, request); matches {
 			return existing, nil
 		}
@@ -198,6 +237,7 @@ func (client *Client) Put(
 	if result == nil || strings.Trim(aws.ToString(result.ETag), "\"") == "" {
 		return objectstore.PutResult{}, objectstore.ErrOperationFailed
 	}
+	storedBytes = request.Size
 	return objectstore.PutResult{ETag: strings.Trim(aws.ToString(result.ETag), "\"")}, nil
 }
 
@@ -266,7 +306,7 @@ func metadataValue(metadata map[string]string, key string) string {
 func (client *Client) SignedGet(
 	ctx context.Context,
 	key string,
-) (objectstore.SignedGetResult, error) {
+) (callResult objectstore.SignedGetResult, callErr error) {
 	if client == nil || client.presigner == nil || ctx == nil {
 		return objectstore.SignedGetResult{}, objectstore.ErrOperationFailed
 	}
@@ -276,6 +316,17 @@ func (client *Client) SignedGet(
 	if client.signedURLTTL <= 0 || client.signedURLTTL > maxSignedURLTTL {
 		return objectstore.SignedGetResult{}, objectstore.ErrInvalidTTL
 	}
+	startedAt := time.Now()
+	defer func() {
+		objectstore.RecordProviderCall(
+			client.observer,
+			providerobservability.ProviderQiniuKodo,
+			providerobservability.CapabilityObjectSignedGet,
+			startedAt,
+			callErr,
+			0,
+		)
+	}()
 	request, err := client.presigner.PresignGetObject(
 		ctx,
 		&s3.GetObjectInput{Bucket: aws.String(client.bucket), Key: aws.String(key)},
@@ -295,13 +346,27 @@ func (client *Client) SignedGet(
 	}, nil
 }
 
-func (client *Client) Open(ctx context.Context, key string) (io.ReadCloser, error) {
+func (client *Client) Open(
+	ctx context.Context,
+	key string,
+) (callResult io.ReadCloser, callErr error) {
 	if client == nil || client.api == nil || ctx == nil {
 		return nil, objectstore.ErrOperationFailed
 	}
 	if err := objectstore.ValidateKey(client.prefix, key); err != nil {
 		return nil, err
 	}
+	startedAt := time.Now()
+	defer func() {
+		objectstore.RecordProviderCall(
+			client.observer,
+			providerobservability.ProviderQiniuKodo,
+			providerobservability.CapabilityObjectOpen,
+			startedAt,
+			callErr,
+			0,
+		)
+	}()
 	result, err := client.api.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(client.bucket),
 		Key:    aws.String(key),
@@ -320,13 +385,24 @@ func (client *Client) Open(ctx context.Context, key string) (io.ReadCloser, erro
 	return result.Body, nil
 }
 
-func (client *Client) Delete(ctx context.Context, key string) error {
+func (client *Client) Delete(ctx context.Context, key string) (callErr error) {
 	if client == nil || client.api == nil || ctx == nil {
 		return objectstore.ErrOperationFailed
 	}
 	if err := objectstore.ValidateKey(client.prefix, key); err != nil {
 		return err
 	}
+	startedAt := time.Now()
+	defer func() {
+		objectstore.RecordProviderCall(
+			client.observer,
+			providerobservability.ProviderQiniuKodo,
+			providerobservability.CapabilityObjectDelete,
+			startedAt,
+			callErr,
+			0,
+		)
+	}()
 	_, err := client.api.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(client.bucket),
 		Key:    aws.String(key),
