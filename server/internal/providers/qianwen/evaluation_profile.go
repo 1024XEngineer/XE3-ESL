@@ -76,8 +76,8 @@ func ieltsCumulativeProfileSchema() map[string]any {
 		"required": []any{"key", "provisional_band_low", "provisional_band_high", "coverage", "confidence", "observations"},
 		"properties": map[string]any{
 			"key":                   map[string]any{"type": "string"},
-			"provisional_band_low":  map[string]any{"type": "number", "minimum": 0, "maximum": 9, "multipleOf": 0.5},
-			"provisional_band_high": map[string]any{"type": "number", "minimum": 0, "maximum": 9, "multipleOf": 0.5},
+			"provisional_band_low":  map[string]any{"type": "number", "minimum": 0, "maximum": 9},
+			"provisional_band_high": map[string]any{"type": "number", "minimum": 0, "maximum": 9},
 			"coverage":              map[string]any{"type": "number", "minimum": 0, "maximum": 1},
 			"confidence":            map[string]any{"type": "number", "minimum": 0, "maximum": 1},
 			"observations":          map[string]any{"type": "array", "maxItems": 3, "items": observation},

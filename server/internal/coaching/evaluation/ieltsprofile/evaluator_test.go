@@ -35,6 +35,53 @@ func TestPart2EvaluationSendsPreviousProfileAndOnlyPart2Delta(t *testing.T) {
 	}
 }
 
+func TestProfileEvaluationRepairsInvalidHalfBand(t *testing.T) {
+	generator := &sequencedProfileGenerator{bands: []float64{6.3, 6.5}}
+	evaluator, err := New(generator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lineage, err := Lineage("qianwen", "qwen-plus")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := evaluator.EvaluateProfile(
+		context.Background(), evaluation.Record{}, profileSnapshotFixture(), lineage,
+	)
+	if err != nil {
+		t.Fatalf("EvaluateProfile() error = %v", err)
+	}
+	if generator.calls != 2 || !strings.Contains(
+		generator.requests[1].UserPrompt, "Every provisional band must be one of",
+	) {
+		t.Fatalf("repair requests = %#v", generator.requests)
+	}
+	var profile evaluation.IELTSCumulativeProfile
+	if evaluation.DecodeStrict(result, &profile) != nil || !profile.Valid() ||
+		profile.Dimensions[0].ProvisionalBandLow != 6.5 {
+		t.Fatalf("repaired profile = %#v", profile)
+	}
+}
+
+func TestProfileEvaluationRejectsRepeatedInvalidHalfBands(t *testing.T) {
+	generator := &sequencedProfileGenerator{bands: []float64{6.3, 6.3}}
+	evaluator, err := New(generator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lineage, err := Lineage("qianwen", "qwen-plus")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := evaluator.EvaluateProfile(
+		context.Background(), evaluation.Record{}, profileSnapshotFixture(), lineage,
+	); err == nil || generator.calls != 2 {
+		t.Fatalf("EvaluateProfile() error = %v, calls = %d", err, generator.calls)
+	}
+}
+
 type profileGeneratorFake struct{ last textgeneration.Request }
 
 func (generator *profileGeneratorFake) Generate(
@@ -115,3 +162,38 @@ func profileDimensions() []evaluation.IELTSProfileDimension {
 }
 
 var _ textgeneration.Generator = (*profileGeneratorFake)(nil)
+
+type sequencedProfileGenerator struct {
+	bands    []float64
+	calls    int
+	requests []textgeneration.Request
+}
+
+func (generator *sequencedProfileGenerator) Generate(
+	_ context.Context,
+	request textgeneration.Request,
+) (textgeneration.Result, error) {
+	generator.requests = append(generator.requests, request)
+	band := generator.bands[generator.calls]
+	generator.calls++
+	dimensions := make([]map[string]any, 0, 4)
+	for _, key := range []string{
+		"FLUENCY_COHERENCE", "LEXICAL_RESOURCE",
+		"GRAMMATICAL_RANGE_ACCURACY", "PRONUNCIATION",
+	} {
+		dimensions = append(dimensions, map[string]any{
+			"key": key, "provisional_band_low": band,
+			"provisional_band_high": band, "coverage": 0.7,
+			"confidence": 0.6, "observations": []any{},
+		})
+	}
+	content, err := json.Marshal(map[string]any{
+		"completed_parts": []int{1, 2}, "dimensions": dimensions,
+	})
+	return textgeneration.Result{
+		RequestID: "profile-request", Content: string(content),
+		Provider: "qianwen", Model: "qwen-plus",
+	}, err
+}
+
+var _ textgeneration.Generator = (*sequencedProfileGenerator)(nil)

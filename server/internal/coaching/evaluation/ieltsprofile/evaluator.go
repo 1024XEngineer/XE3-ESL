@@ -68,9 +68,46 @@ func (evaluator *Evaluator) EvaluateProfile(
 	if err != nil {
 		return nil, err
 	}
+	profile, normalizeErr := normalizeGeneratedProfile(generated, snapshot)
+	if normalizeErr == nil {
+		return encodeProfile(profile)
+	}
+	repairPayload, err := json.Marshal(struct {
+		Input          json.RawMessage `json:"input"`
+		RejectedOutput string          `json:"rejected_output"`
+		Instruction    string          `json:"instruction"`
+	}{
+		Input:          payload,
+		RejectedOutput: generated.Content,
+		Instruction: "Return a complete corrected JSON object that obeys the " +
+			"contract exactly. Every provisional band must be one of " +
+			"0, 0.5, 1, 1.5, ..., 8.5, 9.",
+	})
+	if err != nil {
+		return nil, evaluation.ErrInvalidRequest
+	}
+	repaired, err := evaluator.generator.Generate(ctx, textgeneration.Request{
+		SystemPrompt: profileSystemPrompt, UserPrompt: string(repairPayload),
+	})
+	if err != nil {
+		return nil, err
+	}
+	profile, err = normalizeGeneratedProfile(repaired, snapshot)
+	if err != nil {
+		return nil, errors.Join(normalizeErr, err)
+	}
+	return encodeProfile(profile)
+}
+
+func normalizeGeneratedProfile(
+	generated textgeneration.Result,
+	snapshot evaluation.IELTSProfileInputSnapshot,
+) (evaluation.IELTSCumulativeProfile, error) {
 	var provider providerProfile
 	if evaluation.DecodeStrict([]byte(generated.Content), &provider) != nil {
-		return nil, errors.New("ielts profile: provider response invalid")
+		return evaluation.IELTSCumulativeProfile{}, errors.New(
+			"ielts profile: provider response invalid",
+		)
 	}
 	profile := evaluation.IELTSCumulativeProfile{
 		SchemaVersion: evaluation.IELTSCumulativeProfileSchemaVersion,
@@ -79,8 +116,14 @@ func (evaluator *Evaluator) EvaluateProfile(
 		Provider:   generated.Provider, Model: generated.Model,
 	}
 	if !profile.Valid() || !profileMatchesSnapshot(profile, snapshot) {
-		return nil, errors.New("ielts profile: normalized response invalid")
+		return evaluation.IELTSCumulativeProfile{}, errors.New(
+			"ielts profile: normalized response invalid",
+		)
 	}
+	return profile, nil
+}
+
+func encodeProfile(profile evaluation.IELTSCumulativeProfile) (json.RawMessage, error) {
 	encoded, _, err := evaluation.EncodeStrict(profile)
 	return encoded, err
 }
@@ -150,7 +193,7 @@ func profileMatchesSnapshot(
 	return true
 }
 
-const profileSystemPrompt = `You maintain an internal provisional cumulative IELTS Speaking profile. Return one JSON object only with exactly completed_parts and dimensions. completed_parts is [1] for PART_1 and [1,2] for PART_2. dimensions must be ordered FLUENCY_COHERENCE, LEXICAL_RESOURCE, GRAMMATICAL_RANGE_ACCURACY, PRONUNCIATION. Each dimension contains key, provisional_band_low, provisional_band_high, coverage, confidence, observations. Bands use 0.5 increments from 0 to 9 and are provisional ranges, never official Part scores. Each observation contains kind (STRENGTH or IMPROVEMENT), reason_code and one or two evidence items. Evidence contains turn_id, an exact quote, its 1-based occurrence and part. Use at most three observations per dimension. When previous_profile is present, preserve valid earlier evidence and update conclusions using the new Part. Do not mechanically average Parts. Base pronunciation only on acoustic checkpoints; when coverage is insufficient, use a broad low-confidence range and no invented evidence.`
+const profileSystemPrompt = `You maintain an internal provisional cumulative IELTS Speaking profile. Return one JSON object only with exactly completed_parts and dimensions. completed_parts is [1] for PART_1 and [1,2] for PART_2. dimensions must be ordered FLUENCY_COHERENCE, LEXICAL_RESOURCE, GRAMMATICAL_RANGE_ACCURACY, PRONUNCIATION. Each dimension contains key, provisional_band_low, provisional_band_high, coverage, confidence, observations. Every band must be one of 0, 0.5, 1, 1.5, ..., 8.5, 9 and is a provisional range, never an official Part score. Each observation contains kind (STRENGTH or IMPROVEMENT), reason_code and one or two evidence items. Evidence contains turn_id, an exact quote, its 1-based occurrence and part. Use at most three observations per dimension. When previous_profile is present, preserve valid earlier evidence and update conclusions using the new Part. Do not mechanically average Parts. Base pronunciation only on acoustic checkpoints; when coverage is insufficient, use a broad low-confidence range and no invented evidence.`
 
 var _ interface {
 	EvaluateProfile(context.Context, evaluation.Record, evaluation.IELTSProfileInputSnapshot, evaluation.ConfigLineage) (json.RawMessage, error)
