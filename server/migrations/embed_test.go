@@ -48,6 +48,8 @@ func TestEveryMigrationPairIsEmbedded(t *testing.T) {
 		"000006_user_profile_avatar.up.sql",
 		"000007_pending_practice_actions.down.sql",
 		"000007_pending_practice_actions.up.sql",
+		"000008_product_health_views.down.sql",
+		"000008_product_health_views.up.sql",
 	}
 	slices.Sort(files)
 	if !slices.Equal(files, want) {
@@ -71,6 +73,8 @@ func TestMigrationsAreTransactional(t *testing.T) {
 		"000006_user_profile_avatar.down.sql",
 		"000007_pending_practice_actions.up.sql",
 		"000007_pending_practice_actions.down.sql",
+		"000008_product_health_views.up.sql",
+		"000008_product_health_views.down.sql",
 	} {
 		sql := readMigration(t, name)
 		if !strings.HasPrefix(sql, "BEGIN;") {
@@ -157,6 +161,46 @@ func TestQuestionTipTranslationMigrationRequiresCompleteBilingualContent(t *test
 	} {
 		if !strings.Contains(up, required) {
 			t.Errorf("Question Tip translation migration is missing %q", required)
+		}
+	}
+}
+
+func TestProductHealthMigrationKeepsAnonymousUTCViewsFailClosed(t *testing.T) {
+	up := readMigration(t, "000008_product_health_views.up.sql")
+	down := readMigration(t, "000008_product_health_views.down.sql")
+	for _, view := range []string{
+		"product_health_daily_practice_activity",
+		"product_health_daily_session_outcomes",
+		"product_health_daily_artifact_coverage",
+		"product_health_daily_evaluation_health",
+		"product_health_daily_scoreability",
+	} {
+		if !strings.Contains(up, "CREATE VIEW "+view) ||
+			!strings.Contains(up, "REVOKE ALL ON "+view+" FROM PUBLIC") ||
+			!strings.Contains(down, "DROP VIEW "+view) {
+			t.Errorf("product health migration contract is incomplete for %s", view)
+		}
+	}
+	for _, required := range []string{
+		"WITH (security_barrier = true)",
+		"date_trunc('day', turn.confirmed_at, 'UTC')",
+		"date_trunc('day', ended_at, 'UTC')",
+		"unknown_mode_confirmed_turns",
+		"unknown_eligibility_sources",
+		"unknown_scoreability_evaluations",
+		"NULLIF(eligible_sources, 0)",
+		"NULLIF(count(*) FILTER (WHERE status IN ('READY', 'FAILED')), 0)",
+	} {
+		if !strings.Contains(up, required) {
+			t.Errorf("product health migration is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"generate_series",
+		"CREATE MATERIALIZED VIEW",
+	} {
+		if strings.Contains(up, forbidden) {
+			t.Errorf("product health migration contains %q", forbidden)
 		}
 	}
 }
