@@ -47,6 +47,7 @@ import 'package:speakup/features/coaching/evaluation/wire_turn_feedback_client.d
 import 'package:speakup/features/coaching/profile/coaching_profile.dart';
 import 'package:speakup/features/coaching/practice/avatar/avatar.dart';
 import 'package:speakup/features/coaching/scenario/scenario_practice_session.dart';
+import 'package:speakup/features/update/app_update.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -80,6 +81,9 @@ void main() {
       sessionEvaluationController: dependencies.sessionEvaluationController,
       speechFeedbackController: dependencies.speechFeedbackController,
       coachingProfileController: dependencies.coachingProfileController,
+      appUpdateService: defaultTargetPlatform == TargetPlatform.android
+          ? dependencies.appUpdateService
+          : null,
       avatarControllerFactory: avatarEnabled
           ? dependencies.avatarControllerFactory
           : null,
@@ -104,6 +108,7 @@ final class ProductionAppDependencies {
     required this.sessionEvaluationController,
     required this.speechFeedbackController,
     required this.coachingProfileController,
+    required this.appUpdateService,
     required this.avatarControllerFactory,
   });
 
@@ -122,6 +127,7 @@ final class ProductionAppDependencies {
   final SessionEvaluationController sessionEvaluationController;
   final SpeechFeedbackController speechFeedbackController;
   final CoachingProfileController coachingProfileController;
+  final AppUpdateService appUpdateService;
   final AvatarControllerFactory avatarControllerFactory;
 }
 
@@ -153,6 +159,7 @@ ProductionAppDependencies createProductionAppDependencies({
   AvatarControllerFactory? avatarControllerFactory,
   PracticeLaunchRecordStore? practiceLaunchRecordStore,
   SessionStore? sessionStore,
+  AppUpdateService? appUpdateService,
 }) {
   late final AuthController authController;
   final agentClient = WireAgentClient(
@@ -452,6 +459,14 @@ ProductionAppDependencies createProductionAppDependencies({
       transport: coachingProfileTransport,
     ),
   );
+  final resolvedAppUpdateService =
+      appUpdateService ??
+      AppUpdateService(
+        releaseClient: AppReleaseClient(),
+        checkStore: const SecureAppUpdateCheckStore(),
+        installedVersionLoader: loadInstalledAppVersion,
+        uriLauncher: launchAppUpdateUri,
+      );
   authController = AuthController(
     identityClient: identityClient,
     profileClient: identityClient,
@@ -489,6 +504,7 @@ ProductionAppDependencies createProductionAppDependencies({
     sessionEvaluationController: sessionEvaluationController,
     speechFeedbackController: speechFeedbackController,
     coachingProfileController: coachingProfileController,
+    appUpdateService: resolvedAppUpdateService,
     avatarControllerFactory: createAvatarController,
   );
 }

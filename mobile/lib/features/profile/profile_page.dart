@@ -7,6 +7,8 @@ import 'package:speakup/features/coaching/review/review.dart';
 import 'package:speakup/features/coaching/review/review_history_controller.dart';
 import 'package:speakup/features/profile/profile_avatar_picker.dart';
 import 'package:speakup/features/profile/profile_avatar_view.dart';
+import 'package:speakup/features/update/app_update.dart';
+import 'package:speakup/features/update/app_update_ui.dart';
 import 'package:speakup/identity/client/identity_client.dart';
 import 'package:speakup/identity/model/identity_models.dart';
 
@@ -25,6 +27,9 @@ class ProfilePage extends StatelessWidget {
     required this.onLogout,
     required this.reviewHistoryController,
     required this.coachingProfileController,
+    this.appUpdateService,
+    this.updateCheckInProgress = false,
+    this.onCheckForUpdate,
     this.avatarPicker,
     super.key,
   });
@@ -42,6 +47,9 @@ class ProfilePage extends StatelessWidget {
   final VoidCallback? onLogout;
   final ReviewHistoryController? reviewHistoryController;
   final CoachingProfileController? coachingProfileController;
+  final AppUpdateService? appUpdateService;
+  final bool updateCheckInProgress;
+  final Future<void> Function()? onCheckForUpdate;
   final ProfileAvatarPicker? avatarPicker;
 
   @override
@@ -163,6 +171,14 @@ class ProfilePage extends StatelessWidget {
             CurrentIeltsAbilityProfile(
               historyController: reviewHistoryController,
             ),
+            if (appUpdateService != null && onCheckForUpdate != null) ...[
+              const SizedBox(height: SpeakUpDesign.space24),
+              AppUpdateSection(
+                service: appUpdateService!,
+                checking: updateCheckInProgress,
+                onCheck: onCheckForUpdate!,
+              ),
+            ],
           ],
         ),
       ),
