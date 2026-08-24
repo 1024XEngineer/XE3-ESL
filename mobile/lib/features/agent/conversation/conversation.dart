@@ -64,6 +64,7 @@ class ConversationPage extends StatefulWidget {
     this.hasEarlierMessages = false,
     this.isLoadingEarlierMessages = false,
     this.isBusy = false,
+    this.isRestoring = false,
     this.errorMessage,
     this.onSubmitText,
     this.onRetryOperation,
@@ -104,6 +105,7 @@ class ConversationPage extends StatefulWidget {
   final bool hasEarlierMessages;
   final bool isLoadingEarlierMessages;
   final bool isBusy;
+  final bool isRestoring;
   final String? errorMessage;
   final Future<bool> Function(String)? onSubmitText;
   final VoidCallback? onRetryOperation;
@@ -290,21 +292,22 @@ class ConversationPage extends StatefulWidget {
                             const SizedBox(height: 14),
                             Center(
                               child: Semantics(
-                                label: 'SpeakUp 正在处理',
-                                child: const Wrap(
-                                  key: Key('agent-operation-progress'),
+                                excludeSemantics: true,
+                                label: isRestoring ? '正在加载对话' : 'SpeakUp 正在处理',
+                                child: Wrap(
+                                  key: const Key('agent-operation-progress'),
                                   alignment: WrapAlignment.center,
                                   crossAxisAlignment: WrapCrossAlignment.center,
                                   spacing: 10,
                                   children: [
-                                    SizedBox.square(
+                                    const SizedBox.square(
                                       dimension: 18,
                                       child: CircularProgressIndicator(
                                         strokeWidth: 2,
                                       ),
                                     ),
                                     Text(
-                                      'SpeakUp 正在回复…',
+                                      isRestoring ? '正在加载对话…' : 'SpeakUp 正在回复…',
                                       style: SpeakUpDesign.meta,
                                     ),
                                   ],

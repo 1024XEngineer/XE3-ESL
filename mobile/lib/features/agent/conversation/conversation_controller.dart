@@ -79,6 +79,7 @@ final class ConversationController extends ChangeNotifier {
   bool get isLoadingEarlierMessages => _loadingEarlierMessages;
   String? get errorMessage => _errorMessage;
   bool get isBusy => _busy || _threadTransitionInFlight;
+  bool get isRestoring => !_initialized && _busy;
   bool get canRetry => _retry != null;
 
   Future<void> initialize() async {

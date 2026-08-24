@@ -585,6 +585,23 @@ void main() {
     expect(find.byKey(const Key('agent-assistant-streaming')), findsNothing);
   });
 
+  testWidgets('conversation restore is not presented as an Agent reply', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: ConversationPage(isBusy: true, isRestoring: true),
+      ),
+    );
+
+    expect(find.text('正在加载对话…'), findsOneWidget);
+    expect(find.text('SpeakUp 正在回复…'), findsNothing);
+    expect(
+      tester.getSemantics(find.byKey(const Key('agent-operation-progress'))),
+      isSemantics(label: '正在加载对话'),
+    );
+  });
+
   testWidgets('older Message pagination is visible and accessible', (
     tester,
   ) async {

@@ -714,6 +714,7 @@ class _SpeakUpShellState extends State<SpeakUpShell>
         isLoadingEarlierMessages:
             widget.conversationController.isLoadingEarlierMessages,
         isBusy: widget.conversationController.isBusy,
+        isRestoring: widget.conversationController.isRestoring,
         errorMessage:
             widget.conversationController.errorMessage ??
             widget.conversationController.threadHistoryErrorMessage,
