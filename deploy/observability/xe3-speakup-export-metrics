@@ -101,7 +101,11 @@ latest_backup_timestamp() {
   timestamp=0
   if [[ -d "$root" ]]; then
     while IFS= read -r metadata; do
-      candidate=$(jq -er '.created_at | fromdateiso8601' "$metadata")
+      candidate=$(jq -er '
+        .created_at
+        | sub("\\.[0-9]+Z$"; "Z")
+        | fromdateiso8601
+      ' "$metadata")
       [[ "$candidate" =~ ^[0-9]+$ ]] ||
         fail "invalid backup timestamp for $database"
       if ((candidate > timestamp)); then
