@@ -36,11 +36,25 @@ const (
 	shutdownTimeout                = 5 * time.Second
 	voiceAudioUploadLease          = 2 * time.Minute
 	voiceASRFinalizationTimeMargin = 15 * time.Second
+	// defaultAcousticDependencyMaxWait matches the default ISE request timeout and
+	// remains above media.MaxAudioDuration (122s), so a valid two-minute
+	// Part 2 answer is not degraded while its paced ISE stream is still active.
+	defaultAcousticDependencyMaxWait = 150 * time.Second
 )
 
 type httpServerResult struct {
 	name string
 	err  error
+}
+
+func evaluationAcousticDependencyMaxWait(
+	acousticsEnabled bool,
+	providerTimeout time.Duration,
+) time.Duration {
+	if acousticsEnabled {
+		return providerTimeout
+	}
+	return defaultAcousticDependencyMaxWait
 }
 
 func main() {
@@ -357,6 +371,10 @@ func run() int {
 			slog.String("reason", "ISE_NOT_CONFIGURED"),
 		)
 	}
+	acousticDependencyMaxWait := evaluationAcousticDependencyMaxWait(
+		acousticsEnabled,
+		acousticProviderTimeout,
+	)
 	singleRoundDeadline := textConfig.Timeout + 10*time.Second
 	ieltsDeadline := max(
 		2*textConfig.Timeout+10*time.Second,
@@ -401,16 +419,17 @@ func run() int {
 					LeaseDuration: speechLease,
 					MaxAttempts:   3,
 				},
-				AcousticsEnabled:         acousticsEnabled,
-				InterviewDeadline:        singleRoundDeadline,
-				IELTSDeadline:            ieltsDeadline,
-				GeneralDeadline:          singleRoundDeadline,
-				SpeechDeadline:           speechDeadline,
-				ProfileDeadline:          45 * time.Second,
-				RetryDelay:               time.Second,
-				DependencyDelay:          5 * time.Second,
-				ProfileDependencyMaxWait: 20 * time.Second,
-				FinalizeTimeout:          5 * time.Second,
+				AcousticsEnabled:          acousticsEnabled,
+				InterviewDeadline:         singleRoundDeadline,
+				IELTSDeadline:             ieltsDeadline,
+				GeneralDeadline:           singleRoundDeadline,
+				SpeechDeadline:            speechDeadline,
+				ProfileDeadline:           45 * time.Second,
+				RetryDelay:                time.Second,
+				DependencyDelay:           5 * time.Second,
+				AcousticDependencyMaxWait: acousticDependencyMaxWait,
+				ProfileDependencyMaxWait:  20 * time.Second,
+				FinalizeTimeout:           5 * time.Second,
 			},
 		},
 	)
