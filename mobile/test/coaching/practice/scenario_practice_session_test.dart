@@ -298,104 +298,97 @@ void main() {
     expect(find.text('画面暂不可用，语音仍可继续'), findsNothing);
   });
 
-  testWidgets(
-    'keeps fallback stable through the 500ms controller replacement',
-    (tester) async {
-      final media = _RealtimeQuestionMediaClient();
-      media.release();
-      final nativePlayer = _RecordingPCMStreamPlayer();
-      final practiceController = PracticeController(
-        client: FakePracticeClient(),
-        mediaClient: media,
-        audioPlayer: _SilentPracticeAudioPlayer(),
-        questionSpeechPlayer: nativePlayer,
-        automaticQuestionSpeechEnabled: false,
-      );
-      addTearDown(practiceController.dispose);
-      await activateTestPractice(
-        controller: practiceController,
-        scene: testScenes[2],
-      );
-      final surfaceEvents = <String>[];
-      final firstRenderer = FakeAvatarRenderer(
-        surfaceBuilder: (key) => _SurfaceLifecycleProbe(
-          key: key,
-          id: 'first',
-          events: surfaceEvents,
+  testWidgets('keeps fallback stable through the first retry replacement', (
+    tester,
+  ) async {
+    final media = _RealtimeQuestionMediaClient();
+    media.release();
+    final nativePlayer = _RecordingPCMStreamPlayer();
+    final practiceController = PracticeController(
+      client: FakePracticeClient(),
+      mediaClient: media,
+      audioPlayer: _SilentPracticeAudioPlayer(),
+      questionSpeechPlayer: nativePlayer,
+      automaticQuestionSpeechEnabled: false,
+    );
+    addTearDown(practiceController.dispose);
+    await activateTestPractice(
+      controller: practiceController,
+      scene: testScenes[2],
+    );
+    final surfaceEvents = <String>[];
+    final firstRenderer = FakeAvatarRenderer(
+      surfaceBuilder: (key) =>
+          _SurfaceLifecycleProbe(key: key, id: 'first', events: surfaceEvents),
+    );
+    final secondRenderer = FakeAvatarRenderer(
+      connectOnPrepare: false,
+      surfaceBuilder: (key) =>
+          _SurfaceLifecycleProbe(key: key, id: 'second', events: surfaceEvents),
+    );
+    final controllers = <AvatarController>[
+      _avatarController(firstRenderer),
+      _avatarController(secondRenderer),
+    ];
+    var factoryCalls = 0;
+    PracticeAvatarSessionView? sessionView;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PracticeAvatarSession(
+          practiceController: practiceController,
+          avatarControllerFactory: () => controllers[factoryCalls++],
+          surfaceKey: const Key('test-avatar-surface'),
+          builder: (context, avatar) {
+            sessionView = avatar;
+            return _avatarStage(avatar);
+          },
         ),
-      );
-      final secondRenderer = FakeAvatarRenderer(
-        connectOnPrepare: false,
-        surfaceBuilder: (key) => _SurfaceLifecycleProbe(
-          key: key,
-          id: 'second',
-          events: surfaceEvents,
-        ),
-      );
-      final controllers = <AvatarController>[
-        _avatarController(firstRenderer),
-        _avatarController(secondRenderer),
-      ];
-      var factoryCalls = 0;
-      PracticeAvatarSessionView? sessionView;
+      ),
+    );
+    await _pumpUntil(tester, () => firstRenderer.sends.length == 2);
+    await tester.pump();
+    expect(sessionView?.surfaceVisible, isTrue);
+    expect(find.byKey(const Key('static-fallback')), findsNothing);
+    expect(surfaceEvents, <String>['init:first']);
 
-      await tester.pumpWidget(
-        MaterialApp(
-          home: PracticeAvatarSession(
-            practiceController: practiceController,
-            avatarControllerFactory: () => controllers[factoryCalls++],
-            surfaceKey: const Key('test-avatar-surface'),
-            builder: (context, avatar) {
-              sessionView = avatar;
-              return _avatarStage(avatar);
-            },
-          ),
-        ),
-      );
-      await _pumpUntil(tester, () => firstRenderer.sends.length == 2);
-      await tester.pump();
-      expect(sessionView?.surfaceVisible, isTrue);
-      expect(find.byKey(const Key('static-fallback')), findsNothing);
-      expect(surfaceEvents, <String>['init:first']);
+    firstRenderer.emit(
+      const AvatarRendererState(
+        connection: AvatarRendererConnection.failed,
+        failure: AvatarRendererFailure.network,
+      ),
+    );
+    await tester.pump();
 
-      firstRenderer.emit(
-        const AvatarRendererState(
-          connection: AvatarRendererConnection.failed,
-          failure: AvatarRendererFailure.network,
-        ),
-      );
-      await tester.pump();
+    expect(sessionView?.surfaceVisible, isFalse);
+    expect(find.byKey(const Key('test-avatar-surface')), findsOneWidget);
+    expect(find.byKey(const Key('static-fallback')), findsOneWidget);
+    expect(find.text('正在重新连接情景角色'), findsOneWidget);
+    expect(nativePlayer.events, isEmpty);
 
-      expect(sessionView?.surfaceVisible, isFalse);
-      expect(find.byKey(const Key('test-avatar-surface')), findsOneWidget);
-      expect(find.byKey(const Key('static-fallback')), findsOneWidget);
-      expect(find.text('正在重新连接情景角色'), findsOneWidget);
-      expect(nativePlayer.events, isEmpty);
+    await tester.pump(const Duration(milliseconds: 999));
+    expect(factoryCalls, 1);
+    expect(find.byKey(const Key('static-fallback')), findsOneWidget);
 
-      await tester.pump(const Duration(milliseconds: 499));
-      expect(factoryCalls, 1);
-      expect(find.byKey(const Key('static-fallback')), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 1));
+    await _flushControllerReplacement(tester);
+    await _pumpUntil(tester, () => secondRenderer.preparedGrant != null);
+    await tester.pump();
 
-      await tester.pump(const Duration(milliseconds: 1));
-      await _flushControllerReplacement(tester);
-      await _pumpUntil(tester, () => secondRenderer.preparedGrant != null);
-      await tester.pump();
-
-      expect(factoryCalls, 2);
-      expect(firstRenderer.closeCount, 1);
-      expect(find.byKey(const Key('test-avatar-surface')), findsOneWidget);
-      expect(find.byKey(const Key('static-fallback')), findsOneWidget);
-      expect(sessionView?.surfaceVisible, isFalse);
-      expect(find.text('正在重新连接情景角色'), findsOneWidget);
-      expect(find.text('画面暂不可用，语音仍可继续'), findsNothing);
-      expect(nativePlayer.events, isEmpty);
-      expect(surfaceEvents, hasLength(3));
-      expect(
-        surfaceEvents,
-        containsAll(<String>['init:first', 'dispose:first', 'init:second']),
-      );
-    },
-  );
+    expect(factoryCalls, 2);
+    expect(firstRenderer.closeCount, 1);
+    expect(find.byKey(const Key('test-avatar-surface')), findsOneWidget);
+    expect(find.byKey(const Key('static-fallback')), findsOneWidget);
+    expect(sessionView?.surfaceVisible, isFalse);
+    expect(find.text('正在重新连接情景角色'), findsOneWidget);
+    expect(find.text('画面暂不可用，语音仍可继续'), findsNothing);
+    expect(nativePlayer.events, isEmpty);
+    expect(surfaceEvents, hasLength(3));
+    expect(
+      surfaceEvents,
+      containsAll(<String>['init:first', 'dispose:first', 'init:second']),
+    );
+  });
 
   testWidgets('cancels replacement when the renderer reconnects itself', (
     tester,
@@ -617,13 +610,9 @@ void main() {
     expect(nativePlayer.events.length, 4);
   });
 
-  for (final timeoutCase in <({String name, bool stallPrepare})>[
-    (name: 'connect future', stallPrepare: true),
-    (name: 'connected readiness', stallPrepare: false),
-  ]) {
-    testWidgets('retries ${timeoutCase.name} timeout exactly three times', (
-      tester,
-    ) async {
+  testWidgets(
+    'does not replace the controller while avatar assets are still loading',
+    (tester) async {
       final media = _RealtimeQuestionMediaClient();
       media.release();
       final practiceController = PracticeController(
@@ -638,17 +627,11 @@ void main() {
         controller: practiceController,
         scene: testScenes[2],
       );
-      final prepareGates = List<Completer<void>>.generate(
-        3,
-        (_) => Completer<void>(),
-      );
-      final renderers = List<FakeAvatarRenderer>.generate(
-        3,
-        (index) => FakeAvatarRenderer(
-          connectOnPrepare: false,
-          prepareGate: timeoutCase.stallPrepare ? prepareGates[index] : null,
-        ),
-      );
+      final prepareGate = Completer<void>();
+      final renderers = <FakeAvatarRenderer>[
+        FakeAvatarRenderer(connectOnPrepare: false, prepareGate: prepareGate),
+        FakeAvatarRenderer(),
+      ];
       final controllers = renderers.map(_avatarController).toList();
       var factoryCalls = 0;
       PracticeAvatarSessionView? sessionView;
@@ -667,33 +650,99 @@ void main() {
         ),
       );
 
-      for (var attempt = 0; attempt < 3; attempt++) {
-        await _pumpUntil(
-          tester,
-          () => renderers[attempt].preparedGrant != null,
-        );
-        await tester.pump();
-        await tester.pump(const Duration(seconds: 15));
-        await tester.pump();
+      await _pumpUntil(tester, () => renderers.first.preparedGrant != null);
+      await tester.pump(const Duration(seconds: 15));
+      await tester.pump(const Duration(seconds: 2));
 
-        if (attempt < 2) {
-          expect(find.text('正在重新连接情景角色'), findsOneWidget);
-          expect(find.text('画面暂不可用，语音仍可继续'), findsNothing);
-          await tester.pump(Duration(milliseconds: 1000 + attempt * 500));
-          await _flushControllerReplacement(tester);
-        }
-      }
-
-      expect(factoryCalls, 3);
+      expect(factoryCalls, 1);
+      expect(renderers.first.closeCount, 0);
+      expect(renderers.last.preparedGrant, isNull);
       expect(sessionView?.surfaceVisible, isFalse);
       expect(find.byKey(const Key('static-fallback')), findsOneWidget);
       expect(find.text('正在重新连接情景角色'), findsNothing);
       expect(find.text('画面暂不可用，语音仍可继续'), findsOneWidget);
 
-      await tester.pump(const Duration(seconds: 2));
-      expect(factoryCalls, 3);
-    });
-  }
+      prepareGate.complete();
+      await _pumpUntil(
+        tester,
+        () =>
+            renderers.first.state.connection ==
+            AvatarRendererConnection.surfaceReady,
+      );
+      renderers.first.emit(
+        const AvatarRendererState(
+          connection: AvatarRendererConnection.connected,
+        ),
+      );
+      await tester.pump();
+
+      expect(factoryCalls, 1);
+      expect(sessionView?.surfaceVisible, isTrue);
+      expect(find.byKey(const Key('static-fallback')), findsNothing);
+    },
+  );
+
+  testWidgets('retries connected readiness timeout exactly three times', (
+    tester,
+  ) async {
+    final media = _RealtimeQuestionMediaClient();
+    media.release();
+    final practiceController = PracticeController(
+      client: FakePracticeClient(),
+      mediaClient: media,
+      audioPlayer: _SilentPracticeAudioPlayer(),
+      questionSpeechPlayer: _RecordingPCMStreamPlayer(),
+      automaticQuestionSpeechEnabled: false,
+    );
+    addTearDown(practiceController.dispose);
+    await activateTestPractice(
+      controller: practiceController,
+      scene: testScenes[2],
+    );
+    final renderers = List<FakeAvatarRenderer>.generate(
+      3,
+      (_) => FakeAvatarRenderer(connectOnPrepare: false),
+    );
+    final controllers = renderers.map(_avatarController).toList();
+    var factoryCalls = 0;
+    PracticeAvatarSessionView? sessionView;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PracticeAvatarSession(
+          practiceController: practiceController,
+          avatarControllerFactory: () => controllers[factoryCalls++],
+          surfaceKey: const Key('test-avatar-surface'),
+          builder: (context, avatar) {
+            sessionView = avatar;
+            return _avatarStage(avatar);
+          },
+        ),
+      ),
+    );
+
+    for (var attempt = 0; attempt < 3; attempt++) {
+      await _pumpUntil(tester, () => renderers[attempt].preparedGrant != null);
+      await tester.pump(const Duration(seconds: 15));
+      await tester.pump();
+
+      if (attempt < 2) {
+        expect(find.text('正在重新连接情景角色'), findsOneWidget);
+        expect(find.text('画面暂不可用，语音仍可继续'), findsNothing);
+        await tester.pump(Duration(milliseconds: 1000 + attempt * 500));
+        await _flushControllerReplacement(tester);
+      }
+    }
+
+    expect(factoryCalls, 3);
+    expect(sessionView?.surfaceVisible, isFalse);
+    expect(find.byKey(const Key('static-fallback')), findsOneWidget);
+    expect(find.text('正在重新连接情景角色'), findsNothing);
+    expect(find.text('画面暂不可用，语音仍可继续'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 2));
+    expect(factoryCalls, 3);
+  });
 
   testWidgets('reveals only the connected replacement after a retry succeeds', (
     tester,
@@ -751,7 +800,7 @@ void main() {
     expect(find.byKey(const Key('static-fallback')), findsOneWidget);
     expect(find.text('正在重新连接情景角色'), findsOneWidget);
 
-    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump(const Duration(seconds: 1));
     await _flushControllerReplacement(tester);
     await _pumpUntil(tester, () => secondRenderer.preparedGrant != null);
     await tester.pump();

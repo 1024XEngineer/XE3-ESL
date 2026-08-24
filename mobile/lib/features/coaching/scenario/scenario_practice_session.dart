@@ -131,6 +131,7 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
   int _connectionOperationId = 0;
   int _generation = 0;
   int _lastExhaustedAttemptSequence = 0;
+  String? _connectionBudgetSessionId;
   String? _lastConnectionDiagnostic;
   Future<void> _lifecycleTail = Future<void>.value();
   Future<void> _controllerReplacementTail = Future<void>.value();
@@ -194,7 +195,7 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
       return;
     }
     if (replaceController || !_foreground || !_hasLiveAvatarController) {
-      await _replaceAvatarController(resetConnectionAttempts: true);
+      await _replaceAvatarController(resetConnectionAttempts: false);
     }
     if (!_disposed && _foreground && _hasLiveAvatarController) {
       _scheduleSync();
@@ -288,7 +289,6 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
       _hasUsableAvatarSurface = true;
     }
     if (avatarState.canUseAvatar) {
-      _connectionAttempts = 0;
       _reconnecting = false;
       _readinessTimer?.cancel();
       _readinessTimer = null;
@@ -301,6 +301,8 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
       if (!_isRetryableAvatarFailure(avatarState.failure) ||
           _connectionAttempts >= _maximumConnectionAttempts) {
         _reconnecting = false;
+        _reconnectTimer?.cancel();
+        _reconnectTimer = null;
       }
     }
     final sessionId = widget.practiceController.practiceSessionId;
@@ -347,6 +349,7 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
     if (sessionId == null || sessionId.isEmpty) {
       return;
     }
+    _resetConnectionBudgetForNewSession(sessionId);
     if (!_hasLiveAvatarController) {
       _queueLifecycleReconciliation();
       return;
@@ -452,8 +455,10 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
         operationId: operationId,
         sessionId: sessionId,
       )) {
-        retry = true;
-        _readinessExpired = false;
+        // AvatarKit model loading is not cancellable through Future.timeout.
+        // Keep the original load alive and allow audio fallback instead of
+        // launching an overlapping download with a replacement renderer.
+        _readinessExpired = true;
       }
     } catch (_) {
       if (_connectionFenceMatches(
@@ -475,6 +480,19 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
         }
       }
     }
+  }
+
+  void _resetConnectionBudgetForNewSession(String sessionId) {
+    if (_connectionBudgetSessionId == sessionId) {
+      return;
+    }
+    _connectionBudgetSessionId = sessionId;
+    _connectionAttempts = 0;
+    _connectionAttemptSequence = 0;
+    _lastExhaustedAttemptSequence = 0;
+    _reconnecting = false;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
   }
 
   bool _connectionFenceMatches({
@@ -534,6 +552,11 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
       if (_disposed ||
           !_foreground ||
           widget.practiceController.practiceSessionId != sessionId) {
+        return;
+      }
+      final failure = _avatarController.state.failure;
+      if (failure != null && !_isRetryableAvatarFailure(failure)) {
+        _reconnecting = false;
         return;
       }
       await _replaceAvatarController(resetConnectionAttempts: false);

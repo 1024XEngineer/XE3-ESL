@@ -24,6 +24,9 @@ final class SpatiusAvatarRenderer implements AvatarRenderer {
   static int _nextTokenLease = 0;
   static int _activeTokenLease = 0;
   static Future<void> _tokenLeaseTail = Future<void>.value();
+  static Future<void>? _sdkInitializationFuture;
+  static String? _initializedAppId;
+  static int? _initializedSampleRateHz;
 
   AvatarRendererState _state = const AvatarRendererState();
   kit.Avatar? _avatar;
@@ -31,6 +34,7 @@ final class SpatiusAvatarRenderer implements AvatarRenderer {
   String? _loadingAvatarId;
   bool _closed = false;
   bool _prepared = false;
+  bool _startRequested = false;
   int? _tokenLease;
   Completer<void>? _tokenLeaseRelease;
   Future<void>? _sdkConfigurationFuture;
@@ -75,7 +79,10 @@ final class SpatiusAvatarRenderer implements AvatarRenderer {
       final avatarId = grant.avatarId;
       _loadingAvatarId = avatarId;
       try {
-        _avatar = await kit.AvatarManager.shared.load(id: avatarId);
+        _avatar = await kit.AvatarManager.shared.load(
+          id: avatarId,
+          useCompressedModel: true,
+        );
       } finally {
         if (_loadingAvatarId == avatarId) {
           _loadingAvatarId = null;
@@ -128,16 +135,21 @@ final class SpatiusAvatarRenderer implements AvatarRenderer {
     if (previous != null && !identical(previous, controller)) {
       unawaited(previous.close().catchError((_) {}));
     }
+    if (!identical(previous, controller)) {
+      _startRequested = false;
+    }
     _controller = controller;
     controller.onFirstRendering = () {
-      if (!_closed && _state.connection == AvatarRendererConnection.preparing) {
-        _setState(
-          _state.copyWith(
-            connection: AvatarRendererConnection.surfaceReady,
-            clearFailure: true,
-          ),
-        );
+      if (_closed || _startRequested || !identical(_controller, controller)) {
+        return;
       }
+      _setState(
+        _state.copyWith(
+          connection: AvatarRendererConnection.connecting,
+          clearFailure: true,
+        ),
+      );
+      _startOnce(controller);
     };
     controller.onConnectionState = (connection, errorMessage) {
       if (_closed || !identical(_controller, controller)) {
@@ -146,20 +158,17 @@ final class SpatiusAvatarRenderer implements AvatarRenderer {
       switch (connection) {
         case kit.ConnectionState.disconnected:
           _setState(
-            const AvatarRendererState(
-              connection: AvatarRendererConnection.surfaceReady,
-            ),
+            _state.copyWith(connection: AvatarRendererConnection.surfaceReady),
           );
         case kit.ConnectionState.connecting:
           _setState(
-            const AvatarRendererState(
-              connection: AvatarRendererConnection.connecting,
-            ),
+            _state.copyWith(connection: AvatarRendererConnection.connecting),
           );
         case kit.ConnectionState.connected:
           _setState(
-            const AvatarRendererState(
+            _state.copyWith(
               connection: AvatarRendererConnection.connected,
+              clearFailure: true,
             ),
           );
         case kit.ConnectionState.failed:
@@ -182,11 +191,13 @@ final class SpatiusAvatarRenderer implements AvatarRenderer {
         _fail(_mapError(error));
       }
     };
-    _setState(
-      const AvatarRendererState(
-        connection: AvatarRendererConnection.connecting,
-      ),
-    );
+  }
+
+  void _startOnce(kit.AvatarController controller) {
+    if (_startRequested || _closed || !identical(_controller, controller)) {
+      return;
+    }
+    _startRequested = true;
     unawaited(_start(controller));
   }
 
@@ -283,6 +294,7 @@ final class SpatiusAvatarRenderer implements AvatarRenderer {
     }
     final controller = _controller;
     _controller = null;
+    _startRequested = false;
     var nativeCloseFailed = false;
     if (controller != null) {
       controller.onFirstRendering = null;
@@ -327,17 +339,7 @@ final class SpatiusAvatarRenderer implements AvatarRenderer {
     _tokenLease = lease;
     _tokenLeaseRelease = release;
     try {
-      await kit.AvatarSDK.initialize(
-        appID: grant.appId,
-        configuration: kit.Configuration(
-          environment: kit.Environment.intl,
-          audioFormat: kit.AudioFormat(
-            sampleRate: grant.audioFormat.sampleRateHz,
-          ),
-          drivingServiceMode: kit.DrivingServiceMode.sdk,
-          logLevel: kit.LogLevel.off,
-        ),
-      );
+      await _ensureSdkInitialized(grant);
       if (_closed || _activeTokenLease != lease) {
         throw const AvatarRendererException(AvatarRendererFailure.unavailable);
       }
@@ -347,6 +349,45 @@ final class SpatiusAvatarRenderer implements AvatarRenderer {
       }
     } catch (_) {
       await _clearSdkTokenIfOwned();
+      rethrow;
+    }
+  }
+
+  static Future<void> _ensureSdkInitialized(AvatarSessionGrant grant) async {
+    final existing = _sdkInitializationFuture;
+    if (existing != null) {
+      await existing;
+      if (_initializedAppId != grant.appId ||
+          _initializedSampleRateHz != grant.audioFormat.sampleRateHz) {
+        throw const AvatarRendererException(
+          AvatarRendererFailure.invalidConfiguration,
+        );
+      }
+      return;
+    }
+
+    _initializedAppId = grant.appId;
+    _initializedSampleRateHz = grant.audioFormat.sampleRateHz;
+    final initialization = kit.AvatarSDK.initialize(
+      appID: grant.appId,
+      configuration: kit.Configuration(
+        environment: kit.Environment.intl,
+        audioFormat: kit.AudioFormat(
+          sampleRate: grant.audioFormat.sampleRateHz,
+        ),
+        drivingServiceMode: kit.DrivingServiceMode.sdk,
+        logLevel: kit.LogLevel.off,
+      ),
+    );
+    _sdkInitializationFuture = initialization;
+    try {
+      await initialization;
+    } catch (_) {
+      if (identical(_sdkInitializationFuture, initialization)) {
+        _sdkInitializationFuture = null;
+        _initializedAppId = null;
+        _initializedSampleRateHz = null;
+      }
       rethrow;
     }
   }
@@ -456,7 +497,8 @@ final class SpatiusAvatarRenderer implements AvatarRenderer {
       return AvatarRendererFailure.invalidConfiguration;
     }
     if (normalized.contains('insufficientbalance') ||
-        normalized.contains('insufficient balance')) {
+        normalized.contains('insufficient balance') ||
+        normalized.contains('insufficient credits')) {
       return AvatarRendererFailure.insufficientBalance;
     }
     if (normalized.contains('concurrentlimitexceeded') ||
