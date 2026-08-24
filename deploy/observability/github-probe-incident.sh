@@ -7,17 +7,33 @@ fail() {
   exit 1
 }
 
-[[ $# == 2 ]] || fail 'usage: github-probe-incident.sh firing|resolved production|drill'
-readonly state=$1
+[[ $# == 2 ]] || fail 'usage: github-probe-incident.sh firing|resolved|success|failure|skipped production|drill'
+readonly requested_state=$1
 readonly kind=$2
-case "$state" in
-  firing | resolved) ;;
-  *) fail 'state must be firing or resolved' ;;
-esac
 case "$kind" in
   production | drill) ;;
   *) fail 'kind must be production or drill' ;;
 esac
+state=''
+case "$requested_state" in
+  firing | resolved)
+    state=$requested_state
+    ;;
+  success)
+    [[ "$kind" == production ]] || fail 'probe outcomes apply only to production'
+    state=resolved
+    ;;
+  failure)
+    [[ "$kind" == production ]] || fail 'probe outcomes apply only to production'
+    state=firing
+    ;;
+  skipped)
+    [[ "$kind" == production ]] || fail 'probe outcomes apply only to production'
+    fail 'production probe did not execute; refusing to create an endpoint incident'
+    ;;
+  *) fail 'state must be firing, resolved, success, failure, or skipped' ;;
+esac
+readonly state
 
 for name in GITHUB_REPOSITORY GITHUB_SERVER_URL GITHUB_RUN_ID GITHUB_RUN_ATTEMPT GITHUB_ACTOR; do
   [[ -n "${!name:-}" && "${!name}" != *$'\n'* && "${!name}" != *$'\r'* ]] ||

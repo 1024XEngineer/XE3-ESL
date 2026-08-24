@@ -130,11 +130,8 @@ jobs:
               deploy/observability/github-probe-incident.sh resolved drill
               ;;
             none)
-              if [[ "$PROBE_OUTCOME" == success ]]; then
-                deploy/observability/github-probe-incident.sh resolved production
-              else
-                deploy/observability/github-probe-incident.sh firing production
-              fi
+              deploy/observability/github-probe-incident.sh \
+                "$PROBE_OUTCOME" production
               ;;
             *)
               printf 'Unsupported drill mode: %s\n' "$DRILL_MODE" >&2
@@ -147,6 +144,6 @@ jobs:
           always() &&
           (inputs.drill == 'firing' ||
           ((github.event_name != 'workflow_dispatch' || inputs.drill == 'none') &&
-          steps.public-probe.outcome != 'success'))
+          steps.public-probe.outcome == 'failure'))
         shell: bash
         run: exit 1

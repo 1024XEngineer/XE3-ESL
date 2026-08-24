@@ -415,11 +415,30 @@ PATH="$probe_bin:$PATH" "$probe_incident" resolved drill
 [[ ! -e "$probe_state" ]] || fail 'resolved drill incident remained open'
 expect_failure 'resolve missing drill incident' env PATH="$probe_bin:$PATH" \
   "$probe_incident" resolved drill
+
+: >"$probe_log"
+PATH="$probe_bin:$PATH" "$probe_incident" failure production
+grep -Fxq '[production-probe] SpeakUp public endpoint incident' "$probe_state" ||
+  fail 'executed probe failure did not open the Production incident'
+PATH="$probe_bin:$PATH" "$probe_incident" success production
+[[ ! -e "$probe_state" ]] || fail 'executed probe success did not resolve the Production incident'
+: >"$probe_log"
+expect_failure 'skipped Production probe' env PATH="$probe_bin:$PATH" \
+  "$probe_incident" skipped production
+[[ ! -s "$probe_log" && ! -e "$probe_state" ]] ||
+  fail 'skipped probe contacted GitHub or created a Production incident'
+
 grep -Fq 'issues: write' "$probe_workflow" || fail 'off-host probe cannot write incident state'
 grep -Fq 'continue-on-error: true' "$probe_workflow" ||
   fail 'off-host probe cannot notify before preserving failure status'
 grep -Fq 'Preserve failing probe status' "$probe_workflow" ||
   fail 'off-host probe can silently pass after a failed public probe'
+grep -Fq '"$PROBE_OUTCOME" production' "$probe_workflow" ||
+  fail 'off-host probe does not classify the actual step outcome'
+grep -Fq "steps.public-probe.outcome == 'failure'" "$probe_workflow" ||
+  fail 'off-host workflow does not preserve only an executed probe failure'
+! grep -Fq "steps.public-probe.outcome != 'success'" "$probe_workflow" ||
+  fail 'off-host workflow still treats skipped probes as endpoint failures'
 grep -Fq 'inputs:' "$probe_workflow" || fail 'off-host notification drill is not dispatchable'
 [[ $(grep -Fc -- '--max-time 10' "$probe_workflow") -eq 2 ]] ||
   fail 'off-host retries can exhaust the job before incident recording'
