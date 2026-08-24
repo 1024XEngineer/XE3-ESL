@@ -33,6 +33,15 @@ also time-bounded: the twice-daily TLS renewal becomes stale after 18 hours,
 while each explicitly named PostgreSQL or Portal restore check becomes stale
 after 31 days even when its previous run succeeded.
 
+Safety-check success time comes only from the mtime of three fixed markers under
+`/var/lib/speakup/safety-checks`; the exporter does not parse journals or depend
+on systemd's volatile exit timestamps. The directory must be `root:root` mode
+`0700`, and each empty marker must be `root:root` mode `0600`. A missing marker,
+non-regular file, ownership or mode mismatch, or future mtime exports both
+success and timestamp as zero for that check. Each producer removes only its
+own marker before a new attempt and recreates it only after success, so an
+in-progress or failed later run cannot inherit an older success.
+
 All container images and runtime limits are explicit. Grafana is the only
 service with a published port, and that port is `127.0.0.1:13000`.
 
@@ -195,15 +204,18 @@ switching it so rollback selects an exact source. Then:
      --pgpass-file /etc/speakup/product-health-reader.pgpass
    ```
 
-3. Install `xe3-speakup-export-metrics` as
+3. Install the current PostgreSQL restore-check, Portal SQLite restore-check,
+   and TLS renewal units from their deployment directories. Reload systemd and
+   successfully run each check once so systemd creates its persistent marker.
+4. Install `xe3-speakup-export-metrics` as
    `/usr/local/sbin/xe3-speakup-export-metrics` with mode `0755`.
-4. Install the metrics service/timer under `/etc/systemd/system`, reload systemd,
+5. Install the metrics service/timer under `/etc/systemd/system`, reload systemd,
    and start the timer.
-5. Install `xe3-speakup-nginx.logrotate` as
+6. Install `xe3-speakup-nginx.logrotate` as
    `/etc/logrotate.d/xe3-speakup-nginx` with mode `0644`.
-6. Recreate only the SpeakUp Staging and Production containers so their
+7. Recreate only the SpeakUp Staging and Production containers so their
    per-container `json-file` limits and internal metrics listener take effect.
-7. Start the monitoring stack with the private environment file:
+8. Start the monitoring stack with the private environment file:
 
    ```bash
    docker compose \
@@ -212,10 +224,17 @@ switching it so rollback selects an exact source. Then:
      up --detach --pull always --wait
    ```
 
-8. Confirm every Prometheus target is up and the Product Health datasource can
+9. Confirm every Prometheus target is up and the Product Health datasource can
    query only its five views from a loopback Grafana session.
-9. After DNS/TLS validation, install `monitor-nginx.conf`, run
+10. After DNS/TLS validation, install `monitor-nginx.conf`, run
    `/usr/local/nginx/sbin/nginx -t`, and reload only after it succeeds.
+
+For an existing installation, reinstall all three producer units before the
+new exporter, run `systemctl daemon-reload`, then start each check manually.
+Previous journal or unit timestamps are intentionally not migrated or inferred;
+until a check completes successfully, its metrics remain `0/0`. Do not create
+or touch a marker by hand. The `StateDirectory=` contract keeps valid markers
+across later daemon reloads and host reboots.
 
 Do not use `docker compose down --volumes`; the three named observability volumes
 contain monitoring history, Alertmanager state, and Grafana configuration.

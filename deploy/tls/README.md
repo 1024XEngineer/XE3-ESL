@@ -269,6 +269,20 @@ systemctl start xe3-speakup-tls-renew.service
 systemctl enable --now xe3-speakup-tls-renew.timer
 ```
 
+The renewal unit uses `StateDirectory=speakup/safety-checks` to create the
+shared `/var/lib/speakup/safety-checks` directory as `root:root` mode `0700`.
+Before each attempt, `ExecStartPre=` removes only `tls-renewal.success`, leaving
+it absent while renewal runs or after it fails. Only after the complete
+three-lineage renewal and verification command succeeds does `ExecStartPost=`
+replace the empty marker as `root:root` mode `0600`. The marker persists across
+daemon reloads and host reboots.
+
+For an existing installation, reinstall the service and timer, run
+`systemctl daemon-reload`, and manually start the renewal service once before
+relying on the new observability series. No previous journal/systemd timestamp
+is migrated, so monitoring remains fail-closed until a real renewal check
+succeeds. Never create or touch the marker manually.
+
 The timer runs twice daily with up to 30 minutes of randomized delay and catches
 up after downtime. The script uses a non-blocking `flock`, while Certbot's own
 random sleep is disabled because scheduling jitter belongs to systemd. The unit

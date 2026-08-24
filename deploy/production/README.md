@@ -486,6 +486,21 @@ use a `0077` umask and a two-hour start timeout. Their process network namespace
 is private and only `AF_UNIX` is permitted so the Docker Unix socket remains
 usable without granting the unit IP network access.
 
+The restore-check unit additionally creates the root-only persistent state
+directory `/var/lib/speakup/safety-checks`. `ExecStartPre=` removes only
+`postgres-restore-check.success` before each attempt, so the marker remains
+absent while the check runs or after it fails. Only after the isolated check
+exits successfully does `ExecStartPost=` replace it as a `root:root` mode `0600`
+empty marker. `StateDirectory=` remains writable under this unit's
+`ProtectSystem=strict` sandbox and persists across daemon reloads and host
+reboots.
+
+When upgrading an existing host, reinstall the restore-check unit, run
+`systemctl daemon-reload`, and start the check once before relying on its
+observability series. The old journal/systemd exit time is deliberately not
+converted into a marker; monitoring remains fail-closed until a real check
+succeeds. Never create or touch the marker manually.
+
 The configured application database user is also the owner of objects created
 by the migration command. Dumps and isolated restores both use
 `--no-owner --no-privileges`: they preserve the application schema and data
