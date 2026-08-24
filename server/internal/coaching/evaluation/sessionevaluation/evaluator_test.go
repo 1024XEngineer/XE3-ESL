@@ -294,11 +294,98 @@ func TestIELTSEvaluatorUsesCumulativeProfileAndOnlyPart3RawEvidence(t *testing.T
 	); err != nil {
 		t.Fatalf("EvaluateIELTS() error = %v", err)
 	}
-	if strings.Contains(generator.last.UserPrompt, "PART_ONE_RAW_TRANSCRIPT") ||
-		strings.Contains(generator.last.UserPrompt, "PART_TWO_RAW_TRANSCRIPT") ||
-		!strings.Contains(generator.last.UserPrompt, "PART_THREE_RAW_TRANSCRIPT") ||
-		!strings.Contains(generator.last.UserPrompt, `"cumulative_profile"`) {
-		t.Fatalf("final incremental payload = %s", generator.last.UserPrompt)
+	var payload resolvedIELTSProviderInputV4
+	if err := evaluation.DecodeStrict(
+		json.RawMessage(generator.last.UserPrompt), &payload,
+	); err != nil {
+		t.Fatalf("decode resolved v4 payload: %v: %s", err, generator.last.UserPrompt)
+	}
+	if lineages.IELTS.PromptVersion != ieltsPromptVersionV4 ||
+		payload.SchemaVersion != ieltsInputSchemaVersionV4 ||
+		payload.EvidenceMode != ieltsInputCumulativeParts12PlusPart3 ||
+		len(payload.CumulativeProfile.CompletedParts) != 2 ||
+		len(payload.Questions) != 1 || len(payload.Turns) != 1 ||
+		payload.Turns[0].Transcript != "PART_THREE_RAW_TRANSCRIPT" ||
+		strings.Contains(generator.last.UserPrompt, "PART_ONE_RAW_TRANSCRIPT") ||
+		strings.Contains(generator.last.UserPrompt, "PART_TWO_RAW_TRANSCRIPT") {
+		t.Fatalf("resolved v4 payload = %#v: %s", payload, generator.last.UserPrompt)
+	}
+}
+
+func TestIELTSEvaluatorUsesTaggedFullRawFallbackPayload(t *testing.T) {
+	generator := &reportGeneratorFake{}
+	evaluators, err := New(generator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lineages, err := Lineages("qianwen", "qwen-plus")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := sessionSnapshotFixture()
+	snapshot.Questions = append(snapshot.Questions, evaluation.SessionEvidenceQuestion{
+		ID: "40000000-0000-4000-8000-000000000002", Position: 2,
+		Text: "Unused question", SpeakerParticipantID: "assistant-1",
+		AddresseeParticipantIDs: []string{"user-1"},
+	})
+	snapshot.Turns = append(snapshot.Turns, evaluation.SessionEvidenceTurn{
+		ID: "30000000-0000-4000-8000-000000000002", Position: 2,
+		QuestionID:              "40000000-0000-4000-8000-000000000002",
+		RespondentParticipantID: "user-1", Transcript: "INEFFECTIVE_RAW_TRANSCRIPT",
+		Effective: false, ConfirmedAt: snapshot.CompletedAt,
+	})
+
+	if _, err := evaluators.EvaluateIELTS(
+		context.Background(), evaluation.Record{}, snapshot, lineages.IELTS,
+	); err != nil {
+		t.Fatalf("EvaluateIELTS() error = %v", err)
+	}
+	var payload fallbackIELTSProviderInputV4
+	if err := evaluation.DecodeStrict(
+		json.RawMessage(generator.last.UserPrompt), &payload,
+	); err != nil {
+		t.Fatalf("decode fallback v4 payload: %v: %s", err, generator.last.UserPrompt)
+	}
+	if payload.SchemaVersion != ieltsInputSchemaVersionV4 ||
+		payload.EvidenceMode != ieltsInputFullRawFallback ||
+		len(payload.Questions) != 2 || len(payload.Turns) != 1 ||
+		payload.Turns[0].Transcript != snapshot.Turns[0].Transcript ||
+		strings.Contains(generator.last.UserPrompt, "INEFFECTIVE_RAW_TRANSCRIPT") ||
+		strings.Contains(generator.last.UserPrompt, `"cumulative_profile"`) ||
+		strings.Contains(generator.last.UserPrompt, `"part_3_effective_turns"`) {
+		t.Fatalf("fallback v4 payload = %#v: %s", payload, generator.last.UserPrompt)
+	}
+}
+
+func TestIELTSEvaluatorPreservesHistoricalV3FallbackContract(t *testing.T) {
+	generator := &reportGeneratorFake{}
+	evaluators, err := New(generator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lineages, err := Lineages("qianwen", "qwen-plus")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lineage := lineages.IELTS
+	lineage.PromptVersion = ieltsPromptVersionV3
+
+	if _, err := evaluators.EvaluateIELTS(
+		context.Background(), evaluation.Record{}, sessionSnapshotFixture(), lineage,
+	); err != nil {
+		t.Fatalf("EvaluateIELTS() error = %v", err)
+	}
+	var payload providerInput
+	if err := evaluation.DecodeStrict(
+		json.RawMessage(generator.last.UserPrompt), &payload,
+	); err != nil {
+		t.Fatalf("decode historical v3 payload: %v: %s", err, generator.last.UserPrompt)
+	}
+	if generator.last.SystemPrompt != ieltsSystemPromptV3 ||
+		strings.Contains(generator.last.UserPrompt, `"schema_version"`) ||
+		strings.Contains(generator.last.UserPrompt, `"evidence_mode"`) ||
+		len(payload.Questions) != 1 || len(payload.Turns) != 1 {
+		t.Fatalf("historical v3 contract changed: %#v: %s", payload, generator.last.UserPrompt)
 	}
 }
 
@@ -473,7 +560,7 @@ func TestSessionEvaluationPromptsRequireChineseFeedbackAndOriginalEvidence(t *te
 		version string
 	}{
 		{name: "interview", prompt: interviewSystemPromptV2, version: interviewPromptVersionV2},
-		{name: "IELTS", prompt: ieltsSystemPromptV3, version: ieltsPromptVersionV3},
+		{name: "IELTS", prompt: ieltsSystemPromptV4, version: ieltsPromptVersionV4},
 		{name: "general", prompt: generalSystemPromptV2, version: generalPromptVersionV2},
 	}
 	lineages, err := Lineages("qianwen", "qwen-plus")
@@ -759,6 +846,7 @@ func sessionSnapshotFixture() evaluation.SessionInputSnapshot {
 		PracticeExperience:  "IELTS_SPEAKING",
 		SceneCategory:       "IELTS_SPEAKING",
 		PracticeMode:        "FULL_MOCK",
+		ProfileResolution:   evaluation.IELTSFinalProfileFallback,
 		CompletedAt:         now,
 		AcousticCapability:  evaluation.AcousticCapabilityNotConfigured,
 		PlanSnapshot:        json.RawMessage(`{}`),

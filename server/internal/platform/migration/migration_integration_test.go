@@ -982,7 +982,6 @@ func migrationEvaluationWorkerConfiguration() evaluation.WorkerConfiguration {
 		RetryDelay:                time.Second,
 		DependencyDelay:           time.Second,
 		AcousticDependencyMaxWait: 150 * time.Second,
-		ProfileDependencyMaxWait:  20 * time.Second,
 		FinalizeTimeout:           5 * time.Second,
 	}
 }

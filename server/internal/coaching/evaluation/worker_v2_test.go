@@ -40,6 +40,18 @@ func TestWorkerConfigurationRejectsIELTSDeadlineThatCutsRepairRound(t *testing.T
 	}
 }
 
+func TestWorkerConfigurationDerivesProfileWaitFromLaneLifecycle(t *testing.T) {
+	configuration := workerConfigurationFixture()
+	perStage := 2*configuration.ProfileDeadline + configuration.RetryDelay +
+		configuration.DependencyDelay
+	if got := configuration.profileLifecycleWaitBudget(previousProfileLifecycleStages); got != perStage {
+		t.Fatalf("single-stage profile wait = %s, want %s", got, perStage)
+	}
+	if got := configuration.profileLifecycleWaitBudget(finalProfileLifecycleStages); got != 2*perStage {
+		t.Fatalf("two-stage profile wait = %s, want %s", got, 2*perStage)
+	}
+}
+
 func TestWorkerPart2ProfileReusesReadyPart1Profile(t *testing.T) {
 	now := time.Now().UTC()
 	claim := profileClaimFixture(t, now, IELTSProfileStagePart2)
@@ -81,7 +93,7 @@ func TestWorkerPart2ProfileDefersWhilePart1IsRunning(t *testing.T) {
 	store := &workerStoreFake{
 		claims: []Claim{claim},
 		records: map[Kind]Record{
-			KindIELTSPart1Profile: {Status: JobRunning},
+			KindIELTSPart1Profile: {Status: JobRunning, CreatedAt: now},
 		},
 	}
 	profiles := &profileEvaluatorsFake{}
@@ -127,7 +139,7 @@ func TestWorkerPart2ProfileFallsBackWhenPart1IsMissing(t *testing.T) {
 	}
 }
 
-func TestWorkerFinalReportReusesReadyPart2Profile(t *testing.T) {
+func TestWorkerFinalReportResolvesPart2ProfileReadyAfter45Seconds(t *testing.T) {
 	now := time.Now().UTC()
 	claim := sessionClaimFixture(t, now, IELTSStrategyRef)
 	part2 := cumulativeProfileFixture(claim.SourceID, []int{1, 2})
@@ -138,7 +150,10 @@ func TestWorkerFinalReportReusesReadyPart2Profile(t *testing.T) {
 	store := &workerStoreFake{
 		claims: []Claim{claim},
 		records: map[Kind]Record{
-			KindIELTSPart2Profile: {Status: JobReady, Result: part2Result},
+			KindIELTSPart2Profile: {
+				Status: JobReady, Result: part2Result,
+				CreatedAt: now.Add(-45 * time.Second),
+			},
 		},
 	}
 	sessions := &sessionEvaluatorsFake{}
@@ -157,6 +172,52 @@ func TestWorkerFinalReportReusesReadyPart2Profile(t *testing.T) {
 	}
 }
 
+func TestWorkerFinalReportDefersThroughNormalPart2ProfileRuntime(t *testing.T) {
+	configuration := workerConfigurationFixture()
+	for _, test := range []struct {
+		name     string
+		age      time.Duration
+		attempts int
+	}{
+		{name: "ready-window-28s", age: 28 * time.Second, attempts: 1},
+		{name: "ready-window-45s", age: 45 * time.Second, attempts: 1},
+		{
+			name:     "second-attempt-after-upstream-stage",
+			age:      configuration.profileLifecycleWaitBudget(previousProfileLifecycleStages) + time.Second,
+			attempts: 2,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			now := time.Now().UTC()
+			claim := sessionClaimFixture(t, now, IELTSStrategyRef)
+			store := &workerStoreFake{
+				claims: []Claim{claim},
+				records: map[Kind]Record{
+					KindIELTSPart2Profile: {
+						Status: JobRunning, AttemptCount: test.attempts,
+						CreatedAt: now.Add(-test.age),
+					},
+				},
+			}
+			sessions := &sessionEvaluatorsFake{}
+			worker := workerFixture(
+				t, store, sessions, &speechEvaluatorsFake{}, &acousticEvaluatorFake{},
+			)
+
+			processed, err := worker.ProcessSession(context.Background())
+			if err != nil || !processed || sessions.ieltsCalls != 0 ||
+				len(store.deferrals) != 1 || len(store.checkpoints) != 0 ||
+				len(store.completions) != 0 || len(store.failures) != 0 {
+				t.Fatalf(
+					"ProcessSession=(%t,%v), calls=%d deferrals=%d checkpoints=%d completions=%d failures=%d",
+					processed, err, sessions.ieltsCalls, len(store.deferrals),
+					len(store.checkpoints), len(store.completions), len(store.failures),
+				)
+			}
+		})
+	}
+}
+
 func TestWorkerFinalReportFallsBackWhenPart2ProfileIsUnavailable(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -165,7 +226,7 @@ func TestWorkerFinalReportFallsBackWhenPart2ProfileIsUnavailable(t *testing.T) {
 	}{
 		{
 			name:     "dependency timeout",
-			record:   Record{Status: JobRunning},
+			record:   Record{Status: JobRunning, AttemptCount: 2},
 			timedOut: true,
 		},
 		{
@@ -185,10 +246,9 @@ func TestWorkerFinalReportFallsBackWhenPart2ProfileIsUnavailable(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			now := time.Now().UTC()
 			claim := sessionClaimFixture(t, now, IELTSStrategyRef)
-			claim.CreatedAt = now
 			if test.timedOut {
-				claim.CreatedAt = now.Add(
-					-workerConfigurationFixture().ProfileDependencyMaxWait - time.Second,
+				test.record.CreatedAt = now.Add(
+					-workerConfigurationFixture().profileLifecycleWaitBudget(finalProfileLifecycleStages) - time.Second,
 				)
 			}
 			store := &workerStoreFake{
@@ -974,7 +1034,6 @@ func workerConfigurationFixture() WorkerConfiguration {
 		RetryDelay:                time.Second,
 		DependencyDelay:           5 * time.Second,
 		AcousticDependencyMaxWait: 150 * time.Second,
-		ProfileDependencyMaxWait:  20 * time.Second,
 		FinalizeTimeout:           5 * time.Second,
 	}
 }

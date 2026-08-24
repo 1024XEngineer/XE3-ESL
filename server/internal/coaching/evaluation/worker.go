@@ -9,6 +9,11 @@ import (
 
 const MinimumIELTSTwoRoundDeadline = 2*45*time.Second + 10*time.Second
 
+const (
+	previousProfileLifecycleStages = 1
+	finalProfileLifecycleStages    = 2
+)
+
 const acousticDependencyTimeoutReason = "ACOUSTIC_DEPENDENCY_TIMEOUT"
 
 var ErrAcousticDependencyFailed error = acousticDependencyFailure{}
@@ -103,7 +108,6 @@ type WorkerConfiguration struct {
 	RetryDelay                time.Duration
 	DependencyDelay           time.Duration
 	AcousticDependencyMaxWait time.Duration
-	ProfileDependencyMaxWait  time.Duration
 	FinalizeTimeout           time.Duration
 }
 
@@ -134,10 +138,16 @@ func (configuration WorkerConfiguration) Valid() bool {
 		configuration.DependencyDelay <= time.Minute &&
 		configuration.AcousticDependencyMaxWait >= configuration.DependencyDelay &&
 		configuration.AcousticDependencyMaxWait <= 5*time.Minute &&
-		configuration.ProfileDependencyMaxWait >= configuration.DependencyDelay &&
-		configuration.ProfileDependencyMaxWait <= 5*time.Minute &&
+		configuration.profileLifecycleWaitBudget(finalProfileLifecycleStages) <= 5*time.Minute &&
 		configuration.FinalizeTimeout >= time.Second &&
 		configuration.FinalizeTimeout <= 30*time.Second
+}
+
+func (configuration WorkerConfiguration) profileLifecycleWaitBudget(stages int) time.Duration {
+	attempts := time.Duration(configuration.ProfileLane.MaxAttempts)
+	perStage := attempts*configuration.ProfileDeadline +
+		(attempts-1)*configuration.RetryDelay + configuration.DependencyDelay
+	return time.Duration(stages) * perStage
 }
 
 type Worker struct {
@@ -246,7 +256,9 @@ func (worker *Worker) resolvePreviousProfile(
 		ctx, claim.UserID, KindIELTSPart1Profile, snapshot.SessionID,
 	)
 	if err == nil && (record.Status == JobQueued || record.Status == JobRunning) &&
-		time.Since(claim.CreatedAt) < worker.configuration.ProfileDependencyMaxWait {
+		time.Now().UTC().Before(record.CreatedAt.Add(
+			worker.configuration.profileLifecycleWaitBudget(previousProfileLifecycleStages),
+		)) {
 		finalizeContext, cancel := worker.finalizeContext(ctx)
 		defer cancel()
 		return true, worker.store.DeferClaim(finalizeContext, Deferral{
@@ -455,7 +467,9 @@ func (worker *Worker) resolveFinalProfile(
 		ctx, claim.UserID, KindIELTSPart2Profile, snapshot.SessionID,
 	)
 	if err == nil && (record.Status == JobQueued || record.Status == JobRunning) &&
-		time.Since(claim.CreatedAt) < worker.configuration.ProfileDependencyMaxWait {
+		time.Now().UTC().Before(record.CreatedAt.Add(
+			worker.configuration.profileLifecycleWaitBudget(finalProfileLifecycleStages),
+		)) {
 		finalizeContext, cancel := worker.finalizeContext(ctx)
 		defer cancel()
 		return true, worker.store.DeferClaim(finalizeContext, Deferral{
