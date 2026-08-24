@@ -10,6 +10,7 @@ import (
 	mediapostgres "github.com/1024XEngineer/XE3-ESL/server/internal/media/postgres"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/providerobservability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/providers/xfyun"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -19,6 +20,25 @@ func NewEvaluationAcousticEvaluator(
 	store objectstore.Store,
 	configuration config.ISEConfig,
 ) (evaluation.AcousticEvaluator, error) {
+	return newEvaluationAcousticEvaluator(database, store, configuration, nil)
+}
+
+func (factory *ProviderFactory) EvaluationAcousticEvaluator(
+	database *pgxpool.Pool,
+	store objectstore.Store,
+	configuration config.ISEConfig,
+) (evaluation.AcousticEvaluator, error) {
+	return newEvaluationAcousticEvaluator(
+		database, store, configuration, factory.observer,
+	)
+}
+
+func newEvaluationAcousticEvaluator(
+	database *pgxpool.Pool,
+	store objectstore.Store,
+	configuration config.ISEConfig,
+	observer providerobservability.Recorder,
+) (evaluation.AcousticEvaluator, error) {
 	if database == nil || store == nil {
 		return nil, errors.New("bootstrap: Evaluation acoustic dependencies are required")
 	}
@@ -26,6 +46,7 @@ func NewEvaluationAcousticEvaluator(
 		xfyun.ISEConfig{
 			Endpoint: configuration.Endpoint,
 			Timeout:  configuration.Timeout,
+			Observer: observer,
 		},
 		configuration.AppID.Reveal(),
 		configuration.APIKey.Reveal(),

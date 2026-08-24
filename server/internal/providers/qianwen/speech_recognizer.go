@@ -14,15 +14,17 @@ import (
 	"time"
 
 	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/providerobservability"
 	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 )
 
 const maxASRDataURLBytes = 10_000_000
 
 type ASRConfig struct {
-	BaseURL string
-	Model   string
-	Timeout time.Duration
+	BaseURL  string
+	Model    string
+	Timeout  time.Duration
+	Observer providerobservability.Recorder
 }
 
 type speechRecognizer struct {
@@ -32,6 +34,7 @@ type speechRecognizer struct {
 	timeout    time.Duration
 	apiKey     providerSecret
 	client     httpDoer
+	observer   providerobservability.Recorder
 }
 
 func (recognizer *speechRecognizer) String() string {
@@ -89,6 +92,7 @@ func newRecognizerWithClient(
 		timeout:    config.Timeout,
 		apiKey:     newProviderSecret(apiKey),
 		client:     client,
+		observer:   config.Observer,
 	}, nil
 }
 

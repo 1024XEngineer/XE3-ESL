@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net/http"
 	"net/url"
 	"os"
 	"regexp"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/providerobservability"
 )
 
 const maxSignedURLTTL = 2 * time.Minute
@@ -52,6 +54,7 @@ type Client struct {
 	prefix       string
 	signedURLTTL time.Duration
 	now          func() time.Time
+	observer     providerobservability.Recorder
 }
 
 func New(ctx context.Context, storageConfig config.ObjectStorageConfig) (*Client, error) {
@@ -117,6 +120,25 @@ func NewForPrefix(
 	return client, nil
 }
 
+// NewForPrefixObserved creates a production client using the service-level
+// provider observer.
+func NewForPrefixObserved(
+	ctx context.Context,
+	storageConfig config.ObjectStorageConfig,
+	prefix string,
+	observer providerobservability.Recorder,
+) (*Client, error) {
+	if observer == nil {
+		return nil, errors.New("Kodo provider observer is required")
+	}
+	client, err := NewForPrefix(ctx, storageConfig, prefix)
+	if err != nil {
+		return nil, err
+	}
+	client.observer = observer
+	return client, nil
+}
+
 func (client *Client) Preflight(ctx context.Context) error {
 	if client == nil || client.api == nil || ctx == nil {
 		return objectstore.ErrOperationFailed
@@ -150,7 +172,7 @@ func bucketHasPublicGrant(grants []types.Grant) bool {
 func (client *Client) Put(
 	ctx context.Context,
 	request objectstore.PutRequest,
-) (objectstore.PutResult, error) {
+) (callResult objectstore.PutResult, callErr error) {
 	if client == nil || client.api == nil || ctx == nil {
 		return objectstore.PutResult{}, objectstore.ErrOperationFailed
 	}
@@ -167,6 +189,18 @@ func (client *Client) Put(
 		return objectstore.PutResult{}, objectstore.ErrInvalidObject
 	}
 	defer func() { _, _ = request.Body.Seek(startOffset, io.SeekStart) }()
+	startedAt := time.Now()
+	storedBytes := int64(0)
+	defer func() {
+		objectstore.RecordProviderCall(
+			client.observer,
+			providerobservability.ProviderQiniuKodo,
+			providerobservability.CapabilityObjectPut,
+			startedAt,
+			callErr,
+			storedBytes,
+		)
+	}()
 
 	existing, found, err := client.findExisting(ctx, request)
 	if err != nil {
@@ -198,6 +232,7 @@ func (client *Client) Put(
 	if result == nil || strings.Trim(aws.ToString(result.ETag), "\"") == "" {
 		return objectstore.PutResult{}, objectstore.ErrOperationFailed
 	}
+	storedBytes = request.Size
 	return objectstore.PutResult{ETag: strings.Trim(aws.ToString(result.ETag), "\"")}, nil
 }
 
@@ -295,38 +330,72 @@ func (client *Client) SignedGet(
 	}, nil
 }
 
-func (client *Client) Open(ctx context.Context, key string) (io.ReadCloser, error) {
+func (client *Client) Open(
+	ctx context.Context,
+	key string,
+) (io.ReadCloser, error) {
 	if client == nil || client.api == nil || ctx == nil {
 		return nil, objectstore.ErrOperationFailed
 	}
 	if err := objectstore.ValidateKey(client.prefix, key); err != nil {
 		return nil, err
 	}
+	startedAt := time.Now()
+	recordFailure := func(err error) {
+		objectstore.RecordProviderCall(
+			client.observer,
+			providerobservability.ProviderQiniuKodo,
+			providerobservability.CapabilityObjectOpen,
+			startedAt,
+			err,
+			0,
+		)
+	}
 	result, err := client.api.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(client.bucket),
 		Key:    aws.String(key),
 	})
 	if err != nil {
-		return nil, safeError("get", err)
+		callErr := safeError("get", err)
+		recordFailure(callErr)
+		return nil, callErr
 	}
 	if result == nil || result.Body == nil {
+		recordFailure(objectstore.ErrOperationFailed)
 		return nil, objectstore.ErrOperationFailed
 	}
 	mediaType, _, mediaErr := mime.ParseMediaType(aws.ToString(result.ContentType))
 	if mediaErr != nil || mediaType != "application/pdf" {
 		_ = result.Body.Close()
+		recordFailure(objectstore.ErrInvalidObject)
 		return nil, objectstore.ErrInvalidObject
 	}
-	return result.Body, nil
+	return objectstore.ObserveOpenReadCloser(
+		result.Body,
+		client.observer,
+		providerobservability.ProviderQiniuKodo,
+		startedAt,
+	), nil
 }
 
-func (client *Client) Delete(ctx context.Context, key string) error {
+func (client *Client) Delete(ctx context.Context, key string) (callErr error) {
 	if client == nil || client.api == nil || ctx == nil {
 		return objectstore.ErrOperationFailed
 	}
 	if err := objectstore.ValidateKey(client.prefix, key); err != nil {
 		return err
 	}
+	startedAt := time.Now()
+	defer func() {
+		objectstore.RecordProviderCall(
+			client.observer,
+			providerobservability.ProviderQiniuKodo,
+			providerobservability.CapabilityObjectDelete,
+			startedAt,
+			callErr,
+			0,
+		)
+	}()
 	_, err := client.api.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(client.bucket),
 		Key:    aws.String(key),
@@ -342,6 +411,7 @@ type OperationError struct {
 	Code      string
 	Status    int
 	RequestID string
+	cause     error
 }
 
 func (err *OperationError) Error() string {
@@ -358,18 +428,34 @@ func (err *OperationError) Error() string {
 	)
 }
 
-func (err *OperationError) Unwrap() error {
+func (err *OperationError) Unwrap() []error {
 	if err.Code == "PreconditionFailed" || err.Status == 412 {
-		return objectstore.ErrAlreadyExists
+		return []error{objectstore.ErrAlreadyExists}
 	}
-	return objectstore.ErrOperationFailed
+	causes := []error{objectstore.ErrOperationFailed}
+	if err.cause != nil {
+		causes = append(causes, err.cause)
+	}
+	return causes
+}
+
+// ProviderMetricErrorKind exposes only a bounded category, never provider
+// error text or identifiers.
+func (err *OperationError) ProviderMetricErrorKind() providerobservability.ErrorKind {
+	if err == nil {
+		return providerobservability.ErrorOperationFailed
+	}
+	return kodoMetricErrorKind(err.Code, err.Status, err.cause)
 }
 
 func safeError(operation string, err error) error {
 	if err == nil {
 		return &OperationError{Operation: operation}
 	}
-	result := &OperationError{Operation: operation}
+	result := &OperationError{
+		Operation: operation,
+		cause:     stableContextCause(err),
+	}
 	var apiError smithy.APIError
 	if errors.As(err, &apiError) {
 		result.Code = safeIdentifier(apiError.ErrorCode())
@@ -380,6 +466,58 @@ func safeError(operation string, err error) error {
 		result.RequestID = safeIdentifier(responseError.ServiceRequestID())
 	}
 	return result
+}
+
+func stableContextCause(err error) error {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return context.DeadlineExceeded
+	case errors.Is(err, context.Canceled):
+		return context.Canceled
+	default:
+		return nil
+	}
+}
+
+func kodoMetricErrorKind(
+	code string,
+	status int,
+	cause error,
+) providerobservability.ErrorKind {
+	switch {
+	case errors.Is(cause, context.DeadlineExceeded):
+		return providerobservability.ErrorTimeout
+	case errors.Is(cause, context.Canceled):
+		return providerobservability.ErrorCancelled
+	}
+	switch strings.ToLower(strings.TrimSpace(code)) {
+	case "preconditionfailed":
+		return providerobservability.ErrorAlreadyExists
+	case "invalidaccesskeyid", "invalidaccesskey", "signaturedoesnotmatch", "invalidtoken":
+		return providerobservability.ErrorAuthentication
+	case "accessdenied":
+		return providerobservability.ErrorAuthorization
+	case "requesttimeout":
+		return providerobservability.ErrorTimeout
+	case "toomanyrequests", "throttling", "slowdown":
+		return providerobservability.ErrorRateLimited
+	case "serviceunavailable", "internalerror":
+		return providerobservability.ErrorProviderUnavailable
+	}
+	switch {
+	case status == http.StatusUnauthorized:
+		return providerobservability.ErrorAuthentication
+	case status == http.StatusForbidden:
+		return providerobservability.ErrorAuthorization
+	case status == http.StatusRequestTimeout:
+		return providerobservability.ErrorTimeout
+	case status == http.StatusTooManyRequests:
+		return providerobservability.ErrorRateLimited
+	case status >= http.StatusInternalServerError:
+		return providerobservability.ErrorProviderUnavailable
+	default:
+		return providerobservability.ErrorOperationFailed
+	}
 }
 
 func isNotFound(err error) bool {

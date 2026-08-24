@@ -7,6 +7,7 @@ import (
 	"time"
 
 	practiceinteraction "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/interaction"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/providerobservability"
 	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 	sharedtranslation "github.com/1024XEngineer/XE3-ESL/server/internal/translation"
 )
@@ -143,6 +144,31 @@ func TestPracticeVoiceStreamingObserverMapsProviderSnapshot(t *testing.T) {
 	}
 }
 
+func TestPracticeVoiceObserverClassifiesCallbackFailureAsCancelled(t *testing.T) {
+	cause := errors.New("client stream write failed")
+	adapter := practiceVoiceTranscriptionObserver{
+		observer: &practiceVoiceObserverRecorder{err: cause},
+	}
+	err := adapter.OnTranscriptionUpdate(
+		context.Background(),
+		protocol.TranscriptionUpdate{Transcript: "partial"},
+	)
+	if !errors.Is(err, cause) ||
+		observedErrorKind(err) != providerobservability.ErrorCancelled {
+		t.Fatalf("callback error = %#v", err)
+	}
+	mapped := mapPracticeInteractionError(
+		err,
+		practiceinteraction.ProviderOperationTranscription,
+	)
+	var mappedError *practiceinteraction.ProviderError
+	if !errors.As(mapped, &mappedError) ||
+		mappedError.Kind != practiceinteraction.ProviderErrorCancelled ||
+		!errors.Is(mapped, cause) {
+		t.Fatalf("mapped callback error = %#v", mapped)
+	}
+}
+
 func TestPracticeVoiceStreamingRejectsNonRealtimeModel(t *testing.T) {
 	recognizer := &PracticeVoiceRecognizer{
 		recognizer: &speechRecognizer{model: "fun-asr-flash-2026-06-15"},
@@ -186,6 +212,7 @@ func TestPracticeRecordedVoiceRecognizerRequiresFlashModel(t *testing.T) {
 
 type practiceVoiceObserverRecorder struct {
 	update practiceinteraction.TranscriptionUpdate
+	err    error
 }
 
 func (recorder *practiceVoiceObserverRecorder) OnTranscriptionUpdate(
@@ -193,7 +220,7 @@ func (recorder *practiceVoiceObserverRecorder) OnTranscriptionUpdate(
 	update practiceinteraction.TranscriptionUpdate,
 ) error {
 	recorder.update = update
-	return nil
+	return recorder.err
 }
 
 func isTranslationConfigurationError(err error) bool {

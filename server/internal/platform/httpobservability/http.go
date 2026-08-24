@@ -4,6 +4,8 @@ package httpobservability
 
 import (
 	"crypto/rand"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -32,6 +34,23 @@ type Observer struct {
 
 // New creates an Observer backed by a private Prometheus registry.
 func New(logger *slog.Logger) *Observer {
+	registry := prometheus.NewRegistry()
+	observer, err := NewWithRegistry(logger, registry)
+	if err != nil {
+		panic(err)
+	}
+	return observer
+}
+
+// NewWithRegistry registers HTTP metrics in the service-level registry shared
+// with external-provider metrics.
+func NewWithRegistry(
+	logger *slog.Logger,
+	registry *prometheus.Registry,
+) (*Observer, error) {
+	if registry == nil {
+		return nil, errors.New("http observability registry is required")
+	}
 	requests := prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "speakup",
@@ -50,15 +69,20 @@ func New(logger *slog.Logger) *Observer {
 		},
 		[]string{"method", "route"},
 	)
-	registry := prometheus.NewRegistry()
-	registry.MustRegister(requests, requestDuration)
+	if err := registry.Register(requests); err != nil {
+		return nil, fmt.Errorf("register HTTP request metrics: %w", err)
+	}
+	if err := registry.Register(requestDuration); err != nil {
+		registry.Unregister(requests)
+		return nil, fmt.Errorf("register HTTP duration metrics: %w", err)
+	}
 
 	return &Observer{
 		logger:          logger,
 		requests:        requests,
 		requestDuration: requestDuration,
 		metricsHandler:  metricsMux(registry),
-	}
+	}, nil
 }
 
 // Middleware correlates, logs, and measures each request without retaining
