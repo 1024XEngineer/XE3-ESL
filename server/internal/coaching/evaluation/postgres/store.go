@@ -544,7 +544,7 @@ func (store *Store) FailClaim(
 		WHERE id = $1 AND user_id = $7 AND status = 'RUNNING'
 		  AND lease_token = $2 AND lease_expires_at > transaction_timestamp()`,
 		failure.ID, failure.LeaseToken, failure.RetryAt.UTC(),
-		failure.MaxAttempts, failure.Error.Retryable, failureJSON, failure.UserID)
+		failure.MaxAttempts, failure.AutomaticRetryable, failureJSON, failure.UserID)
 	if err != nil {
 		return fmt.Errorf("fail Evaluation claim: %w", err)
 	}

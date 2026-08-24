@@ -228,7 +228,8 @@ func TestStoreRetryableFinalAndExpiredClaimsConverge(t *testing.T) {
 		Error: evaluation.JobError{
 			Code: "PROVIDER_UNAVAILABLE", Retryable: true, Message: "retry",
 		},
-		RetryAt: time.Now().UTC().Add(-time.Second), MaxAttempts: 3,
+		AutomaticRetryable: true,
+		RetryAt:            time.Now().UTC().Add(-time.Second), MaxAttempts: 3,
 	}); err != nil {
 		t.Fatalf("FailClaim(retryable): %v", err)
 	}
