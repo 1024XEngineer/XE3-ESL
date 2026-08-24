@@ -36,6 +36,7 @@ const (
 	shutdownTimeout                = 5 * time.Second
 	voiceAudioUploadLease          = 2 * time.Minute
 	voiceASRFinalizationTimeMargin = 15 * time.Second
+	evaluationDependencyDelay      = 5 * time.Second
 	// defaultAcousticDependencyMaxWait matches the default ISE request timeout and
 	// remains above media.MaxAudioDuration (122s), so a valid two-minute
 	// Part 2 answer is not degraded while its paced ISE stream is still active.
@@ -52,7 +53,7 @@ func evaluationAcousticDependencyMaxWait(
 	providerTimeout time.Duration,
 ) time.Duration {
 	if acousticsEnabled {
-		return providerTimeout
+		return max(providerTimeout, evaluationDependencyDelay)
 	}
 	return defaultAcousticDependencyMaxWait
 }
@@ -426,7 +427,7 @@ func run() int {
 				SpeechDeadline:            speechDeadline,
 				ProfileDeadline:           45 * time.Second,
 				RetryDelay:                time.Second,
-				DependencyDelay:           5 * time.Second,
+				DependencyDelay:           evaluationDependencyDelay,
 				AcousticDependencyMaxWait: acousticDependencyMaxWait,
 				ProfileDependencyMaxWait:  20 * time.Second,
 				FinalizeTimeout:           5 * time.Second,

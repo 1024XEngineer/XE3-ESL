@@ -37,6 +37,18 @@ func TestAcousticDependencyWaitUsesConfiguredProviderAttempt(t *testing.T) {
 	}
 }
 
+func TestAcousticDependencyWaitClampsShortProviderAttempt(t *testing.T) {
+	providerTimeout := time.Second
+	if got := evaluationAcousticDependencyMaxWait(true, providerTimeout); got !=
+		evaluationDependencyDelay {
+		t.Fatalf(
+			"acoustic dependency wait = %s, want minimum %s",
+			got,
+			evaluationDependencyDelay,
+		)
+	}
+}
+
 func TestVoiceASRLeaseCoversUploadRecognitionAndFinalization(t *testing.T) {
 	for _, test := range []struct {
 		name            string
