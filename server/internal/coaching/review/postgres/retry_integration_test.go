@@ -42,6 +42,7 @@ func TestServiceRetryReplayAndFeedbackScopedIdempotency(t *testing.T) {
 		pool,
 		noopCompletionScheduler{},
 		noopTurnFeedbackScheduler{},
+		noopIELTSProfileScheduler{},
 		identity.NewUUIDv4Generator(nil),
 	)
 	if err != nil {
@@ -311,6 +312,16 @@ func (noopTurnFeedbackScheduler) ScheduleConfirmedTurn(
 	context.Context,
 	pgx.Tx,
 	practice.TurnFeedbackEvidence,
+) error {
+	return nil
+}
+
+type noopIELTSProfileScheduler struct{}
+
+func (noopIELTSProfileScheduler) ScheduleCompletedPart(
+	context.Context,
+	pgx.Tx,
+	practice.IELTSPartProfileEvidence,
 ) error {
 	return nil
 }

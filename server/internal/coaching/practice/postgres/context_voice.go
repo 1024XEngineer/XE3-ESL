@@ -112,6 +112,20 @@ func (r *Repository) advanceTurnInTransaction(ctx context.Context, tx pgx.Tx, ac
 	if tag.RowsAffected() != 1 {
 		return practice.TurnResult{}, practice.ErrConflict
 	}
+	if stage, part1Boundary, part2Boundary, ok := ieltsProfileBoundary(
+		snapshot, nextEffective,
+	); ok {
+		evidence, err := r.ReadIELTSPartProfileEvidence(
+			ctx, tx, actor.UserID, command.SessionID,
+			stage, part1Boundary, part2Boundary,
+		)
+		if err != nil {
+			return practice.TurnResult{}, err
+		}
+		if err := r.profile.ScheduleCompletedPart(ctx, tx, evidence); err != nil {
+			return practice.TurnResult{}, err
+		}
+	}
 	if completed {
 		evidence, err := r.ReadSessionEvidence(ctx, tx, actor.UserID, command.SessionID)
 		if err != nil {
@@ -122,4 +136,27 @@ func (r *Repository) advanceTurnInTransaction(ctx context.Context, tx pgx.Tx, ac
 		}
 	}
 	return practice.TurnResult{SessionID: command.SessionID, TurnID: command.TurnID, Round: nextEffective, EffectiveTurns: nextEffective, SessionVersion: version + 1, TurnLimit: turnLimit, Completed: completed, CreatedAt: progressed.UTC()}, nil
+}
+
+func ieltsProfileBoundary(
+	snapshot practice.SessionSnapshot,
+	nextEffective int,
+) (practice.IELTSProfileStage, int, int, bool) {
+	assignment := snapshot.IELTSAssignment
+	if snapshot.PracticeMode != practice.PracticeModeFullMock ||
+		assignment == nil || len(assignment.Parts) != 3 {
+		return "", 0, 0, false
+	}
+	part1Boundary := len(assignment.Parts[0].TurnBlueprints)
+	part2Boundary := part1Boundary + len(assignment.Parts[1].TurnBlueprints)
+	switch nextEffective {
+	case part1Boundary:
+		return practice.IELTSProfileStagePart1,
+			part1Boundary, part2Boundary, true
+	case part2Boundary:
+		return practice.IELTSProfileStagePart2,
+			part1Boundary, part2Boundary, true
+	default:
+		return "", part1Boundary, part2Boundary, false
+	}
 }

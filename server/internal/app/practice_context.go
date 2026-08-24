@@ -281,6 +281,7 @@ func newIdentityAgentAndPracticeComposition(
 		database,
 		evaluationSchedulers.Completion,
 		evaluationSchedulers.TurnFeedback,
+		evaluationSchedulers.IELTSProfile,
 		base.ids,
 	)
 	if err != nil {

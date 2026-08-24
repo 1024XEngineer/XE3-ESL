@@ -160,6 +160,17 @@ func newEvaluationScoringGenerator(
 	return qianwen.NewEvaluationScoringGenerator(providerConfig, apiKey)
 }
 
+func (factory *ProviderFactory) EvaluationProfileGenerator(
+	configuration config.TextGenerationConfig,
+) (textgeneration.Generator, error) {
+	providerConfig, apiKey, err := textProvider(configuration, factory.observer)
+	if err != nil {
+		return nil, err
+	}
+	providerConfig.Model = configuration.EvaluationModel
+	return qianwen.NewEvaluationProfileGenerator(providerConfig, apiKey)
+}
+
 func NewEvaluationSpeechFeedbackGenerator(
 	configuration config.TextGenerationConfig,
 ) (speechfeedback.TextGenerator, error) {

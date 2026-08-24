@@ -417,11 +417,13 @@ INSERT INTO practice_plans (
 	evaluationComposition, err := app.NewEvaluationComposition(
 		pool,
 		migrationReportGenerator{},
+		migrationReportGenerator{},
 		migrationSpeechFeedbackGenerator{},
 		nil,
 		app.EvaluationConfiguration{
 			Provider:     "qianwen",
 			SessionModel: "qwen-plus",
+			ProfileModel: "qwen-plus",
 			SpeechModel:  "qwen-plus",
 			Worker:       migrationEvaluationWorkerConfiguration(),
 		},
@@ -434,6 +436,7 @@ INSERT INTO practice_plans (
 		pool,
 		schedulers.Completion,
 		schedulers.TurnFeedback,
+		schedulers.IELTSProfile,
 		ids,
 	)
 	if err != nil {
@@ -937,6 +940,14 @@ func migrationEvaluationWorkerConfiguration() evaluation.WorkerConfiguration {
 			LeaseDuration: 3 * time.Minute,
 			MaxAttempts:   3,
 		},
+		ProfileLane: evaluation.ClaimLane{
+			Kinds: []evaluation.Kind{
+				evaluation.KindIELTSPart1Profile,
+				evaluation.KindIELTSPart2Profile,
+			},
+			LeaseDuration: 3 * time.Minute,
+			MaxAttempts:   3,
+		},
 		SpeechLane: evaluation.ClaimLane{
 			Kinds: []evaluation.Kind{
 				evaluation.KindPracticeTurnFeedback,
@@ -945,13 +956,15 @@ func migrationEvaluationWorkerConfiguration() evaluation.WorkerConfiguration {
 			LeaseDuration: 3 * time.Minute,
 			MaxAttempts:   3,
 		},
-		InterviewDeadline: 30 * time.Second,
-		IELTSDeadline:     110 * time.Second,
-		GeneralDeadline:   30 * time.Second,
-		SpeechDeadline:    30 * time.Second,
-		RetryDelay:        time.Second,
-		DependencyDelay:   time.Second,
-		FinalizeTimeout:   5 * time.Second,
+		InterviewDeadline:        30 * time.Second,
+		IELTSDeadline:            110 * time.Second,
+		GeneralDeadline:          30 * time.Second,
+		SpeechDeadline:           30 * time.Second,
+		ProfileDeadline:          30 * time.Second,
+		RetryDelay:               time.Second,
+		DependencyDelay:          time.Second,
+		ProfileDependencyMaxWait: 20 * time.Second,
+		FinalizeTimeout:          5 * time.Second,
 	}
 }
 

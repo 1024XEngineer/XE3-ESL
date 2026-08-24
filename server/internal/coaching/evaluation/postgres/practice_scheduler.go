@@ -46,6 +46,38 @@ type TurnFeedbackScheduler struct {
 	builder *evaluation.TurnFeedbackCommandBuilder
 }
 
+type IELTSProfileScheduler struct {
+	store   *Store
+	builder *evaluation.IELTSProfileCommandBuilder
+}
+
+func NewIELTSProfileScheduler(
+	store *Store,
+	builder *evaluation.IELTSProfileCommandBuilder,
+) (*IELTSProfileScheduler, error) {
+	if store == nil || builder == nil {
+		return nil, evaluation.ErrInvalidRequest
+	}
+	return &IELTSProfileScheduler{store: store, builder: builder}, nil
+}
+
+func (scheduler *IELTSProfileScheduler) ScheduleCompletedPart(
+	ctx context.Context,
+	tx pgx.Tx,
+	evidence practice.IELTSPartProfileEvidence,
+) error {
+	if scheduler == nil || scheduler.store == nil || scheduler.builder == nil ||
+		ctx == nil || tx == nil {
+		return evaluation.ErrInvalidRequest
+	}
+	command, err := scheduler.builder.Build(evidence)
+	if err != nil {
+		return err
+	}
+	_, _, err = scheduler.store.QueueInTx(ctx, tx, command)
+	return err
+}
+
 func NewTurnFeedbackScheduler(
 	store *Store,
 	builder *evaluation.TurnFeedbackCommandBuilder,
@@ -75,3 +107,4 @@ func (scheduler *TurnFeedbackScheduler) ScheduleConfirmedTurn(
 
 var _ practicepostgres.CompletionScheduler = (*SessionScheduler)(nil)
 var _ practicepostgres.TurnFeedbackScheduler = (*TurnFeedbackScheduler)(nil)
+var _ practicepostgres.IELTSProfileScheduler = (*IELTSProfileScheduler)(nil)
