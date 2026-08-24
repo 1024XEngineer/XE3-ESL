@@ -180,6 +180,66 @@ void main() {
     expect(nativePlayer.events, isEmpty);
   });
 
+  testWidgets(
+    'uses native speech when the avatar disconnects before the first PCM send',
+    (tester) async {
+      final media = _RealtimeQuestionMediaClient();
+      final nativePlayer = _RecordingPCMStreamPlayer();
+      final practiceController = PracticeController(
+        client: FakePracticeClient(),
+        mediaClient: media,
+        audioPlayer: _SilentPracticeAudioPlayer(),
+        questionSpeechPlayer: nativePlayer,
+        automaticQuestionSpeechEnabled: false,
+      );
+      addTearDown(practiceController.dispose);
+      await activateTestPractice(
+        controller: practiceController,
+        scene: testScenes[2],
+      );
+
+      final renderer = FakeAvatarRenderer()..interruptGate = Completer<void>();
+      final avatarController = AvatarController(
+        renderer: renderer,
+        tokenClient: FakeAvatarSessionTokenClient(),
+        fallbackPlayback: (_) async {},
+        fallbackStop: () async {},
+        delay: (_) async {},
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PracticeAvatarSession(
+            practiceController: practiceController,
+            avatarControllerFactory: () => avatarController,
+            surfaceKey: const Key('disconnect-before-pcm-surface'),
+            builder: (context, avatar) =>
+                avatar.surfaceBuilder?.call(context) ?? const SizedBox.expand(),
+          ),
+        ),
+      );
+      await tester.pump();
+      media.release();
+      await _pumpUntil(tester, () => renderer.interruptCount == 1);
+
+      renderer.emit(
+        const AvatarRendererState(
+          connection: AvatarRendererConnection.failed,
+          failure: AvatarRendererFailure.network,
+        ),
+      );
+      renderer.interruptGate!.complete();
+      await tester.pumpAndSettle();
+
+      expect(renderer.sends, isEmpty);
+      expect(nativePlayer.events, <String>[
+        'start',
+        'append:4',
+        'append:4',
+        'finish',
+      ]);
+    },
+  );
+
   testWidgets('keeps a loaded avatar surface visible after a disconnect', (
     tester,
   ) async {

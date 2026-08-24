@@ -570,7 +570,10 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
       return;
     }
     final avatarController = _avatarController;
-    final useAvatar = avatarController.state.canUseAvatar;
+    final nativeOutput = widget.practiceController.questionSpeechPlayer;
+    if (nativeOutput == null) {
+      return;
+    }
     _speechInFlight = true;
     if (replay) {
       _replayLoading = true;
@@ -578,18 +581,13 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
     if (mounted) {
       setState(() {});
     }
-    final fallbackReason =
-        avatarController.state.failure?.name ??
-        (_readinessExpired ? 'readiness_timeout' : 'not_ready');
-    developer.log(
-      useAvatar
-          ? 'realtime_question_route output=avatar'
-          : 'realtime_question_route output=native reason=$fallbackReason',
-      name: 'speakup.avatar',
-    );
     try {
       await widget.practiceController.playCurrentQuestionSpeech(
-        output: useAvatar ? _AvatarQuestionSpeechSink(avatarController) : null,
+        output: _AvatarOrNativeQuestionSpeechSink(
+          avatarController,
+          nativeOutput,
+          _readinessExpired,
+        ),
       );
     } finally {
       _speechInFlight = false;
@@ -719,6 +717,87 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
       unawaited(_bestEffort(controller.close));
     }
     super.dispose();
+  }
+}
+
+final class _AvatarOrNativeQuestionSpeechSink implements PracticePCMStreamSink {
+  _AvatarOrNativeQuestionSpeechSink(
+    this._avatarController,
+    this._nativeOutput,
+    this._readinessExpired,
+  );
+
+  final AvatarController _avatarController;
+  final PracticePCMStreamSink _nativeOutput;
+  final bool _readinessExpired;
+  PracticePCMStreamSink? _selectedOutput;
+  bool _stopped = false;
+
+  @override
+  Future<void> startPCMStream() async {
+    if (_selectedOutput != null) {
+      throw StateError('A realtime question output was already selected.');
+    }
+    if (_avatarController.state.canUseAvatar) {
+      _selectedOutput = _AvatarQuestionSpeechSink(_avatarController);
+      try {
+        await _selectedOutput!.startPCMStream();
+        if (_stopped) {
+          await _selectedOutput!.stopPCMStream();
+          throw const AvatarRendererException(
+            AvatarRendererFailure.unavailable,
+          );
+        }
+        developer.log(
+          'realtime_question_route output=avatar',
+          name: 'speakup.avatar',
+        );
+        return;
+      } catch (_) {
+        if (_stopped) {
+          rethrow;
+        }
+        await _bestEffort(_selectedOutput!.stopPCMStream);
+      }
+    }
+
+    final fallbackReason =
+        _avatarController.state.failure?.name ??
+        (_readinessExpired ? 'readiness_timeout' : 'not_ready');
+    _selectedOutput = _nativeOutput;
+    await _nativeOutput.startPCMStream();
+    if (_stopped) {
+      await _nativeOutput.stopPCMStream();
+      throw const AvatarRendererException(AvatarRendererFailure.unavailable);
+    }
+    developer.log(
+      'realtime_question_route output=native reason=$fallbackReason',
+      name: 'speakup.avatar',
+    );
+  }
+
+  @override
+  Future<void> appendPCM(Uint8List bytes) {
+    final output = _selectedOutput;
+    if (_stopped || output == null) {
+      throw const AvatarRendererException(AvatarRendererFailure.unavailable);
+    }
+    return output.appendPCM(bytes);
+  }
+
+  @override
+  Future<void> finishPCMStream() {
+    final output = _selectedOutput;
+    if (_stopped || output == null) {
+      throw const AvatarRendererException(AvatarRendererFailure.unavailable);
+    }
+    return output.finishPCMStream();
+  }
+
+  @override
+  Future<void> stopPCMStream() async {
+    _stopped = true;
+    await _selectedOutput?.stopPCMStream();
   }
 }
 
