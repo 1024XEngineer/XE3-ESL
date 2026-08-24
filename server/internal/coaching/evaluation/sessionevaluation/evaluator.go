@@ -57,6 +57,15 @@ func Lineages(
 			Provider:        provider,
 			Model:           model,
 		},
+		IELTSPractice: evaluation.ConfigLineage{
+			SchemaVersion:   evaluation.ConfigLineageSchemaVersion,
+			StrategyRef:     evaluation.IELTSStrategyRef,
+			PipelineVersion: pipelineVersion,
+			PromptVersion:   ieltsPromptVersionV2,
+			ResultSchema:    report.FormalReportSchemaVersion,
+			Provider:        provider,
+			Model:           model,
+		},
 		General: evaluation.ConfigLineage{
 			SchemaVersion:   evaluation.ConfigLineageSchemaVersion,
 			StrategyRef:     evaluation.GeneralStrategyRef,

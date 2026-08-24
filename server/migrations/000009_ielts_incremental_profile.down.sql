@@ -1,5 +1,16 @@
 BEGIN;
 
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM evaluations
+        WHERE kind IN ('IELTS_PART1_PROFILE', 'IELTS_PART2_PROFILE')
+    ) THEN
+        RAISE EXCEPTION 'cannot roll back IELTS incremental profiles while profile evaluations exist';
+    END IF;
+END
+$$;
+
 ALTER TABLE evaluations DROP CONSTRAINT evaluations_kind_check;
 
 ALTER TABLE evaluations ADD CONSTRAINT evaluations_kind_check CHECK (

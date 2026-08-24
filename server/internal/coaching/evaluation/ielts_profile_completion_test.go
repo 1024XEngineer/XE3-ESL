@@ -121,3 +121,31 @@ func TestIELTSProfileEvidenceValidation(t *testing.T) {
 		t.Fatal("Part 3 evidence was accepted in a Part 1/2 profile")
 	}
 }
+
+func TestSessionCommandBuilderKeepsStandaloneIELTSOnV2(t *testing.T) {
+	lineage := func(strategy string, prompt string) ConfigLineage {
+		return ConfigLineage{
+			SchemaVersion: ConfigLineageSchemaVersion,
+			StrategyRef:   strategy, PipelineVersion: "session-evaluation/v1",
+			PromptVersion: prompt, ResultSchema: "report/v1",
+			Provider: "qianwen", Model: "qwen-plus",
+		}
+	}
+	builder, err := NewSessionCommandBuilder(SessionLineages{
+		Interview:     lineage(InterviewStrategyRef, "interview-report/v2"),
+		IELTSPractice: lineage(IELTSStrategyRef, "ielts-report/v2"),
+		IELTS:         lineage(IELTSStrategyRef, "ielts-report/v3"),
+		General:       lineage(GeneralStrategyRef, "general-report/v2"),
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	standalone, err := builder.lineageFor(IELTSSpeakingPracticeEvaluationPolicyRef)
+	if err != nil || standalone.PromptVersion != "ielts-report/v2" {
+		t.Fatalf("standalone IELTS lineage = %#v, %v", standalone, err)
+	}
+	fullMock, err := builder.lineageFor(IELTSSpeakingFullMockEvaluationPolicyRef)
+	if err != nil || fullMock.PromptVersion != "ielts-report/v3" {
+		t.Fatalf("full mock IELTS lineage = %#v, %v", fullMock, err)
+	}
+}
