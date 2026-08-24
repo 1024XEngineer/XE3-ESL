@@ -274,7 +274,7 @@ class _CoachingProfileCardState extends State<CoachingProfileCard> {
         final profile = widget.controller.profile;
         return InkWell(
           key: const Key('coaching-profile-card'),
-          borderRadius: BorderRadius.circular(22),
+          borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
           onTap: profile == null
               ? widget.controller.load
               : () => Navigator.of(context).push(
@@ -287,7 +287,7 @@ class _CoachingProfileCardState extends State<CoachingProfileCard> {
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
               border: Border.all(color: const Color(0xFFE5E5E5)),
-              borderRadius: BorderRadius.circular(22),
+              borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
             ),
             child: Row(
               children: [
