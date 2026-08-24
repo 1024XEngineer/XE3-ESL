@@ -46,7 +46,7 @@ printf '%s\n' \
   '{"created_at":"2026-08-24T01:02:03Z"}' \
   >"$temporary_directory/postgres-backups/20260824T010203Z-daily/metadata.json"
 printf '%s\n' \
-  '{"created_at":"2026-08-24T02:03:04Z"}' \
+  '{"created_at":"2026-08-24T02:03:04.110Z"}' \
   >"$temporary_directory/portal-backups/20260824T020304Z/metadata.json"
 
 cat >"$temporary_directory/fake-bin/docker" <<'EOF'
@@ -174,6 +174,11 @@ MISSING_SERVICE=portal PATH="$temporary_directory/fake-bin:$PATH" \
 
 expect_failure 'relative output path' env PATH="$temporary_directory/fake-bin:$PATH" \
   "$exporter" --output relative/speakup.prom
+
+printf '%s\n' '{"created_at":"not-an-rfc3339-time"}' \
+  >"$temporary_directory/portal-backups/20260824T020304Z/metadata.json"
+expect_failure 'invalid backup timestamp' env PATH="$temporary_directory/fake-bin:$PATH" \
+  "$exporter" --output "$metrics_file"
 
 OBSERVABILITY_ALERTMANAGER_CONFIG="$observability_directory/alertmanager.example.yml" \
 OBSERVABILITY_GRAFANA_HOST=monitor.speak-up.top \
