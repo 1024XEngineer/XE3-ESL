@@ -19,13 +19,26 @@ test("renders the standalone SpeakUp portal", async () => {
   assert.equal(response.status, 200);
 
   const html = await response.text();
-  assert.match(html, /为下一场重要的英文沟通，先练一遍/);
-  assert.match(html, /有记忆的 AI 口语老师/);
+  assert.match(html, /下一场重要的英文沟通，先练一遍/);
+  assert.match(
+    html,
+    /越用越懂你的 AI 口语老师，围绕真实任务陪你准备、开口和复盘/,
+  );
   assert.match(html, /Android 版本准备中/);
   assert.match(html, /正式 APK 就绪后开放下载/);
-  assert.match(html, /怎么练/);
-  assert.match(html, /长期记忆/);
+  assert.match(html, /href="#method"[^>]*>怎么练<\/a>/);
+  assert.match(
+    html,
+    /<section class="release-method" id="method"[^>]*><div class="release-section-heading"><h2 id="method-title">/,
+  );
+  assert.match(html, /href="#memory"[^>]*>长期记忆<\/a>/);
+  assert.match(
+    html,
+    /<section class="release-memory" id="memory"[^>]*><div><h2 id="memory-title">/,
+  );
   assert.match(html, /portal-interview-practice\.png/);
+  assert.match(html, /speak-up-wordmark-black\.png/);
+  assert.match(html, /speakup-mascot-blue\.png/);
   assert.doesNotMatch(html, /href="\/download\/android"/);
   assert.doesNotMatch(html, /常见问题|唯一官方下载|制品信息完整/);
   assert.doesNotMatch(html, /SHA-256|签名证书|ABI/);
