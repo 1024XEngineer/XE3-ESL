@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"time"
-	"unicode/utf8"
 
 	practiceinteraction "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/interaction"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/providerobservability"
@@ -181,10 +180,7 @@ func (synthesizer *PracticeVoiceSynthesizer) Synthesize(
 		ctx,
 		protocol.SynthesisRequest{Text: request.Text},
 	)
-	characters := 0
-	if err == nil {
-		characters = utf8.RuneCountInString(request.Text)
-	}
+	characters := observedSynthesisCharacters(request.Text, err)
 	recordSpeechCall(
 		synthesizer.synthesizer.observer,
 		providerobservability.CapabilitySpeechSynthesis,

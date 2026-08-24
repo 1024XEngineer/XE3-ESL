@@ -16,18 +16,10 @@ import (
 
 type providerRecorder struct {
 	observations []providerobservability.Observation
-	retries      int
 }
 
 func (recorder *providerRecorder) Record(observation providerobservability.Observation) {
 	recorder.observations = append(recorder.observations, observation)
-}
-
-func (recorder *providerRecorder) RecordRetry(
-	providerobservability.Provider,
-	providerobservability.Capability,
-) {
-	recorder.retries++
 }
 
 func TestTextClientRecordsSuccessUsageAndSanitizedTransportFailure(t *testing.T) {
@@ -69,6 +61,25 @@ func TestTextClientRecordsSuccessUsageAndSanitizedTransportFailure(t *testing.T)
 		}
 		if strings.Contains(fmt.Sprintf("%#v", observation), sensitiveError) {
 			t.Fatal("observation retained provider error text")
+		}
+	})
+
+	t.Run("reported usage survives local response validation", func(t *testing.T) {
+		recorder := &providerRecorder{}
+		generator := observedTextGenerator(t, recorder, doerFunc(func(*http.Request) (*http.Response, error) {
+			return jsonResponse(http.StatusOK, `{
+				"id":"chatcmpl-observed","model":"qwen3.5-flash",
+				"choices":[{"finish_reason":"stop","index":0,"message":{"role":"tool","content":"invalid"}}],
+				"usage":{"prompt_tokens":12,"completion_tokens":4,"total_tokens":16}
+			}`), nil
+		}))
+		if _, err := generator.Generate(context.Background(), validRequest()); err == nil {
+			t.Fatal("Generate error = nil")
+		}
+		observation := onlyObservation(t, recorder)
+		if observation.ErrorKind != providerobservability.ErrorInvalidResponse ||
+			observation.Usage.Tokens != 16 {
+			t.Fatalf("observation = %#v", observation)
 		}
 	})
 }
@@ -119,6 +130,73 @@ func TestObservedAssistantSpeechSessionRecordsCharactersOnce(t *testing.T) {
 	}
 }
 
+func TestObservedAssistantSpeechSessionCloseBeforeFinishIsCancelled(t *testing.T) {
+	recorder := &providerRecorder{}
+	session := &observedAssistantSpeechSession{
+		delegate: &assistantSpeechSessionStub{closeErr: errors.New("private provider close detail")},
+		recorder: recorder, startedAt: time.Now(),
+	}
+	if err := session.Close(); err == nil {
+		t.Fatal("Close error = nil")
+	}
+	observation := onlyObservation(t, recorder)
+	if observation.ErrorKind != providerobservability.ErrorCancelled {
+		t.Fatalf("observation = %#v", observation)
+	}
+}
+
+func TestObservedAssistantSpeechSessionKeepsCharactersAfterLocalValidationFailure(t *testing.T) {
+	recorder := &providerRecorder{}
+	finishErr := protocol.NewSpeechError(
+		protocol.SpeechOperationSynthesis,
+		protocol.ErrorInvalidResponse,
+		200,
+		"",
+		"",
+		errors.New("local final response validation"),
+	)
+	session := &observedAssistantSpeechSession{
+		delegate: &assistantSpeechSessionStub{finishErr: finishErr},
+		recorder: recorder, startedAt: time.Now(),
+	}
+	if err := session.AppendText("你好"); err != nil {
+		t.Fatalf("AppendText: %v", err)
+	}
+	if err := session.Finish(); !errors.Is(err, finishErr) {
+		t.Fatalf("Finish error = %v", err)
+	}
+	observation := onlyObservation(t, recorder)
+	if observation.ErrorKind != providerobservability.ErrorInvalidResponse ||
+		observation.Usage.Characters != 2 {
+		t.Fatalf("observation = %#v", observation)
+	}
+}
+
+func TestObservedSynthesisCharactersSurviveLocalResponseValidation(t *testing.T) {
+	invalidResponse := protocol.NewSpeechError(
+		protocol.SpeechOperationSynthesis,
+		protocol.ErrorInvalidResponse,
+		200,
+		"",
+		"",
+		errors.New("local response validation"),
+	)
+	if got := observedSynthesisCharacters("你好", invalidResponse); got != 2 {
+		t.Fatalf("observedSynthesisCharacters() = %d, want 2", got)
+	}
+	invalidRequest := protocol.NewSpeechError(
+		protocol.SpeechOperationSynthesis,
+		protocol.ErrorInvalidRequest,
+		0,
+		"",
+		"",
+		errors.New("local request validation"),
+	)
+	if got := observedSynthesisCharacters("你好", invalidRequest); got != 0 {
+		t.Fatalf("invalid request characters = %d, want 0", got)
+	}
+}
+
 func observedTextGenerator(
 	t *testing.T,
 	recorder providerobservability.Recorder,
@@ -147,10 +225,13 @@ func onlyObservation(
 	return recorder.observations[0]
 }
 
-type assistantSpeechSessionStub struct{}
+type assistantSpeechSessionStub struct {
+	finishErr error
+	closeErr  error
+}
 
 func (*assistantSpeechSessionStub) AppendText(string) error { return nil }
-func (*assistantSpeechSessionStub) Finish() error           { return nil }
-func (*assistantSpeechSessionStub) Close() error            { return nil }
+func (stub *assistantSpeechSessionStub) Finish() error      { return stub.finishErr }
+func (stub *assistantSpeechSessionStub) Close() error       { return stub.closeErr }
 
 var _ agentconversation.AssistantSpeechSession = (*assistantSpeechSessionStub)(nil)

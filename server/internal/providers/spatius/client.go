@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/avatar"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/providerobservability"
 )
 
 const maxResponseBody = 64 * 1024
@@ -23,12 +24,14 @@ type Config struct {
 	ConsoleBaseURL string
 	APIKey         string
 	Timeout        time.Duration
+	Observer       providerobservability.Recorder
 }
 
 type Client struct {
 	endpoint string
 	apiKey   string
 	client   *http.Client
+	observer providerobservability.Recorder
 }
 
 var _ avatar.TokenProvider = (*Client)(nil)
@@ -64,8 +67,9 @@ func newClient(
 			configuration.ConsoleBaseURL,
 			"/",
 		) + "/session-tokens",
-		apiKey: configuration.APIKey,
-		client: client,
+		apiKey:   configuration.APIKey,
+		client:   client,
+		observer: configuration.Observer,
 	}, nil
 }
 
@@ -98,8 +102,14 @@ func (client *Client) CreateSessionToken(
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-Api-Key", client.apiKey)
 
+	startedAt := time.Now()
+	metricKind := providerobservability.ErrorProviderUnavailable
+	defer func() {
+		recordSessionTokenCall(client.observer, startedAt, metricKind)
+	}()
 	response, err := client.client.Do(request)
 	if err != nil {
+		metricKind = sessionTokenTransportKind(ctx, err)
 		return avatar.ProviderSessionToken{}, fmt.Errorf(
 			"create avatar provider session token: %w",
 			avatar.ErrProviderUnavailable,
@@ -110,14 +120,17 @@ func (client *Client) CreateSessionToken(
 	switch {
 	case response.StatusCode == http.StatusTooManyRequests ||
 		response.StatusCode == http.StatusPaymentRequired:
+		metricKind = sessionTokenStatusKind(response.StatusCode)
 		discardResponse(response.Body)
 		return avatar.ProviderSessionToken{}, avatar.ErrProviderQuotaExhausted
 	case response.StatusCode < http.StatusOK ||
 		response.StatusCode >= http.StatusMultipleChoices:
+		metricKind = sessionTokenStatusKind(response.StatusCode)
 		discardResponse(response.Body)
 		return avatar.ProviderSessionToken{}, avatar.ErrProviderUnavailable
 	}
 	if !jsonContentType(response.Header.Get("Content-Type")) {
+		metricKind = providerobservability.ErrorInvalidResponse
 		discardResponse(response.Body)
 		return avatar.ProviderSessionToken{}, avatar.ErrInvalidProviderResponse
 	}
@@ -125,13 +138,20 @@ func (client *Client) CreateSessionToken(
 		response.Body,
 		maxResponseBody+1,
 	))
-	if err != nil || len(body) == 0 || len(body) > maxResponseBody {
+	if err != nil {
+		metricKind = sessionTokenTransportKind(ctx, err)
 		return avatar.ProviderSessionToken{}, avatar.ErrInvalidProviderResponse
 	}
-	token, err := decodeSessionToken(body)
+	if len(body) == 0 || len(body) > maxResponseBody {
+		metricKind = providerobservability.ErrorInvalidResponse
+		return avatar.ProviderSessionToken{}, avatar.ErrInvalidProviderResponse
+	}
+	token, tokenKind, err := decodeSessionToken(body)
+	metricKind = tokenKind
 	if err != nil {
 		return avatar.ProviderSessionToken{}, err
 	}
+	metricKind = providerobservability.ErrorNone
 	return avatar.ProviderSessionToken{
 		Value:     token,
 		ExpiresAt: expiresAt.UTC().Truncate(time.Second),
@@ -151,29 +171,31 @@ type providerError struct {
 	Status int `json:"status"`
 }
 
-func decodeSessionToken(body []byte) (string, error) {
+func decodeSessionToken(
+	body []byte,
+) (string, providerobservability.ErrorKind, error) {
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	var document sessionTokenResponse
 	if err := decoder.Decode(&document); err != nil {
-		return "", avatar.ErrInvalidProviderResponse
+		return "", providerobservability.ErrorInvalidResponse, avatar.ErrInvalidProviderResponse
 	}
 	var trailing any
 	if !errors.Is(decoder.Decode(&trailing), io.EOF) {
-		return "", avatar.ErrInvalidProviderResponse
+		return "", providerobservability.ErrorInvalidResponse, avatar.ErrInvalidProviderResponse
 	}
 	for _, providerError := range document.Errors {
 		if providerError.Status == http.StatusPaymentRequired ||
 			providerError.Status == http.StatusTooManyRequests {
-			return "", avatar.ErrProviderQuotaExhausted
+			return "", sessionTokenStatusKind(providerError.Status), avatar.ErrProviderQuotaExhausted
 		}
 	}
 	if len(document.Errors) > 0 {
-		return "", avatar.ErrProviderUnavailable
+		return "", sessionTokenStatusKind(document.Errors[0].Status), avatar.ErrProviderUnavailable
 	}
 	if !validSessionToken(document.SessionToken) {
-		return "", avatar.ErrInvalidProviderResponse
+		return "", providerobservability.ErrorInvalidResponse, avatar.ErrInvalidProviderResponse
 	}
-	return document.SessionToken, nil
+	return document.SessionToken, providerobservability.ErrorNone, nil
 }
 
 func validConsoleBaseURL(raw string) bool {

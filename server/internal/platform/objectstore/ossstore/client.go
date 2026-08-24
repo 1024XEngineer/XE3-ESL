@@ -261,12 +261,6 @@ func (c *Client) Put(
 	})
 	if err != nil {
 		if shouldReconcilePut(err) {
-			if c.observer != nil {
-				c.observer.RecordRetry(
-					providerobservability.ProviderAliyunOSS,
-					providerobservability.CapabilityObjectPut,
-				)
-			}
 			if existing, matches := c.reconcileExisting(ctx, request); matches {
 				return existing, nil
 			}
@@ -317,25 +311,13 @@ func metadataValue(metadata map[string]string, key string) string {
 func (c *Client) SignedGet(
 	ctx context.Context,
 	key string,
-) (callResult objectstore.SignedGetResult, callErr error) {
+) (objectstore.SignedGetResult, error) {
 	if err := objectstore.ValidateKey(c.prefix, key); err != nil {
 		return objectstore.SignedGetResult{}, err
 	}
 	if c.signedURLTTL <= 0 || c.signedURLTTL > 2*time.Minute {
 		return objectstore.SignedGetResult{}, objectstore.ErrInvalidTTL
 	}
-	startedAt := time.Now()
-	defer func() {
-		objectstore.RecordProviderCall(
-			c.observer,
-			providerobservability.ProviderAliyunOSS,
-			providerobservability.CapabilityObjectSignedGet,
-			startedAt,
-			callErr,
-			0,
-		)
-	}()
-
 	result, err := c.sdk.Presign(
 		ctx,
 		&aliyunoss.GetObjectRequest{
@@ -358,35 +340,43 @@ func (c *Client) SignedGet(
 func (c *Client) Open(
 	ctx context.Context,
 	key string,
-) (callResult io.ReadCloser, callErr error) {
+) (io.ReadCloser, error) {
 	if err := objectstore.ValidateKey(c.prefix, key); err != nil {
 		return nil, err
 	}
 	startedAt := time.Now()
-	defer func() {
+	recordFailure := func(err error) {
 		objectstore.RecordProviderCall(
 			c.observer,
 			providerobservability.ProviderAliyunOSS,
 			providerobservability.CapabilityObjectOpen,
 			startedAt,
-			callErr,
+			err,
 			0,
 		)
-	}()
+	}
 	result, err := c.sdk.GetObject(ctx, &aliyunoss.GetObjectRequest{
 		Bucket: aliyunoss.Ptr(c.bucket),
 		Key:    aliyunoss.Ptr(key),
 	})
 	if err != nil {
-		return nil, safeError("get", err)
+		callErr := safeError("get", err)
+		recordFailure(callErr)
+		return nil, callErr
 	}
 	if result.Body == nil || aliyunoss.ToString(result.ContentType) != "application/pdf" {
 		if result.Body != nil {
 			_ = result.Body.Close()
 		}
+		recordFailure(objectstore.ErrInvalidObject)
 		return nil, objectstore.ErrInvalidObject
 	}
-	return result.Body, nil
+	return objectstore.ObserveOpenReadCloser(
+		result.Body,
+		c.observer,
+		providerobservability.ProviderAliyunOSS,
+		startedAt,
+	), nil
 }
 
 func (c *Client) Delete(ctx context.Context, key string) (callErr error) {
@@ -420,6 +410,7 @@ type OperationError struct {
 	Code       string
 	StatusCode int
 	RequestID  string
+	cause      error
 }
 
 func (e *OperationError) Error() string {
@@ -436,14 +427,28 @@ func (e *OperationError) Error() string {
 	)
 }
 
-func (e *OperationError) Unwrap() error {
+func (e *OperationError) Unwrap() []error {
 	if e.Code == "FileAlreadyExists" {
-		return objectstore.ErrAlreadyExists
+		return []error{objectstore.ErrAlreadyExists}
 	}
-	return objectstore.ErrOperationFailed
+	causes := []error{objectstore.ErrOperationFailed}
+	if e.cause != nil {
+		causes = append(causes, e.cause)
+	}
+	return causes
+}
+
+// ProviderMetricErrorKind exposes only a bounded category, never provider
+// error text or identifiers.
+func (e *OperationError) ProviderMetricErrorKind() providerobservability.ErrorKind {
+	if e == nil {
+		return providerobservability.ErrorOperationFailed
+	}
+	return ossMetricErrorKind(e.Code, e.StatusCode, e.cause)
 }
 
 func safeError(operation string, err error) error {
+	cause := stableContextCause(err)
 	var serviceError *aliyunoss.ServiceError
 	if errors.As(err, &serviceError) {
 		return &OperationError{
@@ -451,7 +456,60 @@ func safeError(operation string, err error) error {
 			Code:       serviceError.Code,
 			StatusCode: serviceError.StatusCode,
 			RequestID:  serviceError.RequestID,
+			cause:      cause,
 		}
 	}
-	return &OperationError{Operation: operation}
+	return &OperationError{Operation: operation, cause: cause}
+}
+
+func stableContextCause(err error) error {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return context.DeadlineExceeded
+	case errors.Is(err, context.Canceled):
+		return context.Canceled
+	default:
+		return nil
+	}
+}
+
+func ossMetricErrorKind(
+	code string,
+	status int,
+	cause error,
+) providerobservability.ErrorKind {
+	switch {
+	case errors.Is(cause, context.DeadlineExceeded):
+		return providerobservability.ErrorTimeout
+	case errors.Is(cause, context.Canceled):
+		return providerobservability.ErrorCancelled
+	}
+	switch strings.ToLower(strings.TrimSpace(code)) {
+	case "filealreadyexists":
+		return providerobservability.ErrorAlreadyExists
+	case "invalidaccesskeyid", "signaturedoesnotmatch", "invalidsecuritytoken", "securitytokenexpired":
+		return providerobservability.ErrorAuthentication
+	case "accessdenied":
+		return providerobservability.ErrorAuthorization
+	case "requesttimeout":
+		return providerobservability.ErrorTimeout
+	case "toomanyrequests", "throttling", "slowdown":
+		return providerobservability.ErrorRateLimited
+	case "serviceunavailable", "internalerror":
+		return providerobservability.ErrorProviderUnavailable
+	}
+	switch {
+	case status == http.StatusUnauthorized:
+		return providerobservability.ErrorAuthentication
+	case status == http.StatusForbidden:
+		return providerobservability.ErrorAuthorization
+	case status == http.StatusRequestTimeout:
+		return providerobservability.ErrorTimeout
+	case status == http.StatusTooManyRequests:
+		return providerobservability.ErrorRateLimited
+	case status >= http.StatusInternalServerError:
+		return providerobservability.ErrorProviderUnavailable
+	default:
+		return providerobservability.ErrorOperationFailed
+	}
 }

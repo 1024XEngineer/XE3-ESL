@@ -75,20 +75,22 @@ func (client *Client) RecognizePDF(
 	callCtx, cancel := context.WithTimeout(ctx, client.config.Timeout)
 	defer cancel()
 	startedAt := time.Now()
+	providerErr := error(nil)
+	reportedPages := 0
 	defer func() {
 		if client.observer == nil {
 			return
 		}
-		pages := 0
-		if callErr == nil {
-			pages = callResult.PageCount
+		metricErr := callErr
+		if providerErr != nil {
+			metricErr = providerErr
 		}
 		client.observer.Record(providerobservability.Observation{
 			Provider:   providerobservability.ProviderPaddleOCR,
 			Capability: providerobservability.CapabilityDocumentOCR,
 			Duration:   time.Since(startedAt),
-			ErrorKind:  observedOCRFailure(callErr),
-			Usage:      providerobservability.Usage{Pages: float64(pages)},
+			ErrorKind:  observedOCRFailure(metricErr),
+			Usage:      providerobservability.Usage{Pages: float64(reportedPages)},
 		})
 	}()
 	result, err := client.parse(callCtx, &paddleapi.DocParsingRequest{
@@ -102,15 +104,51 @@ func (client *Client) RecognizePDF(
 			ReturnMarkdownImages:      paddleapi.Bool(false),
 		},
 	})
+	if result != nil {
+		reportedPages = len(result.Pages)
+	}
 	if err != nil {
+		providerErr = err
+		if ctx.Err() != nil {
+			providerErr = ctx.Err()
+		} else if callCtx.Err() != nil {
+			providerErr = callCtx.Err()
+		}
 		return resumeocr.Result{}, mapProviderFailure(err)
 	}
 	return mapResponse(result)
 }
 
 func observedOCRFailure(err error) providerobservability.ErrorKind {
-	if err == nil {
+	switch {
+	case err == nil:
 		return providerobservability.ErrorNone
+	case errors.Is(err, context.Canceled):
+		return providerobservability.ErrorCancelled
+	case errors.Is(err, context.DeadlineExceeded):
+		return providerobservability.ErrorTimeout
+	}
+	var auth *paddleapi.AuthError
+	if errors.As(err, &auth) {
+		return providerobservability.ErrorAuthentication
+	}
+	var invalidRequest *paddleapi.InvalidRequestError
+	if errors.As(err, &invalidRequest) {
+		return providerobservability.ErrorInvalidRequest
+	}
+	var rateLimit *paddleapi.RateLimitError
+	if errors.As(err, &rateLimit) {
+		return providerobservability.ErrorRateLimited
+	}
+	var responseFormat *paddleapi.ResponseFormatError
+	var resultParse *paddleapi.ResultParseError
+	if errors.As(err, &responseFormat) || errors.As(err, &resultParse) {
+		return providerobservability.ErrorInvalidResponse
+	}
+	var requestTimeout *paddleapi.RequestTimeoutError
+	var pollTimeout *paddleapi.PollTimeoutError
+	if errors.As(err, &requestTimeout) || errors.As(err, &pollTimeout) {
+		return providerobservability.ErrorTimeout
 	}
 	var failure *resumeocr.Failure
 	if !errors.As(err, &failure) {

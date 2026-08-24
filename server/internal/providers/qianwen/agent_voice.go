@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"time"
-	"unicode/utf8"
 
 	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
 	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
@@ -234,10 +233,7 @@ func (synthesizer *AgentVoiceSynthesizer) Synthesize(
 		ctx,
 		protocol.SynthesisRequest{Text: request.Text},
 	)
-	characters := 0
-	if err == nil {
-		characters = utf8.RuneCountInString(request.Text)
-	}
+	characters := observedSynthesisCharacters(request.Text, err)
 	recordSpeechCall(
 		synthesizer.synthesizer.observer,
 		providerobservability.CapabilitySpeechSynthesis,

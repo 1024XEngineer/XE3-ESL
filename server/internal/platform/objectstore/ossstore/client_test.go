@@ -135,6 +135,11 @@ func TestClientPutSignAndDelete(t *testing.T) {
 		putObservation.Usage.Bytes != float64(len(payload)) {
 		t.Fatalf("put observation = %#v, found = %v", putObservation, found)
 	}
+	deleteObservation, found := recorder.find(providerobservability.CapabilityObjectDelete)
+	if !found || deleteObservation.ErrorKind != providerobservability.ErrorNone ||
+		len(recorder.observations) != 2 {
+		t.Fatalf("local signing created a provider observation: %#v", recorder.observations)
+	}
 }
 
 func TestClientPutReconcilesLostResponse(t *testing.T) {
@@ -187,11 +192,77 @@ func TestClientPutReconcilesLostResponse(t *testing.T) {
 	}
 	observation, found := recorder.find(providerobservability.CapabilityObjectPut)
 	if !found || observation.ErrorKind != providerobservability.ErrorNone ||
-		observation.Usage.Bytes != 0 || recorder.retries != 1 {
+		observation.Usage.Bytes != 0 || len(recorder.observations) != 1 {
 		t.Fatalf(
-			"reconciled observation = %#v, found = %v, retries = %d",
-			observation, found, recorder.retries,
+			"reconciled observations = %#v, found = %v",
+			recorder.observations, found,
 		)
+	}
+}
+
+func TestClientRecordsPutOpenDeleteContextOutcome(t *testing.T) {
+	for causeName, cause := range map[string]error{
+		"cancelled": context.Canceled,
+		"timeout":   context.DeadlineExceeded,
+	} {
+		wantKind := providerobservability.ErrorCancelled
+		if errors.Is(cause, context.DeadlineExceeded) {
+			wantKind = providerobservability.ErrorTimeout
+		}
+		for operationName, capability := range map[string]providerobservability.Capability{
+			"put":    providerobservability.CapabilityObjectPut,
+			"open":   providerobservability.CapabilityObjectOpen,
+			"delete": providerobservability.CapabilityObjectDelete,
+		} {
+			t.Run(causeName+"/"+operationName, func(t *testing.T) {
+				client := newTestClient(t, &http.Client{Transport: roundTripFunc(
+					func(*http.Request) (*http.Response, error) { return nil, cause },
+				)})
+				recorder := &objectProviderRecorder{}
+				client.observer = recorder
+				var err error
+				switch operationName {
+				case "put":
+					payload := []byte("context outcome")
+					_, err = client.Put(context.Background(), objectstore.PutRequest{
+						Key: "audio/v1/assets/context.wav", Body: bytes.NewReader(payload),
+						Size: int64(len(payload)), ContentType: "audio/wav",
+						ChecksumSHA256: sha256Hex(payload),
+					})
+				case "open":
+					_, err = client.Open(context.Background(), "audio/v1/context.pdf")
+				case "delete":
+					err = client.Delete(context.Background(), "audio/v1/context.wav")
+				}
+				if !errors.Is(err, cause) {
+					t.Fatalf("operation error = %v, want context cause %v", err, cause)
+				}
+				observation, found := recorder.find(capability)
+				if !found || len(recorder.observations) != 1 ||
+					observation.ErrorKind != wantKind {
+					t.Fatalf("observations = %#v", recorder.observations)
+				}
+			})
+		}
+	}
+}
+
+func TestOperationErrorMapsBoundedProviderCategory(t *testing.T) {
+	tests := []struct {
+		code   string
+		status int
+		want   providerobservability.ErrorKind
+	}{
+		{code: "InvalidAccessKeyId", want: providerobservability.ErrorAuthentication},
+		{code: "AccessDenied", want: providerobservability.ErrorAuthorization},
+		{status: http.StatusTooManyRequests, want: providerobservability.ErrorRateLimited},
+		{status: http.StatusServiceUnavailable, want: providerobservability.ErrorProviderUnavailable},
+	}
+	for _, test := range tests {
+		err := &OperationError{Code: test.code, StatusCode: test.status}
+		if got := objectstore.ProviderErrorKind(err); got != test.want {
+			t.Fatalf("ProviderErrorKind(%q, %d) = %q, want %q", test.code, test.status, got, test.want)
+		}
 	}
 }
 
@@ -636,20 +707,12 @@ func response(status int, header http.Header, body string) *http.Response {
 
 type objectProviderRecorder struct {
 	observations []providerobservability.Observation
-	retries      int
 }
 
 func (recorder *objectProviderRecorder) Record(
 	observation providerobservability.Observation,
 ) {
 	recorder.observations = append(recorder.observations, observation)
-}
-
-func (recorder *objectProviderRecorder) RecordRetry(
-	providerobservability.Provider,
-	providerobservability.Capability,
-) {
-	recorder.retries++
 }
 
 func (recorder *objectProviderRecorder) find(

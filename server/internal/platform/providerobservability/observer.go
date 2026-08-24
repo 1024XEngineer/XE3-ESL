@@ -21,20 +21,23 @@ const (
 	ProviderPaddleOCR Provider = "paddleocr"
 	ProviderAliyunOSS Provider = "aliyun_oss"
 	ProviderQiniuKodo Provider = "qiniu_kodo"
+	ProviderXFYunISE  Provider = "xfyun_ise"
+	ProviderSpatius   Provider = "spatius"
 )
 
 // Capability is one bounded external operation family.
 type Capability string
 
 const (
-	CapabilityTextGeneration    Capability = "text_generation"
-	CapabilitySpeechRecognition Capability = "speech_recognition"
-	CapabilitySpeechSynthesis   Capability = "speech_synthesis"
-	CapabilityDocumentOCR       Capability = "document_ocr"
-	CapabilityObjectPut         Capability = "object_put"
-	CapabilityObjectSignedGet   Capability = "object_signed_get"
-	CapabilityObjectOpen        Capability = "object_open"
-	CapabilityObjectDelete      Capability = "object_delete"
+	CapabilityTextGeneration     Capability = "text_generation"
+	CapabilitySpeechRecognition  Capability = "speech_recognition"
+	CapabilitySpeechSynthesis    Capability = "speech_synthesis"
+	CapabilityDocumentOCR        Capability = "document_ocr"
+	CapabilitySpeechEvaluation   Capability = "speech_evaluation"
+	CapabilityAvatarSessionToken Capability = "avatar_session_token"
+	CapabilityObjectPut          Capability = "object_put"
+	CapabilityObjectOpen         Capability = "object_open"
+	CapabilityObjectDelete       Capability = "object_delete"
 )
 
 // ErrorKind is a stable, sanitized failure class.
@@ -88,14 +91,12 @@ type Observation struct {
 // Recorder is the narrow dependency used by provider adapters.
 type Recorder interface {
 	Record(Observation)
-	RecordRetry(Provider, Capability)
 }
 
 // Observer owns all external-provider metrics for one service registry.
 type Observer struct {
 	calls        *prometheus.CounterVec
 	duration     *prometheus.HistogramVec
-	retries      *prometheus.CounterVec
 	tokens       *prometheus.CounterVec
 	audioSeconds *prometheus.CounterVec
 	characters   *prometheus.CounterVec
@@ -119,8 +120,7 @@ func New(registerer prometheus.Registerer) (*Observer, error) {
 			Help:    "External provider call duration in seconds by bounded outcome.",
 			Buckets: []float64{0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300},
 		}, []string{"provider", "capability", "outcome"}),
-		retries: providerCounter("retries_total", "External provider retries."),
-		tokens:  providerCounter("usage_tokens_total", "Provider-reported tokens consumed."),
+		tokens: providerCounter("usage_tokens_total", "Provider-reported tokens consumed."),
 		audioSeconds: providerCounter(
 			"usage_audio_seconds_total", "Provider-reported audio seconds consumed.",
 		),
@@ -128,10 +128,10 @@ func New(registerer prometheus.Registerer) (*Observer, error) {
 			"usage_characters_total", "Provider-reported or submitted TTS characters consumed.",
 		),
 		pages: providerCounter("usage_pages_total", "Provider-reported document pages consumed."),
-		bytes: providerCounter("usage_bytes_total", "Provider-reported object bytes stored."),
+		bytes: providerCounter("usage_bytes_total", "Provider-reported or transferred object bytes."),
 	}
 	collectors := []prometheus.Collector{
-		observer.calls, observer.duration, observer.retries, observer.tokens,
+		observer.calls, observer.duration, observer.tokens,
 		observer.audioSeconds, observer.characters, observer.pages, observer.bytes,
 	}
 	registered := make([]prometheus.Collector, 0, len(collectors))
@@ -176,17 +176,6 @@ func (observer *Observer) Record(observation Observation) {
 	addPositive(observer.bytes, provider, capability, observation.Usage.Bytes)
 }
 
-// RecordRetry records a real additional provider attempt, not merely a
-// retryable error classification.
-func (observer *Observer) RecordRetry(provider Provider, capability Capability) {
-	if observer == nil {
-		panic("providerobservability: observer is required")
-	}
-	validateProvider(provider)
-	validateCapability(capability)
-	observer.retries.WithLabelValues(string(provider), string(capability)).Inc()
-}
-
 func addPositive(counter *prometheus.CounterVec, provider string, capability string, value float64) {
 	if value > 0 {
 		counter.WithLabelValues(provider, capability).Add(value)
@@ -216,7 +205,8 @@ func validateObservation(observation Observation) {
 func validateProvider(provider Provider) {
 	switch provider {
 	case ProviderQianwen, ProviderQiniu, ProviderPaddleOCR,
-		ProviderAliyunOSS, ProviderQiniuKodo:
+		ProviderAliyunOSS, ProviderQiniuKodo, ProviderXFYunISE,
+		ProviderSpatius:
 		return
 	default:
 		panic("providerobservability: invalid provider")
@@ -226,8 +216,10 @@ func validateProvider(provider Provider) {
 func validateCapability(capability Capability) {
 	switch capability {
 	case CapabilityTextGeneration, CapabilitySpeechRecognition,
-		CapabilitySpeechSynthesis, CapabilityDocumentOCR, CapabilityObjectPut,
-		CapabilityObjectSignedGet, CapabilityObjectOpen, CapabilityObjectDelete:
+		CapabilitySpeechSynthesis, CapabilityDocumentOCR,
+		CapabilitySpeechEvaluation, CapabilityAvatarSessionToken,
+		CapabilityObjectPut,
+		CapabilityObjectOpen, CapabilityObjectDelete:
 		return
 	default:
 		panic("providerobservability: invalid capability")

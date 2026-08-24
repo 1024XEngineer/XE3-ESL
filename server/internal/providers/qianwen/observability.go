@@ -128,6 +128,8 @@ type observedAssistantSpeechSession struct {
 	startedAt  time.Time
 	characters int
 	recorded   sync.Once
+	state      sync.Mutex
+	finished   bool
 }
 
 func (session *observedAssistantSpeechSession) AppendText(text string) error {
@@ -136,11 +138,16 @@ func (session *observedAssistantSpeechSession) AppendText(text string) error {
 		session.finish(err)
 		return err
 	}
+	session.state.Lock()
 	session.characters += utf8.RuneCountInString(text)
+	session.state.Unlock()
 	return nil
 }
 
 func (session *observedAssistantSpeechSession) Finish() error {
+	session.state.Lock()
+	session.finished = true
+	session.state.Unlock()
 	err := session.delegate.Finish()
 	session.finish(err)
 	return err
@@ -148,28 +155,26 @@ func (session *observedAssistantSpeechSession) Finish() error {
 
 func (session *observedAssistantSpeechSession) Close() error {
 	err := session.delegate.Close()
-	if err != nil {
-		session.finish(err)
-	} else {
-		session.recorded.Do(func() {
-			recordSpeechCall(
-				session.recorder,
-				providerobservability.CapabilitySpeechSynthesis,
-				session.startedAt,
-				protocol.SpeechUsage{},
-				context.Canceled,
-				0,
-			)
-		})
+	session.state.Lock()
+	finished := session.finished
+	session.state.Unlock()
+	if !finished {
+		session.finish(context.Canceled)
+		return err
 	}
+	session.finish(err)
 	return err
 }
 
 func (session *observedAssistantSpeechSession) finish(err error) {
 	session.recorded.Do(func() {
 		characters := 0
-		if err == nil {
+		kind := observedErrorKind(err)
+		if kind == providerobservability.ErrorNone ||
+			kind == providerobservability.ErrorInvalidResponse {
+			session.state.Lock()
 			characters = session.characters
+			session.state.Unlock()
 		}
 		recordSpeechCall(
 			session.recorder,
@@ -180,6 +185,15 @@ func (session *observedAssistantSpeechSession) finish(err error) {
 			characters,
 		)
 	})
+}
+
+func observedSynthesisCharacters(text string, err error) int {
+	kind := observedErrorKind(err)
+	if kind != providerobservability.ErrorNone &&
+		kind != providerobservability.ErrorInvalidResponse {
+		return 0
+	}
+	return utf8.RuneCountInString(text)
 }
 
 var _ agentconversation.AssistantSpeechSession = (*observedAssistantSpeechSession)(nil)

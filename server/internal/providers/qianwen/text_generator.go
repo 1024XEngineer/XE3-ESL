@@ -211,12 +211,13 @@ func (generator *textClient) Generate(
 	httpRequest.Header.Set("Accept", "application/json")
 
 	startedAt := time.Now()
+	observedUsage := protocol.TokenUsage{}
 	defer func() {
 		recordTextCall(
 			generator.observer,
 			generator.provider,
 			startedAt,
-			callResult.Usage,
+			observedUsage,
 			callErr,
 		)
 	}()
@@ -268,6 +269,7 @@ func (generator *textClient) Generate(
 			errors.New("decode Qianwen response"),
 		)
 	}
+	observedUsage = completion.reportedUsage()
 	result, err := completion.result(generator.provider, providerToInternal)
 	if err != nil {
 		return protocol.TextResult{}, protocol.NewGenerationError(
@@ -352,12 +354,13 @@ func (generator *textClient) GenerateStream(
 	httpRequest.Header.Set("Content-Type", "application/json")
 	httpRequest.Header.Set("Accept", "text/event-stream")
 	startedAt := time.Now()
+	observedUsage := protocol.TokenUsage{}
 	defer func() {
 		recordTextCall(
 			generator.observer,
 			generator.provider,
 			startedAt,
-			callResult.Usage,
+			observedUsage,
 			callErr,
 		)
 	}()
@@ -390,6 +393,7 @@ func (generator *textClient) GenerateStream(
 		generator.provider,
 		providerToInternal,
 		observer,
+		&observedUsage,
 	)
 	if err != nil {
 		var generationError *protocol.GenerationError
@@ -651,6 +655,7 @@ func decodeCompletionStream(
 	provider string,
 	providerToInternal map[string]string,
 	observer protocol.TextDeltaObserver,
+	reportedUsage *protocol.TokenUsage,
 ) (protocol.TextResult, error) {
 	scanner := bufio.NewScanner(io.LimitReader(body, maxStreamBytes+1))
 	scanner.Buffer(make([]byte, 16<<10), maxStreamEventBytes)
@@ -722,6 +727,13 @@ func decodeCompletionStream(
 			if usage.prompt < 0 || usage.completion < 0 || usage.total < 0 ||
 				usage.total-usage.prompt != usage.completion {
 				return protocol.TextResult{}, errors.New("Qianwen stream has invalid token usage")
+			}
+			if reportedUsage != nil {
+				*reportedUsage = protocol.TokenUsage{
+					InputTokens:  usage.prompt,
+					OutputTokens: usage.completion,
+					TotalTokens:  usage.total,
+				}
 			}
 			sawUsage = true
 			if len(chunk.Choices) == 0 {
@@ -955,6 +967,22 @@ func (response chatCompletionResponse) result(
 			TotalTokens:  *response.Usage.TotalTokens,
 		},
 	}, nil
+}
+
+func (response chatCompletionResponse) reportedUsage() protocol.TokenUsage {
+	if response.Usage == nil || response.Usage.PromptTokens == nil ||
+		response.Usage.CompletionTokens == nil || response.Usage.TotalTokens == nil ||
+		*response.Usage.PromptTokens < 0 || *response.Usage.CompletionTokens < 0 ||
+		*response.Usage.TotalTokens < 0 ||
+		*response.Usage.TotalTokens-*response.Usage.PromptTokens !=
+			*response.Usage.CompletionTokens {
+		return protocol.TokenUsage{}
+	}
+	return protocol.TokenUsage{
+		InputTokens:  *response.Usage.PromptTokens,
+		OutputTokens: *response.Usage.CompletionTokens,
+		TotalTokens:  *response.Usage.TotalTokens,
+	}
 }
 
 func toolNameMappings(request protocol.TextRequest) (map[string]string, map[string]string, error) {

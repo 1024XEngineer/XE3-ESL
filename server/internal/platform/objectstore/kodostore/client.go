@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net/http"
 	"net/url"
 	"os"
 	"regexp"
@@ -223,12 +224,6 @@ func (client *Client) Put(
 		Metadata:      map[string]string{"sha256": request.ChecksumSHA256},
 	})
 	if err != nil {
-		if client.observer != nil {
-			client.observer.RecordRetry(
-				providerobservability.ProviderQiniuKodo,
-				providerobservability.CapabilityObjectPut,
-			)
-		}
 		if existing, matches := client.reconcileExisting(ctx, request); matches {
 			return existing, nil
 		}
@@ -306,7 +301,7 @@ func metadataValue(metadata map[string]string, key string) string {
 func (client *Client) SignedGet(
 	ctx context.Context,
 	key string,
-) (callResult objectstore.SignedGetResult, callErr error) {
+) (objectstore.SignedGetResult, error) {
 	if client == nil || client.presigner == nil || ctx == nil {
 		return objectstore.SignedGetResult{}, objectstore.ErrOperationFailed
 	}
@@ -316,17 +311,6 @@ func (client *Client) SignedGet(
 	if client.signedURLTTL <= 0 || client.signedURLTTL > maxSignedURLTTL {
 		return objectstore.SignedGetResult{}, objectstore.ErrInvalidTTL
 	}
-	startedAt := time.Now()
-	defer func() {
-		objectstore.RecordProviderCall(
-			client.observer,
-			providerobservability.ProviderQiniuKodo,
-			providerobservability.CapabilityObjectSignedGet,
-			startedAt,
-			callErr,
-			0,
-		)
-	}()
 	request, err := client.presigner.PresignGetObject(
 		ctx,
 		&s3.GetObjectInput{Bucket: aws.String(client.bucket), Key: aws.String(key)},
@@ -349,7 +333,7 @@ func (client *Client) SignedGet(
 func (client *Client) Open(
 	ctx context.Context,
 	key string,
-) (callResult io.ReadCloser, callErr error) {
+) (io.ReadCloser, error) {
 	if client == nil || client.api == nil || ctx == nil {
 		return nil, objectstore.ErrOperationFailed
 	}
@@ -357,32 +341,41 @@ func (client *Client) Open(
 		return nil, err
 	}
 	startedAt := time.Now()
-	defer func() {
+	recordFailure := func(err error) {
 		objectstore.RecordProviderCall(
 			client.observer,
 			providerobservability.ProviderQiniuKodo,
 			providerobservability.CapabilityObjectOpen,
 			startedAt,
-			callErr,
+			err,
 			0,
 		)
-	}()
+	}
 	result, err := client.api.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(client.bucket),
 		Key:    aws.String(key),
 	})
 	if err != nil {
-		return nil, safeError("get", err)
+		callErr := safeError("get", err)
+		recordFailure(callErr)
+		return nil, callErr
 	}
 	if result == nil || result.Body == nil {
+		recordFailure(objectstore.ErrOperationFailed)
 		return nil, objectstore.ErrOperationFailed
 	}
 	mediaType, _, mediaErr := mime.ParseMediaType(aws.ToString(result.ContentType))
 	if mediaErr != nil || mediaType != "application/pdf" {
 		_ = result.Body.Close()
+		recordFailure(objectstore.ErrInvalidObject)
 		return nil, objectstore.ErrInvalidObject
 	}
-	return result.Body, nil
+	return objectstore.ObserveOpenReadCloser(
+		result.Body,
+		client.observer,
+		providerobservability.ProviderQiniuKodo,
+		startedAt,
+	), nil
 }
 
 func (client *Client) Delete(ctx context.Context, key string) (callErr error) {
@@ -418,6 +411,7 @@ type OperationError struct {
 	Code      string
 	Status    int
 	RequestID string
+	cause     error
 }
 
 func (err *OperationError) Error() string {
@@ -434,18 +428,34 @@ func (err *OperationError) Error() string {
 	)
 }
 
-func (err *OperationError) Unwrap() error {
+func (err *OperationError) Unwrap() []error {
 	if err.Code == "PreconditionFailed" || err.Status == 412 {
-		return objectstore.ErrAlreadyExists
+		return []error{objectstore.ErrAlreadyExists}
 	}
-	return objectstore.ErrOperationFailed
+	causes := []error{objectstore.ErrOperationFailed}
+	if err.cause != nil {
+		causes = append(causes, err.cause)
+	}
+	return causes
+}
+
+// ProviderMetricErrorKind exposes only a bounded category, never provider
+// error text or identifiers.
+func (err *OperationError) ProviderMetricErrorKind() providerobservability.ErrorKind {
+	if err == nil {
+		return providerobservability.ErrorOperationFailed
+	}
+	return kodoMetricErrorKind(err.Code, err.Status, err.cause)
 }
 
 func safeError(operation string, err error) error {
 	if err == nil {
 		return &OperationError{Operation: operation}
 	}
-	result := &OperationError{Operation: operation}
+	result := &OperationError{
+		Operation: operation,
+		cause:     stableContextCause(err),
+	}
 	var apiError smithy.APIError
 	if errors.As(err, &apiError) {
 		result.Code = safeIdentifier(apiError.ErrorCode())
@@ -456,6 +466,58 @@ func safeError(operation string, err error) error {
 		result.RequestID = safeIdentifier(responseError.ServiceRequestID())
 	}
 	return result
+}
+
+func stableContextCause(err error) error {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return context.DeadlineExceeded
+	case errors.Is(err, context.Canceled):
+		return context.Canceled
+	default:
+		return nil
+	}
+}
+
+func kodoMetricErrorKind(
+	code string,
+	status int,
+	cause error,
+) providerobservability.ErrorKind {
+	switch {
+	case errors.Is(cause, context.DeadlineExceeded):
+		return providerobservability.ErrorTimeout
+	case errors.Is(cause, context.Canceled):
+		return providerobservability.ErrorCancelled
+	}
+	switch strings.ToLower(strings.TrimSpace(code)) {
+	case "preconditionfailed":
+		return providerobservability.ErrorAlreadyExists
+	case "invalidaccesskeyid", "invalidaccesskey", "signaturedoesnotmatch", "invalidtoken":
+		return providerobservability.ErrorAuthentication
+	case "accessdenied":
+		return providerobservability.ErrorAuthorization
+	case "requesttimeout":
+		return providerobservability.ErrorTimeout
+	case "toomanyrequests", "throttling", "slowdown":
+		return providerobservability.ErrorRateLimited
+	case "serviceunavailable", "internalerror":
+		return providerobservability.ErrorProviderUnavailable
+	}
+	switch {
+	case status == http.StatusUnauthorized:
+		return providerobservability.ErrorAuthentication
+	case status == http.StatusForbidden:
+		return providerobservability.ErrorAuthorization
+	case status == http.StatusRequestTimeout:
+		return providerobservability.ErrorTimeout
+	case status == http.StatusTooManyRequests:
+		return providerobservability.ErrorRateLimited
+	case status >= http.StatusInternalServerError:
+		return providerobservability.ErrorProviderUnavailable
+	default:
+		return providerobservability.ErrorOperationFailed
+	}
 }
 
 func isNotFound(err error) bool {

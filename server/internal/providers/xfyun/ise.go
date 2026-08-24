@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/providerobservability"
 )
 
 const (
@@ -30,6 +32,7 @@ const (
 type ISEConfig struct {
 	Endpoint string
 	Timeout  time.Duration
+	Observer providerobservability.Recorder
 }
 
 type EvaluationRequest struct {
@@ -82,6 +85,7 @@ type Evaluator struct {
 	frameInterval time.Duration
 	dial          dialFunc
 	now           func() time.Time
+	observer      providerobservability.Recorder
 }
 
 type secret struct {
@@ -158,7 +162,8 @@ func NewEvaluator(
 		) (websocketConnection, *http.Response, error) {
 			return dialer.DialContext(ctx, target, nil)
 		},
-		now: time.Now,
+		now:      time.Now,
+		observer: config.Observer,
 	}, nil
 }
 
@@ -193,8 +198,14 @@ func (evaluator *Evaluator) Evaluate(
 	if err != nil {
 		return EvaluationResult{}, err
 	}
+	startedAt := time.Now()
+	metricKind := providerobservability.ErrorProviderUnavailable
+	defer func() {
+		recordISECall(evaluator.observer, startedAt, metricKind)
+	}()
 	connection, response, err := evaluator.dial(callContext, target)
 	if err != nil {
+		metricKind = iseHandshakeErrorKind(callContext, response, err)
 		if response != nil {
 			return EvaluationResult{}, fmt.Errorf(
 				"iFlytek ISE handshake failed with HTTP %d: %w",
@@ -207,12 +218,14 @@ func (evaluator *Evaluator) Evaluate(
 	defer connection.Close()
 	if deadline, ok := callContext.Deadline(); ok {
 		if err := connection.SetWriteDeadline(deadline); err != nil {
+			metricKind = iseTransportErrorKind(callContext, err)
 			return EvaluationResult{}, fmt.Errorf(
 				"set iFlytek ISE write deadline: %w",
 				err,
 			)
 		}
 		if err := connection.SetReadDeadline(deadline); err != nil {
+			metricKind = iseTransportErrorKind(callContext, err)
 			return EvaluationResult{}, fmt.Errorf(
 				"set iFlytek ISE read deadline: %w",
 				err,
@@ -244,23 +257,27 @@ func (evaluator *Evaluator) Evaluate(
 		},
 		Data: requestData{Status: 0, Data: ""},
 	}); err != nil {
+		metricKind = iseTransportErrorKind(callContext, err)
 		return EvaluationResult{}, fmt.Errorf(
 			"send iFlytek ISE parameters: %w",
 			err,
 		)
 	}
 	if err := evaluator.sendAudio(callContext, connection, request.Audio); err != nil {
+		metricKind = iseTransportErrorKind(callContext, err)
 		return EvaluationResult{}, err
 	}
 	for {
 		var message responseMessage
 		if err := connection.ReadJSON(&message); err != nil {
+			metricKind = iseTransportErrorKind(callContext, err)
 			return EvaluationResult{}, fmt.Errorf(
 				"read iFlytek ISE response: %w",
 				err,
 			)
 		}
 		if message.Code != 0 {
+			metricKind = iseProviderCodeKind(message.Code)
 			return EvaluationResult{}, fmt.Errorf(
 				"iFlytek ISE rejected request: code=%d message=%s sid=%s",
 				message.Code,
@@ -273,15 +290,18 @@ func (evaluator *Evaluator) Evaluate(
 		}
 		rawXML, err := base64.StdEncoding.DecodeString(message.Data.Data)
 		if err != nil {
+			metricKind = providerobservability.ErrorInvalidResponse
 			return EvaluationResult{}, errors.New(
 				"decode final iFlytek ISE result",
 			)
 		}
 		result, err := parseResult(rawXML)
 		if err != nil {
+			metricKind = providerobservability.ErrorInvalidResponse
 			return EvaluationResult{}, err
 		}
 		result.SessionID = strings.TrimSpace(message.SessionID)
+		metricKind = providerobservability.ErrorNone
 		return result, nil
 	}
 }

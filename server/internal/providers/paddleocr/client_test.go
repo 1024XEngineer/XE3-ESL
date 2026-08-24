@@ -99,7 +99,9 @@ func TestNewRejectsMissingTokenAndNonDocumentModel(t *testing.T) {
 }
 
 func TestClientRecordsPagesAndStableFailureOnly(t *testing.T) {
+	cancelledContext, cancel := context.WithCancel(context.Background())
 	for name, test := range map[string]struct {
+		ctx       context.Context
 		call      parseDocumentCall
 		wantKind  providerobservability.ErrorKind
 		wantPages float64
@@ -118,15 +120,34 @@ func TestClientRecordsPagesAndStableFailureOnly(t *testing.T) {
 			},
 			wantKind: providerobservability.ErrorTimeout,
 		},
+		"caller cancellation": {
+			ctx: cancelledContext,
+			call: func(callCtx context.Context, _ *paddleapi.DocParsingRequest) (*paddleapi.DocParsingResult, error) {
+				cancel()
+				<-callCtx.Done()
+				return nil, &paddleapi.PollTimeoutError{}
+			},
+			wantKind: providerobservability.ErrorCancelled,
+		},
+		"provider usage before local validation": {
+			call: func(context.Context, *paddleapi.DocParsingRequest) (*paddleapi.DocParsingResult, error) {
+				return &paddleapi.DocParsingResult{Pages: []paddleapi.DocParsingPage{
+					{}, {},
+				}}, nil
+			},
+			wantKind: providerobservability.ErrorInvalidResponse, wantPages: 2,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			recorder := &paddleProviderRecorder{}
 			client := testClient()
 			client.parse = test.call
 			client.observer = recorder
-			_, _ = client.RecognizePDF(
-				context.Background(), "https://private.example/file.pdf?secret",
-			)
+			callContext := test.ctx
+			if callContext == nil {
+				callContext = context.Background()
+			}
+			_, _ = client.RecognizePDF(callContext, "https://private.example/file.pdf?secret")
 			if len(recorder.observations) != 1 {
 				t.Fatalf("observations = %#v", recorder.observations)
 			}
@@ -141,6 +162,52 @@ func TestClientRecordsPagesAndStableFailureOnly(t *testing.T) {
 	}
 }
 
+func TestObservedOCRFailureMapsSDKTypesToClosedKinds(t *testing.T) {
+	for name, test := range map[string]struct {
+		err  error
+		want providerobservability.ErrorKind
+	}{
+		"authentication": {
+			err: &paddleapi.AuthError{}, want: providerobservability.ErrorAuthentication,
+		},
+		"invalid request": {
+			err: &paddleapi.InvalidRequestError{}, want: providerobservability.ErrorInvalidRequest,
+		},
+		"page limit": {
+			err:  resumeocr.NewFailure(resumeocr.FailurePageLimit),
+			want: providerobservability.ErrorPageLimitExceeded,
+		},
+		"rate limited": {
+			err: &paddleapi.RateLimitError{}, want: providerobservability.ErrorRateLimited,
+		},
+		"response format": {
+			err: &paddleapi.ResponseFormatError{}, want: providerobservability.ErrorInvalidResponse,
+		},
+		"result parse": {
+			err: &paddleapi.ResultParseError{}, want: providerobservability.ErrorInvalidResponse,
+		},
+		"request timeout": {
+			err: &paddleapi.RequestTimeoutError{}, want: providerobservability.ErrorTimeout,
+		},
+		"poll timeout": {
+			err: &paddleapi.PollTimeoutError{}, want: providerobservability.ErrorTimeout,
+		},
+		"service unavailable": {
+			err:  &paddleapi.ServiceUnavailableError{},
+			want: providerobservability.ErrorProviderUnavailable,
+		},
+		"network": {
+			err: &paddleapi.NetworkError{}, want: providerobservability.ErrorProviderUnavailable,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := observedOCRFailure(test.err); got != test.want {
+				t.Fatalf("observedOCRFailure() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 type paddleProviderRecorder struct {
 	observations []providerobservability.Observation
 }
@@ -149,12 +216,6 @@ func (recorder *paddleProviderRecorder) Record(
 	observation providerobservability.Observation,
 ) {
 	recorder.observations = append(recorder.observations, observation)
-}
-
-func (*paddleProviderRecorder) RecordRetry(
-	providerobservability.Provider,
-	providerobservability.Capability,
-) {
 }
 
 func testClient() *Client {

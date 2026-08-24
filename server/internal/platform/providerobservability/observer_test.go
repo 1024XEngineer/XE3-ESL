@@ -8,7 +8,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-func TestObserverRecordsBoundedCallsRetriesAndFixedUsage(t *testing.T) {
+func TestObserverRecordsBoundedCallsAndFixedUsage(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	observer, err := New(registry)
 	if err != nil {
@@ -27,19 +27,27 @@ func TestObserverRecordsBoundedCallsRetriesAndFixedUsage(t *testing.T) {
 		Provider: ProviderQianwen, Capability: CapabilitySpeechRecognition,
 		Duration: time.Millisecond, ErrorKind: ErrorCancelled,
 	})
-	observer.RecordRetry(ProviderQianwen, CapabilitySpeechRecognition)
+	observer.Record(Observation{
+		Provider: ProviderXFYunISE, Capability: CapabilitySpeechEvaluation,
+		Duration: time.Millisecond, ErrorKind: ErrorNone,
+	})
+	observer.Record(Observation{
+		Provider: ProviderSpatius, Capability: CapabilityAvatarSessionToken,
+		Duration: time.Millisecond, ErrorKind: ErrorAuthentication,
+	})
 
 	families, err := registry.Gather()
 	if err != nil {
 		t.Fatalf("Gather: %v", err)
 	}
 	want := map[string]float64{
-		`speakup_provider_calls_total|capability=speech_recognition,error_kind=none,outcome=success,provider=qianwen`:        1,
-		`speakup_provider_calls_total|capability=speech_recognition,error_kind=timeout,outcome=timeout,provider=qianwen`:     1,
-		`speakup_provider_calls_total|capability=speech_recognition,error_kind=cancelled,outcome=cancelled,provider=qianwen`: 1,
-		`speakup_provider_retries_total|capability=speech_recognition,provider=qianwen`:                                      1,
-		`speakup_provider_usage_audio_seconds_total|capability=speech_recognition,provider=qianwen`:                          3,
-		`speakup_provider_usage_tokens_total|capability=speech_recognition,provider=qianwen`:                                 7,
+		`speakup_provider_calls_total|capability=speech_recognition,error_kind=none,outcome=success,provider=qianwen`:             1,
+		`speakup_provider_calls_total|capability=speech_recognition,error_kind=timeout,outcome=timeout,provider=qianwen`:          1,
+		`speakup_provider_calls_total|capability=speech_recognition,error_kind=cancelled,outcome=cancelled,provider=qianwen`:      1,
+		`speakup_provider_calls_total|capability=speech_evaluation,error_kind=none,outcome=success,provider=xfyun_ise`:            1,
+		`speakup_provider_calls_total|capability=avatar_session_token,error_kind=authentication,outcome=failure,provider=spatius`: 1,
+		`speakup_provider_usage_audio_seconds_total|capability=speech_recognition,provider=qianwen`:                               3,
+		`speakup_provider_usage_tokens_total|capability=speech_recognition,provider=qianwen`:                                      7,
 	}
 	for _, family := range families {
 		for _, metric := range family.Metric {

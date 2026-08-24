@@ -333,7 +333,7 @@ func run() int {
 		}
 		acousticProviderTimeout = iseConfig.Timeout
 		acousticEvaluator, err =
-			app.NewEvaluationAcousticEvaluator(
+			providerFactory.EvaluationAcousticEvaluator(
 				databasePool.Native(),
 				recordingStore,
 				iseConfig,
@@ -474,6 +474,7 @@ func run() int {
 		avatarProvider, err = spatius.NewClient(spatius.Config{
 			Enabled: true, ConsoleBaseURL: spatiusConfig.ConsoleBaseURL,
 			APIKey: spatiusConfig.APIKey.Reveal(), Timeout: spatiusConfig.Timeout,
+			Observer: providerObserver,
 		})
 		if err != nil {
 			logger.Error("Practice avatar provider startup failed")
