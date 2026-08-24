@@ -139,7 +139,7 @@ final class SpatiusAvatarRenderer implements AvatarRenderer {
         );
       }
     };
-    controller.onConnectionState = (connection, _) {
+    controller.onConnectionState = (connection, errorMessage) {
       if (_closed || !identical(_controller, controller)) {
         return;
       }
@@ -163,7 +163,7 @@ final class SpatiusAvatarRenderer implements AvatarRenderer {
             ),
           );
         case kit.ConnectionState.failed:
-          _fail(AvatarRendererFailure.network);
+          _fail(_mapConnectionFailure(errorMessage));
       }
     };
     controller.onConversationState = (conversation) {
@@ -437,6 +437,40 @@ final class SpatiusAvatarRenderer implements AvatarRenderer {
       kit.AvatarError.failedToDownloadAvatarAssets ||
       kit.AvatarError.serverError => AvatarRendererFailure.network,
     };
+  }
+
+  static AvatarRendererFailure _mapConnectionFailure(String? errorMessage) {
+    final normalized = errorMessage?.toLowerCase();
+    if (normalized == null || normalized.isEmpty) {
+      return AvatarRendererFailure.network;
+    }
+    if (normalized.contains('sessiontokenexpired') ||
+        normalized.contains('session token expired') ||
+        normalized.contains('sessiontimeout') ||
+        normalized.contains('session timeout')) {
+      return AvatarRendererFailure.sessionExpired;
+    }
+    if (normalized.contains('appidunrecognized') ||
+        normalized.contains('avataridunrecognized') ||
+        normalized.contains('avatarassetmissing')) {
+      return AvatarRendererFailure.invalidConfiguration;
+    }
+    if (normalized.contains('insufficientbalance') ||
+        normalized.contains('insufficient balance')) {
+      return AvatarRendererFailure.insufficientBalance;
+    }
+    if (normalized.contains('concurrentlimitexceeded') ||
+        normalized.contains('concurrent limit')) {
+      return AvatarRendererFailure.sessionLimit;
+    }
+    if (normalized.contains('sessiontokeninvalid') ||
+        normalized.contains('session token invalid') ||
+        normalized.contains('authentication') ||
+        normalized.contains('unauthorized') ||
+        normalized.contains('forbidden')) {
+      return AvatarRendererFailure.authentication;
+    }
+    return AvatarRendererFailure.network;
   }
 }
 

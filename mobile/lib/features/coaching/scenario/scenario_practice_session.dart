@@ -18,6 +18,7 @@ typedef PracticeAvatarSessionBuilder =
 final class PracticeAvatarSessionView {
   const PracticeAvatarSessionView({
     required this.surfaceBuilder,
+    required this.surfaceVisible,
     required this.statusLabel,
     required this.interruptForUserTurn,
     required this.onReplayQuestion,
@@ -26,6 +27,7 @@ final class PracticeAvatarSessionView {
   });
 
   final WidgetBuilder? surfaceBuilder;
+  final bool surfaceVisible;
   final String? statusLabel;
   final Future<void> Function() interruptForUserTurn;
   final Future<void> Function()? onReplayQuestion;
@@ -85,6 +87,7 @@ class ScenarioPracticeSession extends StatelessWidget {
         practiceController: practiceController,
         questionSpeaker: practiceController.promptSpeaker,
         avatarSurfaceBuilder: avatar.surfaceBuilder,
+        avatarSurfaceVisible: avatar.surfaceVisible,
         avatarStatusLabel: avatar.statusLabel,
         onBeforeStartRecording: avatar.interruptForUserTurn,
         onBeforeSubmitText: avatar.interruptForUserTurn,
@@ -121,10 +124,14 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
   bool _foreground = true;
   bool _hasLiveAvatarController = true;
   bool _hasUsableAvatarSurface = false;
+  bool _reconnecting = false;
   bool _disposed = false;
   int _connectionAttempts = 0;
+  int _connectionAttemptSequence = 0;
   int _connectionOperationId = 0;
   int _generation = 0;
+  int _lastExhaustedAttemptSequence = 0;
+  String? _lastConnectionDiagnostic;
   Future<void> _lifecycleTail = Future<void>.value();
   Future<void> _controllerReplacementTail = Future<void>.value();
 
@@ -142,7 +149,7 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
       if (_foreground) {
         _scheduleSync();
       } else {
-        _queueLifecycleReconciliation();
+        _queueLifecycleReconciliation(replaceController: true);
       }
     });
   }
@@ -170,23 +177,23 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
       // Never replay an interrupted question just because the App resumes.
       _autoHandledQuestionId = widget.practiceController.questionId;
     }
-    _queueLifecycleReconciliation();
+    _queueLifecycleReconciliation(replaceController: !_foreground);
   }
 
-  void _queueLifecycleReconciliation() {
+  void _queueLifecycleReconciliation({bool replaceController = false}) {
     final previous = _lifecycleTail;
     final operation = previous
         .catchError((_) {})
-        .then((_) => _reconcileLifecycle());
+        .then((_) => _reconcileLifecycle(replaceController: replaceController));
     _lifecycleTail = operation;
     unawaited(operation);
   }
 
-  Future<void> _reconcileLifecycle() async {
+  Future<void> _reconcileLifecycle({required bool replaceController}) async {
     if (_disposed) {
       return;
     }
-    if (!_foreground || !_hasLiveAvatarController) {
+    if (replaceController || !_foreground || !_hasLiveAvatarController) {
       await _replaceAvatarController(resetConnectionAttempts: true);
     }
     if (!_disposed && _foreground && _hasLiveAvatarController) {
@@ -217,6 +224,7 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
       _hasUsableAvatarSurface = false;
       if (resetConnectionAttempts) {
         _connectionAttempts = 0;
+        _reconnecting = false;
       }
 
       if (_hasLiveAvatarController) {
@@ -270,6 +278,7 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
       return;
     }
     final avatarState = _avatarController.state;
+    _logConnectionState(avatarState);
     if (switch (avatarState.renderer.connection) {
       AvatarRendererConnection.surfaceReady ||
       AvatarRendererConnection.connecting ||
@@ -280,13 +289,25 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
     }
     if (avatarState.canUseAvatar) {
       _connectionAttempts = 0;
+      _reconnecting = false;
       _readinessTimer?.cancel();
       _readinessTimer = null;
+      _reconnectTimer?.cancel();
+      _reconnectTimer = null;
+    }
+    if (avatarState.failure != null) {
+      _readinessTimer?.cancel();
+      _readinessTimer = null;
+      if (!_isRetryableAvatarFailure(avatarState.failure) ||
+          _connectionAttempts >= _maximumConnectionAttempts) {
+        _reconnecting = false;
+      }
     }
     final sessionId = widget.practiceController.practiceSessionId;
     if (sessionId != null &&
         !_connectionInFlight &&
-        _isRetryableAvatarFailure(_avatarController.state.failure)) {
+        !avatarState.canUseAvatar &&
+        _isRetryableAvatarFailure(avatarState.failure)) {
       _scheduleReconnect(sessionId);
     }
     if (mounted) {
@@ -375,6 +396,7 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
     _connectionInFlight = true;
     _connectionAttemptedSessionId = sessionId;
     _connectionAttempts++;
+    _connectionAttemptSequence++;
     _readinessExpired = false;
     _readinessTimer?.cancel();
     _readinessTimer = null;
@@ -395,9 +417,18 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
         _readinessExpired = !retry;
         return;
       }
-      _reconnectTimer?.cancel();
-      _reconnectTimer = null;
       if (controller.state.canUseAvatar) {
+        _reconnectTimer?.cancel();
+        _reconnectTimer = null;
+        return;
+      }
+      final failure = controller.state.failure;
+      if (_isRetryableAvatarFailure(failure)) {
+        retry = true;
+        return;
+      }
+      if (failure != null) {
+        _readinessExpired = true;
         return;
       }
       _readinessTimer = Timer(_avatarReadinessTimeout, () {
@@ -410,6 +441,7 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
           return;
         }
         _readinessExpired = true;
+        _reconnecting = false;
         _scheduleSync();
         if (mounted) {
           setState(() {});
@@ -422,6 +454,7 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
         sessionId: sessionId,
       )) {
         _readinessExpired = true;
+        _reconnecting = false;
       }
     } catch (_) {
       if (_connectionFenceMatches(
@@ -469,12 +502,33 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
     if (_disposed ||
         !_foreground ||
         !_hasLiveAvatarController ||
-        _reconnectTimer != null ||
-        _connectionAttempts >= _maximumConnectionAttempts ||
         widget.practiceController.practiceSessionId != sessionId) {
       return;
     }
+    if (_connectionAttempts >= _maximumConnectionAttempts) {
+      _reconnecting = false;
+      if (_lastExhaustedAttemptSequence != _connectionAttemptSequence) {
+        _lastExhaustedAttemptSequence = _connectionAttemptSequence;
+        developer.log(
+          'avatar_connection attempt=$_connectionAttemptSequence '
+          'state=exhausted mapped_failure='
+          '${_avatarController.state.failure?.name ?? 'none'}',
+          name: 'speakup.avatar',
+        );
+      }
+      return;
+    }
+    if (_reconnectTimer != null) {
+      return;
+    }
+    _reconnecting = true;
     final delay = Duration(milliseconds: 500 * (_connectionAttempts + 1));
+    developer.log(
+      'avatar_connection attempt=$_connectionAttemptSequence '
+      'state=reconnect_scheduled mapped_failure='
+      '${_avatarController.state.failure?.name ?? 'none'}',
+      name: 'speakup.avatar',
+    );
     _reconnectTimer = Timer(delay, () async {
       _reconnectTimer = null;
       if (_disposed ||
@@ -669,6 +723,11 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
       return _foreground ? '正在重新连接情景角色' : '情景角色已暂停';
     }
     final state = _avatarController.state;
+    if (_reconnecting ||
+        (_isRetryableAvatarFailure(state.failure) &&
+            _connectionAttempts < _maximumConnectionAttempts)) {
+      return '正在重新连接情景角色';
+    }
     if (state.phase == AvatarControllerPhase.idle ||
         state.phase == AvatarControllerPhase.preparing) {
       return _readinessExpired ? '画面暂不可用，语音仍可继续' : '正在准备情景角色';
@@ -680,14 +739,32 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
     return null;
   }
 
+  void _logConnectionState(AvatarControllerState state) {
+    final diagnostic =
+        'avatar_connection attempt=$_connectionAttemptSequence '
+        'state=${state.renderer.connection.name} '
+        'mapped_failure=${state.failure?.name ?? 'none'}';
+    if (_lastConnectionDiagnostic == diagnostic) {
+      return;
+    }
+    _lastConnectionDiagnostic = diagnostic;
+    developer.log(diagnostic, name: 'speakup.avatar');
+  }
+
   @override
   Widget build(BuildContext context) {
+    final avatarController = _avatarController;
     return widget.builder(
       context,
       PracticeAvatarSessionView(
         surfaceBuilder: _hasLiveAvatarController && _hasUsableAvatarSurface
-            ? (_) => _avatarController.buildSurface(key: widget.surfaceKey)
+            ? (_) => KeyedSubtree(
+                key: ObjectKey(avatarController),
+                child: avatarController.buildSurface(key: widget.surfaceKey),
+              )
             : null,
+        surfaceVisible:
+            _hasLiveAvatarController && avatarController.state.canUseAvatar,
         statusLabel: _avatarStatusLabel,
         interruptForUserTurn: _interruptForUserTurn,
         onReplayQuestion: !widget.practiceController.canPlayQuestionAudio

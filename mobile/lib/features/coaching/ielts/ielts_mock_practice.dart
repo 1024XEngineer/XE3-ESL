@@ -79,6 +79,7 @@ class IeltsSpeakingMockPage extends StatefulWidget {
     this.speechFeedbackController,
     this.examinerSpeaker,
     this.avatarSurfaceBuilder,
+    this.avatarSurfaceVisible = true,
     this.avatarStatusLabel,
     this.onBeforeUserTurn,
     this.onReplayQuestionWithAvatar,
@@ -97,6 +98,7 @@ class IeltsSpeakingMockPage extends StatefulWidget {
   final SpeechFeedbackController? speechFeedbackController;
   final PracticePromptSpeaker? examinerSpeaker;
   final WidgetBuilder? avatarSurfaceBuilder;
+  final bool avatarSurfaceVisible;
   final String? avatarStatusLabel;
   final Future<void> Function()? onBeforeUserTurn;
   final Future<void> Function()? onReplayQuestionWithAvatar;
@@ -1606,6 +1608,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
                       imageKey: Key('ielts-avatar-placeholder'),
                     ),
                     surfaceBuilder: widget.avatarSurfaceBuilder,
+                    surfaceVisible: widget.avatarSurfaceVisible,
                     statusLabel: widget.avatarStatusLabel,
                     exitInFlight: _exitInFlight,
                     exitButtonKey: const Key('ielts-mock-exit'),
