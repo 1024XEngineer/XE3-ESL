@@ -1172,6 +1172,67 @@ void main() {
     );
   });
 
+  testWidgets('system back pops an authenticated nested route first', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const SpeakUpApp.preview());
+
+    final shellContext = tester.element(find.byType(SpeakUpShell));
+    Navigator.of(shellContext).pushNamed(AppRoutes.conversation);
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('conversation-route-back-button')),
+      findsOneWidget,
+    );
+
+    expect(await tester.binding.handlePopRoute(), isTrue);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('conversation-route-back-button')),
+      findsNothing,
+    );
+    expect(find.byKey(const Key('agent-home-page')), findsOneWidget);
+    expect(await tester.binding.handlePopRoute(), isFalse);
+  });
+
+  testWidgets('system back leaves a nested PopScope in control', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const SpeakUpApp.preview());
+    var intercepted = false;
+
+    final shellContext = tester.element(find.byType(SpeakUpShell));
+    Navigator.of(shellContext).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => PopScope<void>(
+          canPop: false,
+          onPopInvokedWithResult: (didPop, _) {
+            if (!didPop) {
+              intercepted = true;
+            }
+          },
+          child: const Scaffold(
+            body: Center(
+              child: Text(
+                'Active practice',
+                key: Key('blocking-practice-route'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+
+    expect(intercepted, isTrue);
+    expect(find.byKey(const Key('blocking-practice-route')), findsOneWidget);
+    expect(find.byKey(const Key('agent-home-page')), findsNothing);
+  });
+
   testWidgets('keeps primary tabs root-styled from the conversation route', (
     tester,
   ) async {
