@@ -106,6 +106,70 @@ func TestIELTSEvaluatorMarksPronunciationNotAssessedWhenCapabilityDisabled(t *te
 	}
 }
 
+func TestIELTSEvaluatorUsesCumulativeProfileAndOnlyPart3RawEvidence(t *testing.T) {
+	generator := &reportGeneratorFake{}
+	evaluators, err := New(generator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lineages, err := Lineages("qianwen", "qwen-plus")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := sessionSnapshotFixture()
+	now := snapshot.CompletedAt
+	snapshot.PlanSnapshot = json.RawMessage(`{"ielts_assignment":{"parts":[{"turn_blueprints":["p1"]},{"turn_blueprints":["p2"]},{"turn_blueprints":["p3"]}]}}`)
+	snapshot.Questions[0].Text = "Part 1 question"
+	snapshot.Turns[0].Transcript = "PART_ONE_RAW_TRANSCRIPT"
+	for index, transcript := range []string{"PART_TWO_RAW_TRANSCRIPT", "PART_THREE_RAW_TRANSCRIPT"} {
+		position := index + 2
+		questionID := fmt.Sprintf("40000000-0000-4000-8000-%012d", position)
+		turnID := fmt.Sprintf("30000000-0000-4000-8000-%012d", position)
+		snapshot.Questions = append(snapshot.Questions, evaluation.SessionEvidenceQuestion{
+			ID: questionID, Position: position, Text: fmt.Sprintf("Part %d question", position),
+			SpeakerParticipantID: "assistant-1", AddresseeParticipantIDs: []string{"user-1"},
+		})
+		snapshot.Turns = append(snapshot.Turns, evaluation.SessionEvidenceTurn{
+			ID: turnID, Position: position, QuestionID: questionID,
+			RespondentParticipantID: "user-1", Transcript: transcript,
+			Effective: true, ConfirmedAt: now,
+		})
+	}
+	snapshot.CumulativeProfile = &evaluation.IELTSCumulativeProfile{
+		SchemaVersion: evaluation.IELTSCumulativeProfileSchemaVersion,
+		SessionID:     snapshot.SessionID, CompletedParts: []int{1, 2},
+		Dimensions: cumulativeProfileDimensions(), Provider: "qianwen", Model: "qwen-plus",
+	}
+	snapshot.ProfileResolution = evaluation.IELTSFinalProfileResolved
+
+	if _, err := evaluators.EvaluateIELTS(
+		context.Background(), evaluation.Record{}, snapshot, lineages.IELTS,
+	); err != nil {
+		t.Fatalf("EvaluateIELTS() error = %v", err)
+	}
+	if strings.Contains(generator.last.UserPrompt, "PART_ONE_RAW_TRANSCRIPT") ||
+		strings.Contains(generator.last.UserPrompt, "PART_TWO_RAW_TRANSCRIPT") ||
+		!strings.Contains(generator.last.UserPrompt, "PART_THREE_RAW_TRANSCRIPT") ||
+		!strings.Contains(generator.last.UserPrompt, `"cumulative_profile"`) {
+		t.Fatalf("final incremental payload = %s", generator.last.UserPrompt)
+	}
+}
+
+func cumulativeProfileDimensions() []evaluation.IELTSProfileDimension {
+	result := make([]evaluation.IELTSProfileDimension, 0, 4)
+	for _, key := range []string{
+		"FLUENCY_COHERENCE", "LEXICAL_RESOURCE",
+		"GRAMMATICAL_RANGE_ACCURACY", "PRONUNCIATION",
+	} {
+		result = append(result, evaluation.IELTSProfileDimension{
+			Key: key, ProvisionalBandLow: 6, ProvisionalBandHigh: 7,
+			Coverage: 0.6, Confidence: 0.6,
+			Observations: []evaluation.IELTSProfileObservation{},
+		})
+	}
+	return result
+}
+
 func TestIELTSEvaluatorDoesNotScorePronunciationBelowMinimumCoverage(t *testing.T) {
 	generator := &reportGeneratorFake{}
 	evaluators, err := New(generator)
@@ -262,7 +326,7 @@ func TestSessionEvaluationPromptsRequireChineseFeedbackAndOriginalEvidence(t *te
 		version string
 	}{
 		{name: "interview", prompt: interviewSystemPromptV2, version: interviewPromptVersionV2},
-		{name: "IELTS", prompt: ieltsSystemPromptV2, version: ieltsPromptVersionV2},
+		{name: "IELTS", prompt: ieltsSystemPromptV3, version: ieltsPromptVersionV3},
 		{name: "general", prompt: generalSystemPromptV2, version: generalPromptVersionV2},
 	}
 	lineages, err := Lineages("qianwen", "qwen-plus")

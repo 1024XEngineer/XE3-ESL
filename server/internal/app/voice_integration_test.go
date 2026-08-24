@@ -1252,6 +1252,14 @@ func (voiceTestEvaluationBoundary) ScheduleConfirmedTurn(
 	return nil
 }
 
+func (voiceTestEvaluationBoundary) ScheduleCompletedPart(
+	context.Context,
+	pgx.Tx,
+	practice.IELTSPartProfileEvidence,
+) error {
+	return nil
+}
+
 func (voiceTestEvaluationBoundary) StatusURLForTurn(
 	context.Context,
 	requestcontext.Actor,
@@ -1265,6 +1273,7 @@ func voiceTestPracticeEvaluationSchedulers() PracticeEvaluationSchedulers {
 	return PracticeEvaluationSchedulers{
 		Completion:     boundary,
 		TurnFeedback:   boundary,
+		IELTSProfile:   boundary,
 		FeedbackReader: boundary,
 	}
 }

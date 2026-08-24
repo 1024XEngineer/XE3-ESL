@@ -80,6 +80,7 @@ func buildPracticeInteractionApplication(
 	configuration PracticeInteractionConfiguration,
 	completion practicepostgres.CompletionScheduler,
 	turnFeedback practicepostgres.TurnFeedbackScheduler,
+	profile practicepostgres.IELTSProfileScheduler,
 	feedbackReader practiceinteraction.TurnFeedbackStatusReader,
 	ids practice.PracticeResourceIDGenerator,
 	mediaService *sharedmedia.Service,
@@ -97,7 +98,7 @@ func buildPracticeInteractionApplication(
 		configuration.QuestionGenerator == nil ||
 		configuration.TemporaryAudio == nil ||
 		configuration.ASRLease <= 0 || completion == nil ||
-		turnFeedback == nil || feedbackReader == nil || ids == nil {
+		turnFeedback == nil || profile == nil || feedbackReader == nil || ids == nil {
 		return nil, nil, nil,
 			errors.New("bootstrap: Practice Interaction dependencies are required")
 	}
@@ -106,6 +107,7 @@ func buildPracticeInteractionApplication(
 		database,
 		completion,
 		turnFeedback,
+		profile,
 		ids,
 	)
 	if err != nil {

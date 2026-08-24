@@ -93,6 +93,12 @@ func run() int {
 		logger.Error("evaluation scoring startup failed")
 		return 1
 	}
+	evaluationProfileGenerator, err :=
+		providerFactory.EvaluationProfileGenerator(textConfig)
+	if err != nil {
+		logger.Error("evaluation profile startup failed")
+		return 1
+	}
 	evaluationSpeechFeedbackGenerator, err :=
 		providerFactory.EvaluationSpeechFeedbackGenerator(textConfig)
 	if err != nil {
@@ -365,17 +371,27 @@ func run() int {
 	evaluationComposition, err := app.NewEvaluationComposition(
 		databasePool.Native(),
 		evaluationScoringGenerator,
+		evaluationProfileGenerator,
 		evaluationSpeechFeedbackGenerator,
 		acousticEvaluator,
 		app.EvaluationConfiguration{
 			Provider:     textConfig.Provider,
 			SessionModel: textConfig.EvaluationModel,
+			ProfileModel: textConfig.EvaluationModel,
 			SpeechModel:  textConfig.SpeechFeedbackModel,
 			Worker: evaluation.WorkerConfiguration{
 				SessionLane: evaluation.ClaimLane{
 					Kinds:         []evaluation.Kind{evaluation.KindSessionReport},
 					LeaseDuration: sessionLease,
 					MaxAttempts:   3,
+				},
+				ProfileLane: evaluation.ClaimLane{
+					Kinds: []evaluation.Kind{
+						evaluation.KindIELTSPart1Profile,
+						evaluation.KindIELTSPart2Profile,
+					},
+					LeaseDuration: 90 * time.Second,
+					MaxAttempts:   2,
 				},
 				SpeechLane: evaluation.ClaimLane{
 					Kinds: []evaluation.Kind{
@@ -385,14 +401,16 @@ func run() int {
 					LeaseDuration: speechLease,
 					MaxAttempts:   3,
 				},
-				AcousticsEnabled:  acousticsEnabled,
-				InterviewDeadline: singleRoundDeadline,
-				IELTSDeadline:     ieltsDeadline,
-				GeneralDeadline:   singleRoundDeadline,
-				SpeechDeadline:    speechDeadline,
-				RetryDelay:        time.Second,
-				DependencyDelay:   5 * time.Second,
-				FinalizeTimeout:   5 * time.Second,
+				AcousticsEnabled:         acousticsEnabled,
+				InterviewDeadline:        singleRoundDeadline,
+				IELTSDeadline:            ieltsDeadline,
+				GeneralDeadline:          singleRoundDeadline,
+				SpeechDeadline:           speechDeadline,
+				ProfileDeadline:          45 * time.Second,
+				RetryDelay:               time.Second,
+				DependencyDelay:          5 * time.Second,
+				ProfileDependencyMaxWait: 20 * time.Second,
+				FinalizeTimeout:          5 * time.Second,
 			},
 		},
 	)

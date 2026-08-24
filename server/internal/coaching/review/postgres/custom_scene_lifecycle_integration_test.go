@@ -113,6 +113,7 @@ INSERT INTO agent_threads (id,user_id) VALUES ($2,$1)
 		pool,
 		completionScheduler,
 		noopTurnFeedbackScheduler{},
+		noopIELTSProfileScheduler{},
 		identity.NewUUIDv4Generator(nil),
 	)
 	if err != nil {
@@ -261,6 +262,7 @@ func customLifecycleEvaluationRuntime(
 	worker, err := evaluation.NewWorker(
 		store,
 		sessionEvaluator,
+		customLifecycleProfileEvaluator{},
 		speechEvaluator,
 		nil,
 		nil,
@@ -270,6 +272,17 @@ func customLifecycleEvaluationRuntime(
 		t.Fatalf("compose Custom Evaluation worker: %v", err)
 	}
 	return store, scheduler, worker
+}
+
+type customLifecycleProfileEvaluator struct{}
+
+func (customLifecycleProfileEvaluator) EvaluateProfile(
+	context.Context,
+	evaluation.Record,
+	evaluation.IELTSProfileInputSnapshot,
+	evaluation.ConfigLineage,
+) (json.RawMessage, error) {
+	return nil, errors.New("unexpected IELTS profile evaluation")
 }
 
 type customLifecycleReportGenerator struct{}
@@ -336,6 +349,14 @@ func customLifecycleWorkerConfiguration() evaluation.WorkerConfiguration {
 			LeaseDuration: 3 * time.Minute,
 			MaxAttempts:   3,
 		},
+		ProfileLane: evaluation.ClaimLane{
+			Kinds: []evaluation.Kind{
+				evaluation.KindIELTSPart1Profile,
+				evaluation.KindIELTSPart2Profile,
+			},
+			LeaseDuration: 3 * time.Minute,
+			MaxAttempts:   3,
+		},
 		SpeechLane: evaluation.ClaimLane{
 			Kinds: []evaluation.Kind{
 				evaluation.KindPracticeTurnFeedback,
@@ -344,13 +365,15 @@ func customLifecycleWorkerConfiguration() evaluation.WorkerConfiguration {
 			LeaseDuration: 3 * time.Minute,
 			MaxAttempts:   3,
 		},
-		InterviewDeadline: 30 * time.Second,
-		IELTSDeadline:     110 * time.Second,
-		GeneralDeadline:   30 * time.Second,
-		SpeechDeadline:    30 * time.Second,
-		RetryDelay:        time.Second,
-		DependencyDelay:   time.Second,
-		FinalizeTimeout:   5 * time.Second,
+		InterviewDeadline:        30 * time.Second,
+		IELTSDeadline:            110 * time.Second,
+		GeneralDeadline:          30 * time.Second,
+		SpeechDeadline:           30 * time.Second,
+		ProfileDeadline:          30 * time.Second,
+		RetryDelay:               time.Second,
+		DependencyDelay:          time.Second,
+		ProfileDependencyMaxWait: 20 * time.Second,
+		FinalizeTimeout:          5 * time.Second,
 	}
 }
 

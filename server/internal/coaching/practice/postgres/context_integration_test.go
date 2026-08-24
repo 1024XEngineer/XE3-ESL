@@ -33,6 +33,7 @@ func TestCreateSessionReplaysOnlyTheSameIdempotencyIntent(t *testing.T) {
 		pool,
 		contextCompletionScheduler{},
 		contextTurnFeedbackScheduler{},
+		contextIELTSProfileScheduler{},
 		contextIDGenerator{},
 	)
 	if err != nil {
@@ -185,6 +186,16 @@ func (contextTurnFeedbackScheduler) ScheduleConfirmedTurn(
 	context.Context,
 	pgx.Tx,
 	practice.TurnFeedbackEvidence,
+) error {
+	return nil
+}
+
+type contextIELTSProfileScheduler struct{}
+
+func (contextIELTSProfileScheduler) ScheduleCompletedPart(
+	context.Context,
+	pgx.Tx,
+	practice.IELTSPartProfileEvidence,
 ) error {
 	return nil
 }

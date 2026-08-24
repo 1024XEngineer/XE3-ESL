@@ -25,12 +25,14 @@ func New(
 	pool *pgxpool.Pool,
 	completion practicepostgres.CompletionScheduler,
 	turnFeedback practicepostgres.TurnFeedbackScheduler,
+	profile practicepostgres.IELTSProfileScheduler,
 	ids practice.PracticeResourceIDGenerator,
 ) (*Repository, error) {
 	practiceRepository, err := practicepostgres.New(
 		pool,
 		completion,
 		turnFeedback,
+		profile,
 		ids,
 	)
 	if err != nil {

@@ -40,6 +40,123 @@ func TestWorkerConfigurationRejectsIELTSDeadlineThatCutsRepairRound(t *testing.T
 	}
 }
 
+func TestWorkerPart2ProfileReusesReadyPart1Profile(t *testing.T) {
+	now := time.Now().UTC()
+	claim := profileClaimFixture(t, now, IELTSProfileStagePart2)
+	part1 := cumulativeProfileFixture(claim.SourceID, []int{1})
+	part1Result, _, err := EncodeStrict(part1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &workerStoreFake{
+		claims: []Claim{claim},
+		records: map[Kind]Record{
+			KindIELTSPart1Profile: {Status: JobReady, Result: part1Result},
+		},
+	}
+	profiles := &profileEvaluatorsFake{}
+	worker, err := NewWorker(
+		store, &sessionEvaluatorsFake{}, profiles, &speechEvaluatorsFake{},
+		&acousticEvaluatorFake{}, store, workerConfigurationFixture(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	processed, err := worker.ProcessProfile(context.Background())
+	if err != nil || !processed || profiles.calls != 1 ||
+		profiles.last.DependencyResolution != IELTSProfileDependencyResolved ||
+		profiles.last.PreviousProfile == nil || len(store.checkpoints) != 1 ||
+		len(store.completions) != 1 {
+		t.Fatalf("ProcessProfile=(%t,%v), calls=%d snapshot=%#v checkpoints=%d completions=%d",
+			processed, err, profiles.calls, profiles.last,
+			len(store.checkpoints), len(store.completions))
+	}
+}
+
+func TestWorkerPart2ProfileDefersWhilePart1IsRunning(t *testing.T) {
+	now := time.Now().UTC()
+	claim := profileClaimFixture(t, now, IELTSProfileStagePart2)
+	claim.CreatedAt = now
+	store := &workerStoreFake{
+		claims: []Claim{claim},
+		records: map[Kind]Record{
+			KindIELTSPart1Profile: {Status: JobRunning},
+		},
+	}
+	profiles := &profileEvaluatorsFake{}
+	worker, err := NewWorker(
+		store, &sessionEvaluatorsFake{}, profiles, &speechEvaluatorsFake{},
+		&acousticEvaluatorFake{}, store, workerConfigurationFixture(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	processed, err := worker.ProcessProfile(context.Background())
+	if err != nil || !processed || profiles.calls != 0 ||
+		len(store.deferrals) != 1 || len(store.checkpoints) != 0 ||
+		len(store.completions) != 0 {
+		t.Fatalf("ProcessProfile=(%t,%v), calls=%d deferrals=%d checkpoints=%d completions=%d",
+			processed, err, profiles.calls, len(store.deferrals),
+			len(store.checkpoints), len(store.completions))
+	}
+}
+
+func TestWorkerPart2ProfileFallsBackWhenPart1IsMissing(t *testing.T) {
+	now := time.Now().UTC()
+	claim := profileClaimFixture(t, now, IELTSProfileStagePart2)
+	store := &workerStoreFake{claims: []Claim{claim}}
+	profiles := &profileEvaluatorsFake{}
+	worker, err := NewWorker(
+		store, &sessionEvaluatorsFake{}, profiles, &speechEvaluatorsFake{},
+		&acousticEvaluatorFake{}, store, workerConfigurationFixture(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	processed, err := worker.ProcessProfile(context.Background())
+	if err != nil || !processed || profiles.calls != 1 ||
+		profiles.last.DependencyResolution != IELTSProfileDependencyFallback ||
+		profiles.last.PreviousProfile != nil || len(store.checkpoints) != 1 ||
+		len(store.completions) != 1 {
+		t.Fatalf("ProcessProfile=(%t,%v), calls=%d snapshot=%#v checkpoints=%d completions=%d",
+			processed, err, profiles.calls, profiles.last,
+			len(store.checkpoints), len(store.completions))
+	}
+}
+
+func TestWorkerFinalReportReusesReadyPart2Profile(t *testing.T) {
+	now := time.Now().UTC()
+	claim := sessionClaimFixture(t, now, IELTSStrategyRef)
+	part2 := cumulativeProfileFixture(claim.SourceID, []int{1, 2})
+	part2Result, _, err := EncodeStrict(part2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &workerStoreFake{
+		claims: []Claim{claim},
+		records: map[Kind]Record{
+			KindIELTSPart2Profile: {Status: JobReady, Result: part2Result},
+		},
+	}
+	sessions := &sessionEvaluatorsFake{}
+	worker := workerFixture(
+		t, store, sessions, &speechEvaluatorsFake{}, &acousticEvaluatorFake{},
+	)
+
+	processed, err := worker.ProcessSession(context.Background())
+	if err != nil || !processed || sessions.ieltsCalls != 1 ||
+		sessions.lastIELTSSnapshot.ProfileResolution != IELTSFinalProfileResolved ||
+		sessions.lastIELTSSnapshot.CumulativeProfile == nil ||
+		len(store.checkpoints) != 1 || len(store.completions) != 1 {
+		t.Fatalf("ProcessSession=(%t,%v), calls=%d snapshot=%#v checkpoints=%d completions=%d",
+			processed, err, sessions.ieltsCalls, sessions.lastIELTSSnapshot,
+			len(store.checkpoints), len(store.completions))
+	}
+}
+
 func TestWorkerReusesAcousticCheckpointAfterTextEvaluationRetry(t *testing.T) {
 	now := time.Now().UTC()
 	first := speechClaimFixture(t, now, KindPracticeTurnFeedback, nil)
@@ -191,15 +308,16 @@ func TestWorkerIELTSReportReusesTurnAcousticsAfterTextRetry(t *testing.T) {
 	)
 
 	processed, err := worker.ProcessSession(context.Background())
-	if !processed || err == nil || len(store.checkpoints) != 1 ||
+	if !processed || err == nil || len(store.checkpoints) != 2 ||
 		store.sessionAcousticCalls != 1 {
 		t.Fatalf(
 			"first ProcessSession = (%v, %v), checkpoints=%d reads=%d",
 			processed, err, len(store.checkpoints), store.sessionAcousticCalls,
 		)
 	}
-	store.claims[1].InputSnapshot = store.checkpoints[0].InputSnapshot
-	store.claims[1].InputHash = store.checkpoints[0].InputHash
+	latestCheckpoint := store.checkpoints[len(store.checkpoints)-1]
+	store.claims[1].InputSnapshot = latestCheckpoint.InputSnapshot
+	store.claims[1].InputHash = latestCheckpoint.InputHash
 
 	processed, err = worker.ProcessSession(context.Background())
 	if err != nil {
@@ -333,6 +451,7 @@ type workerStoreFake struct {
 	deferrals            []Deferral
 	sessionAcoustics     SessionAcousticRead
 	sessionAcousticCalls int
+	records              map[Kind]Record
 }
 
 func (store *workerStoreFake) DeferClaim(_ context.Context, deferral Deferral) error {
@@ -355,11 +474,17 @@ func (store *workerStoreFake) Queue(context.Context, QueueCommand) (Record, bool
 }
 
 func (store *workerStoreFake) GetRecordBySource(
-	context.Context,
-	string,
-	Kind,
-	string,
+	_ context.Context,
+	_ string,
+	kind Kind,
+	_ string,
 ) (Record, error) {
+	if record, exists := store.records[kind]; exists {
+		return record, nil
+	}
+	if kind == KindIELTSPart1Profile || kind == KindIELTSPart2Profile {
+		return Record{}, ErrNotFound
+	}
 	return Record{}, errors.New("unexpected GetRecordBySource")
 }
 
@@ -523,6 +648,7 @@ func workerFixture(
 	worker, err := NewWorker(
 		store,
 		sessions,
+		&profileEvaluatorsFake{},
 		speech,
 		acoustics,
 		store.(*workerStoreFake),
@@ -541,6 +667,11 @@ func workerConfigurationFixture() WorkerConfiguration {
 			LeaseDuration: 3 * time.Minute,
 			MaxAttempts:   3,
 		},
+		ProfileLane: ClaimLane{
+			Kinds:         []Kind{KindIELTSPart1Profile, KindIELTSPart2Profile},
+			LeaseDuration: 90 * time.Second,
+			MaxAttempts:   2,
+		},
 		SpeechLane: ClaimLane{
 			Kinds: []Kind{
 				KindPracticeTurnFeedback,
@@ -549,14 +680,123 @@ func workerConfigurationFixture() WorkerConfiguration {
 			LeaseDuration: 13 * time.Minute,
 			MaxAttempts:   3,
 		},
-		AcousticsEnabled:  true,
-		InterviewDeadline: 45 * time.Second,
-		IELTSDeadline:     110 * time.Second,
-		GeneralDeadline:   45 * time.Second,
-		SpeechDeadline:    11*time.Minute + 30*time.Second,
-		RetryDelay:        time.Second,
-		DependencyDelay:   5 * time.Second,
-		FinalizeTimeout:   5 * time.Second,
+		AcousticsEnabled:         true,
+		InterviewDeadline:        45 * time.Second,
+		IELTSDeadline:            110 * time.Second,
+		GeneralDeadline:          45 * time.Second,
+		SpeechDeadline:           11*time.Minute + 30*time.Second,
+		ProfileDeadline:          45 * time.Second,
+		RetryDelay:               time.Second,
+		DependencyDelay:          5 * time.Second,
+		ProfileDependencyMaxWait: 20 * time.Second,
+		FinalizeTimeout:          5 * time.Second,
+	}
+}
+
+type profileEvaluatorsFake struct {
+	calls int
+	last  IELTSProfileInputSnapshot
+}
+
+func (evaluator *profileEvaluatorsFake) EvaluateProfile(
+	_ context.Context,
+	_ Record,
+	snapshot IELTSProfileInputSnapshot,
+	_ ConfigLineage,
+) (json.RawMessage, error) {
+	evaluator.calls++
+	evaluator.last = snapshot
+	return json.RawMessage(`{"schema_version":"ielts-cumulative-profile/v1"}`), nil
+}
+
+func profileClaimFixture(
+	t *testing.T,
+	now time.Time,
+	stage IELTSProfileStage,
+) Claim {
+	t.Helper()
+	snapshot := IELTSProfileInputSnapshot{
+		SchemaVersion: IELTSProfileInputSchemaVersion,
+		SessionID:     "20000000-0000-4000-8000-000000000001", SessionVersion: 3,
+		Stage: stage, CompletedAt: now.Add(-time.Minute),
+		Part1Boundary: 1, Part2Boundary: 2,
+		AcousticCapability:   AcousticCapabilityEnabled,
+		DependencyResolution: IELTSProfileDependencyPending,
+		Questions: []SessionEvidenceQuestion{
+			{ID: "40000000-0000-4000-8000-000000000001", Position: 1,
+				Text: "Part 1", SpeakerParticipantID: "assistant",
+				AddresseeParticipantIDs: []string{"learner"}},
+		},
+		Turns: []SessionEvidenceTurn{
+			{ID: "30000000-0000-4000-8000-000000000001", Position: 1,
+				QuestionID:              "40000000-0000-4000-8000-000000000001",
+				RespondentParticipantID: "learner", Transcript: "Part 1 answer",
+				Effective: true, ConfirmedAt: now.Add(-time.Minute)},
+		},
+	}
+	if stage == IELTSProfileStagePart2 {
+		snapshot.Questions = append(snapshot.Questions, SessionEvidenceQuestion{
+			ID: "40000000-0000-4000-8000-000000000002", Position: 2,
+			Text: "Part 2", SpeakerParticipantID: "assistant",
+			AddresseeParticipantIDs: []string{"learner"},
+		})
+		snapshot.Turns = append(snapshot.Turns, SessionEvidenceTurn{
+			ID: "30000000-0000-4000-8000-000000000002", Position: 2,
+			QuestionID:              "40000000-0000-4000-8000-000000000002",
+			RespondentParticipantID: "learner", Transcript: "Part 2 answer",
+			Effective: true, ConfirmedAt: now.Add(-time.Minute),
+		})
+	}
+	input, inputHash, err := EncodeStrict(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lineage := ConfigLineage{
+		SchemaVersion:   ConfigLineageSchemaVersion,
+		StrategyRef:     "ielts-cumulative-profile/v1",
+		PipelineVersion: "ielts-cumulative-profile/v1",
+		PromptVersion:   "ielts-cumulative-profile/v1",
+		ResultSchema:    IELTSCumulativeProfileSchemaVersion,
+		Provider:        "qianwen", Model: "qwen-plus",
+	}
+	config, configHash, err := EncodeStrict(lineage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaseExpiry := now.Add(90 * time.Second)
+	started := now
+	kind := KindIELTSPart1Profile
+	if stage == IELTSProfileStagePart2 {
+		kind = KindIELTSPart2Profile
+	}
+	return Claim{Record: Record{
+		ID:     "11111111-1111-4111-8111-111111111119",
+		UserID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+		Kind:   kind, SourceID: snapshot.SessionID, ContextID: snapshot.SessionID,
+		Status: JobRunning, InputSnapshot: input, InputHash: inputHash,
+		ConfigLineage: config, ConfigHash: configHash, AttemptCount: 1,
+		LeaseToken:     "11111111-1111-4111-8111-111111111120",
+		LeaseExpiresAt: &leaseExpiry, AvailableAt: now.Add(-time.Minute),
+		CreatedAt: now.Add(-time.Minute), UpdatedAt: now, StartedAt: &started,
+	}, LeaseDuration: 90 * time.Second}
+}
+
+func cumulativeProfileFixture(sessionID string, parts []int) IELTSCumulativeProfile {
+	dimensions := make([]IELTSProfileDimension, 0, 4)
+	for _, key := range []string{
+		"FLUENCY_COHERENCE", "LEXICAL_RESOURCE",
+		"GRAMMATICAL_RANGE_ACCURACY", "PRONUNCIATION",
+	} {
+		dimensions = append(dimensions, IELTSProfileDimension{
+			Key: key, ProvisionalBandLow: 6, ProvisionalBandHigh: 7,
+			Coverage: 0.5, Confidence: 0.5,
+			Observations: []IELTSProfileObservation{},
+		})
+	}
+	return IELTSCumulativeProfile{
+		SchemaVersion: IELTSCumulativeProfileSchemaVersion,
+		SessionID:     sessionID, CompletedParts: parts, Dimensions: dimensions,
+		Provider: "qianwen", Model: "qwen-plus",
 	}
 }
 

@@ -10,12 +10,14 @@ import (
 )
 
 const (
-	evaluationPollInterval      = 500 * time.Millisecond
-	evaluationSpeechConcurrency = 4
+	evaluationPollInterval       = 500 * time.Millisecond
+	evaluationProfileConcurrency = 2
+	evaluationSpeechConcurrency  = 4
 )
 
 type evaluationProcessor interface {
 	ProcessSession(context.Context) (bool, error)
+	ProcessProfile(context.Context) (bool, error)
 	ProcessSpeech(context.Context) (bool, error)
 }
 
@@ -36,12 +38,18 @@ func buildEvaluationRuntime(
 	if processor == nil || logger == nil {
 		return nil, errors.New("evaluation worker dependencies are required")
 	}
-	workers := make([]*evaluationLaneWorker, 0, 1+evaluationSpeechConcurrency)
+	workers := make([]*evaluationLaneWorker, 0,
+		1+evaluationProfileConcurrency+evaluationSpeechConcurrency)
 	workers = append(workers, &evaluationLaneWorker{
 		name:    "session",
 		process: processor.ProcessSession,
 		logger:  logger,
 	})
+	for range evaluationProfileConcurrency {
+		workers = append(workers, &evaluationLaneWorker{
+			name: "profile", process: processor.ProcessProfile, logger: logger,
+		})
+	}
 	for range evaluationSpeechConcurrency {
 		workers = append(workers, &evaluationLaneWorker{
 			name:    "speech",

@@ -34,11 +34,14 @@ const (
 	KindSessionReport        Kind = "SESSION_REPORT"
 	KindPracticeTurnFeedback Kind = "PRACTICE_TURN_FEEDBACK"
 	KindAgentMessageFeedback Kind = "AGENT_MESSAGE_FEEDBACK"
+	KindIELTSPart1Profile    Kind = "IELTS_PART1_PROFILE"
+	KindIELTSPart2Profile    Kind = "IELTS_PART2_PROFILE"
 )
 
 func (kind Kind) Valid() bool {
 	switch kind {
-	case KindSessionReport, KindPracticeTurnFeedback, KindAgentMessageFeedback:
+	case KindSessionReport, KindPracticeTurnFeedback, KindAgentMessageFeedback,
+		KindIELTSPart1Profile, KindIELTSPart2Profile:
 		return true
 	default:
 		return false
@@ -98,19 +101,21 @@ func (failure JobError) Valid() bool {
 }
 
 type SessionInputSnapshot struct {
-	SchemaVersion       string                    `json:"schema_version"`
-	SessionID           string                    `json:"session_id"`
-	SessionVersion      int                       `json:"session_version"`
-	EvaluationPolicyRef string                    `json:"evaluation_policy_ref"`
-	PracticeExperience  string                    `json:"practice_experience"`
-	SceneCategory       string                    `json:"scene_category"`
-	PracticeMode        string                    `json:"practice_mode"`
-	CompletedAt         time.Time                 `json:"completed_at"`
-	AcousticCapability  AcousticCapabilityStatus  `json:"acoustic_capability"`
-	PlanSnapshot        json.RawMessage           `json:"plan_snapshot"`
-	Participants        json.RawMessage           `json:"participants"`
-	Questions           []SessionEvidenceQuestion `json:"questions"`
-	Turns               []SessionEvidenceTurn     `json:"turns"`
+	SchemaVersion       string                      `json:"schema_version"`
+	SessionID           string                      `json:"session_id"`
+	SessionVersion      int                         `json:"session_version"`
+	EvaluationPolicyRef string                      `json:"evaluation_policy_ref"`
+	PracticeExperience  string                      `json:"practice_experience"`
+	SceneCategory       string                      `json:"scene_category"`
+	PracticeMode        string                      `json:"practice_mode"`
+	CompletedAt         time.Time                   `json:"completed_at"`
+	AcousticCapability  AcousticCapabilityStatus    `json:"acoustic_capability"`
+	PlanSnapshot        json.RawMessage             `json:"plan_snapshot"`
+	Participants        json.RawMessage             `json:"participants"`
+	Questions           []SessionEvidenceQuestion   `json:"questions"`
+	Turns               []SessionEvidenceTurn       `json:"turns"`
+	CumulativeProfile   *IELTSCumulativeProfile     `json:"cumulative_profile,omitempty"`
+	ProfileResolution   IELTSFinalProfileResolution `json:"profile_resolution,omitempty"`
 }
 
 type SessionEvidenceQuestion struct {
@@ -148,6 +153,19 @@ func (snapshot SessionInputSnapshot) Valid() bool {
 		!validJSONArray(snapshot.Participants) ||
 		len(snapshot.Questions) == 0 || len(snapshot.Questions) > 128 ||
 		len(snapshot.Turns) == 0 || len(snapshot.Turns) > 128 {
+		return false
+	}
+	if snapshot.ProfileResolution != "" &&
+		snapshot.ProfileResolution != IELTSFinalProfileResolved &&
+		snapshot.ProfileResolution != IELTSFinalProfileFallback {
+		return false
+	}
+	if (snapshot.ProfileResolution == IELTSFinalProfileResolved) !=
+		(snapshot.CumulativeProfile != nil) ||
+		(snapshot.CumulativeProfile != nil &&
+			(!snapshot.CumulativeProfile.Valid() ||
+				snapshot.CumulativeProfile.SessionID != snapshot.SessionID ||
+				len(snapshot.CumulativeProfile.CompletedParts) != 2)) {
 		return false
 	}
 	questionIDs := make(map[string]struct{}, len(snapshot.Questions))
@@ -417,6 +435,15 @@ func validateRecordJSON(record Record) error {
 		if err := DecodeStrict(record.InputSnapshot, &snapshot); err != nil ||
 			!snapshot.Valid(record.Kind) ||
 			snapshot.EvidenceRefID != record.SourceID {
+			return ErrInvalidRequest
+		}
+	case KindIELTSPart1Profile, KindIELTSPart2Profile:
+		var snapshot IELTSProfileInputSnapshot
+		if err := DecodeStrict(record.InputSnapshot, &snapshot); err != nil ||
+			!snapshot.Valid() || snapshot.SessionID != record.SourceID ||
+			snapshot.SessionID != record.ContextID ||
+			(record.Kind == KindIELTSPart1Profile && snapshot.Stage != IELTSProfileStagePart1) ||
+			(record.Kind == KindIELTSPart2Profile && snapshot.Stage != IELTSProfileStagePart2) {
 			return ErrInvalidRequest
 		}
 	default:
