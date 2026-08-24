@@ -843,6 +843,15 @@ void main() {
       find.byKey(const Key('evaluation-report-detail-page')),
       findsNothing,
     );
+
+    await tester.tap(
+      find.byKey(Key('review-history-select-${item.review.id}')),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('evaluation-report-detail-page')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('canonical report renders dimensions and priority improvements', (
