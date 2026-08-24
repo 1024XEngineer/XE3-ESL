@@ -227,6 +227,30 @@ void main() {
     expect(harness.currentState?.sends, 1);
   });
 
+  testWidgets('release survives the wrapped target rebuilding away', (
+    tester,
+  ) async {
+    final harness = GlobalKey<_VoiceCaptureHarnessState>();
+    await tester.pumpWidget(
+      _VoiceCaptureHarness(key: harness, detachTargetWhileRecording: true),
+    );
+
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byKey(const Key('voice-capture-target'))),
+    );
+    await tester.pump(const Duration(milliseconds: 180));
+
+    expect(harness.currentState?.starts, 1);
+    expect(find.byKey(const Key('voice-capture-target')), findsNothing);
+    expect(find.byKey(const Key('detached-capture-target')), findsOneWidget);
+
+    await gesture.up();
+    await tester.pump();
+
+    expect(harness.currentState?.sends, 1);
+    expect(harness.currentState?.cancels, 0);
+  });
+
   testWidgets('one release action fences later taps until it completes', (
     tester,
   ) async {
@@ -293,12 +317,14 @@ class _VoiceCaptureHarness extends StatefulWidget {
     this.beforeStartCompleter,
     this.sendCompleter,
     this.showTapActions = false,
+    this.detachTargetWhileRecording = false,
   });
 
   final Completer<void>? startCompleter;
   final Completer<void>? beforeStartCompleter;
   final Completer<void>? sendCompleter;
   final bool showTapActions;
+  final bool detachTargetWhileRecording;
 
   @override
   State<_VoiceCaptureHarness> createState() => _VoiceCaptureHarnessState();
@@ -362,6 +388,14 @@ class _VoiceCaptureHarnessState extends State<_VoiceCaptureHarness> {
             onConvertToText: _convert,
             onCancel: _cancel,
             builder: (context, capture) {
+              if (widget.detachTargetWhileRecording &&
+                  phase == VoiceCapturePhase.recording) {
+                return const SizedBox(
+                  key: Key('detached-capture-target'),
+                  width: 180,
+                  height: 64,
+                );
+              }
               final target = capture.wrapTarget(
                 key: const Key('voice-capture-target'),
                 semanticsLabel: phase == VoiceCapturePhase.idle
