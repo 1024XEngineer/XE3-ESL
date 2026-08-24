@@ -122,6 +122,35 @@ func observedStableErrorKind(kind string) providerobservability.ErrorKind {
 	}
 }
 
+func downstreamSpeechCallbackError(
+	operation protocol.SpeechOperation,
+	err error,
+) error {
+	if err == nil {
+		return nil
+	}
+	return protocol.NewSpeechError(
+		operation,
+		protocol.ErrorCancelled,
+		0,
+		"",
+		"",
+		err,
+	)
+}
+
+func downstreamSpeechConsumer(consume func([]byte) error) func([]byte) error {
+	if consume == nil {
+		return nil
+	}
+	return func(audio []byte) error {
+		return downstreamSpeechCallbackError(
+			protocol.SpeechOperationSynthesis,
+			consume(audio),
+		)
+	}
+}
+
 type observedAssistantSpeechSession struct {
 	delegate   agentconversation.AssistantSpeechSession
 	recorder   providerobservability.Recorder

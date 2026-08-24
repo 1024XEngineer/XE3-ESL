@@ -29,7 +29,10 @@ func (synthesizer *AgentVoiceSynthesizer) OpenAssistantSpeech(
 		)
 	}
 	startedAt := time.Now()
-	session, err := synthesizer.synthesizer.openRealtimeSpeech(ctx, consume)
+	session, err := synthesizer.synthesizer.openRealtimeSpeech(
+		ctx,
+		downstreamSpeechConsumer(consume),
+	)
 	if err != nil {
 		recordSpeechCall(
 			synthesizer.synthesizer.observer,
@@ -190,12 +193,15 @@ func (observer agentVoiceTranscriptionObserver) OnTranscriptionUpdate(
 	ctx context.Context,
 	update protocol.TranscriptionUpdate,
 ) error {
-	return observer.observer.OnTranscriptionUpdate(
-		ctx,
-		agentvoice.TranscriptionUpdate{
-			Transcript: update.Transcript,
-			Final:      update.Final,
-		},
+	return downstreamSpeechCallbackError(
+		protocol.SpeechOperationTranscription,
+		observer.observer.OnTranscriptionUpdate(
+			ctx,
+			agentvoice.TranscriptionUpdate{
+				Transcript: update.Transcript,
+				Final:      update.Final,
+			},
+		),
 	)
 }
 

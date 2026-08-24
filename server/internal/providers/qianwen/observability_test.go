@@ -145,6 +145,33 @@ func TestObservedAssistantSpeechSessionCloseBeforeFinishIsCancelled(t *testing.T
 	}
 }
 
+func TestObservedAssistantSpeechSessionRecordsConsumerFailureAsCancelled(t *testing.T) {
+	cause := errors.New("client audio write failed")
+	consume := downstreamSpeechConsumer(func([]byte) error { return cause })
+	callbackErr := consume([]byte{1, 2, 3})
+	if !errors.Is(callbackErr, cause) ||
+		observedErrorKind(callbackErr) != providerobservability.ErrorCancelled {
+		t.Fatalf("consumer error = %#v", callbackErr)
+	}
+
+	recorder := &providerRecorder{}
+	session := &observedAssistantSpeechSession{
+		delegate: &assistantSpeechSessionStub{finishErr: callbackErr},
+		recorder: recorder, startedAt: time.Now(),
+	}
+	if err := session.AppendText("你好"); err != nil {
+		t.Fatalf("AppendText: %v", err)
+	}
+	if err := session.Finish(); !errors.Is(err, cause) {
+		t.Fatalf("Finish error = %v", err)
+	}
+	observation := onlyObservation(t, recorder)
+	if observation.ErrorKind != providerobservability.ErrorCancelled ||
+		observation.Usage.Characters != 0 {
+		t.Fatalf("observation = %#v", observation)
+	}
+}
+
 func TestObservedAssistantSpeechSessionKeepsCharactersAfterLocalValidationFailure(t *testing.T) {
 	recorder := &providerRecorder{}
 	finishErr := protocol.NewSpeechError(

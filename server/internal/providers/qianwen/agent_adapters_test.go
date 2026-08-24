@@ -1,6 +1,7 @@
 package qianwen
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -8,6 +9,7 @@ import (
 
 	agentvoice "github.com/1024XEngineer/XE3-ESL/server/internal/agent/input/voice"
 	agentrun "github.com/1024XEngineer/XE3-ESL/server/internal/agent/run"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/providerobservability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 )
 
@@ -127,4 +129,48 @@ func TestAgentVoiceAdapterMapsTranscriptionResult(t *testing.T) {
 	if !reflect.DeepEqual(mapped, want) {
 		t.Fatalf("mapped transcription = %#v, want %#v", mapped, want)
 	}
+}
+
+func TestAgentVoiceObserverClassifiesCallbackFailureAsCancelled(t *testing.T) {
+	t.Parallel()
+
+	cause := errors.New("client stream write failed")
+	adapter := agentVoiceTranscriptionObserver{
+		observer: agentVoiceObserverFunc(func(
+			context.Context,
+			agentvoice.TranscriptionUpdate,
+		) error {
+			return cause
+		}),
+	}
+	err := adapter.OnTranscriptionUpdate(
+		context.Background(),
+		protocol.TranscriptionUpdate{Transcript: "partial"},
+	)
+	var speechError *protocol.SpeechError
+	if !errors.As(err, &speechError) ||
+		speechError.Kind != protocol.ErrorCancelled ||
+		!errors.Is(err, cause) ||
+		observedErrorKind(err) != providerobservability.ErrorCancelled {
+		t.Fatalf("callback error = %#v", err)
+	}
+	mapped := mapAgentVoiceError(err, agentvoice.SpeechOperationTranscription)
+	var mappedError *agentvoice.SpeechError
+	if !errors.As(mapped, &mappedError) ||
+		mappedError.Kind != agentvoice.ErrorCancelled ||
+		!errors.Is(mapped, cause) {
+		t.Fatalf("mapped callback error = %#v", mapped)
+	}
+}
+
+type agentVoiceObserverFunc func(
+	context.Context,
+	agentvoice.TranscriptionUpdate,
+) error
+
+func (observe agentVoiceObserverFunc) OnTranscriptionUpdate(
+	ctx context.Context,
+	update agentvoice.TranscriptionUpdate,
+) error {
+	return observe(ctx, update)
 }

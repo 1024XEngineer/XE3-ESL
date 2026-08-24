@@ -138,12 +138,15 @@ func (observer practiceVoiceTranscriptionObserver) OnTranscriptionUpdate(
 	ctx context.Context,
 	update protocol.TranscriptionUpdate,
 ) error {
-	return observer.observer.OnTranscriptionUpdate(
-		ctx,
-		practiceinteraction.TranscriptionUpdate{
-			Transcript: update.Transcript,
-			Final:      update.Final,
-		},
+	return downstreamSpeechCallbackError(
+		protocol.SpeechOperationTranscription,
+		observer.observer.OnTranscriptionUpdate(
+			ctx,
+			practiceinteraction.TranscriptionUpdate{
+				Transcript: update.Transcript,
+				Final:      update.Final,
+			},
+		),
 	)
 }
 
