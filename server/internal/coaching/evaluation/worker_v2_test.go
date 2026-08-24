@@ -157,6 +157,68 @@ func TestWorkerFinalReportReusesReadyPart2Profile(t *testing.T) {
 	}
 }
 
+func TestWorkerFinalReportFallsBackWhenPart2ProfileIsUnavailable(t *testing.T) {
+	tests := []struct {
+		name     string
+		record   Record
+		timedOut bool
+	}{
+		{
+			name:     "dependency timeout",
+			record:   Record{Status: JobRunning},
+			timedOut: true,
+		},
+		{
+			name:   "failed dependency",
+			record: Record{Status: JobFailed},
+		},
+		{
+			name: "malformed ready dependency",
+			record: Record{
+				Status: JobReady,
+				Result: json.RawMessage(`{"schema_version":"ielts-cumulative-profile/v1"}`),
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			now := time.Now().UTC()
+			claim := sessionClaimFixture(t, now, IELTSStrategyRef)
+			claim.CreatedAt = now
+			if test.timedOut {
+				claim.CreatedAt = now.Add(
+					-workerConfigurationFixture().ProfileDependencyMaxWait - time.Second,
+				)
+			}
+			store := &workerStoreFake{
+				claims: []Claim{claim},
+				records: map[Kind]Record{
+					KindIELTSPart2Profile: test.record,
+				},
+			}
+			sessions := &sessionEvaluatorsFake{}
+			worker := workerFixture(
+				t, store, sessions, &speechEvaluatorsFake{}, &acousticEvaluatorFake{},
+			)
+
+			processed, err := worker.ProcessSession(context.Background())
+			if err != nil || !processed || sessions.ieltsCalls != 1 ||
+				sessions.lastIELTSSnapshot.ProfileResolution != IELTSFinalProfileFallback ||
+				sessions.lastIELTSSnapshot.CumulativeProfile != nil ||
+				len(store.deferrals) != 0 || len(store.checkpoints) != 1 ||
+				len(store.completions) != 1 || len(store.failures) != 0 {
+				t.Fatalf(
+					"ProcessSession=(%t,%v), calls=%d snapshot=%#v deferrals=%d checkpoints=%d completions=%d failures=%d",
+					processed, err, sessions.ieltsCalls, sessions.lastIELTSSnapshot,
+					len(store.deferrals), len(store.checkpoints), len(store.completions),
+					len(store.failures),
+				)
+			}
+		})
+	}
+}
+
 func TestWorkerReusesAcousticCheckpointAfterTextEvaluationRetry(t *testing.T) {
 	now := time.Now().UTC()
 	first := speechClaimFixture(t, now, KindPracticeTurnFeedback, nil)
