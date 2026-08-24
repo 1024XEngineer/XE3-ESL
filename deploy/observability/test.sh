@@ -10,10 +10,13 @@ readonly logrotate_file="$observability_directory/xe3-speakup-nginx.logrotate"
 readonly dashboard_file="$observability_directory/grafana/dashboards/speakup-overview.json"
 readonly monitor_nginx="$observability_directory/monitor-nginx.conf"
 readonly private_file_validator="$observability_directory/validate-private-files"
+readonly product_health_reader="$observability_directory/configure-product-health-reader"
 readonly probe_incident="$observability_directory/github-probe-incident.sh"
 readonly probe_workflow="$observability_directory/../../.github/workflows/production-probe.yml"
 readonly metrics_service="$observability_directory/xe3-speakup-observability-metrics.service"
 readonly metrics_environment_example="$observability_directory/observability-metrics.env.example"
+readonly product_health_dashboard="$observability_directory/grafana/dashboards/speakup-product-health.json"
+readonly product_health_datasource="$observability_directory/grafana/provisioning/datasources/product-health.yml"
 
 fail() {
   printf 'observability contract test: %s\n' "$*" >&2
@@ -42,6 +45,9 @@ printf '%s\n' 'fixture certificate' >"$temporary_directory/production.pem"
 printf '%s\n' 'fixture certificate' >"$temporary_directory/staging.pem"
 printf '%s\n' 'fixture certificate' >"$temporary_directory/monitor.pem"
 printf '%s\n' 'fixture password' >"$temporary_directory/grafana-password"
+printf '%s\n' \
+  'postgres:5432:speakup:speakup_product_health_reader:ProductHealthReader_1234567890abcdef' \
+  >"$temporary_directory/product-health.pgpass"
 printf '%s\n' \
   '{"created_at":"2026-08-24T01:02:03Z"}' \
   >"$temporary_directory/postgres-backups/20260824T010203Z-daily/metadata.json"
@@ -126,7 +132,8 @@ esac
 EOF
 chmod 0755 "$temporary_directory/fake-bin/"*
 
-bash -n "$exporter" "$private_file_validator" "$probe_incident" "$0"
+bash -n "$exporter" "$private_file_validator" "$product_health_reader" \
+  "$probe_incident" "$0"
 
 export OBSERVABILITY_PRODUCTION_CERTIFICATE="$temporary_directory/production.pem"
 export OBSERVABILITY_STAGING_CERTIFICATE="$temporary_directory/staging.pem"
@@ -184,12 +191,15 @@ OBSERVABILITY_ALERTMANAGER_CONFIG="$observability_directory/alertmanager.example
 OBSERVABILITY_GRAFANA_HOST=monitor.speak-up.top \
 OBSERVABILITY_GRAFANA_ADMIN_USER=speakup-admin \
 OBSERVABILITY_GRAFANA_ADMIN_PASSWORD_FILE="$temporary_directory/grafana-password" \
+OBSERVABILITY_PRODUCT_HEALTH_DATABASE=speakup \
+OBSERVABILITY_PRODUCT_HEALTH_PGPASS_FILE="$temporary_directory/product-health.pgpass" \
   docker compose \
     --env-file /dev/null \
     --file "$compose_file" \
     config --format json >"$temporary_directory/compose.json"
 
-jq --exit-status '
+jq --exit-status \
+  --arg product_health_pgpass_file "$temporary_directory/product-health.pgpass" '
   .name == "xe3-speakup-observability" and
   (.services | keys | sort) ==
     ["alertmanager", "blackbox", "grafana", "node-exporter", "prometheus"] and
@@ -216,10 +226,25 @@ jq --exit-status '
   (.services.grafana.ports[0].published | tostring) == "13000" and
   .services.grafana.platform == "linux/amd64" and
   .services.grafana.environment.GF_AUTH_ANONYMOUS_ENABLED == "false" and
+  .services.grafana.environment.GF_USERS_DEFAULT_LANGUAGE == "zh-Hans" and
+  .services.grafana.environment.PGPASSFILE == "/run/secrets/product_health_reader_pgpass" and
+  .services.grafana.environment.OBSERVABILITY_PRODUCT_HEALTH_DATABASE == "speakup" and
+  ([.services.grafana.secrets[] |
+    select(.source == "product_health_reader_pgpass" and
+      .target == "/run/secrets/product_health_reader_pgpass")
+  ] | length) == 1 and
+  .secrets.product_health_reader_pgpass.file ==
+    $product_health_pgpass_file and
+  (.services.grafana.networks | has("production_database")) and
+  ([.services | to_entries[] |
+    select(.key != "grafana") |
+    (.value.networks | has("production_database"))] | any | not) and
   .networks.production_api.external == true and
   .networks.production_api.name == "xe3-speakup-production-server-edge" and
   .networks.staging_api.external == true and
   .networks.staging_api.name == "xe3-speakup-staging_server_edge" and
+  .networks.production_database.external == true and
+  .networks.production_database.name == "xe3-speakup-production_database" and
   (.networks.monitor.external // false) == false and
   ([.services[] | .image | test("@sha256:[0-9a-f]{64}$")] | all)
 ' "$temporary_directory/compose.json" >/dev/null ||
@@ -304,6 +329,69 @@ jq --exit-status '
     any(contains("speakup_http_server_request_duration_seconds_bucket")))
 ' "$dashboard_file" >/dev/null || fail 'Grafana dashboard is incomplete'
 
+jq --exit-status '
+  .uid == "speakup-product-health" and
+  .title == "SpeakUp 产品健康" and
+  (.description | contains("UTC")) and
+  .timezone == "utc" and
+  .editable == false and
+  (.panels | length) >= 12 and
+  ([.panels[].title] == [
+    "每日练习用户",
+    "终态练习结果",
+    "练习完成率与提前结束率",
+    "有效回答与重练回答",
+    "重练占比：回答与练习",
+    "确认回答的交互方式",
+    "反馈与报告生成覆盖率",
+    "评估任务：成功与失败",
+    "评估终态成功率",
+    "评估生命周期 P95 耗时",
+    "证据不足与未知评估数量",
+    "证据不足与未知评估占比"
+  ]) and
+  ([.panels[].description | length > 0] | all) and
+  ([.panels[].targets[]? |
+    .datasource.uid == "speakup-product-health-postgres" and
+    .datasource.type == "grafana-postgresql-datasource"
+  ] | all) and
+  ([.panels[].targets[]?.rawSql // "" |
+    (split("SELECT ") | length) ==
+      (split("WHERE $__timeFilter(day_utc)") | length)
+  ] | all) and
+  ([.panels[].targets[]?.rawSql // "" |
+    test("FROM public\\.product_health_daily_(practice_activity|session_outcomes|artifact_coverage|evaluation_health|scoreability)")
+  ] | all) and
+  ([.panels[].targets[]?.rawSql // "" |
+    test("FROM public\\.(users|practice_sessions|practice_turns|evaluations|evaluation_feedback_items)")
+  ] | any | not) and
+  ([.panels[].targets[]?.rawSql // ""] |
+    any(contains("active_practice_users"))) and
+  ([.panels[].targets[]?.rawSql // ""] |
+    any(contains("ready_coverage_rate"))) and
+  ([.panels[].targets[]?.rawSql // ""] |
+    any(contains("processing_lifecycle_p95_seconds"))) and
+  ([.panels[].targets[]?.rawSql // ""] |
+    any(contains("unknown_scoreability_evaluations")))
+' "$product_health_dashboard" >/dev/null ||
+  fail 'Product Health Grafana dashboard violates its anonymous SQL contract'
+
+grep -Fxq '    uid: speakup-product-health-postgres' "$product_health_datasource" ||
+  fail 'Product Health datasource UID is not fixed'
+grep -Fxq '    url: postgres:5432' "$product_health_datasource" ||
+  fail 'Product Health datasource does not use the private Postgres service'
+grep -Fxq '    user: speakup_product_health_reader' "$product_health_datasource" ||
+  fail 'Product Health datasource does not use its dedicated reader'
+grep -Fq 'database: $__env{OBSERVABILITY_PRODUCT_HEALTH_DATABASE}' \
+  "$product_health_datasource" || fail 'Product Health database is not provisioned explicitly'
+grep -Fxq '      postgresVersion: 1000' "$product_health_datasource" ||
+  fail 'Product Health datasource does not declare PostgreSQL 10+'
+grep -Fxq '      maxOpenConns: 4' "$product_health_datasource" ||
+  fail 'Product Health datasource connections are not bounded'
+if grep -Eq '(^|[[:space:]])(password|secureJsonData):' "$product_health_datasource"; then
+  fail 'Product Health datasource contains a credential field'
+fi
+
 # Private file validation is fail-closed and accounts for the runtime UIDs of
 # standalone Compose bind mounts.
 private_bin="$temporary_directory/private-bin"
@@ -327,6 +415,9 @@ case "$path" in
   */grafana-password)
     owner=472 mode=400
     ;;
+  */product-health.pgpass)
+    owner=472 mode=600
+    ;;
   *) exit 2 ;;
 esac
 case "$format" in
@@ -342,6 +433,8 @@ OBSERVABILITY_ALERTMANAGER_CONFIG=$temporary_directory/alertmanager.yml
 OBSERVABILITY_GRAFANA_HOST=monitor.speak-up.top
 OBSERVABILITY_GRAFANA_ADMIN_USER=speakup-admin
 OBSERVABILITY_GRAFANA_ADMIN_PASSWORD_FILE=$temporary_directory/grafana-password
+OBSERVABILITY_PRODUCT_HEALTH_DATABASE=speakup
+OBSERVABILITY_PRODUCT_HEALTH_PGPASS_FILE=$temporary_directory/product-health.pgpass
 EOF
 cat >"$temporary_directory/metrics.env" <<EOF
 OBSERVABILITY_PRODUCTION_CERTIFICATE=$temporary_directory/production.pem
@@ -359,6 +452,65 @@ expect_failure 'public Grafana password' env \
   "$private_file_validator" \
     --environment-file "$temporary_directory/observability.env" \
     --metrics-environment-file "$temporary_directory/metrics.env"
+expect_failure 'public Product Health PGPASSFILE' env \
+  FAKE_BAD_PRIVATE_PATH="$temporary_directory/product-health.pgpass" \
+  PATH="$private_bin:$PATH" \
+  "$private_file_validator" \
+    --environment-file "$temporary_directory/observability.env" \
+    --metrics-environment-file "$temporary_directory/metrics.env"
+
+# The role configurator reads one scoped PGPASSFILE and sends the password only
+# through psql stdin. Docker arguments and command output remain credential-free.
+role_bin="$temporary_directory/role-bin"
+role_args="$temporary_directory/role-args"
+role_sql="$temporary_directory/role.sql"
+mkdir -p "$role_bin"
+cat >"$role_bin/docker" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >"$FAKE_ROLE_ARGS"
+cat >"$FAKE_ROLE_SQL"
+printf '%s\n' 'BEGIN' 'ALTER ROLE' 'GRANT' 'COMMIT'
+EOF
+chmod 0755 "$role_bin/docker"
+cat >"$temporary_directory/production.env" <<'EOF'
+PRODUCTION_POSTGRES_DB=speakup
+PRODUCTION_POSTGRES_USER=speakup
+PRODUCTION_POSTGRES_PASSWORD=not-read-by-product-health-configurator
+EOF
+chmod 0600 "$temporary_directory/production.env" \
+  "$temporary_directory/product-health.pgpass"
+export FAKE_ROLE_ARGS="$role_args" FAKE_ROLE_SQL="$role_sql"
+printf '%s\n' \
+  'postgres:5432:another_database:speakup_product_health_reader:ProductHealthReader_1234567890abcdef' \
+  >"$temporary_directory/wrong-scope-product-health.pgpass"
+chmod 0600 "$temporary_directory/wrong-scope-product-health.pgpass"
+expect_failure 'wrong Product Health database scope' env \
+  PATH="$role_bin:$PATH" \
+  "$product_health_reader" \
+    --production-compose-file "$observability_directory/../production/compose.yaml" \
+    --production-env-file "$temporary_directory/production.env" \
+    --pgpass-file "$temporary_directory/wrong-scope-product-health.pgpass"
+PATH="$role_bin:$PATH" "$product_health_reader" \
+  --production-compose-file "$observability_directory/../production/compose.yaml" \
+  --production-env-file "$temporary_directory/production.env" \
+  --pgpass-file "$temporary_directory/product-health.pgpass" \
+  >"$temporary_directory/role-output"
+readonly product_health_fixture_password=ProductHealthReader_1234567890abcdef
+! grep -Fq "$product_health_fixture_password" "$role_args" ||
+  fail 'Product Health reader password leaked into Docker arguments'
+! grep -Fq "$product_health_fixture_password" "$temporary_directory/role-output" ||
+  fail 'Product Health reader password leaked into command output'
+grep -Fq "ALTER ROLE speakup_product_health_reader WITH LOGIN PASSWORD '$product_health_fixture_password'" \
+  "$role_sql" || fail 'Product Health reader password was not delivered over psql stdin'
+grep -Fq 'REVOKE ALL ON ALL TABLES IN SCHEMA public FROM speakup_product_health_reader;' \
+  "$role_sql" || fail 'Product Health reader does not revoke inherited table grants'
+grep -Fq 'FROM pg_catalog.pg_auth_members AS membership' "$role_sql" ||
+  fail 'Product Health reader does not reject role memberships'
+[[ $(grep -Fc 'public.product_health_daily_' "$role_sql") -eq 5 ]] ||
+  fail 'Product Health reader grant is not the exact five-view set'
+! grep -Eq 'GRANT SELECT ON public\.(users|practice_sessions|practice_turns|evaluations)' \
+  "$role_sql" || fail 'Product Health reader grants a raw business table'
 
 # The off-host probe opens exactly one assigned incident, then comments and
 # closes it on resolution using only GitHub's built-in token and Issues API.

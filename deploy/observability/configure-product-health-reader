@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly reader_role=speakup_product_health_reader
+readonly production_project=xe3-speakup-production
+
+fail() {
+  printf 'product health reader: %s\n' "$*" >&2
+  exit 1
+}
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: configure-product-health-reader \
+  --production-compose-file FILE \
+  --production-env-file FILE \
+  --pgpass-file FILE
+EOF
+}
+
+require_file() {
+  local label=$1 path=$2
+  [[ -f "$path" && ! -L "$path" && -s "$path" ]] ||
+    fail "$label must be a non-empty regular file"
+}
+
+file_mode() {
+  if stat -Lc '%a' -- "$1" 2>/dev/null; then
+    return
+  fi
+  stat -L -f '%Lp' -- "$1" 2>/dev/null ||
+    fail "cannot inspect file mode"
+}
+
+environment_value() {
+  local key=$1 file=$2 line name value found=''
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line=${line%$'\r'}
+    case "$line" in
+      '' | \#*) continue ;;
+    esac
+    [[ "$line" == *=* ]] || fail 'production environment syntax is invalid'
+    name=${line%%=*}
+    value=${line#*=}
+    if [[ "$name" == "$key" ]]; then
+      [[ -z "$found" ]] || fail "duplicate production environment key: $key"
+      [[ -n "$value" ]] || fail "production environment key is empty: $key"
+      found=$value
+    fi
+  done <"$file"
+  [[ -n "$found" ]] || fail "production environment key is missing: $key"
+  printf '%s\n' "$found"
+}
+
+production_compose_file=''
+production_environment_file=''
+pgpass_file=''
+while (($# > 0)); do
+  case "$1" in
+    --production-compose-file)
+      [[ $# -ge 2 ]] || fail '--production-compose-file requires a value'
+      production_compose_file=$2
+      shift 2
+      ;;
+    --production-env-file)
+      [[ $# -ge 2 ]] || fail '--production-env-file requires a value'
+      production_environment_file=$2
+      shift 2
+      ;;
+    --pgpass-file)
+      [[ $# -ge 2 ]] || fail '--pgpass-file requires a value'
+      pgpass_file=$2
+      shift 2
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      usage
+      fail "unknown argument: $1"
+      ;;
+  esac
+done
+
+[[ -n "$production_compose_file" ]] || fail '--production-compose-file is required'
+[[ -n "$production_environment_file" ]] || fail '--production-env-file is required'
+[[ -n "$pgpass_file" ]] || fail '--pgpass-file is required'
+require_file 'Production Compose file' "$production_compose_file"
+require_file 'Production environment file' "$production_environment_file"
+require_file 'product health PGPASSFILE' "$pgpass_file"
+[[ "$(file_mode "$production_environment_file")" == 600 ]] ||
+  fail 'Production environment file must have mode 0600'
+[[ "$(file_mode "$pgpass_file")" == 600 ]] ||
+  fail 'product health PGPASSFILE must have mode 0600'
+
+readonly database_name="$(environment_value PRODUCTION_POSTGRES_DB "$production_environment_file")"
+readonly admin_user="$(environment_value PRODUCTION_POSTGRES_USER "$production_environment_file")"
+[[ "$database_name" =~ ^[a-z][a-z0-9_]{0,62}$ ]] ||
+  fail 'PRODUCTION_POSTGRES_DB is invalid'
+[[ "$admin_user" =~ ^[a-z][a-z0-9_]{0,62}$ ]] ||
+  fail 'PRODUCTION_POSTGRES_USER is invalid'
+[[ $(wc -l <"$pgpass_file" | tr -d '[:space:]') == 1 ]] ||
+  fail 'product health PGPASSFILE must contain exactly one line'
+
+pg_host=''
+pg_port=''
+pg_database=''
+pg_user=''
+reader_password=''
+pg_extra=''
+IFS=: read -r pg_host pg_port pg_database pg_user reader_password pg_extra \
+  <"$pgpass_file" || fail 'product health PGPASSFILE must be newline terminated'
+[[ "$pg_host" == postgres && "$pg_port" == 5432 &&
+  "$pg_database" == "$database_name" && "$pg_user" == "$reader_role" &&
+  -z "$pg_extra" ]] || fail 'product health PGPASSFILE scope is invalid'
+[[ "$reader_password" =~ ^[A-Za-z0-9_-]{32,128}$ ]] ||
+  fail 'product health PGPASSFILE password must be 32-128 base64url characters'
+
+# The credential travels only over stdin to psql. It is never placed in an
+# environment variable, command argument, committed file, or command output.
+{
+  cat <<'SQL'
+BEGIN;
+SET LOCAL log_statement = 'none';
+SET LOCAL log_min_error_statement = 'panic';
+DO $role$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_roles
+        WHERE rolname = 'speakup_product_health_reader'
+    ) THEN
+        CREATE ROLE speakup_product_health_reader LOGIN;
+    END IF;
+    IF EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_auth_members AS membership
+        JOIN pg_catalog.pg_roles AS member
+          ON member.oid = membership.member
+        WHERE member.rolname = 'speakup_product_health_reader'
+    ) THEN
+        RAISE EXCEPTION 'product health reader must not inherit another role';
+    END IF;
+END
+$role$;
+SQL
+  printf "ALTER ROLE %s WITH LOGIN PASSWORD '%s' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 4;\n" \
+    "$reader_role" "$reader_password"
+  cat <<'SQL'
+ALTER ROLE speakup_product_health_reader SET search_path = pg_catalog, public;
+ALTER ROLE speakup_product_health_reader SET default_transaction_read_only = on;
+ALTER ROLE speakup_product_health_reader SET statement_timeout = '15s';
+ALTER ROLE speakup_product_health_reader SET idle_in_transaction_session_timeout = '15s';
+REVOKE CREATE ON SCHEMA public FROM speakup_product_health_reader;
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM speakup_product_health_reader;
+GRANT USAGE ON SCHEMA public TO speakup_product_health_reader;
+GRANT SELECT ON public.product_health_daily_practice_activity,
+                public.product_health_daily_session_outcomes,
+                public.product_health_daily_artifact_coverage,
+                public.product_health_daily_evaluation_health,
+                public.product_health_daily_scoreability
+TO speakup_product_health_reader;
+COMMIT;
+SQL
+} | docker compose \
+  --project-name "$production_project" \
+  --env-file "$production_environment_file" \
+  --file "$production_compose_file" \
+  exec -T postgres \
+  psql --no-psqlrc --set ON_ERROR_STOP=1 \
+    --username "$admin_user" --dbname "$database_name"
+
+printf 'product health reader configured=true\n'

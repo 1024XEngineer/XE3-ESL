@@ -17,7 +17,9 @@ The shared server remains protected by three scope rules:
 
 - Prometheus: 30-day/8-GB bounded retention.
 - Alertmanager: private SMTP configuration supplied by the server operator.
-- Grafana: provisioned Prometheus data source and SpeakUp overview dashboard.
+- Grafana: provisioned Prometheus and restricted PostgreSQL data sources, with
+  separate system and Product Health dashboards. New users default to the
+  Simplified Chinese (`zh-Hans`) interface.
 - blackbox_exporter: Portal, API, and Android release HTTPS probes.
 - node_exporter: only the bounded SpeakUp textfile collector. It has no host
   root mount; the reviewed host-side exporter emits root disk and inode values.
@@ -33,6 +35,52 @@ after 31 days even when its previous run succeeded.
 
 All container images and runtime limits are explicit. Grafana is the only
 service with a published port, and that port is `127.0.0.1:13000`.
+
+## Product Health boundary
+
+Migration `000008_product_health_views` creates five daily aggregate views in
+the application schema. They expose only UTC buckets, bounded enum dimensions,
+counts, rates, and latency aggregates. They never expose a user, Session, Turn,
+Evaluation, transcript, answer, report body, or other identifier/content field.
+The migration revokes `PUBLIC` access to every view.
+
+`configure-product-health-reader` provisions the login role
+`speakup_product_health_reader` after the migration is applied. It first revokes
+all table access, then grants `SELECT` on exactly those five views. The role is
+non-inheriting, read-only by default, connection-limited, and time-bounded.
+Grafana uses that role only through the existing internal
+`xe3-speakup-production_database` Docker network. PostgreSQL receives no host
+or public port.
+
+This follows Grafana's recommendation to use a dedicated database user with
+only `SELECT` on the necessary views and PostgreSQL's separate `USAGE`/`SELECT`
+privilege model. The datasource supplies no password field: Grafana reads the
+official `PGPASSFILE` instead.
+
+The first dashboard intentionally reports only facts the current schema can
+prove:
+
+- active practice users had at least one confirmed answer that UTC day;
+- completion and early-end rates use only terminal Sessions as the denominator;
+- Retry has both Turn share and Session share;
+- `TEXT`, `PUSH_TO_TALK`, and unknown interaction modes remain separate;
+- Turn Feedback eligibility requires the frozen Session policy to say
+  `speech_feedback_allowed=true`; missing/malformed policy remains unknown;
+- Feedback/Report coverage means scheduled or READY generation, never viewing;
+- Evaluation status and latency are grouped by the job's UTC creation day, so
+  a recent bucket can change as its queued jobs reach a terminal state;
+- initial queue latency is `started_at-created_at`; after-first-start and total
+  lifecycle include retry/dependency waits because no attempt-history table
+  exists, so the dashboard does not call either value pure processing time;
+- scoreability keeps `PROVISIONAL`, `INSUFFICIENT`, and unknown separate.
+
+Rates use `NULL` for a zero denominator, and migrations do not generate empty
+calendar rows. Account deletion cascades through the source facts, so this is a
+current operational health view rather than an immutable historical warehouse.
+The deterministic migration integration fixture is the canonical
+Staging-compatible seed for reproducing and checking every first-version
+formula; it creates only an isolated test schema and is never loaded into
+Production.
 
 ## Application metrics boundary
 
@@ -57,6 +105,7 @@ Create these files on the server; never commit or paste their populated values:
 /etc/speakup/observability-metrics.env
 /etc/speakup/alertmanager.yml
 /etc/speakup/grafana-admin-password
+/etc/speakup/product-health-reader.pgpass
 ```
 
 Start from `observability.env.example`, `observability-metrics.env.example`, and
@@ -64,8 +113,36 @@ Start from `observability.env.example`, `observability-metrics.env.example`, and
 ownership. Install `observability.env` and `observability-metrics.env` as
 `root:root` mode `0600`, Alertmanager configuration as UID `65534` mode `0400`,
 and the one-line newline-terminated Grafana password as UID `472` mode `0400`.
-The two service UIDs match the pinned container images without making a secret
-group- or world-readable. Validate all four files before Compose reads them:
+Create the Product Health password file as UID `472` mode `0600`, with exactly
+one scoped entry and a fresh 32-128 character base64url password:
+
+```text
+postgres:5432:speakup:speakup_product_health_reader:REPLACE_WITH_RANDOM_BASE64URL
+```
+
+For the initial installation, this root-only sequence creates the file without
+printing the credential or putting it in a command argument. It refuses to
+replace an existing credential:
+
+```bash
+set -euo pipefail
+install -d -o root -g root -m 0750 /etc/speakup
+test ! -e /etc/speakup/product-health-reader.pgpass
+product_health_pgpass_tmp=$(mktemp /etc/speakup/.product-health-reader.pgpass.XXXXXX)
+trap 'rm -f -- "$product_health_pgpass_tmp"' EXIT
+{
+  printf 'postgres:5432:speakup:speakup_product_health_reader:'
+  openssl rand -hex 32
+} >"$product_health_pgpass_tmp"
+chown 472:472 "$product_health_pgpass_tmp"
+chmod 0600 "$product_health_pgpass_tmp"
+ln "$product_health_pgpass_tmp" /etc/speakup/product-health-reader.pgpass
+rm -f -- "$product_health_pgpass_tmp"
+trap - EXIT
+```
+
+The service UIDs match the pinned container images without making a secret
+group- or world-readable. Validate all five files before Compose reads them:
 
 ```bash
 /usr/local/sbin/xe3-speakup-observability-validate-private-files \
@@ -93,20 +170,40 @@ Issue, verify, and activate it through `deploy/tls/manage.sh`:
 
 ## Installation order
 
-Copy this reviewed directory to `/opt/xe3-speakup-observability/source`, then:
+Keep every reviewed observability source under
+`/opt/xe3-speakup-observability/releases/<full-git-sha>` and make
+`/opt/xe3-speakup-observability/source` a symlink to the selected release.
+Never overwrite a release directory; record the previous symlink target before
+switching it so rollback selects an exact source. Then:
 
 1. Install the private files above, install `validate-private-files` as
    `/usr/local/sbin/xe3-speakup-observability-validate-private-files`, and run
    the validator.
-2. Install `xe3-speakup-export-metrics` as
+2. Apply Production database migrations through the reviewed release contract.
+   Install `configure-product-health-reader` as
+   `/usr/local/sbin/xe3-speakup-configure-product-health-reader`, then provision
+   or rotate the reader without placing its password in arguments or logs:
+
+   ```bash
+   install -o root -g root -m 0755 \
+     /opt/xe3-speakup-observability/source/configure-product-health-reader \
+     /usr/local/sbin/xe3-speakup-configure-product-health-reader
+   test -f /opt/xe3-speakup-production/source/deploy/production/compose.yaml
+   /usr/local/sbin/xe3-speakup-configure-product-health-reader \
+     --production-compose-file /opt/xe3-speakup-production/source/deploy/production/compose.yaml \
+     --production-env-file /etc/speakup/production.env \
+     --pgpass-file /etc/speakup/product-health-reader.pgpass
+   ```
+
+3. Install `xe3-speakup-export-metrics` as
    `/usr/local/sbin/xe3-speakup-export-metrics` with mode `0755`.
-3. Install the metrics service/timer under `/etc/systemd/system`, reload systemd,
+4. Install the metrics service/timer under `/etc/systemd/system`, reload systemd,
    and start the timer.
-4. Install `xe3-speakup-nginx.logrotate` as
+5. Install `xe3-speakup-nginx.logrotate` as
    `/etc/logrotate.d/xe3-speakup-nginx` with mode `0644`.
-5. Recreate only the SpeakUp Staging and Production containers so their
+6. Recreate only the SpeakUp Staging and Production containers so their
    per-container `json-file` limits and internal metrics listener take effect.
-6. Start the monitoring stack with the private environment file:
+7. Start the monitoring stack with the private environment file:
 
    ```bash
    docker compose \
@@ -115,8 +212,9 @@ Copy this reviewed directory to `/opt/xe3-speakup-observability/source`, then:
      up --detach --pull always --wait
    ```
 
-7. Confirm every Prometheus target is up from a loopback Grafana session.
-8. After DNS/TLS validation, install `monitor-nginx.conf`, run
+8. Confirm every Prometheus target is up and the Product Health datasource can
+   query only its five views from a loopback Grafana session.
+9. After DNS/TLS validation, install `monitor-nginx.conf`, run
    `/usr/local/nginx/sbin/nginx -t`, and reload only after it succeeds.
 
 Do not use `docker compose down --volumes`; the three named observability volumes
@@ -168,6 +266,30 @@ are installed; do not commit those settings.
 
 ## Rollback
 
+- If Product Health provisioning fails before Grafana is recreated, do not
+  start the new Grafana model. Correct the private file or database migration
+  first; none of the new database or monitoring ports is public.
+- To restore Grafana availability, select the recorded preceding directory
+  under `/opt/xe3-speakup-observability/releases`, atomically restore the
+  `/opt/xe3-speakup-observability/source` symlink to it, validate its private
+  files, and recreate only Grafana:
+
+  ```bash
+  /usr/local/sbin/xe3-speakup-observability-validate-private-files \
+    --environment-file /etc/speakup/observability.env \
+    --metrics-environment-file /etc/speakup/observability-metrics.env
+  docker compose \
+    --project-name xe3-speakup-observability \
+    --env-file /etc/speakup/observability.env \
+    --file /opt/xe3-speakup-observability/source/compose.yaml \
+    up --detach --no-deps --force-recreate --wait grafana
+  curl --fail http://127.0.0.1:13000/api/health
+  ```
+
+  Keep the Product Health role, views, and root-private PGPASSFILE in place.
+  They are additive and cannot read raw tables; Production rollback never runs
+  a down migration. Removing them belongs to a separately reviewed database
+  change, not an availability rollback.
 - If the stack fails, keep its volumes and stop only the
   `xe3-speakup-observability` Compose project.
 - Restore the previous SpeakUp Compose files and recreate only those services if

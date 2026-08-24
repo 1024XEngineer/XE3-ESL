@@ -54,7 +54,9 @@ load_environment() {
       OBSERVABILITY_ALERTMANAGER_CONFIG | \
         OBSERVABILITY_GRAFANA_HOST | \
         OBSERVABILITY_GRAFANA_ADMIN_USER | \
-        OBSERVABILITY_GRAFANA_ADMIN_PASSWORD_FILE)
+        OBSERVABILITY_GRAFANA_ADMIN_PASSWORD_FILE | \
+        OBSERVABILITY_PRODUCT_HEALTH_DATABASE | \
+        OBSERVABILITY_PRODUCT_HEALTH_PGPASS_FILE)
         ;;
       *) fail "unsupported environment key: $name" ;;
     esac
@@ -105,7 +107,9 @@ for name in \
   OBSERVABILITY_ALERTMANAGER_CONFIG \
   OBSERVABILITY_GRAFANA_HOST \
   OBSERVABILITY_GRAFANA_ADMIN_USER \
-  OBSERVABILITY_GRAFANA_ADMIN_PASSWORD_FILE; do
+  OBSERVABILITY_GRAFANA_ADMIN_PASSWORD_FILE \
+  OBSERVABILITY_PRODUCT_HEALTH_DATABASE \
+  OBSERVABILITY_PRODUCT_HEALTH_PGPASS_FILE; do
   [[ -n "${!name:-}" ]] || fail "$name is required"
 done
 for name in \
@@ -120,10 +124,14 @@ valid_absolute_path "$OBSERVABILITY_ALERTMANAGER_CONFIG" ||
   fail 'OBSERVABILITY_ALERTMANAGER_CONFIG must be a safe absolute path'
 valid_absolute_path "$OBSERVABILITY_GRAFANA_ADMIN_PASSWORD_FILE" ||
   fail 'OBSERVABILITY_GRAFANA_ADMIN_PASSWORD_FILE must be a safe absolute path'
+valid_absolute_path "$OBSERVABILITY_PRODUCT_HEALTH_PGPASS_FILE" ||
+  fail 'OBSERVABILITY_PRODUCT_HEALTH_PGPASS_FILE must be a safe absolute path'
 [[ "$OBSERVABILITY_GRAFANA_HOST" == monitor.speak-up.top ]] ||
   fail 'OBSERVABILITY_GRAFANA_HOST must be monitor.speak-up.top'
 [[ "$OBSERVABILITY_GRAFANA_ADMIN_USER" =~ ^[A-Za-z0-9_.-]{3,64}$ ]] ||
   fail 'OBSERVABILITY_GRAFANA_ADMIN_USER is invalid'
+[[ "$OBSERVABILITY_PRODUCT_HEALTH_DATABASE" =~ ^[a-z][a-z0-9_]{0,62}$ ]] ||
+  fail 'OBSERVABILITY_PRODUCT_HEALTH_DATABASE is invalid'
 
 # Standalone Compose bind mounts preserve host ownership. Match each image's
 # non-root runtime UID while denying group and other access.
@@ -131,5 +139,23 @@ require_private_file 'Alertmanager configuration' "$OBSERVABILITY_ALERTMANAGER_C
 require_private_file 'Grafana admin password' "$OBSERVABILITY_GRAFANA_ADMIN_PASSWORD_FILE" 472 400
 [[ $(wc -l <"$OBSERVABILITY_GRAFANA_ADMIN_PASSWORD_FILE" | tr -d '[:space:]') == 1 ]] ||
   fail 'Grafana admin password must contain exactly one newline-terminated line'
+require_private_file 'product health PGPASSFILE' "$OBSERVABILITY_PRODUCT_HEALTH_PGPASS_FILE" 472 600
+[[ $(wc -l <"$OBSERVABILITY_PRODUCT_HEALTH_PGPASS_FILE" | tr -d '[:space:]') == 1 ]] ||
+  fail 'product health PGPASSFILE must contain exactly one newline-terminated line'
+pg_host=''
+pg_port=''
+pg_database=''
+pg_user=''
+pg_password=''
+pg_extra=''
+IFS=: read -r pg_host pg_port pg_database pg_user pg_password pg_extra \
+  <"$OBSERVABILITY_PRODUCT_HEALTH_PGPASS_FILE" ||
+  fail 'product health PGPASSFILE must be newline terminated'
+[[ "$pg_host" == postgres && "$pg_port" == 5432 &&
+  "$pg_database" == "$OBSERVABILITY_PRODUCT_HEALTH_DATABASE" &&
+  "$pg_user" == speakup_product_health_reader && -z "$pg_extra" ]] ||
+  fail 'product health PGPASSFILE scope is invalid'
+[[ "$pg_password" =~ ^[A-Za-z0-9_-]{32,128}$ ]] ||
+  fail 'product health PGPASSFILE password must be 32-128 base64url characters'
 
 printf 'observability private files valid=true\n'

@@ -80,8 +80,12 @@ services:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_USERS_DEFAULT_LANGUAGE: zh-Hans
+      OBSERVABILITY_PRODUCT_HEALTH_DATABASE: ${OBSERVABILITY_PRODUCT_HEALTH_DATABASE:?OBSERVABILITY_PRODUCT_HEALTH_DATABASE is required}
+      PGPASSFILE: /run/secrets/product_health_reader_pgpass
     secrets:
       - grafana_admin_password
+      - product_health_reader_pgpass
     ports:
       - "127.0.0.1:13000:3000"
     volumes:
@@ -92,6 +96,7 @@ services:
       - /tmp:size=64m,mode=1777
     networks:
       - monitor
+      - production_database
     mem_limit: 512m
     cpus: 0.50
     pids_limit: 128
@@ -152,6 +157,9 @@ networks:
   staging_api:
     external: true
     name: xe3-speakup-staging_server_edge
+  production_database:
+    external: true
+    name: xe3-speakup-production_database
 
 volumes:
   prometheus_data:
@@ -161,3 +169,5 @@ volumes:
 secrets:
   grafana_admin_password:
     file: ${OBSERVABILITY_GRAFANA_ADMIN_PASSWORD_FILE:?OBSERVABILITY_GRAFANA_ADMIN_PASSWORD_FILE is required}
+  product_health_reader_pgpass:
+    file: ${OBSERVABILITY_PRODUCT_HEALTH_PGPASS_FILE:?OBSERVABILITY_PRODUCT_HEALTH_PGPASS_FILE is required}

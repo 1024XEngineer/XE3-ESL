@@ -1,0 +1,19 @@
+apiVersion: 1
+
+datasources:
+  - name: SpeakUp Product Health
+    uid: speakup-product-health-postgres
+    type: postgres
+    access: proxy
+    url: postgres:5432
+    user: speakup_product_health_reader
+    isDefault: false
+    editable: false
+    jsonData:
+      database: $__env{OBSERVABILITY_PRODUCT_HEALTH_DATABASE}
+      sslmode: disable
+      maxOpenConns: 4
+      maxIdleConns: 2
+      connMaxLifetime: 300
+      postgresVersion: 1000
+      timescaledb: false
