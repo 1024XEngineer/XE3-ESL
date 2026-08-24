@@ -542,6 +542,8 @@ void main() {
         home: ConversationPage(
           hasFocusedThread: false,
           isBusy: true,
+          isReplyPending: true,
+          isComposerBlocked: true,
           onCreateConversation: () {},
           onSubmitText: (_) async => true,
         ),
@@ -564,6 +566,8 @@ void main() {
       const MaterialApp(
         home: ConversationPage(
           isBusy: true,
+          isReplyPending: true,
+          isComposerBlocked: true,
           messages: <AgentMessage>[
             AgentMessage(
               id: 'user-message',

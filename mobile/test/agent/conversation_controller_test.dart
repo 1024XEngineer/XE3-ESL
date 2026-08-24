@@ -8,6 +8,40 @@ import 'package:speakup/features/agent/conversation/agent_models.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('a real text Run is exposed as reply pending', () async {
+    final client = _HistoryAgentClient(controlOldSend: true);
+    final controller = ConversationController(client: client);
+    addTearDown(controller.dispose);
+    await controller.initialize();
+
+    final sending = controller.sendText('real user message');
+    await client.sendStarted.future;
+
+    expect(controller.isBusy, isTrue);
+    expect(controller.isRestoring, isFalse);
+    expect(controller.isReplyPending, isTrue);
+    expect(controller.isComposerBlocked, isTrue);
+
+    client.sendResult.complete(
+      const AgentExchange(
+        userMessage: AgentMessage(
+          id: 'message_real_user',
+          role: AgentMessageRole.user,
+          text: 'real user message',
+        ),
+        assistantMessage: AgentMessage(
+          id: 'message_real_assistant',
+          role: AgentMessageRole.assistant,
+          text: 'real assistant reply',
+        ),
+      ),
+    );
+    expect(await sending, isTrue);
+    expect(controller.isBusy, isFalse);
+    expect(controller.isReplyPending, isFalse);
+    expect(controller.isComposerBlocked, isFalse);
+  });
+
   test(
     'clears UI before awaiting client cleanup and discards a late response',
     () async {
@@ -148,12 +182,16 @@ void main() {
 
       expect(controller.isBusy, isTrue);
       expect(controller.isRestoring, isTrue);
+      expect(controller.isReplyPending, isFalse);
+      expect(controller.isComposerBlocked, isFalse);
 
       gate.complete();
       await restoration;
 
       expect(controller.isBusy, isFalse);
       expect(controller.isRestoring, isFalse);
+      expect(controller.isReplyPending, isFalse);
+      expect(controller.isComposerBlocked, isFalse);
     },
   );
 
@@ -324,6 +362,7 @@ void main() {
     await client.createStarted.future;
 
     expect(controller.isThreadTransitionInFlight, isTrue);
+    expect(controller.isComposerBlocked, isTrue);
     expect(await controller.createThread(), isFalse);
     expect(client.createCalls, 1);
 
@@ -331,6 +370,7 @@ void main() {
     expect(await firstCreate, isTrue);
     expect(client.createCalls, 1);
     expect(controller.isThreadTransitionInFlight, isFalse);
+    expect(controller.isComposerBlocked, isFalse);
   });
 
   test(

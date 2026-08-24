@@ -55,6 +55,7 @@ final class ConversationController extends ChangeNotifier {
   _ConversationRetry? _retry;
   bool _initialized = false;
   bool _busy = false;
+  bool _replyPending = false;
   bool _disposed = false;
   int _epoch = 0;
   Future<void>? _initializationFuture;
@@ -78,8 +79,11 @@ final class ConversationController extends ChangeNotifier {
   bool get hasEarlierMessages => _nextMessageCursor != null;
   bool get isLoadingEarlierMessages => _loadingEarlierMessages;
   String? get errorMessage => _errorMessage;
-  bool get isBusy => _busy || _threadTransitionInFlight;
-  bool get isRestoring => !_initialized && _busy;
+  bool get isBusy => _busy || _replyPending || _threadTransitionInFlight;
+  bool get isRestoring => !_initialized && _busy && !_replyPending;
+  bool get isReplyPending => _replyPending;
+  bool get isComposerBlocked =>
+      _replyPending || _threadTransitionInFlight || (_busy && !isRestoring);
   bool get canRetry => _retry != null;
 
   Future<void> initialize() async {
@@ -657,7 +661,7 @@ final class ConversationController extends ChangeNotifier {
     final fence = _captureOperationFence(threadId: threadId);
     _retry = null;
     _errorMessage = null;
-    _setBusy(true);
+    _setReplyPending(true);
     if (operation.imageAssetIds.isEmpty && client is AgentStreamingTextClient) {
       final streamingClient = client as AgentStreamingTextClient;
       final committedUserMessageID = operation.committedUserMessageID;
@@ -739,7 +743,7 @@ final class ConversationController extends ChangeNotifier {
       return false;
     } finally {
       if (_isOperationCurrent(fence)) {
-        _setBusy(false);
+        _setReplyPending(false);
       }
     }
   }
@@ -914,7 +918,7 @@ final class ConversationController extends ChangeNotifier {
     } finally {
       frameTimer?.cancel();
       if (_isOperationCurrent(fence)) {
-        _setBusy(false);
+        _setReplyPending(false);
       }
     }
   }
@@ -1264,8 +1268,7 @@ final class ConversationController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<bool> prepareToLeaveConversation() async =>
-      !_disposed && !_busy && !_threadTransitionInFlight;
+  Future<bool> prepareToLeaveConversation() async => !_disposed && !isBusy;
 
   Future<void> clearPrivateState() async {
     _epoch++;
@@ -1287,6 +1290,7 @@ final class ConversationController extends ChangeNotifier {
     _retry = null;
     _initialized = false;
     _busy = false;
+    _replyPending = false;
     if (!_disposed) {
       notifyListeners();
     }
@@ -1382,6 +1386,14 @@ final class ConversationController extends ChangeNotifier {
       return;
     }
     _busy = value;
+    notifyListeners();
+  }
+
+  void _setReplyPending(bool value) {
+    if (_disposed) {
+      return;
+    }
+    _replyPending = value;
     notifyListeners();
   }
 
