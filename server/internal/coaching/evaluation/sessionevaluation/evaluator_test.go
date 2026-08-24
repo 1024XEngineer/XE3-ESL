@@ -19,11 +19,158 @@ func TestInvalidProviderReportRemainsRetryableAtTheJobBoundary(t *testing.T) {
 	var failure interface {
 		StableCategory() string
 		Retryable() bool
+		EvaluationNormalizeReason() string
 	}
 	if !errors.As(ErrProviderResponse, &failure) ||
 		failure.StableCategory() != "PROVIDER_RESPONSE_INVALID" ||
+		failure.EvaluationNormalizeReason() != "normalized_report_invalid" ||
 		!failure.Retryable() {
 		t.Fatalf("provider response failure = %#v", failure)
+	}
+}
+
+func TestInsufficientProviderReportClearsScoresAndPriorityActions(t *testing.T) {
+	score := 7.0
+	generated := mustProviderResult(t, providerReport{
+		ScoreabilityStatus: report.ReportScoreabilityInsufficient,
+		Summary:            "The available evidence is insufficient.",
+		Dimensions: []providerDimension{
+			providerDimensionFixture("FLUENCY_COHERENCE", &score),
+		},
+		PriorityActions: []providerPriorityAction{{
+			DimensionKey: "UNKNOWN", ImprovementIndex: 99,
+		}},
+	})
+
+	formal, err := normalizeProviderReport(
+		generated, sessionSnapshotFixture(), evaluation.SceneIELTSSpeaking,
+		[]string{"FLUENCY_COHERENCE"}, report.ReportScaleIELTSBand,
+		"qianwen", "qwen-plus",
+	)
+	if err != nil {
+		t.Fatalf("normalizeProviderReport() error = %v", err)
+	}
+	for _, dimension := range formal.Dimensions {
+		if dimension.Score != nil {
+			t.Fatalf("INSUFFICIENT dimension retained score: %#v", dimension)
+		}
+	}
+	if len(formal.PriorityActions) != 0 {
+		t.Fatalf("INSUFFICIENT priority actions = %#v", formal.PriorityActions)
+	}
+}
+
+func TestInsufficientProviderReportDoesNotFabricateInvalidEvidence(t *testing.T) {
+	score := 7.0
+	dimension := providerDimensionFixture("FLUENCY_COHERENCE", &score)
+	dimension.Strengths = []providerFinding{{
+		Message: "Unsupported strength",
+		Evidence: []providerEvidence{{
+			TurnID: sessionSnapshotFixture().Turns[0].ID,
+			Quote:  "provider-invented quote", Occurrence: 1,
+		}},
+	}}
+	_, err := normalizeProviderReport(
+		mustProviderResult(t, providerReport{
+			ScoreabilityStatus: report.ReportScoreabilityInsufficient,
+			Summary:            "The available evidence is insufficient.", Dimensions: []providerDimension{dimension},
+			PriorityActions: []providerPriorityAction{},
+		}),
+		sessionSnapshotFixture(), evaluation.SceneIELTSSpeaking,
+		[]string{"FLUENCY_COHERENCE"}, report.ReportScaleIELTSBand,
+		"qianwen", "qwen-plus",
+	)
+	if !errors.Is(err, ErrProviderResponse) ||
+		normalizeReasonFromError(err) != normalizeReasonEvidenceInvalid {
+		t.Fatalf("invalid INSUFFICIENT evidence error = %v", err)
+	}
+}
+
+func TestProvisionalProviderReportRemainsFailClosed(t *testing.T) {
+	tests := []struct {
+		name       string
+		report     providerReport
+		wantReason normalizeReason
+	}{
+		{
+			name: "invalid score",
+			report: func() providerReport {
+				score := 9.5
+				return providerReport{
+					ScoreabilityStatus: report.ReportScoreabilityProvisional,
+					Summary:            "Provisional report.",
+					Dimensions: []providerDimension{
+						providerDimensionFixture("FLUENCY_COHERENCE", &score),
+					},
+					PriorityActions: []providerPriorityAction{},
+				}
+			}(),
+			wantReason: normalizeReasonNormalizedReportInvalid,
+		},
+		{
+			name: "invalid priority action",
+			report: func() providerReport {
+				score := 7.0
+				return providerReport{
+					ScoreabilityStatus: report.ReportScoreabilityProvisional,
+					Summary:            "Provisional report.",
+					Dimensions: []providerDimension{
+						providerDimensionFixture("FLUENCY_COHERENCE", &score),
+					},
+					PriorityActions: []providerPriorityAction{{
+						DimensionKey: "FLUENCY_COHERENCE", ImprovementIndex: 1,
+					}},
+				}
+			}(),
+			wantReason: normalizeReasonPriorityActionInvalid,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := normalizeProviderReport(
+				mustProviderResult(t, test.report),
+				sessionSnapshotFixture(), evaluation.SceneIELTSSpeaking,
+				[]string{"FLUENCY_COHERENCE"}, report.ReportScaleIELTSBand,
+				"qianwen", "qwen-plus",
+			)
+			if !errors.Is(err, ErrProviderResponse) ||
+				normalizeReasonFromError(err) != test.wantReason {
+				t.Fatalf("normalizeProviderReport() error = %v, reason = %q", err, normalizeReasonFromError(err))
+			}
+		})
+	}
+}
+
+func TestIELTSRepairReceivesBoundedNormalizeReason(t *testing.T) {
+	generator := &repairReportGeneratorFake{}
+	evaluators, err := New(generator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lineages, err := Lineages("qianwen", "qwen-plus")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := evaluators.EvaluateIELTS(
+		context.Background(), evaluation.Record{}, sessionSnapshotFixture(), lineages.IELTS,
+	); err != nil {
+		t.Fatalf("EvaluateIELTS() error = %v", err)
+	}
+	if len(generator.requests) != 2 {
+		t.Fatalf("generation requests = %d", len(generator.requests))
+	}
+	var repair struct {
+		Violation   normalizeReason `json:"violation"`
+		Instruction string          `json:"instruction"`
+	}
+	if err := json.Unmarshal([]byte(generator.requests[1].UserPrompt), &repair); err != nil {
+		t.Fatal(err)
+	}
+	if repair.Violation != normalizeReasonPriorityActionInvalid ||
+		!repair.Violation.valid() ||
+		!strings.Contains(repair.Instruction, "For INSUFFICIENT, every score must be null") ||
+		!strings.Contains(repair.Instruction, "existing improvement in the same dimension") {
+		t.Fatalf("repair contract = %#v", repair)
 	}
 }
 
@@ -491,6 +638,81 @@ type reportGeneratorFake struct {
 	last textgeneration.Request
 }
 
+type repairReportGeneratorFake struct {
+	requests []textgeneration.Request
+}
+
+func (generator *repairReportGeneratorFake) Generate(
+	_ context.Context,
+	request textgeneration.Request,
+) (textgeneration.Result, error) {
+	generator.requests = append(generator.requests, request)
+	var dimensionKeys []string
+	if len(generator.requests) == 1 {
+		var input struct {
+			DimensionKeys []string `json:"dimension_keys"`
+		}
+		if err := json.Unmarshal([]byte(request.UserPrompt), &input); err != nil {
+			return textgeneration.Result{}, err
+		}
+		dimensionKeys = input.DimensionKeys
+	} else {
+		var repair struct {
+			Input struct {
+				DimensionKeys []string `json:"dimension_keys"`
+			} `json:"input"`
+		}
+		if err := json.Unmarshal([]byte(request.UserPrompt), &repair); err != nil {
+			return textgeneration.Result{}, err
+		}
+		dimensionKeys = repair.Input.DimensionKeys
+	}
+	score := 7.0
+	dimensions := make([]providerDimension, len(dimensionKeys))
+	for index, key := range dimensionKeys {
+		dimensions[index] = providerDimensionFixture(key, &score)
+	}
+	actions := []providerPriorityAction{}
+	if len(generator.requests) == 1 {
+		actions = append(actions, providerPriorityAction{
+			DimensionKey: dimensionKeys[0], ImprovementIndex: 1,
+		})
+	}
+	content, err := json.Marshal(providerReport{
+		ScoreabilityStatus: report.ReportScoreabilityProvisional,
+		Summary:            "Provisional report.",
+		Dimensions:         dimensions,
+		PriorityActions:    actions,
+	})
+	if err != nil {
+		return textgeneration.Result{}, err
+	}
+	return textgeneration.Result{
+		RequestID: fmt.Sprintf("request-%d", len(generator.requests)),
+		Content:   string(content), Provider: "qianwen", Model: "qwen-plus",
+	}, nil
+}
+
+func providerDimensionFixture(key string, score *float64) providerDimension {
+	return providerDimension{
+		Key: key, Score: score, Coverage: 1, Confidence: 0.8,
+		ReasonCodes: []string{}, Strengths: []providerFinding{},
+		Improvements: []providerFinding{}, Examples: []providerFinding{},
+	}
+}
+
+func mustProviderResult(t *testing.T, value providerReport) textgeneration.Result {
+	t.Helper()
+	content, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return textgeneration.Result{
+		RequestID: "request-1", Content: string(content),
+		Provider: "qianwen", Model: "qwen-plus",
+	}
+}
+
 func (generator *reportGeneratorFake) Generate(
 	_ context.Context,
 	request textgeneration.Request,
@@ -557,3 +779,4 @@ func sessionSnapshotFixture() evaluation.SessionInputSnapshot {
 }
 
 var _ textgeneration.Generator = (*reportGeneratorFake)(nil)
+var _ textgeneration.Generator = (*repairReportGeneratorFake)(nil)
