@@ -19,6 +19,57 @@ import 'package:speakup/features/agent/conversation/agent_models.dart';
 import 'package:speakup/features/agent/conversation/conversation_controller.dart';
 
 void main() {
+  testWidgets(
+    'cold-start restore keeps recording available without reply progress',
+    (tester) async {
+      final conversationController = ConversationController(
+        client: FakeAgentClient(delay: const Duration(milliseconds: 100)),
+      );
+      final composerController = ComposerController(
+        conversationController: conversationController,
+        voiceClient: FakeAgentVoiceClient(),
+      );
+      addTearDown(() {
+        composerController.dispose();
+        conversationController.dispose();
+      });
+
+      await tester.pumpWidget(
+        SpeakUpApp.preview(
+          conversationController: conversationController,
+          composerController: composerController,
+        ),
+      );
+
+      expect(conversationController.isBusy, isTrue);
+      expect(conversationController.isRestoring, isTrue);
+      expect(conversationController.isReplyPending, isFalse);
+      expect(conversationController.isComposerBlocked, isFalse);
+      expect(find.byKey(const Key('agent-operation-progress')), findsOneWidget);
+      expect(find.text('正在加载对话…'), findsOneWidget);
+      expect(find.text('SpeakUp 正在回复…'), findsNothing);
+      expect(find.text('点击或长按说话'), findsOneWidget);
+      expect(find.text('暂时无法录音'), findsNothing);
+
+      await tester.tap(find.byKey(const Key('agent-mic-placeholder')));
+      await _pumpUntil(
+        tester,
+        () =>
+            composerController.voiceController?.state ==
+            AgentVoiceComposerState.recording,
+      );
+
+      expect(
+        composerController.voiceController?.state,
+        AgentVoiceComposerState.recording,
+      );
+      expect(find.byKey(const Key('agent-operation-progress')), findsNothing);
+
+      await composerController.voiceController!.cancel();
+      await tester.pump();
+    },
+  );
+
   testWidgets('home microphone commits a playable voice Message', (
     tester,
   ) async {
