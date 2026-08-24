@@ -171,7 +171,7 @@ func (evaluator *InterviewEvaluator) Evaluate(
 			"INTERVIEW_EVIDENCE",
 			"INTERVIEW_PROFESSIONAL",
 			"INTERVIEW_INTERACTION",
-		}, report.ReportScalePercentage100, false, nil)
+		}, report.ReportScalePercentage100, false, nil, nil)
 }
 
 func (evaluator *IELTSEvaluator) Evaluate(
@@ -214,8 +214,9 @@ func (evaluator *IELTSEvaluator) Evaluate(
 		dimensions = append(dimensions, "PRONUNCIATION")
 	}
 	var payloadOverride any
+	var evidencePolicy *providerEvidencePolicy
 	if lineage.PromptVersion == ieltsPromptVersionV4 {
-		payloadOverride, err = ieltsV4Payload(snapshot, dimensions)
+		payloadOverride, evidencePolicy, err = ieltsV4Payload(snapshot, dimensions)
 		if err != nil {
 			return nil, err
 		}
@@ -227,7 +228,7 @@ func (evaluator *IELTSEvaluator) Evaluate(
 	}
 	return evaluate(ctx, evaluator.generator, snapshot, lineage,
 		prompt.system, prompt.insufficientSummary, evaluation.SceneIELTSSpeaking,
-		dimensions, report.ReportScaleIELTSBand, true, payloadOverride)
+		dimensions, report.ReportScaleIELTSBand, true, payloadOverride, evidencePolicy)
 }
 
 func (evaluator *GeneralEvaluator) Evaluate(
@@ -269,7 +270,7 @@ func (evaluator *GeneralEvaluator) Evaluate(
 			"CLARITY_COHERENCE",
 			"LANGUAGE_CONTROL",
 			"INTERACTION",
-		}, report.ReportScalePercentage100, false, nil)
+		}, report.ReportScalePercentage100, false, nil, nil)
 }
 
 func evaluate(
@@ -284,6 +285,7 @@ func evaluate(
 	scale report.ReportScoreScale,
 	allowRepair bool,
 	payloadOverride any,
+	evidencePolicy *providerEvidencePolicy,
 ) (json.RawMessage, error) {
 	if generator == nil || ctx == nil || strings.TrimSpace(systemPrompt) == "" ||
 		strings.TrimSpace(insufficientSummary) == "" ||
@@ -300,6 +302,10 @@ func evaluate(
 		return encodeReport(insufficientReport(
 			snapshot, sceneType, dimensionKeys, scale, insufficientSummary,
 		))
+	}
+	if evidencePolicy == nil {
+		value := fullRawProviderEvidencePolicy(snapshot)
+		evidencePolicy = &value
 	}
 	payloadSource := payloadOverride
 	if payloadSource == nil {
@@ -322,7 +328,7 @@ func evaluate(
 	}
 	formal, normalizeErr := normalizeProviderReport(
 		generated, snapshot, sceneType, dimensionKeys, scale,
-		lineage.Provider, lineage.Model,
+		lineage.Provider, lineage.Model, *evidencePolicy,
 	)
 	if normalizeErr == nil {
 		return encodeReport(formal)
@@ -355,7 +361,7 @@ func evaluate(
 	}
 	formal, err = normalizeProviderReport(
 		repaired, snapshot, sceneType, dimensionKeys, scale,
-		lineage.Provider, lineage.Model,
+		lineage.Provider, lineage.Model, *evidencePolicy,
 	)
 	if err != nil {
 		return nil, err
@@ -404,13 +410,14 @@ type fallbackIELTSProviderInputV4 struct {
 func ieltsV4Payload(
 	snapshot evaluation.SessionInputSnapshot,
 	dimensionKeys []string,
-) (any, error) {
+) (any, *providerEvidencePolicy, error) {
 	switch snapshot.ProfileResolution {
 	case evaluation.IELTSFinalProfileResolved:
 		incremental, err := incrementalIELTSPayload(snapshot, dimensionKeys)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
+		policy := resolvedIELTSProviderEvidencePolicy(snapshot, incremental)
 		return resolvedIELTSProviderInputV4{
 			SchemaVersion: ieltsInputSchemaVersionV4,
 			EvidenceMode:  ieltsInputCumulativeParts12PlusPart3,
@@ -418,7 +425,7 @@ func ieltsV4Payload(
 			DimensionKeys:     incremental.DimensionKeys,
 			CumulativeProfile: incremental.CumulativeProfile,
 			Questions:         incremental.Questions, Turns: incremental.Turns,
-		}, nil
+		}, &policy, nil
 	case evaluation.IELTSFinalProfileFallback:
 		effectiveTurns := make([]evaluation.SessionEvidenceTurn, 0, len(snapshot.Turns))
 		for _, turn := range snapshot.Turns {
@@ -432,9 +439,9 @@ func ieltsV4Payload(
 			SceneType:     evaluation.SceneIELTSSpeaking,
 			PracticeMode:  snapshot.PracticeMode, DimensionKeys: dimensionKeys,
 			Questions: snapshot.Questions, Turns: effectiveTurns,
-		}, nil
+		}, nil, nil
 	default:
-		return nil, evaluation.ErrInvalidRequest
+		return nil, nil, evaluation.ErrInvalidRequest
 	}
 }
 
@@ -521,6 +528,82 @@ type providerEvidence struct {
 	Occurrence int    `json:"occurrence"`
 }
 
+type providerEvidenceKey struct {
+	TurnID     string
+	Quote      string
+	Occurrence int
+}
+
+type providerEvidencePolicy struct {
+	transcripts map[string]string
+	rawTurns    map[string]struct{}
+	exact       map[providerEvidenceKey]struct{}
+}
+
+func fullRawProviderEvidencePolicy(
+	snapshot evaluation.SessionInputSnapshot,
+) providerEvidencePolicy {
+	policy := providerEvidencePolicy{
+		transcripts: make(map[string]string, len(snapshot.Turns)),
+		rawTurns:    make(map[string]struct{}, len(snapshot.Turns)),
+		exact:       map[providerEvidenceKey]struct{}{},
+	}
+	for _, turn := range snapshot.Turns {
+		if turn.Effective {
+			policy.transcripts[turn.ID] = turn.Transcript
+			policy.rawTurns[turn.ID] = struct{}{}
+		}
+	}
+	return policy
+}
+
+func resolvedIELTSProviderEvidencePolicy(
+	snapshot evaluation.SessionInputSnapshot,
+	payload incrementalIELTSProviderInput,
+) providerEvidencePolicy {
+	policy := providerEvidencePolicy{
+		transcripts: make(map[string]string, len(snapshot.Turns)),
+		rawTurns:    make(map[string]struct{}, len(payload.Turns)),
+		exact:       map[providerEvidenceKey]struct{}{},
+	}
+	for _, turn := range snapshot.Turns {
+		if turn.Effective {
+			policy.transcripts[turn.ID] = turn.Transcript
+		}
+	}
+	for _, turn := range payload.Turns {
+		policy.rawTurns[turn.ID] = struct{}{}
+	}
+	for _, dimension := range payload.CumulativeProfile.Dimensions {
+		for _, observation := range dimension.Observations {
+			for _, evidence := range observation.Evidence {
+				policy.exact[providerEvidenceKey{
+					TurnID: evidence.TurnID, Quote: strings.TrimSpace(evidence.Quote),
+					Occurrence: evidence.Occurrence,
+				}] = struct{}{}
+			}
+		}
+	}
+	return policy
+}
+
+func (policy providerEvidencePolicy) byteOffset(source providerEvidence) (int, bool) {
+	transcript, exists := policy.transcripts[source.TurnID]
+	quote := strings.TrimSpace(source.Quote)
+	if !exists || quote == "" || source.Occurrence < 1 {
+		return -1, false
+	}
+	if _, raw := policy.rawTurns[source.TurnID]; !raw {
+		if _, exact := policy.exact[providerEvidenceKey{
+			TurnID: source.TurnID, Quote: quote, Occurrence: source.Occurrence,
+		}]; !exact {
+			return -1, false
+		}
+	}
+	start := byteOccurrence(transcript, quote, source.Occurrence)
+	return start, start >= 0
+}
+
 type providerPriorityAction struct {
 	DimensionKey     string `json:"dimension_key"`
 	ImprovementIndex int    `json:"improvement_index"`
@@ -534,6 +617,7 @@ func normalizeProviderReport(
 	scale report.ReportScoreScale,
 	expectedProvider string,
 	expectedModel string,
+	evidencePolicy providerEvidencePolicy,
 ) (report.FormalReport, error) {
 	if generated.Provider != expectedProvider || generated.Model != expectedModel ||
 		generated.RequestID == "" || len(generated.Content) == 0 ||
@@ -560,12 +644,6 @@ func normalizeProviderReport(
 		return report.FormalReport{}, providerResponseError(
 			normalizeReasonDimensionCountInvalid,
 		)
-	}
-	turns := make(map[string]string, len(snapshot.Turns))
-	for _, turn := range snapshot.Turns {
-		if turn.Effective {
-			turns[turn.ID] = turn.Transcript
-		}
 	}
 	formal := report.FormalReport{
 		SchemaVersion:      report.FormalReportSchemaVersion,
@@ -606,19 +684,19 @@ func normalizeProviderReport(
 		}
 		var err error
 		dimension.Strengths, err = normalizeFindings(
-			expectedKey, "strength", providedDimension.Strengths, turns,
+			expectedKey, "strength", providedDimension.Strengths, evidencePolicy,
 		)
 		if err != nil {
 			return report.FormalReport{}, err
 		}
 		dimension.Improvements, err = normalizeFindings(
-			expectedKey, "improvement", providedDimension.Improvements, turns,
+			expectedKey, "improvement", providedDimension.Improvements, evidencePolicy,
 		)
 		if err != nil {
 			return report.FormalReport{}, err
 		}
 		dimension.Examples, err = normalizeFindings(
-			expectedKey, "example", providedDimension.Examples, turns,
+			expectedKey, "example", providedDimension.Examples, evidencePolicy,
 		)
 		if err != nil {
 			return report.FormalReport{}, err
@@ -784,7 +862,7 @@ func normalizeFindings(
 	dimensionKey string,
 	kind string,
 	provided []providerFinding,
-	turns map[string]string,
+	evidencePolicy providerEvidencePolicy,
 ) ([]report.ReportFinding, error) {
 	if provided == nil || len(provided) > 5 {
 		return nil, providerResponseError(normalizeReasonFindingCountInvalid)
@@ -801,10 +879,9 @@ func normalizeFindings(
 			return nil, providerResponseError(normalizeReasonEvidenceCountInvalid)
 		}
 		for evidenceIndex, source := range item.Evidence {
-			transcript, exists := turns[source.TurnID]
 			quote := strings.TrimSpace(source.Quote)
-			start := byteOccurrence(transcript, quote, source.Occurrence)
-			if !exists || source.Occurrence < 1 || start < 0 {
+			start, allowed := evidencePolicy.byteOffset(source)
+			if !allowed {
 				return nil, providerResponseError(normalizeReasonEvidenceInvalid)
 			}
 			finding.Evidence[evidenceIndex] = report.ReportEvidence{

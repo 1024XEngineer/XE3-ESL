@@ -31,6 +31,7 @@ func TestInvalidProviderReportRemainsRetryableAtTheJobBoundary(t *testing.T) {
 
 func TestInsufficientProviderReportClearsScoresAndPriorityActions(t *testing.T) {
 	score := 7.0
+	snapshot := sessionSnapshotFixture()
 	generated := mustProviderResult(t, providerReport{
 		ScoreabilityStatus: report.ReportScoreabilityInsufficient,
 		Summary:            "The available evidence is insufficient.",
@@ -43,9 +44,9 @@ func TestInsufficientProviderReportClearsScoresAndPriorityActions(t *testing.T) 
 	})
 
 	formal, err := normalizeProviderReport(
-		generated, sessionSnapshotFixture(), evaluation.SceneIELTSSpeaking,
+		generated, snapshot, evaluation.SceneIELTSSpeaking,
 		[]string{"FLUENCY_COHERENCE"}, report.ReportScaleIELTSBand,
-		"qianwen", "qwen-plus",
+		"qianwen", "qwen-plus", fullRawProviderEvidencePolicy(snapshot),
 	)
 	if err != nil {
 		t.Fatalf("normalizeProviderReport() error = %v", err)
@@ -62,11 +63,12 @@ func TestInsufficientProviderReportClearsScoresAndPriorityActions(t *testing.T) 
 
 func TestInsufficientProviderReportDoesNotFabricateInvalidEvidence(t *testing.T) {
 	score := 7.0
+	snapshot := sessionSnapshotFixture()
 	dimension := providerDimensionFixture("FLUENCY_COHERENCE", &score)
 	dimension.Strengths = []providerFinding{{
 		Message: "Unsupported strength",
 		Evidence: []providerEvidence{{
-			TurnID: sessionSnapshotFixture().Turns[0].ID,
+			TurnID: snapshot.Turns[0].ID,
 			Quote:  "provider-invented quote", Occurrence: 1,
 		}},
 	}}
@@ -76,9 +78,9 @@ func TestInsufficientProviderReportDoesNotFabricateInvalidEvidence(t *testing.T)
 			Summary:            "The available evidence is insufficient.", Dimensions: []providerDimension{dimension},
 			PriorityActions: []providerPriorityAction{},
 		}),
-		sessionSnapshotFixture(), evaluation.SceneIELTSSpeaking,
+		snapshot, evaluation.SceneIELTSSpeaking,
 		[]string{"FLUENCY_COHERENCE"}, report.ReportScaleIELTSBand,
-		"qianwen", "qwen-plus",
+		"qianwen", "qwen-plus", fullRawProviderEvidencePolicy(snapshot),
 	)
 	if !errors.Is(err, ErrProviderResponse) ||
 		normalizeReasonFromError(err) != normalizeReasonEvidenceInvalid {
@@ -127,11 +129,12 @@ func TestProvisionalProviderReportRemainsFailClosed(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			snapshot := sessionSnapshotFixture()
 			_, err := normalizeProviderReport(
 				mustProviderResult(t, test.report),
-				sessionSnapshotFixture(), evaluation.SceneIELTSSpeaking,
+				snapshot, evaluation.SceneIELTSSpeaking,
 				[]string{"FLUENCY_COHERENCE"}, report.ReportScaleIELTSBand,
-				"qianwen", "qwen-plus",
+				"qianwen", "qwen-plus", fullRawProviderEvidencePolicy(snapshot),
 			)
 			if !errors.Is(err, ErrProviderResponse) ||
 				normalizeReasonFromError(err) != test.wantReason {
@@ -263,31 +266,7 @@ func TestIELTSEvaluatorUsesCumulativeProfileAndOnlyPart3RawEvidence(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot := sessionSnapshotFixture()
-	now := snapshot.CompletedAt
-	snapshot.PlanSnapshot = json.RawMessage(`{"ielts_assignment":{"parts":[{"turn_blueprints":["p1"]},{"turn_blueprints":["p2"]},{"turn_blueprints":["p3"]}]}}`)
-	snapshot.Questions[0].Text = "Part 1 question"
-	snapshot.Turns[0].Transcript = "PART_ONE_RAW_TRANSCRIPT"
-	for index, transcript := range []string{"PART_TWO_RAW_TRANSCRIPT", "PART_THREE_RAW_TRANSCRIPT"} {
-		position := index + 2
-		questionID := fmt.Sprintf("40000000-0000-4000-8000-%012d", position)
-		turnID := fmt.Sprintf("30000000-0000-4000-8000-%012d", position)
-		snapshot.Questions = append(snapshot.Questions, evaluation.SessionEvidenceQuestion{
-			ID: questionID, Position: position, Text: fmt.Sprintf("Part %d question", position),
-			SpeakerParticipantID: "assistant-1", AddresseeParticipantIDs: []string{"user-1"},
-		})
-		snapshot.Turns = append(snapshot.Turns, evaluation.SessionEvidenceTurn{
-			ID: turnID, Position: position, QuestionID: questionID,
-			RespondentParticipantID: "user-1", Transcript: transcript,
-			Effective: true, ConfirmedAt: now,
-		})
-	}
-	snapshot.CumulativeProfile = &evaluation.IELTSCumulativeProfile{
-		SchemaVersion: evaluation.IELTSCumulativeProfileSchemaVersion,
-		SessionID:     snapshot.SessionID, CompletedParts: []int{1, 2},
-		Dimensions: cumulativeProfileDimensions(), Provider: "qianwen", Model: "qwen-plus",
-	}
-	snapshot.ProfileResolution = evaluation.IELTSFinalProfileResolved
+	snapshot := resolvedFullMockSnapshot()
 
 	if _, err := evaluators.EvaluateIELTS(
 		context.Background(), evaluation.Record{}, snapshot, lineages.IELTS,
@@ -306,9 +285,133 @@ func TestIELTSEvaluatorUsesCumulativeProfileAndOnlyPart3RawEvidence(t *testing.T
 		len(payload.CumulativeProfile.CompletedParts) != 2 ||
 		len(payload.Questions) != 1 || len(payload.Turns) != 1 ||
 		payload.Turns[0].Transcript != "PART_THREE_RAW_TRANSCRIPT" ||
-		strings.Contains(generator.last.UserPrompt, "PART_ONE_RAW_TRANSCRIPT") ||
+		strings.Contains(generator.last.UserPrompt, "PART_ONE_HIDDEN_RAW") ||
 		strings.Contains(generator.last.UserPrompt, "PART_TWO_RAW_TRANSCRIPT") {
 		t.Fatalf("resolved v4 payload = %#v: %s", payload, generator.last.UserPrompt)
+	}
+}
+
+func TestIELTSEvaluatorV4ResolvedRejectsPart12RawEvidenceOutsideProfile(t *testing.T) {
+	snapshot := resolvedFullMockSnapshot()
+	for _, test := range []struct {
+		name     string
+		evidence providerEvidence
+	}{
+		{
+			name: "Part 1 raw outside profile",
+			evidence: providerEvidence{
+				TurnID: snapshot.Turns[0].ID, Quote: "PART_ONE_HIDDEN_RAW", Occurrence: 1,
+			},
+		},
+		{
+			name: "Part 2 raw outside profile",
+			evidence: providerEvidence{
+				TurnID: snapshot.Turns[1].ID, Quote: "PART_TWO_RAW_TRANSCRIPT", Occurrence: 1,
+			},
+		},
+		{
+			name: "profile quote with different occurrence",
+			evidence: providerEvidence{
+				TurnID: snapshot.Turns[0].ID, Quote: "PROFILE_ALLOWED_QUOTE", Occurrence: 2,
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			generator := &reportGeneratorFake{evidence: &test.evidence}
+			evaluators, err := New(generator)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lineages, err := Lineages("qianwen", "qwen-plus")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			_, err = evaluators.EvaluateIELTS(
+				context.Background(), evaluation.Record{}, snapshot, lineages.IELTS,
+			)
+			if !errors.Is(err, ErrProviderResponse) || generator.calls != 2 {
+				t.Fatalf(
+					"EvaluateIELTS() error = %v, generator calls = %d",
+					err, generator.calls,
+				)
+			}
+		})
+	}
+}
+
+func TestIELTSEvaluatorV4ResolvedAcceptsOnlyProfileOrPart3Evidence(t *testing.T) {
+	snapshot := resolvedFullMockSnapshot()
+	tests := []struct {
+		name      string
+		evidence  providerEvidence
+		turnIndex int
+	}{
+		{
+			name: "cumulative profile evidence",
+			evidence: providerEvidence{
+				TurnID: snapshot.Turns[0].ID, Quote: "PROFILE_ALLOWED_QUOTE", Occurrence: 1,
+			}, turnIndex: 0,
+		},
+		{
+			name: "Part 3 raw evidence",
+			evidence: providerEvidence{
+				TurnID: snapshot.Turns[2].ID, Quote: "THREE_RAW", Occurrence: 1,
+			}, turnIndex: 2,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			generator := &reportGeneratorFake{evidence: &test.evidence}
+			evaluators, err := New(generator)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lineages, err := Lineages("qianwen", "qwen-plus")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			encoded, err := evaluators.EvaluateIELTS(
+				context.Background(), evaluation.Record{}, snapshot, lineages.IELTS,
+			)
+			if err != nil {
+				t.Fatalf("EvaluateIELTS() error = %v", err)
+			}
+			var formal report.FormalReport
+			if err := evaluation.DecodeStrict(encoded, &formal); err != nil {
+				t.Fatal(err)
+			}
+			got := formal.Dimensions[0].Strengths[0].Evidence[0]
+			wantStart := strings.Index(
+				snapshot.Turns[test.turnIndex].Transcript, test.evidence.Quote,
+			)
+			if got.TurnID != test.evidence.TurnID ||
+				got.OriginalExcerpt != test.evidence.Quote || got.StartUTF8Byte != wantStart {
+				t.Fatalf("normalized evidence = %#v, want start %d", got, wantStart)
+			}
+		})
+	}
+}
+
+func TestIELTSEvaluatorV4FallbackKeepsFullRawEvidence(t *testing.T) {
+	snapshot := sessionSnapshotFixture()
+	generator := &reportGeneratorFake{evidence: &providerEvidence{
+		TurnID: snapshot.Turns[0].ID, Quote: "small engineering", Occurrence: 1,
+	}}
+	evaluators, err := New(generator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lineages, err := Lineages("qianwen", "qwen-plus")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := evaluators.EvaluateIELTS(
+		context.Background(), evaluation.Record{}, snapshot, lineages.IELTS,
+	); err != nil {
+		t.Fatalf("EvaluateIELTS() error = %v", err)
 	}
 }
 
@@ -386,6 +489,40 @@ func TestIELTSEvaluatorPreservesHistoricalV3FallbackContract(t *testing.T) {
 		strings.Contains(generator.last.UserPrompt, `"evidence_mode"`) ||
 		len(payload.Questions) != 1 || len(payload.Turns) != 1 {
 		t.Fatalf("historical v3 contract changed: %#v: %s", payload, generator.last.UserPrompt)
+	}
+}
+
+func TestIELTSEvaluatorPreservesHistoricalV3ResolvedContract(t *testing.T) {
+	snapshot := resolvedFullMockSnapshot()
+	generator := &reportGeneratorFake{evidence: &providerEvidence{
+		TurnID: snapshot.Turns[0].ID, Quote: "PART_ONE_HIDDEN_RAW", Occurrence: 1,
+	}}
+	evaluators, err := New(generator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lineages, err := Lineages("qianwen", "qwen-plus")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lineage := lineages.IELTS
+	lineage.PromptVersion = ieltsPromptVersionV3
+
+	if _, err := evaluators.EvaluateIELTS(
+		context.Background(), evaluation.Record{}, snapshot, lineage,
+	); err != nil {
+		t.Fatalf("EvaluateIELTS() error = %v", err)
+	}
+	var payload incrementalIELTSProviderInput
+	if err := evaluation.DecodeStrict(
+		json.RawMessage(generator.last.UserPrompt), &payload,
+	); err != nil {
+		t.Fatalf("decode historical resolved v3 payload: %v: %s", err, generator.last.UserPrompt)
+	}
+	if generator.last.SystemPrompt != ieltsSystemPromptV3 ||
+		len(payload.CumulativeProfile.CompletedParts) != 2 ||
+		len(payload.Questions) != 1 || len(payload.Turns) != 1 {
+		t.Fatalf("historical resolved v3 contract changed: %#v", payload)
 	}
 }
 
@@ -722,7 +859,9 @@ func TestInsufficientReportFollowsRecordedVersionAndPreservesOriginalText(t *tes
 }
 
 type reportGeneratorFake struct {
-	last textgeneration.Request
+	last     textgeneration.Request
+	evidence *providerEvidence
+	calls    int
 }
 
 type repairReportGeneratorFake struct {
@@ -804,6 +943,7 @@ func (generator *reportGeneratorFake) Generate(
 	_ context.Context,
 	request textgeneration.Request,
 ) (textgeneration.Result, error) {
+	generator.calls++
 	generator.last = request
 	var input struct {
 		DimensionKeys []string `json:"dimension_keys"`
@@ -813,9 +953,16 @@ func (generator *reportGeneratorFake) Generate(
 	}
 	dimensions := make([]map[string]any, len(input.DimensionKeys))
 	for index, key := range input.DimensionKeys {
+		strengths := []any{}
+		if index == 0 && generator.evidence != nil {
+			strengths = []any{map[string]any{
+				"message": "有明确证据。", "suggestion": "继续保持。",
+				"evidence": []providerEvidence{*generator.evidence},
+			}}
+		}
 		dimensions[index] = map[string]any{
 			"key": key, "score": 7.0, "coverage": 1.0, "confidence": 0.8,
-			"reason_codes": []string{}, "strengths": []any{},
+			"reason_codes": []string{}, "strengths": strengths,
 			"improvements": []any{}, "recommended_examples": []any{},
 		}
 	}
@@ -834,6 +981,43 @@ func (generator *reportGeneratorFake) Generate(
 		Provider:  "qianwen",
 		Model:     "qwen-plus",
 	}, nil
+}
+
+func resolvedFullMockSnapshot() evaluation.SessionInputSnapshot {
+	snapshot := sessionSnapshotFixture()
+	now := snapshot.CompletedAt
+	snapshot.PlanSnapshot = json.RawMessage(`{"ielts_assignment":{"parts":[{"turn_blueprints":["p1"]},{"turn_blueprints":["p2"]},{"turn_blueprints":["p3"]}]}}`)
+	snapshot.Questions[0].Text = "Part 1 question"
+	snapshot.Turns[0].Transcript = "PROFILE_ALLOWED_QUOTE PART_ONE_HIDDEN_RAW"
+	for index, transcript := range []string{"PART_TWO_RAW_TRANSCRIPT", "PART_THREE_RAW_TRANSCRIPT"} {
+		position := index + 2
+		questionID := fmt.Sprintf("40000000-0000-4000-8000-%012d", position)
+		turnID := fmt.Sprintf("30000000-0000-4000-8000-%012d", position)
+		snapshot.Questions = append(snapshot.Questions, evaluation.SessionEvidenceQuestion{
+			ID: questionID, Position: position, Text: fmt.Sprintf("Part %d question", position),
+			SpeakerParticipantID: "assistant-1", AddresseeParticipantIDs: []string{"user-1"},
+		})
+		snapshot.Turns = append(snapshot.Turns, evaluation.SessionEvidenceTurn{
+			ID: turnID, Position: position, QuestionID: questionID,
+			RespondentParticipantID: "user-1", Transcript: transcript,
+			Effective: true, ConfirmedAt: now,
+		})
+	}
+	dimensions := cumulativeProfileDimensions()
+	dimensions[0].Observations = []evaluation.IELTSProfileObservation{{
+		Kind: "STRENGTH", ReasonCode: "PROFILE_EVIDENCE",
+		Evidence: []evaluation.IELTSProfileEvidence{{
+			TurnID: snapshot.Turns[0].ID, Quote: "PROFILE_ALLOWED_QUOTE",
+			Occurrence: 1, Part: 1,
+		}},
+	}}
+	snapshot.CumulativeProfile = &evaluation.IELTSCumulativeProfile{
+		SchemaVersion: evaluation.IELTSCumulativeProfileSchemaVersion,
+		SessionID:     snapshot.SessionID, CompletedParts: []int{1, 2},
+		Dimensions: dimensions, Provider: "qianwen", Model: "qwen-plus",
+	}
+	snapshot.ProfileResolution = evaluation.IELTSFinalProfileResolved
+	return snapshot
 }
 
 func sessionSnapshotFixture() evaluation.SessionInputSnapshot {

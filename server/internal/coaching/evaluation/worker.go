@@ -12,6 +12,7 @@ const MinimumIELTSTwoRoundDeadline = 2*45*time.Second + 10*time.Second
 const (
 	previousProfileLifecycleStages = 1
 	finalProfileLifecycleStages    = 2
+	maximumProfileLifecycleWait    = 30 * time.Minute
 )
 
 const acousticDependencyTimeoutReason = "ACOUSTIC_DEPENDENCY_TIMEOUT"
@@ -138,15 +139,21 @@ func (configuration WorkerConfiguration) Valid() bool {
 		configuration.DependencyDelay <= time.Minute &&
 		configuration.AcousticDependencyMaxWait >= configuration.DependencyDelay &&
 		configuration.AcousticDependencyMaxWait <= 5*time.Minute &&
-		configuration.profileLifecycleWaitBudget(finalProfileLifecycleStages) <= 5*time.Minute &&
+		configuration.profileLifecycleWaitBudget(finalProfileLifecycleStages) <=
+			maximumProfileLifecycleWait &&
 		configuration.FinalizeTimeout >= time.Second &&
 		configuration.FinalizeTimeout <= 30*time.Second
 }
 
 func (configuration WorkerConfiguration) profileLifecycleWaitBudget(stages int) time.Duration {
 	attempts := time.Duration(configuration.ProfileLane.MaxAttempts)
-	perStage := attempts*configuration.ProfileDeadline +
+	processing := attempts*configuration.ProfileDeadline +
 		(attempts-1)*configuration.RetryDelay + configuration.DependencyDelay
+	// A crashed worker can retain each attempt until its lease expires. The
+	// lease margin extends, rather than duplicates, the provider deadline.
+	leaseRecoveryMargin := attempts *
+		(configuration.ProfileLane.LeaseDuration - configuration.ProfileDeadline)
+	perStage := configuration.AcousticDependencyMaxWait + processing + leaseRecoveryMargin
 	return time.Duration(stages) * perStage
 }
 
