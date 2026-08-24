@@ -383,7 +383,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
 
   @override
   Widget build(BuildContext context) {
-    return Navigator(
+    final navigator = Navigator(
       key: _navigatorKey,
       observers: [_routeObserver],
       initialRoute: AppRoutes.home,
@@ -487,6 +487,15 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
           builder: (_) => page,
         );
       },
+    );
+    return NavigatorPopHandler<Object?>(
+      onPopWithResult: (result) {
+        final navigatorState = _navigatorKey.currentState;
+        if (navigatorState != null) {
+          unawaited(navigatorState.maybePop<Object?>(result));
+        }
+      },
+      child: navigator,
     );
   }
 
