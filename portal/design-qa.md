@@ -1,11 +1,15 @@
 # Portal design QA
 
 - Reference: ByteDance Seed's restrained editorial layout, adapted rather than
-  copied: quiet full-width navigation, black-and-white hierarchy, one primary
-  action, generous spacing, and product media on the right.
-- Product continuity: retained the existing SpeakUp mascot, real interview
-  practice screenshot, product positioning, practice method, and long-term
-  memory explanation.
+  copied: quiet full-width navigation, neutral hierarchy, one primary action,
+  generous spacing, and product media on the right.
+- Brand: replaced only the 3D mascot with the approved flat SpeakUp mark and
+  retained the existing handwritten SpeakUp wordmark. Two rising opening quotes
+  use violet `#7157E8` and coral `#FF654F`; there is no gradient, shadow, glow,
+  character, or decorative UI restyle. The same SVG remains legible at favicon
+  and navigation sizes.
+- Product continuity: retained the real interview practice screenshot, product
+  positioning, practice method, and long-term memory explanation.
 - Public homepage: presents one Android APK action at the top. It does not
   expose signing, SHA-256, ABI, FAQ, release promises, or a second download
   route.

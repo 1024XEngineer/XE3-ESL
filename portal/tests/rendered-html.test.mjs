@@ -38,7 +38,8 @@ test("renders the standalone SpeakUp portal", async () => {
   );
   assert.match(html, /portal-interview-practice\.png/);
   assert.match(html, /speak-up-wordmark-black\.png/);
-  assert.match(html, /speakup-mascot-blue\.png/);
+  assert.match(html, /speakup-mark\.svg/);
+  assert.doesNotMatch(html, /speakup-mascot-blue/);
   assert.doesNotMatch(html, /href="\/download\/android"/);
   assert.doesNotMatch(html, /常见问题|唯一官方下载|制品信息完整/);
   assert.doesNotMatch(html, /SHA-256|签名证书|ABI/);

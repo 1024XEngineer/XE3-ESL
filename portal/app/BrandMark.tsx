@@ -3,7 +3,7 @@ export default function BrandMark() {
     <span className="brand-mark" aria-hidden="true">
       {/* Static assets are served directly because Vinext does not provide Next.js image optimization in development. */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src="/assets/brand/speakup-mascot-blue.png" alt="" width="1254" height="1254" />
+      <img src="/assets/brand/speakup-mark.svg" alt="" width="48" height="48" />
     </span>
   );
 }
