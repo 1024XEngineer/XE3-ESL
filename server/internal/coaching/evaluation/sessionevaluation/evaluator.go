@@ -17,7 +17,7 @@ import (
 )
 
 var ErrProviderResponse error = providerResponseFailure{
-	message: "evaluation: report provider response invalid",
+	reason: normalizeReasonNormalizedReportInvalid,
 }
 
 const pipelineVersion = "session-evaluation/v1"
@@ -316,11 +316,15 @@ func evaluate(
 	repairPayload, err := json.Marshal(struct {
 		Input          json.RawMessage `json:"input"`
 		RejectedOutput string          `json:"rejected_output"`
+		Violation      normalizeReason `json:"violation"`
 		Instruction    string          `json:"instruction"`
 	}{
 		Input:          payload,
 		RejectedOutput: generated.Content,
-		Instruction:    "Return a complete corrected JSON object that obeys the contract exactly.",
+		Violation:      normalizeReasonFromError(normalizeErr),
+		Instruction: "Return a complete corrected JSON object that obeys the contract exactly. " +
+			"For INSUFFICIENT, every score must be null and priority_actions must be empty. " +
+			"For PROVISIONAL, each priority action must reference an existing improvement in the same dimension.",
 	})
 	if err != nil {
 		return nil, evaluation.ErrInvalidRequest
@@ -337,7 +341,7 @@ func evaluate(
 		lineage.Provider, lineage.Model,
 	)
 	if err != nil {
-		return nil, errors.Join(ErrProviderResponse, err)
+		return nil, err
 	}
 	return encodeReport(formal)
 }
@@ -459,20 +463,28 @@ func normalizeProviderReport(
 	if generated.Provider != expectedProvider || generated.Model != expectedModel ||
 		generated.RequestID == "" || len(generated.Content) == 0 ||
 		len(generated.Content) > 256*1024 {
-		return report.FormalReport{}, ErrProviderResponse
+		return report.FormalReport{}, providerResponseError(
+			normalizeReasonResponseMetadataInvalid,
+		)
 	}
 	decoder := json.NewDecoder(bytes.NewBufferString(generated.Content))
 	decoder.DisallowUnknownFields()
 	var provided providerReport
 	if err := decoder.Decode(&provided); err != nil {
-		return report.FormalReport{}, fmt.Errorf("%w: decode: %v", ErrProviderResponse, err)
+		return report.FormalReport{}, providerResponseError(
+			normalizeReasonResponseJSONInvalid,
+		)
 	}
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF {
-		return report.FormalReport{}, fmt.Errorf("%w: trailing JSON", ErrProviderResponse)
+		return report.FormalReport{}, providerResponseError(
+			normalizeReasonResponseJSONInvalid,
+		)
 	}
 	if len(provided.Dimensions) != len(dimensionKeys) {
-		return report.FormalReport{}, fmt.Errorf("%w: dimension count", ErrProviderResponse)
+		return report.FormalReport{}, providerResponseError(
+			normalizeReasonDimensionCountInvalid,
+		)
 	}
 	turns := make(map[string]string, len(snapshot.Turns))
 	for _, turn := range snapshot.Turns {
@@ -496,11 +508,18 @@ func normalizeProviderReport(
 	for index, expectedKey := range dimensionKeys {
 		providedDimension := provided.Dimensions[index]
 		if providedDimension.Key != expectedKey {
-			return report.FormalReport{}, fmt.Errorf("%w: dimension order", ErrProviderResponse)
+			return report.FormalReport{}, providerResponseError(
+				normalizeReasonDimensionOrderInvalid,
+			)
+		}
+		score := providedDimension.Score
+		if provided.ScoreabilityStatus == report.ReportScoreabilityInsufficient &&
+			score != nil {
+			score = nil
 		}
 		dimension := report.ReportDimension{
 			Key:          expectedKey,
-			Score:        providedDimension.Score,
+			Score:        score,
 			Scale:        scale,
 			Coverage:     providedDimension.Coverage,
 			Confidence:   providedDimension.Confidence,
@@ -548,22 +567,28 @@ func normalizeProviderReport(
 		}
 		formal.Dimensions[index] = dimension
 	}
-	for _, action := range provided.PriorityActions {
-		ids, exists := improvementIDs[action.DimensionKey]
-		if !exists || action.ImprovementIndex < 1 || action.ImprovementIndex > len(ids) {
-			return report.FormalReport{}, fmt.Errorf("%w: priority action", ErrProviderResponse)
+	// Evidence-insufficient reports must not expose provider-generated
+	// priorities, even when those references happen to resolve.
+	if provided.ScoreabilityStatus != report.ReportScoreabilityInsufficient {
+		for _, action := range provided.PriorityActions {
+			ids, exists := improvementIDs[action.DimensionKey]
+			if !exists || action.ImprovementIndex < 1 || action.ImprovementIndex > len(ids) {
+				return report.FormalReport{}, providerResponseError(
+					normalizeReasonPriorityActionInvalid,
+				)
+			}
+			formal.PriorityActions = append(formal.PriorityActions, report.ReportPriorityAction{
+				DimensionKey: action.DimensionKey,
+				FindingID:    ids[action.ImprovementIndex-1],
+			})
 		}
-		formal.PriorityActions = append(formal.PriorityActions, report.ReportPriorityAction{
-			DimensionKey: action.DimensionKey,
-			FindingID:    ids[action.ImprovementIndex-1],
-		})
 	}
 	if sceneType == evaluation.SceneIELTSSpeaking &&
 		slices.Contains(dimensionKeys, "PRONUNCIATION") {
 		available, coverage, _ := pronunciationAvailability(snapshot)
 		if !available {
-			return report.FormalReport{}, fmt.Errorf(
-				"%w: pronunciation coverage changed", ErrProviderResponse,
+			return report.FormalReport{}, providerResponseError(
+				normalizeReasonPronunciationCoverageChanged,
 			)
 		}
 		for index := range formal.Dimensions {
@@ -604,7 +629,9 @@ func normalizeProviderReport(
 		})
 	}
 	if !formal.Valid() {
-		return report.FormalReport{}, fmt.Errorf("%w: normalized report", ErrProviderResponse)
+		return report.FormalReport{}, providerResponseError(
+			normalizeReasonNormalizedReportInvalid,
+		)
 	}
 	return formal, nil
 }
@@ -685,7 +712,7 @@ func normalizeFindings(
 	turns map[string]string,
 ) ([]report.ReportFinding, error) {
 	if provided == nil || len(provided) > 5 {
-		return nil, fmt.Errorf("%w: finding count", ErrProviderResponse)
+		return nil, providerResponseError(normalizeReasonFindingCountInvalid)
 	}
 	result := make([]report.ReportFinding, len(provided))
 	for index, item := range provided {
@@ -696,14 +723,14 @@ func normalizeFindings(
 			Evidence:   make([]report.ReportEvidence, len(item.Evidence)),
 		}
 		if len(item.Evidence) > 8 {
-			return nil, fmt.Errorf("%w: evidence count", ErrProviderResponse)
+			return nil, providerResponseError(normalizeReasonEvidenceCountInvalid)
 		}
 		for evidenceIndex, source := range item.Evidence {
 			transcript, exists := turns[source.TurnID]
 			quote := strings.TrimSpace(source.Quote)
 			start := byteOccurrence(transcript, quote, source.Occurrence)
 			if !exists || source.Occurrence < 1 || start < 0 {
-				return nil, fmt.Errorf("%w: evidence quote", ErrProviderResponse)
+				return nil, providerResponseError(normalizeReasonEvidenceInvalid)
 			}
 			finding.Evidence[evidenceIndex] = report.ReportEvidence{
 				EvidenceRefID:   source.TurnID,
@@ -824,10 +851,67 @@ const generalSystemPromptV1 = `You are an evidence-bound everyday or workplace E
 
 const generalSystemPromptV2 = `You are an evidence-bound everyday or workplace English evaluator. Score only the requested communication dimensions on PERCENTAGE_100. Return one JSON object only, with exactly: scoreability_status, summary, dimensions, priority_actions. Use dimension_keys in the input in the same order. Each dimension must contain key, score, coverage, confidence, reason_codes, strengths, improvements, recommended_examples. Each finding must contain message, suggestion, evidence. Each evidence item must contain turn_id, an exact quote copied from that turn, and its 1-based occurrence. priority_actions contains dimension_key and 1-based improvement_index. Arrays must be present even when empty. Write summary and every finding message in Simplified Chinese. Write suggestions for strengths and improvements in Simplified Chinese. For each recommended_examples finding, write its message in Simplified Chinese and put only the directly reusable English expression in suggestion. Keep every question, answer, and evidence quote in its original language; never translate or rewrite them. Do not infer voice qualities from text.`
 
-func (failure providerResponseFailure) Error() string          { return failure.message }
-func (failure providerResponseFailure) StableCategory() string { return "PROVIDER_RESPONSE_INVALID" }
-func (failure providerResponseFailure) Retryable() bool        { return true }
+type normalizeReason string
 
-type providerResponseFailure struct{ message string }
+const (
+	normalizeReasonResponseMetadataInvalid      normalizeReason = "response_metadata_invalid"
+	normalizeReasonResponseJSONInvalid          normalizeReason = "response_json_invalid"
+	normalizeReasonDimensionCountInvalid        normalizeReason = "dimension_count_invalid"
+	normalizeReasonDimensionOrderInvalid        normalizeReason = "dimension_order_invalid"
+	normalizeReasonFindingCountInvalid          normalizeReason = "finding_count_invalid"
+	normalizeReasonEvidenceCountInvalid         normalizeReason = "evidence_count_invalid"
+	normalizeReasonEvidenceInvalid              normalizeReason = "evidence_invalid"
+	normalizeReasonPriorityActionInvalid        normalizeReason = "priority_action_invalid"
+	normalizeReasonPronunciationCoverageChanged normalizeReason = "pronunciation_coverage_changed"
+	normalizeReasonNormalizedReportInvalid      normalizeReason = "normalized_report_invalid"
+)
+
+func (reason normalizeReason) valid() bool {
+	switch reason {
+	case normalizeReasonResponseMetadataInvalid,
+		normalizeReasonResponseJSONInvalid,
+		normalizeReasonDimensionCountInvalid,
+		normalizeReasonDimensionOrderInvalid,
+		normalizeReasonFindingCountInvalid,
+		normalizeReasonEvidenceCountInvalid,
+		normalizeReasonEvidenceInvalid,
+		normalizeReasonPriorityActionInvalid,
+		normalizeReasonPronunciationCoverageChanged,
+		normalizeReasonNormalizedReportInvalid:
+		return true
+	default:
+		return false
+	}
+}
+
+func providerResponseError(reason normalizeReason) error {
+	if !reason.valid() {
+		reason = normalizeReasonNormalizedReportInvalid
+	}
+	return providerResponseFailure{reason: reason}
+}
+
+func normalizeReasonFromError(err error) normalizeReason {
+	var failure providerResponseFailure
+	if errors.As(err, &failure) && failure.reason.valid() {
+		return failure.reason
+	}
+	return normalizeReasonNormalizedReportInvalid
+}
+
+type providerResponseFailure struct{ reason normalizeReason }
+
+func (providerResponseFailure) Error() string {
+	return "evaluation: report provider response invalid"
+}
+func (providerResponseFailure) StableCategory() string { return "PROVIDER_RESPONSE_INVALID" }
+func (providerResponseFailure) Retryable() bool        { return true }
+func (failure providerResponseFailure) EvaluationNormalizeReason() string {
+	return string(failure.reason)
+}
+func (providerResponseFailure) Is(target error) bool {
+	_, ok := target.(providerResponseFailure)
+	return ok
+}
 
 var _ evaluation.SessionEvaluators = (*Evaluators)(nil)
