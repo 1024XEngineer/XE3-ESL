@@ -2,15 +2,140 @@ package iserelay
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/speechfeedback"
 )
+
+func TestNewClientLoadsMTLSConfiguration(t *testing.T) {
+	directory := t.TempDir()
+	certificateFile, keyFile := writeClientCertificate(t, directory)
+	client, err := NewClient(ClientConfig{
+		Endpoint:       "https://relay.example.test/",
+		CAFile:         certificateFile,
+		ClientCertFile: certificateFile,
+		ClientKeyFile:  keyFile,
+		PollInterval:   time.Second,
+	})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	transport, ok := client.httpClient.Transport.(*http.Transport)
+	if !ok || transport.TLSClientConfig == nil ||
+		transport.TLSClientConfig.MinVersion != tls.VersionTLS13 ||
+		len(transport.TLSClientConfig.Certificates) != 1 ||
+		len(transport.TLSClientConfig.RootCAs.Subjects()) != 1 {
+		t.Fatalf("unexpected mTLS transport: %#v", client.httpClient.Transport)
+	}
+	if client.endpoint.String() != "https://relay.example.test" ||
+		client.pollInterval != time.Second {
+		t.Fatalf("unexpected relay client: %#v", client)
+	}
+}
+
+func TestNewClientRejectsInvalidTLSConfiguration(t *testing.T) {
+	directory := t.TempDir()
+	invalidCAFile := filepath.Join(directory, "invalid-ca.pem")
+	if err := os.WriteFile(invalidCAFile, []byte("not a certificate"), 0o600); err != nil {
+		t.Fatalf("write invalid CA: %v", err)
+	}
+	tests := []struct {
+		name          string
+		configuration ClientConfig
+	}{
+		{
+			name: "HTTP endpoint",
+			configuration: ClientConfig{
+				Endpoint:       "http://relay.example.test",
+				CAFile:         invalidCAFile,
+				ClientCertFile: "client.pem",
+				ClientKeyFile:  "client-key.pem",
+				PollInterval:   time.Second,
+			},
+		},
+		{
+			name: "missing CA file",
+			configuration: ClientConfig{
+				Endpoint:       "https://relay.example.test",
+				CAFile:         filepath.Join(directory, "missing.pem"),
+				ClientCertFile: "client.pem",
+				ClientKeyFile:  "client-key.pem",
+				PollInterval:   time.Second,
+			},
+		},
+		{
+			name: "invalid CA file",
+			configuration: ClientConfig{
+				Endpoint:       "https://relay.example.test",
+				CAFile:         invalidCAFile,
+				ClientCertFile: "client.pem",
+				ClientKeyFile:  "client-key.pem",
+				PollInterval:   time.Second,
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := NewClient(test.configuration); err == nil {
+				t.Fatal("expected invalid mTLS configuration to be rejected")
+			}
+		})
+	}
+}
+
+func writeClientCertificate(t *testing.T, directory string) (string, string) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate client key: %v", err)
+	}
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "relay-client"},
+		NotBefore:             time.Now().Add(-time.Minute),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create client certificate: %v", err)
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatalf("marshal client key: %v", err)
+	}
+	certificateFile := filepath.Join(directory, "client.pem")
+	keyFile := filepath.Join(directory, "client-key.pem")
+	if err := os.WriteFile(certificateFile, pem.EncodeToMemory(&pem.Block{
+		Type: "CERTIFICATE", Bytes: der,
+	}), 0o600); err != nil {
+		t.Fatalf("write client certificate: %v", err)
+	}
+	if err := os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{
+		Type: "PRIVATE KEY", Bytes: keyDER,
+	}), 0o600); err != nil {
+		t.Fatalf("write client key: %v", err)
+	}
+	return certificateFile, keyFile
+}
 
 func TestClientCreatesAndPollsEvaluation(t *testing.T) {
 	var polls atomic.Int32

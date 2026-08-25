@@ -17,6 +17,111 @@ import (
 	"time"
 )
 
+func TestLoadRuntimeConfigDefaultsAndOverrides(t *testing.T) {
+	t.Run("defaults", func(t *testing.T) {
+		setRuntimeConfigEnvironment(t)
+
+		configuration, err := loadRuntimeConfig()
+		if err != nil {
+			t.Fatalf("load runtime configuration: %v", err)
+		}
+		if configuration.Address != ":18443" ||
+			configuration.InternalAddress != ":18080" ||
+			configuration.Retention != 15*time.Minute ||
+			configuration.MaxJobs != 16 || configuration.MaxInFlight != 2 ||
+			configuration.LogLevel != "info" {
+			t.Fatalf("unexpected default configuration: %#v", configuration)
+		}
+	})
+
+	t.Run("overrides", func(t *testing.T) {
+		setRuntimeConfigEnvironment(t)
+		t.Setenv("ISE_RELAY_ADDRESS", "127.0.0.1:19443")
+		t.Setenv("ISE_RELAY_INTERNAL_ADDRESS", "127.0.0.1:19080")
+		t.Setenv("ISE_RELAY_RETENTION", "30m")
+		t.Setenv("ISE_RELAY_MAX_JOBS", "32")
+		t.Setenv("ISE_RELAY_MAX_IN_FLIGHT", "4")
+		t.Setenv("LOG_LEVEL", "debug")
+
+		configuration, err := loadRuntimeConfig()
+		if err != nil {
+			t.Fatalf("load runtime configuration: %v", err)
+		}
+		if configuration.Address != "127.0.0.1:19443" ||
+			configuration.InternalAddress != "127.0.0.1:19080" ||
+			configuration.Retention != 30*time.Minute ||
+			configuration.MaxJobs != 32 || configuration.MaxInFlight != 4 ||
+			configuration.LogLevel != "debug" {
+			t.Fatalf("unexpected overridden configuration: %#v", configuration)
+		}
+	})
+}
+
+func TestLoadRuntimeConfigRejectsUnsafeSettings(t *testing.T) {
+	tests := []struct {
+		name  string
+		apply func(*testing.T)
+	}{
+		{
+			name: "missing TLS file",
+			apply: func(t *testing.T) {
+				t.Setenv("ISE_RELAY_SERVER_CERT_FILE", "")
+			},
+		},
+		{
+			name: "short retention",
+			apply: func(t *testing.T) {
+				t.Setenv("ISE_RELAY_RETENTION", "30s")
+			},
+		},
+		{
+			name: "non-positive max jobs",
+			apply: func(t *testing.T) {
+				t.Setenv("ISE_RELAY_MAX_JOBS", "0")
+			},
+		},
+		{
+			name: "excessive max jobs",
+			apply: func(t *testing.T) {
+				t.Setenv("ISE_RELAY_MAX_JOBS", "65")
+			},
+		},
+		{
+			name: "max in flight exceeds max jobs",
+			apply: func(t *testing.T) {
+				t.Setenv("ISE_RELAY_MAX_JOBS", "2")
+				t.Setenv("ISE_RELAY_MAX_IN_FLIGHT", "3")
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			setRuntimeConfigEnvironment(t)
+			test.apply(t)
+			if _, err := loadRuntimeConfig(); err == nil {
+				t.Fatal("expected unsafe runtime configuration to be rejected")
+			}
+		})
+	}
+}
+
+func setRuntimeConfigEnvironment(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{
+		"ISE_RELAY_ADDRESS",
+		"ISE_RELAY_INTERNAL_ADDRESS",
+		"ISE_RELAY_RETENTION",
+		"ISE_RELAY_MAX_JOBS",
+		"ISE_RELAY_MAX_IN_FLIGHT",
+		"LOG_LEVEL",
+	} {
+		t.Setenv(name, "")
+	}
+	t.Setenv("ISE_RELAY_SERVER_CERT_FILE", "/run/secrets/server.pem")
+	t.Setenv("ISE_RELAY_SERVER_KEY_FILE", "/run/secrets/server-key.pem")
+	t.Setenv("ISE_RELAY_CLIENT_CA_FILE", "/run/secrets/client-ca.pem")
+}
+
 func TestRelayTLSRequiresTrustedClientCertificate(t *testing.T) {
 	caCertificate, caKey, caPEM := newTestCA(t, "relay-test-ca")
 	serverCertificate, serverKey := newTestCertificate(
