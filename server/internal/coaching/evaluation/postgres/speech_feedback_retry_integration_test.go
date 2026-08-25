@@ -58,6 +58,52 @@ func TestSpeechFeedbackPart1InvalidThenValidReusesAcoustics(t *testing.T) {
 	}
 }
 
+func TestSpeechFeedbackRepairProviderFailureUsesWorkerRetryBudget(t *testing.T) {
+	pool := evaluationTestDatabase(t)
+	insertEvaluationTestUser(t, pool, speechRetryUserID, "speech-repair-retry@example.com")
+	generator := &speechRetryGenerator{
+		contents: []string{
+			`{"items":[{"kind":"CORRECTION","explanation":"动词形式需要修改。","source_text":"missing excerpt","source_occurrence":1,"suggested_text":"read"}]}`,
+			"",
+			`{"items":[{"kind":"RECOMMENDED_EXPRESSION","explanation":"这是更自然的表达。","source_text":"read","source_occurrence":1,"suggested_text":"do some reading"}]}`,
+		},
+		errors: map[int]error{2: speechRetryTextFailure{}},
+	}
+	acoustics := &speechRetryAcoustics{}
+	store, worker := speechRetryWorker(t, pool, generator, acoustics)
+	queueSpeechRetry(t, store, "I usually read before work.")
+
+	processed, err := worker.ProcessSpeech(context.Background())
+	if !processed || err == nil {
+		t.Fatalf("first ProcessSpeech = (%t, %v)", processed, err)
+	}
+	queued, err := store.GetRecordBySource(
+		context.Background(), speechRetryUserID,
+		evaluation.KindPracticeTurnFeedback, speechRetryTurnID,
+	)
+	if err != nil || queued.Status != evaluation.JobQueued ||
+		queued.AttemptCount != 1 || queued.Error != nil {
+		t.Fatalf("queued retry = %#v, %v", queued, err)
+	}
+
+	processed, err = worker.ProcessSpeech(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("second ProcessSpeech = (%t, %v)", processed, err)
+	}
+	ready, err := store.GetRecordBySource(
+		context.Background(), speechRetryUserID,
+		evaluation.KindPracticeTurnFeedback, speechRetryTurnID,
+	)
+	if err != nil || ready.Status != evaluation.JobReady ||
+		ready.AttemptCount != 2 || ready.Error != nil ||
+		acoustics.calls != 1 || generator.calls != 3 {
+		t.Fatalf(
+			"ready=%#v err=%v acoustic=%d text=%d",
+			ready, err, acoustics.calls, generator.calls,
+		)
+	}
+}
+
 func TestSpeechFeedbackAcousticAndTextRetriesHaveIndependentBudgets(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -462,6 +508,7 @@ func queueSpeechRetry(t *testing.T, store *Store, transcript string) {
 
 type speechRetryGenerator struct {
 	contents []string
+	errors   map[int]error
 	calls    int
 }
 
@@ -470,6 +517,9 @@ func (generator *speechRetryGenerator) Generate(
 	speechfeedback.TextGenerationRequest,
 ) (speechfeedback.TextGenerationResult, error) {
 	generator.calls++
+	if err := generator.errors[generator.calls]; err != nil {
+		return speechfeedback.TextGenerationResult{}, err
+	}
 	if generator.calls > len(generator.contents) {
 		return speechfeedback.TextGenerationResult{}, errors.New("unexpected generation")
 	}
@@ -510,6 +560,12 @@ type speechRetryAcousticFailure struct{}
 func (speechRetryAcousticFailure) Error() string          { return "acoustic unavailable" }
 func (speechRetryAcousticFailure) StableCategory() string { return "PROVIDER_UNAVAILABLE" }
 func (speechRetryAcousticFailure) Retryable() bool        { return true }
+
+type speechRetryTextFailure struct{}
+
+func (speechRetryTextFailure) Error() string          { return "text provider unavailable" }
+func (speechRetryTextFailure) StableCategory() string { return "PROVIDER_UNAVAILABLE" }
+func (speechRetryTextFailure) Retryable() bool        { return true }
 
 type speechRetrySessions struct{}
 

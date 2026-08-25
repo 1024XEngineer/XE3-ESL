@@ -327,14 +327,6 @@ func TestCompactEvaluatorRepairIsBoundedAndDirectFailuresAreNotRetried(t *testin
 			},
 			wantCalls: 2,
 		},
-		{
-			name: "repair generation failure is terminal", transcript: "I has a plan.",
-			steps: []compactGenerationStep{
-				{result: compactResult(invalidEvidence)},
-				{err: errors.New("provider unavailable")},
-			},
-			wantCalls: 2,
-		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -369,6 +361,41 @@ func TestCompactEvaluatorRepairIsBoundedAndDirectFailuresAreNotRetried(t *testin
 				t.Fatalf("public failure = %#v", public)
 			}
 		})
+	}
+}
+
+func TestCompactEvaluatorPreservesRepairGenerationFailure(t *testing.T) {
+	lineage, err := Lineage("qianwen", "qwen-plus")
+	if err != nil {
+		t.Fatal(err)
+	}
+	providerFailure := retryableCompactGenerationFailure{}
+	generator := &sequenceCompactGenerator{steps: []compactGenerationStep{
+		{result: compactResult(`{"items":[{"kind":"CORRECTION","explanation":"需要修改。","source_text":"missing excerpt","source_occurrence":1,"suggested_text":"have"}]}`)},
+		{err: providerFailure},
+	}}
+	evaluator, err := NewCompactEvaluator(generator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = evaluator.EvaluatePracticeTurn(
+		context.Background(),
+		evaluation.SpeechInputSnapshot{
+			SchemaVersion: evaluation.SpeechInputSchemaVersion,
+			Transcript:    "I has a plan.",
+			EvidenceRefID: "30000000-0000-4000-8000-000000000023",
+			QuestionID:    "40000000-0000-4000-8000-000000000023",
+			Acoustic: &evaluation.AcousticCheckpoint{
+				Status: evaluation.AcousticNotAssessed,
+				Reason: "TEST_ACOUSTICS_NOT_ASSESSED",
+			},
+		},
+		lineage,
+	)
+	var failure retryableCompactGenerationFailure
+	if !errors.As(err, &failure) || len(generator.requests) != 2 ||
+		failure.StableCategory() != "PROVIDER_UNAVAILABLE" || !failure.Retryable() {
+		t.Fatalf("repair failure=%#v calls=%d", err, len(generator.requests))
 	}
 }
 
@@ -552,6 +579,18 @@ func (generator *sequenceCompactGenerator) Generate(
 }
 
 var _ TextGenerator = (*sequenceCompactGenerator)(nil)
+
+type retryableCompactGenerationFailure struct{}
+
+func (retryableCompactGenerationFailure) Error() string {
+	return "provider unavailable"
+}
+func (retryableCompactGenerationFailure) StableCategory() string {
+	return "PROVIDER_UNAVAILABLE"
+}
+func (retryableCompactGenerationFailure) Retryable() bool { return true }
+
+var _ GenerationFailure = retryableCompactGenerationFailure{}
 
 func TestCompactFeedbackItemsEnforcesClassificationContract(t *testing.T) {
 	t.Parallel()
