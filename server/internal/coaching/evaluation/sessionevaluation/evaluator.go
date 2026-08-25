@@ -17,7 +17,7 @@ import (
 )
 
 var ErrProviderResponse error = providerResponseFailure{
-	message: "evaluation: report provider response invalid",
+	reason: normalizeReasonNormalizedReportInvalid,
 }
 
 const pipelineVersion = "session-evaluation/v1"
@@ -30,8 +30,13 @@ const (
 	ieltsPromptVersionV1     = "ielts-report/v1"
 	ieltsPromptVersionV2     = "ielts-report/v2"
 	ieltsPromptVersionV3     = "ielts-report/v3"
+	ieltsPromptVersionV4     = "ielts-report/v4"
 	generalPromptVersionV1   = "general-report/v1"
 	generalPromptVersionV2   = "general-report/v2"
+
+	ieltsInputSchemaVersionV4            = "ielts-report-input/v4"
+	ieltsInputCumulativeParts12PlusPart3 = "CUMULATIVE_PARTS_1_2_PLUS_PART_3"
+	ieltsInputFullRawFallback            = "FULL_RAW_FALLBACK"
 )
 
 func Lineages(
@@ -52,7 +57,7 @@ func Lineages(
 			SchemaVersion:   evaluation.ConfigLineageSchemaVersion,
 			StrategyRef:     evaluation.IELTSStrategyRef,
 			PipelineVersion: pipelineVersion,
-			PromptVersion:   ieltsPromptVersionV3,
+			PromptVersion:   ieltsPromptVersionV4,
 			ResultSchema:    report.FormalReportSchemaVersion,
 			Provider:        provider,
 			Model:           model,
@@ -166,7 +171,7 @@ func (evaluator *InterviewEvaluator) Evaluate(
 			"INTERVIEW_EVIDENCE",
 			"INTERVIEW_PROFESSIONAL",
 			"INTERVIEW_INTERACTION",
-		}, report.ReportScalePercentage100, false, nil)
+		}, report.ReportScalePercentage100, false, nil, nil)
 }
 
 func (evaluator *IELTSEvaluator) Evaluate(
@@ -189,6 +194,13 @@ func (evaluator *IELTSEvaluator) Evaluate(
 		}
 		err = nil
 	}
+	if lineage.PromptVersion == ieltsPromptVersionV4 {
+		prompt = reportPrompt{
+			system:              ieltsSystemPromptV4,
+			insufficientSummary: "本次练习的有效证据不足，暂时无法形成可靠的评估结论。",
+		}
+		err = nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -202,7 +214,13 @@ func (evaluator *IELTSEvaluator) Evaluate(
 		dimensions = append(dimensions, "PRONUNCIATION")
 	}
 	var payloadOverride any
-	if snapshot.CumulativeProfile != nil {
+	var evidencePolicy *providerEvidencePolicy
+	if lineage.PromptVersion == ieltsPromptVersionV4 {
+		payloadOverride, evidencePolicy, err = ieltsV4Payload(snapshot, dimensions)
+		if err != nil {
+			return nil, err
+		}
+	} else if snapshot.CumulativeProfile != nil {
 		payloadOverride, err = incrementalIELTSPayload(snapshot, dimensions)
 		if err != nil {
 			return nil, err
@@ -210,7 +228,7 @@ func (evaluator *IELTSEvaluator) Evaluate(
 	}
 	return evaluate(ctx, evaluator.generator, snapshot, lineage,
 		prompt.system, prompt.insufficientSummary, evaluation.SceneIELTSSpeaking,
-		dimensions, report.ReportScaleIELTSBand, true, payloadOverride)
+		dimensions, report.ReportScaleIELTSBand, true, payloadOverride, evidencePolicy)
 }
 
 func (evaluator *GeneralEvaluator) Evaluate(
@@ -252,7 +270,7 @@ func (evaluator *GeneralEvaluator) Evaluate(
 			"CLARITY_COHERENCE",
 			"LANGUAGE_CONTROL",
 			"INTERACTION",
-		}, report.ReportScalePercentage100, false, nil)
+		}, report.ReportScalePercentage100, false, nil, nil)
 }
 
 func evaluate(
@@ -267,6 +285,7 @@ func evaluate(
 	scale report.ReportScoreScale,
 	allowRepair bool,
 	payloadOverride any,
+	evidencePolicy *providerEvidencePolicy,
 ) (json.RawMessage, error) {
 	if generator == nil || ctx == nil || strings.TrimSpace(systemPrompt) == "" ||
 		strings.TrimSpace(insufficientSummary) == "" ||
@@ -283,6 +302,10 @@ func evaluate(
 		return encodeReport(insufficientReport(
 			snapshot, sceneType, dimensionKeys, scale, insufficientSummary,
 		))
+	}
+	if evidencePolicy == nil {
+		value := fullRawProviderEvidencePolicy(snapshot)
+		evidencePolicy = &value
 	}
 	payloadSource := payloadOverride
 	if payloadSource == nil {
@@ -305,7 +328,7 @@ func evaluate(
 	}
 	formal, normalizeErr := normalizeProviderReport(
 		generated, snapshot, sceneType, dimensionKeys, scale,
-		lineage.Provider, lineage.Model,
+		lineage.Provider, lineage.Model, *evidencePolicy,
 	)
 	if normalizeErr == nil {
 		return encodeReport(formal)
@@ -316,11 +339,15 @@ func evaluate(
 	repairPayload, err := json.Marshal(struct {
 		Input          json.RawMessage `json:"input"`
 		RejectedOutput string          `json:"rejected_output"`
+		Violation      normalizeReason `json:"violation"`
 		Instruction    string          `json:"instruction"`
 	}{
 		Input:          payload,
 		RejectedOutput: generated.Content,
-		Instruction:    "Return a complete corrected JSON object that obeys the contract exactly.",
+		Violation:      normalizeReasonFromError(normalizeErr),
+		Instruction: "Return a complete corrected JSON object that obeys the contract exactly. " +
+			"For INSUFFICIENT, every score must be null and priority_actions must be empty. " +
+			"For PROVISIONAL, each priority action must reference an existing improvement in the same dimension.",
 	})
 	if err != nil {
 		return nil, evaluation.ErrInvalidRequest
@@ -334,10 +361,10 @@ func evaluate(
 	}
 	formal, err = normalizeProviderReport(
 		repaired, snapshot, sceneType, dimensionKeys, scale,
-		lineage.Provider, lineage.Model,
+		lineage.Provider, lineage.Model, *evidencePolicy,
 	)
 	if err != nil {
-		return nil, errors.Join(ErrProviderResponse, err)
+		return nil, err
 	}
 	return encodeReport(formal)
 }
@@ -357,6 +384,65 @@ type incrementalIELTSProviderInput struct {
 	CumulativeProfile evaluation.IELTSCumulativeProfile    `json:"cumulative_profile"`
 	Questions         []evaluation.SessionEvidenceQuestion `json:"part_3_questions"`
 	Turns             []evaluation.SessionEvidenceTurn     `json:"part_3_effective_turns"`
+}
+
+type resolvedIELTSProviderInputV4 struct {
+	SchemaVersion     string                               `json:"schema_version"`
+	EvidenceMode      string                               `json:"evidence_mode"`
+	SceneType         evaluation.SceneType                 `json:"scene_type"`
+	PracticeMode      string                               `json:"practice_mode"`
+	DimensionKeys     []string                             `json:"dimension_keys"`
+	CumulativeProfile evaluation.IELTSCumulativeProfile    `json:"cumulative_profile"`
+	Questions         []evaluation.SessionEvidenceQuestion `json:"part_3_questions"`
+	Turns             []evaluation.SessionEvidenceTurn     `json:"part_3_effective_turns"`
+}
+
+type fallbackIELTSProviderInputV4 struct {
+	SchemaVersion string                               `json:"schema_version"`
+	EvidenceMode  string                               `json:"evidence_mode"`
+	SceneType     evaluation.SceneType                 `json:"scene_type"`
+	PracticeMode  string                               `json:"practice_mode"`
+	DimensionKeys []string                             `json:"dimension_keys"`
+	Questions     []evaluation.SessionEvidenceQuestion `json:"questions"`
+	Turns         []evaluation.SessionEvidenceTurn     `json:"effective_turns"`
+}
+
+func ieltsV4Payload(
+	snapshot evaluation.SessionInputSnapshot,
+	dimensionKeys []string,
+) (any, *providerEvidencePolicy, error) {
+	switch snapshot.ProfileResolution {
+	case evaluation.IELTSFinalProfileResolved:
+		incremental, err := incrementalIELTSPayload(snapshot, dimensionKeys)
+		if err != nil {
+			return nil, nil, err
+		}
+		policy := resolvedIELTSProviderEvidencePolicy(snapshot, incremental)
+		return resolvedIELTSProviderInputV4{
+			SchemaVersion: ieltsInputSchemaVersionV4,
+			EvidenceMode:  ieltsInputCumulativeParts12PlusPart3,
+			SceneType:     incremental.SceneType, PracticeMode: incremental.PracticeMode,
+			DimensionKeys:     incremental.DimensionKeys,
+			CumulativeProfile: incremental.CumulativeProfile,
+			Questions:         incremental.Questions, Turns: incremental.Turns,
+		}, &policy, nil
+	case evaluation.IELTSFinalProfileFallback:
+		effectiveTurns := make([]evaluation.SessionEvidenceTurn, 0, len(snapshot.Turns))
+		for _, turn := range snapshot.Turns {
+			if turn.Effective {
+				effectiveTurns = append(effectiveTurns, turn)
+			}
+		}
+		return fallbackIELTSProviderInputV4{
+			SchemaVersion: ieltsInputSchemaVersionV4,
+			EvidenceMode:  ieltsInputFullRawFallback,
+			SceneType:     evaluation.SceneIELTSSpeaking,
+			PracticeMode:  snapshot.PracticeMode, DimensionKeys: dimensionKeys,
+			Questions: snapshot.Questions, Turns: effectiveTurns,
+		}, nil, nil
+	default:
+		return nil, nil, evaluation.ErrInvalidRequest
+	}
 }
 
 func incrementalIELTSPayload(
@@ -442,6 +528,82 @@ type providerEvidence struct {
 	Occurrence int    `json:"occurrence"`
 }
 
+type providerEvidenceKey struct {
+	TurnID     string
+	Quote      string
+	Occurrence int
+}
+
+type providerEvidencePolicy struct {
+	transcripts map[string]string
+	rawTurns    map[string]struct{}
+	exact       map[providerEvidenceKey]struct{}
+}
+
+func fullRawProviderEvidencePolicy(
+	snapshot evaluation.SessionInputSnapshot,
+) providerEvidencePolicy {
+	policy := providerEvidencePolicy{
+		transcripts: make(map[string]string, len(snapshot.Turns)),
+		rawTurns:    make(map[string]struct{}, len(snapshot.Turns)),
+		exact:       map[providerEvidenceKey]struct{}{},
+	}
+	for _, turn := range snapshot.Turns {
+		if turn.Effective {
+			policy.transcripts[turn.ID] = turn.Transcript
+			policy.rawTurns[turn.ID] = struct{}{}
+		}
+	}
+	return policy
+}
+
+func resolvedIELTSProviderEvidencePolicy(
+	snapshot evaluation.SessionInputSnapshot,
+	payload incrementalIELTSProviderInput,
+) providerEvidencePolicy {
+	policy := providerEvidencePolicy{
+		transcripts: make(map[string]string, len(snapshot.Turns)),
+		rawTurns:    make(map[string]struct{}, len(payload.Turns)),
+		exact:       map[providerEvidenceKey]struct{}{},
+	}
+	for _, turn := range snapshot.Turns {
+		if turn.Effective {
+			policy.transcripts[turn.ID] = turn.Transcript
+		}
+	}
+	for _, turn := range payload.Turns {
+		policy.rawTurns[turn.ID] = struct{}{}
+	}
+	for _, dimension := range payload.CumulativeProfile.Dimensions {
+		for _, observation := range dimension.Observations {
+			for _, evidence := range observation.Evidence {
+				policy.exact[providerEvidenceKey{
+					TurnID: evidence.TurnID, Quote: strings.TrimSpace(evidence.Quote),
+					Occurrence: evidence.Occurrence,
+				}] = struct{}{}
+			}
+		}
+	}
+	return policy
+}
+
+func (policy providerEvidencePolicy) byteOffset(source providerEvidence) (int, bool) {
+	transcript, exists := policy.transcripts[source.TurnID]
+	quote := strings.TrimSpace(source.Quote)
+	if !exists || quote == "" || source.Occurrence < 1 {
+		return -1, false
+	}
+	if _, raw := policy.rawTurns[source.TurnID]; !raw {
+		if _, exact := policy.exact[providerEvidenceKey{
+			TurnID: source.TurnID, Quote: quote, Occurrence: source.Occurrence,
+		}]; !exact {
+			return -1, false
+		}
+	}
+	start := byteOccurrence(transcript, quote, source.Occurrence)
+	return start, start >= 0
+}
+
 type providerPriorityAction struct {
 	DimensionKey     string `json:"dimension_key"`
 	ImprovementIndex int    `json:"improvement_index"`
@@ -455,30 +617,33 @@ func normalizeProviderReport(
 	scale report.ReportScoreScale,
 	expectedProvider string,
 	expectedModel string,
+	evidencePolicy providerEvidencePolicy,
 ) (report.FormalReport, error) {
 	if generated.Provider != expectedProvider || generated.Model != expectedModel ||
 		generated.RequestID == "" || len(generated.Content) == 0 ||
 		len(generated.Content) > 256*1024 {
-		return report.FormalReport{}, ErrProviderResponse
+		return report.FormalReport{}, providerResponseError(
+			normalizeReasonResponseMetadataInvalid,
+		)
 	}
 	decoder := json.NewDecoder(bytes.NewBufferString(generated.Content))
 	decoder.DisallowUnknownFields()
 	var provided providerReport
 	if err := decoder.Decode(&provided); err != nil {
-		return report.FormalReport{}, fmt.Errorf("%w: decode: %v", ErrProviderResponse, err)
+		return report.FormalReport{}, providerResponseError(
+			normalizeReasonResponseJSONInvalid,
+		)
 	}
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF {
-		return report.FormalReport{}, fmt.Errorf("%w: trailing JSON", ErrProviderResponse)
+		return report.FormalReport{}, providerResponseError(
+			normalizeReasonResponseJSONInvalid,
+		)
 	}
 	if len(provided.Dimensions) != len(dimensionKeys) {
-		return report.FormalReport{}, fmt.Errorf("%w: dimension count", ErrProviderResponse)
-	}
-	turns := make(map[string]string, len(snapshot.Turns))
-	for _, turn := range snapshot.Turns {
-		if turn.Effective {
-			turns[turn.ID] = turn.Transcript
-		}
+		return report.FormalReport{}, providerResponseError(
+			normalizeReasonDimensionCountInvalid,
+		)
 	}
 	formal := report.FormalReport{
 		SchemaVersion:      report.FormalReportSchemaVersion,
@@ -496,11 +661,18 @@ func normalizeProviderReport(
 	for index, expectedKey := range dimensionKeys {
 		providedDimension := provided.Dimensions[index]
 		if providedDimension.Key != expectedKey {
-			return report.FormalReport{}, fmt.Errorf("%w: dimension order", ErrProviderResponse)
+			return report.FormalReport{}, providerResponseError(
+				normalizeReasonDimensionOrderInvalid,
+			)
+		}
+		score := providedDimension.Score
+		if provided.ScoreabilityStatus == report.ReportScoreabilityInsufficient &&
+			score != nil {
+			score = nil
 		}
 		dimension := report.ReportDimension{
 			Key:          expectedKey,
-			Score:        providedDimension.Score,
+			Score:        score,
 			Scale:        scale,
 			Coverage:     providedDimension.Coverage,
 			Confidence:   providedDimension.Confidence,
@@ -512,19 +684,19 @@ func normalizeProviderReport(
 		}
 		var err error
 		dimension.Strengths, err = normalizeFindings(
-			expectedKey, "strength", providedDimension.Strengths, turns,
+			expectedKey, "strength", providedDimension.Strengths, evidencePolicy,
 		)
 		if err != nil {
 			return report.FormalReport{}, err
 		}
 		dimension.Improvements, err = normalizeFindings(
-			expectedKey, "improvement", providedDimension.Improvements, turns,
+			expectedKey, "improvement", providedDimension.Improvements, evidencePolicy,
 		)
 		if err != nil {
 			return report.FormalReport{}, err
 		}
 		dimension.Examples, err = normalizeFindings(
-			expectedKey, "example", providedDimension.Examples, turns,
+			expectedKey, "example", providedDimension.Examples, evidencePolicy,
 		)
 		if err != nil {
 			return report.FormalReport{}, err
@@ -548,22 +720,28 @@ func normalizeProviderReport(
 		}
 		formal.Dimensions[index] = dimension
 	}
-	for _, action := range provided.PriorityActions {
-		ids, exists := improvementIDs[action.DimensionKey]
-		if !exists || action.ImprovementIndex < 1 || action.ImprovementIndex > len(ids) {
-			return report.FormalReport{}, fmt.Errorf("%w: priority action", ErrProviderResponse)
+	// Evidence-insufficient reports must not expose provider-generated
+	// priorities, even when those references happen to resolve.
+	if provided.ScoreabilityStatus != report.ReportScoreabilityInsufficient {
+		for _, action := range provided.PriorityActions {
+			ids, exists := improvementIDs[action.DimensionKey]
+			if !exists || action.ImprovementIndex < 1 || action.ImprovementIndex > len(ids) {
+				return report.FormalReport{}, providerResponseError(
+					normalizeReasonPriorityActionInvalid,
+				)
+			}
+			formal.PriorityActions = append(formal.PriorityActions, report.ReportPriorityAction{
+				DimensionKey: action.DimensionKey,
+				FindingID:    ids[action.ImprovementIndex-1],
+			})
 		}
-		formal.PriorityActions = append(formal.PriorityActions, report.ReportPriorityAction{
-			DimensionKey: action.DimensionKey,
-			FindingID:    ids[action.ImprovementIndex-1],
-		})
 	}
 	if sceneType == evaluation.SceneIELTSSpeaking &&
 		slices.Contains(dimensionKeys, "PRONUNCIATION") {
 		available, coverage, _ := pronunciationAvailability(snapshot)
 		if !available {
-			return report.FormalReport{}, fmt.Errorf(
-				"%w: pronunciation coverage changed", ErrProviderResponse,
+			return report.FormalReport{}, providerResponseError(
+				normalizeReasonPronunciationCoverageChanged,
 			)
 		}
 		for index := range formal.Dimensions {
@@ -604,7 +782,9 @@ func normalizeProviderReport(
 		})
 	}
 	if !formal.Valid() {
-		return report.FormalReport{}, fmt.Errorf("%w: normalized report", ErrProviderResponse)
+		return report.FormalReport{}, providerResponseError(
+			normalizeReasonNormalizedReportInvalid,
+		)
 	}
 	return formal, nil
 }
@@ -682,10 +862,10 @@ func normalizeFindings(
 	dimensionKey string,
 	kind string,
 	provided []providerFinding,
-	turns map[string]string,
+	evidencePolicy providerEvidencePolicy,
 ) ([]report.ReportFinding, error) {
 	if provided == nil || len(provided) > 5 {
-		return nil, fmt.Errorf("%w: finding count", ErrProviderResponse)
+		return nil, providerResponseError(normalizeReasonFindingCountInvalid)
 	}
 	result := make([]report.ReportFinding, len(provided))
 	for index, item := range provided {
@@ -696,14 +876,13 @@ func normalizeFindings(
 			Evidence:   make([]report.ReportEvidence, len(item.Evidence)),
 		}
 		if len(item.Evidence) > 8 {
-			return nil, fmt.Errorf("%w: evidence count", ErrProviderResponse)
+			return nil, providerResponseError(normalizeReasonEvidenceCountInvalid)
 		}
 		for evidenceIndex, source := range item.Evidence {
-			transcript, exists := turns[source.TurnID]
 			quote := strings.TrimSpace(source.Quote)
-			start := byteOccurrence(transcript, quote, source.Occurrence)
-			if !exists || source.Occurrence < 1 || start < 0 {
-				return nil, fmt.Errorf("%w: evidence quote", ErrProviderResponse)
+			start, allowed := evidencePolicy.byteOffset(source)
+			if !allowed {
+				return nil, providerResponseError(normalizeReasonEvidenceInvalid)
 			}
 			finding.Evidence[evidenceIndex] = report.ReportEvidence{
 				EvidenceRefID:   source.TurnID,
@@ -820,14 +999,73 @@ const ieltsSystemPromptV2 = `You are an evidence-bound IELTS Speaking practice e
 
 const ieltsSystemPromptV3 = `You are an evidence-bound IELTS Speaking practice evaluator. Score the candidate's average performance across the whole test, not separate Part scores. The input may contain a provisional cumulative_profile for Parts 1 and 2 plus raw Part 3 evidence. Treat the profile as provisional evidence: preserve its exact cited quotes, then recalibrate every requested dimension using Part 3. Never mechanically average Parts or copy provisional bands without reconsideration. Score every requested dimension on IELTS_BAND_9 using half-band increments. Return one JSON object only, with exactly: scoreability_status, summary, dimensions, priority_actions. Use dimension_keys in the input in the same order. Each dimension must contain key, score, coverage, confidence, reason_codes, strengths, improvements, recommended_examples. Each finding must contain message, suggestion, evidence. Each evidence item must contain turn_id, an exact quote present either in cumulative_profile evidence or Part 3 turns, and its 1-based occurrence. priority_actions contains dimension_key and 1-based improvement_index. Arrays must be present even when empty. Write summary and every finding message in Simplified Chinese. Write suggestions for strengths and improvements in Simplified Chinese. For each recommended_examples finding, write its message in Simplified Chinese and put only the directly reusable English expression in suggestion. Keep every question, answer, and evidence quote in its original language; never translate or rewrite them. Base PRONUNCIATION only on acoustic checkpoints and the provisional pronunciation profile, never on transcript spelling.`
 
+const ieltsSystemPromptV4 = `You are an evidence-bound IELTS Speaking practice evaluator. The input schema_version is ielts-report-input/v4 and evidence_mode is exactly one of CUMULATIVE_PARTS_1_2_PLUS_PART_3 or FULL_RAW_FALLBACK. For CUMULATIVE_PARTS_1_2_PLUS_PART_3, score the candidate's average performance across the whole test using the provisional cumulative_profile for Parts 1 and 2 plus only part_3_questions and part_3_effective_turns as raw evidence. Preserve exact profile quotes, then recalibrate every requested dimension using Part 3; never mechanically average Parts or copy provisional bands without reconsideration. For FULL_RAW_FALLBACK, use only questions and effective_turns as the complete raw evidence for all Parts. Never infer or combine fields from the other evidence mode. Score every requested dimension on IELTS_BAND_9 using half-band increments. Return one JSON object only, with exactly: scoreability_status, summary, dimensions, priority_actions. Use dimension_keys in the input in the same order. Each dimension must contain key, score, coverage, confidence, reason_codes, strengths, improvements, recommended_examples. Each finding must contain message, suggestion, evidence. Each evidence item must contain turn_id, an exact quote present in the evidence allowed by evidence_mode, and its 1-based occurrence. priority_actions contains dimension_key and 1-based improvement_index. Arrays must be present even when empty. Write summary and every finding message in Simplified Chinese. Write suggestions for strengths and improvements in Simplified Chinese. For each recommended_examples finding, write its message in Simplified Chinese and put only the directly reusable English expression in suggestion. Keep every question, answer, and evidence quote in its original language; never translate or rewrite them. Base PRONUNCIATION only on acoustic checkpoints and, in CUMULATIVE_PARTS_1_2_PLUS_PART_3 mode, the provisional pronunciation profile; never on transcript spelling.`
+
 const generalSystemPromptV1 = `You are an evidence-bound everyday or workplace English evaluator. Score only the requested communication dimensions on PERCENTAGE_100. Return one JSON object only, with exactly: scoreability_status, summary, dimensions, priority_actions. Use dimension_keys in the input in the same order. Each dimension must contain key, score, coverage, confidence, reason_codes, strengths, improvements, recommended_examples. Each finding must contain message, suggestion, evidence. Each evidence item must contain turn_id, an exact quote copied from that turn, and its 1-based occurrence. priority_actions contains dimension_key and 1-based improvement_index. Arrays must be present even when empty. Do not infer voice qualities from text.`
 
 const generalSystemPromptV2 = `You are an evidence-bound everyday or workplace English evaluator. Score only the requested communication dimensions on PERCENTAGE_100. Return one JSON object only, with exactly: scoreability_status, summary, dimensions, priority_actions. Use dimension_keys in the input in the same order. Each dimension must contain key, score, coverage, confidence, reason_codes, strengths, improvements, recommended_examples. Each finding must contain message, suggestion, evidence. Each evidence item must contain turn_id, an exact quote copied from that turn, and its 1-based occurrence. priority_actions contains dimension_key and 1-based improvement_index. Arrays must be present even when empty. Write summary and every finding message in Simplified Chinese. Write suggestions for strengths and improvements in Simplified Chinese. For each recommended_examples finding, write its message in Simplified Chinese and put only the directly reusable English expression in suggestion. Keep every question, answer, and evidence quote in its original language; never translate or rewrite them. Do not infer voice qualities from text.`
 
-func (failure providerResponseFailure) Error() string          { return failure.message }
-func (failure providerResponseFailure) StableCategory() string { return "PROVIDER_RESPONSE_INVALID" }
-func (failure providerResponseFailure) Retryable() bool        { return true }
+type normalizeReason string
 
-type providerResponseFailure struct{ message string }
+const (
+	normalizeReasonResponseMetadataInvalid      normalizeReason = "response_metadata_invalid"
+	normalizeReasonResponseJSONInvalid          normalizeReason = "response_json_invalid"
+	normalizeReasonDimensionCountInvalid        normalizeReason = "dimension_count_invalid"
+	normalizeReasonDimensionOrderInvalid        normalizeReason = "dimension_order_invalid"
+	normalizeReasonFindingCountInvalid          normalizeReason = "finding_count_invalid"
+	normalizeReasonEvidenceCountInvalid         normalizeReason = "evidence_count_invalid"
+	normalizeReasonEvidenceInvalid              normalizeReason = "evidence_invalid"
+	normalizeReasonPriorityActionInvalid        normalizeReason = "priority_action_invalid"
+	normalizeReasonPronunciationCoverageChanged normalizeReason = "pronunciation_coverage_changed"
+	normalizeReasonNormalizedReportInvalid      normalizeReason = "normalized_report_invalid"
+)
+
+func (reason normalizeReason) valid() bool {
+	switch reason {
+	case normalizeReasonResponseMetadataInvalid,
+		normalizeReasonResponseJSONInvalid,
+		normalizeReasonDimensionCountInvalid,
+		normalizeReasonDimensionOrderInvalid,
+		normalizeReasonFindingCountInvalid,
+		normalizeReasonEvidenceCountInvalid,
+		normalizeReasonEvidenceInvalid,
+		normalizeReasonPriorityActionInvalid,
+		normalizeReasonPronunciationCoverageChanged,
+		normalizeReasonNormalizedReportInvalid:
+		return true
+	default:
+		return false
+	}
+}
+
+func providerResponseError(reason normalizeReason) error {
+	if !reason.valid() {
+		reason = normalizeReasonNormalizedReportInvalid
+	}
+	return providerResponseFailure{reason: reason}
+}
+
+func normalizeReasonFromError(err error) normalizeReason {
+	var failure providerResponseFailure
+	if errors.As(err, &failure) && failure.reason.valid() {
+		return failure.reason
+	}
+	return normalizeReasonNormalizedReportInvalid
+}
+
+type providerResponseFailure struct{ reason normalizeReason }
+
+func (providerResponseFailure) Error() string {
+	return "evaluation: report provider response invalid"
+}
+func (providerResponseFailure) StableCategory() string { return "PROVIDER_RESPONSE_INVALID" }
+func (providerResponseFailure) Retryable() bool        { return true }
+func (failure providerResponseFailure) EvaluationNormalizeReason() string {
+	return string(failure.reason)
+}
+func (providerResponseFailure) Is(target error) bool {
+	_, ok := target.(providerResponseFailure)
+	return ok
+}
 
 var _ evaluation.SessionEvaluators = (*Evaluators)(nil)

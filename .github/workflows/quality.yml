@@ -462,6 +462,9 @@ jobs:
       - name: Exercise Production PostgreSQL backup and isolated restore
         run: make check-production-backup
 
+      - name: Exercise isolated Production schema upgrade rehearsal
+        run: make check-production-rehearsal
+
       - name: Validate offline release contract
         run: make check-offline-release
 

@@ -39,12 +39,13 @@ func TestEvaluationFailureAttributesExposeSafeDiagnosticMetadata(t *testing.T) {
 		values[attribute.Key] = attribute.Value.String()
 	}
 	for key, want := range map[string]string{
-		"lane":            "session",
-		"evaluation_id":   "70000000-0000-4000-8000-000000000001",
-		"evaluation_kind": "SESSION_REPORT",
-		"attempt_count":   "2",
-		"failure_code":    "PROVIDER_RESPONSE_INVALID",
-		"retryable":       "true",
+		"lane":             "session",
+		"evaluation_id":    "70000000-0000-4000-8000-000000000001",
+		"evaluation_kind":  "SESSION_REPORT",
+		"attempt_count":    "2",
+		"failure_code":     "PROVIDER_RESPONSE_INVALID",
+		"normalize_reason": "priority_action_invalid",
+		"retryable":        "true",
 	} {
 		if values[key] != want {
 			t.Fatalf("%s = %q, want %q; attributes=%#v", key, values[key], want, values)
@@ -79,6 +80,9 @@ func (evaluationFailureStub) EvaluationKind() evaluation.Kind {
 	return evaluation.KindSessionReport
 }
 func (evaluationFailureStub) EvaluationAttemptCount() int { return 2 }
+func (evaluationFailureStub) EvaluationNormalizeReason() string {
+	return "priority_action_invalid"
+}
 func (evaluationFailureStub) EvaluationJobError() evaluation.JobError {
 	return evaluation.JobError{
 		Code: "PROVIDER_RESPONSE_INVALID", Retryable: true,

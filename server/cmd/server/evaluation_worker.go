@@ -104,6 +104,10 @@ type evaluationFailureMetadata interface {
 	EvaluationJobError() evaluation.JobError
 }
 
+type evaluationNormalizeFailure interface {
+	EvaluationNormalizeReason() string
+}
+
 func evaluationErrorAttributes(lane string, err error) []slog.Attr {
 	attributes := []slog.Attr{
 		slog.String("lane", lane),
@@ -118,6 +122,12 @@ func evaluationErrorAttributes(lane string, err error) []slog.Attr {
 			slog.Int("attempt_count", metadata.EvaluationAttemptCount()),
 			slog.String("failure_code", failure.Code),
 			slog.Bool("retryable", failure.Retryable),
+		)
+	}
+	var normalization evaluationNormalizeFailure
+	if errors.As(err, &normalization) && normalization.EvaluationNormalizeReason() != "" {
+		attributes = append(attributes,
+			slog.String("normalize_reason", normalization.EvaluationNormalizeReason()),
 		)
 	}
 	return attributes

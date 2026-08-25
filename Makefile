@@ -25,6 +25,7 @@ SHELL := /bin/bash
 	check-api-contracts \
 	check-release-candidate \
 	check-production-backup \
+	check-production-rehearsal \
 	check-offline-release \
 	check-android-download \
 	check-tls-lifecycle \
@@ -56,6 +57,7 @@ help:
 		'  make check-api      Validate OpenAPI, JSON Schema, and contract fixtures' \
 		'  make check-release-candidate  Validate release metadata and manifest tooling' \
 		'  make check-production-backup  Exercise PostgreSQL backup and isolated restore' \
+		'  make check-production-rehearsal  Validate the isolated schema 7 to 9 rehearsal' \
 		'  make check-offline-release  Validate offline image build/load contracts' \
 		'  make check-android-download  Validate the public Android bundle and publish contract' \
 		'  make check-tls-lifecycle  Validate TLS issuance and renewal contracts' \
@@ -308,6 +310,9 @@ check-release-candidate:
 check-production-backup:
 	./deploy/production/test-backup.sh
 
+check-production-rehearsal:
+	./deploy/production/test-rehearsal.sh
+
 check-offline-release:
 	./tools/release-candidate/build-offline-images.test.sh
 	./deploy/production/test-offline-images.sh
@@ -333,6 +338,7 @@ check-production-nginx:
 	./deploy/production/test-nginx.sh
 
 check-staging-deploy:
+	node --test deploy/staging/uat.test.mjs
 	./deploy/staging/test.sh
 
 check-staging-nginx:

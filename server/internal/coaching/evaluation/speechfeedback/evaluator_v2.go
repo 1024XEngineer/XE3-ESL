@@ -382,9 +382,10 @@ func encodeCompactSpeechResult(
 
 type compactProviderFailure struct{ message string }
 
-func (failure compactProviderFailure) Error() string          { return failure.message }
-func (failure compactProviderFailure) StableCategory() string { return "PROVIDER_RESPONSE_INVALID" }
-func (failure compactProviderFailure) Retryable() bool        { return false }
+func (failure compactProviderFailure) Error() string            { return failure.message }
+func (failure compactProviderFailure) StableCategory() string   { return "PROVIDER_RESPONSE_INVALID" }
+func (failure compactProviderFailure) Retryable() bool          { return false }
+func (failure compactProviderFailure) AutomaticRetryable() bool { return true }
 
 func compactProviderError(message string) error {
 	return compactProviderFailure{message: message}
