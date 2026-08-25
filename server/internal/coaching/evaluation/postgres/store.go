@@ -300,12 +300,18 @@ func (store *Store) CheckpointSnapshot(
 	}
 	record, err := scanRecord(tx.QueryRow(ctx, `UPDATE evaluations
 		SET input_snapshot = $3::json, input_hash = $4,
+			attempt_count = CASE WHEN $6 THEN 1 ELSE attempt_count END,
 			updated_at = transaction_timestamp()
 		WHERE id = $1 AND user_id = $5 AND status = 'RUNNING'
 		  AND lease_token = $2 AND lease_expires_at > transaction_timestamp()
+		  AND (NOT $6 OR (
+			kind = 'PRACTICE_TURN_FEEDBACK'
+			AND COALESCE(input_snapshot->>'acoustic', '') = ''
+		  ))
 		RETURNING `+evaluationColumns,
 		checkpoint.ID, checkpoint.LeaseToken,
-		checkpoint.InputSnapshot, checkpoint.InputHash[:], checkpoint.UserID))
+		checkpoint.InputSnapshot, checkpoint.InputHash[:], checkpoint.UserID,
+		checkpoint.RestartAttemptBudget))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return evaluation.Record{}, evaluation.ErrClaimLost
 	}
