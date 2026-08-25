@@ -720,6 +720,9 @@ class _SpeakUpShellState extends State<SpeakUpShell>
         errorMessage:
             widget.conversationController.errorMessage ??
             widget.conversationController.threadHistoryErrorMessage,
+        retryOperationLabel: widget.conversationController.canRetry
+            ? widget.conversationController.retryActionLabel
+            : '重试',
         onSubmitText: widget.composerController.sendText,
         onRetryOperation: widget.conversationController.canRetry
             ? widget.conversationController.retryLastOperation

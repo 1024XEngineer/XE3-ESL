@@ -609,6 +609,33 @@ void main() {
     );
   });
 
+  testWidgets(
+    'an incomplete restored reply exposes an explicit continue action',
+    (tester) async {
+      var continueCalls = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ConversationPage(
+            errorMessage: '上次回复未完成，点击“继续”恢复。',
+            retryOperationLabel: '继续',
+            onRetryOperation: () => continueCalls++,
+          ),
+        ),
+      );
+
+      expect(find.text('上次回复未完成，点击“继续”恢复。'), findsOneWidget);
+      expect(find.text('继续'), findsOneWidget);
+      expect(find.text('SpeakUp 正在回复…'), findsNothing);
+
+      tester
+          .widget<TextButton>(
+            find.byKey(const Key('agent-retry-operation-button')),
+          )
+          .onPressed!();
+      expect(continueCalls, 1);
+    },
+  );
+
   testWidgets('older Message pagination is visible and accessible', (
     tester,
   ) async {

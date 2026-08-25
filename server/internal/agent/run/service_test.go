@@ -27,6 +27,31 @@ func TestSubmitWithImagesRequiresImageInputCapability(t *testing.T) {
 	}
 }
 
+func TestGetLatestRunUsesOwnedThreadRead(t *testing.T) {
+	actor := requestcontext.Actor{
+		UserID:    "10000000-0000-4000-8000-000000000001",
+		SessionID: "20000000-0000-4000-8000-000000000001",
+	}
+	threadID := "30000000-0000-4000-8000-000000000001"
+	want := Run{ID: "40000000-0000-4000-8000-000000000001"}
+	repository := &latestRunRepository{run: want, found: true}
+	service := &Service{repository: repository}
+
+	got, found, err := service.GetLatestRun(context.Background(), actor, threadID)
+
+	if err != nil || !found || got != want ||
+		repository.ownerID != actor.UserID || repository.threadID != threadID {
+		t.Fatalf(
+			"GetLatestRun = (%#v, %t, %v), read owner = %q thread = %q",
+			got,
+			found,
+			err,
+			repository.ownerID,
+			repository.threadID,
+		)
+	}
+}
+
 func TestClassifyRunFailureRecognizesContextTermination(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -198,6 +223,24 @@ func TestRunConfigurationMatchesPersistedProviderModelAndBudget(t *testing.T) {
 type completedRetryRepository struct {
 	loopRepository
 	retry Retry
+}
+
+type latestRunRepository struct {
+	loopRepository
+	run      Run
+	found    bool
+	ownerID  string
+	threadID string
+}
+
+func (repository *latestRunRepository) FindLatestForThread(
+	_ context.Context,
+	ownerID string,
+	threadID string,
+) (Run, bool, error) {
+	repository.ownerID = ownerID
+	repository.threadID = threadID
+	return repository.run, repository.found, nil
 }
 
 func (repository completedRetryRepository) CreateRetry(

@@ -3,6 +3,7 @@ package runhttp
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -78,6 +79,55 @@ func TestSubmitRunTreatsEmptyImageAssetIDsAsText(t *testing.T) {
 	}
 }
 
+func TestGetLatestRunReadsWithoutSubmitting(t *testing.T) {
+	runs := &imageRunHTTPApplication{latestRun: imageRunHTTPSubmission(
+		"20000000-0000-4000-8000-000000000001",
+	).Run, latestFound: true}
+	router := newImageRunHTTPRouter(t, runs)
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/v1/agent-threads/20000000-0000-4000-8000-000000000001/runs/latest",
+		nil,
+	)
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(response, request)
+
+	var body struct {
+		Run map[string]any `json:"run"`
+	}
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &body) != nil {
+		t.Fatalf("latest Run response = %d %s", response.Code, response.Body.String())
+	}
+	if body.Run["run_id"] != runs.latestRun.ID ||
+		runs.latestReads != 1 || runs.textCalls != 0 || len(runs.imageAssetIDs) != 0 {
+		t.Fatalf(
+			"latest response = %#v, reads = %d, text calls = %d, image IDs = %#v",
+			body.Run,
+			runs.latestReads,
+			runs.textCalls,
+			runs.imageAssetIDs,
+		)
+	}
+}
+
+func TestGetLatestRunReturnsEmptyEvidenceWhenThreadHasNoRun(t *testing.T) {
+	runs := &imageRunHTTPApplication{}
+	router := newImageRunHTTPRouter(t, runs)
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/v1/agent-threads/20000000-0000-4000-8000-000000000001/runs/latest",
+		nil,
+	)
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || response.Body.String() != "{}" {
+		t.Fatalf("empty latest Run response = %d %s", response.Code, response.Body.String())
+	}
+}
+
 func newImageRunHTTPRouter(
 	t *testing.T,
 	application agentrun.Application,
@@ -113,6 +163,9 @@ type imageRunHTTPApplication struct {
 	threadID      string
 	imageAssetIDs []string
 	textCalls     int
+	latestRun     agentrun.Run
+	latestFound   bool
+	latestReads   int
 }
 
 func (application *imageRunHTTPApplication) SubmitText(
@@ -139,6 +192,17 @@ func (application *imageRunHTTPApplication) SubmitWithImages(
 	application.threadID = threadID
 	application.imageAssetIDs = append([]string(nil), imageAssetIDs...)
 	return imageRunHTTPSubmission(threadID), nil
+}
+
+func (application *imageRunHTTPApplication) GetLatestRun(
+	_ context.Context,
+	actor requestcontext.Actor,
+	threadID string,
+) (agentrun.Run, bool, error) {
+	application.actor = actor
+	application.threadID = threadID
+	application.latestReads++
+	return application.latestRun, application.latestFound, nil
 }
 
 func imageRunHTTPSubmission(threadID string) agentrun.Submission {

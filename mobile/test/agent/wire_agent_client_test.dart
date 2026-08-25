@@ -282,7 +282,7 @@ void main() {
       },
     );
 
-    test('restores a failed Run and its stable retry identity', () async {
+    test('reads a failed Run without POST and keeps its retry identity', () async {
       const text = 'Restore this failed request.';
       const clientMessageId = 'message_cold_restore';
       final transport = _ScriptedTransport([
@@ -307,21 +307,17 @@ void main() {
           }),
         ),
         _Step(
-          method: 'POST',
-          path: '/v1/agent-threads/$_threadId/runs',
-          verify: (call) {
-            expect(jsonDecode(call.body!), {
-              'client_message_id': clientMessageId,
-              'content': text,
-            });
-          },
+          method: 'GET',
+          path: '/v1/agent-threads/$_threadId/runs/latest',
           response: _jsonResponse(
-            HttpStatus.created,
-            _runJson(
-              status: 'failed',
-              failureKind: 'timeout',
-              failureRetryable: true,
-            ),
+            HttpStatus.ok,
+            {
+              'run': _runJson(
+                status: 'failed',
+                failureKind: 'timeout',
+                failureRetryable: true,
+              ),
+            },
           ),
         ),
         _Step(
@@ -349,7 +345,9 @@ void main() {
 
       expect(snapshot.messages, hasLength(1));
       expect(snapshot.textRecovery?.clientMessageId, clientMessageId);
-      expect(snapshot.textRecovery?.retryable, isTrue);
+      expect(snapshot.textRecovery?.latestRun?.status, AgentRunStatus.failed);
+      expect(snapshot.textRecovery?.canContinue, isTrue);
+      expect(transport.calls.where((call) => call.method == 'POST'), isEmpty);
 
       final exchange = await harness.client.sendText(
         threadId: _threadId,
@@ -359,16 +357,14 @@ void main() {
 
       expect(exchange.assistantMessage, isNotNull);
       expect(
-        transport.calls
-            .where((call) => call.path == '/v1/agent-threads/$_threadId/runs')
-            .length,
+        transport.calls.where((call) => call.method == 'POST').length,
         1,
       );
       transport.expectDone();
     });
 
     test(
-      'finishes a restored pending Message without duplicating it',
+      'only resumes a pending Message after one explicit POST',
       () async {
         const text = 'Finish this restored request.';
         final transport = _ScriptedTransport([
@@ -393,8 +389,22 @@ void main() {
             }),
           ),
           _Step(
+            method: 'GET',
+            path: '/v1/agent-threads/$_threadId/runs/latest',
+            response: _jsonResponse(
+              HttpStatus.ok,
+              {'run': _runJson(status: 'pending')},
+            ),
+          ),
+          _Step(
             method: 'POST',
             path: '/v1/agent-threads/$_threadId/runs',
+            verify: (call) {
+              expect(jsonDecode(call.body!), {
+                'client_message_id': 'message_pending_restore',
+                'content': text,
+              });
+            },
             response: _jsonResponse(
               HttpStatus.accepted,
               _runJson(status: 'pending'),
@@ -417,13 +427,194 @@ void main() {
 
         final snapshot = await harness.client.getThread(threadId: _threadId);
 
-        expect(snapshot.textRecovery, isNull);
-        expect(snapshot.messages, hasLength(2));
-        expect(snapshot.messages.first.id, _userMessageId);
-        expect(snapshot.messages.last.id, _assistantMessageId);
+        expect(snapshot.textRecovery?.latestRun?.status, AgentRunStatus.pending);
+        expect(snapshot.textRecovery?.canContinue, isTrue);
+        expect(snapshot.messages, hasLength(1));
+        expect(transport.calls.where((call) => call.method == 'POST'), isEmpty);
+
+        final exchange = await harness.client.sendText(
+          threadId: _threadId,
+          text: text,
+          clientMessageId: 'message_pending_restore',
+        );
+
+        expect(exchange.userMessage.id, _userMessageId);
+        expect(exchange.assistantMessage?.id, _assistantMessageId);
+        expect(transport.calls.where((call) => call.method == 'POST'), hasLength(1));
         transport.expectDone();
       },
     );
+
+    test('renders missing Run evidence without attempting a write', () async {
+      const text = 'This input has no durable Run.';
+      const clientMessageId = 'message_without_run';
+      final transport = _ScriptedTransport([
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-threads/$_threadId',
+          response: _jsonResponse(HttpStatus.ok, _threadJson()),
+        ),
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-threads/$_threadId/messages',
+          response: _jsonResponse(HttpStatus.ok, {
+            'messages': [
+              _messageJson(
+                id: _userMessageId,
+                sequence: 1,
+                role: 'user',
+                content: text,
+                clientMessageId: clientMessageId,
+              ),
+            ],
+          }),
+        ),
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-threads/$_threadId/runs/latest',
+          response: _jsonResponse(HttpStatus.ok, <String, Object?>{}),
+        ),
+      ]);
+      final harness = _Harness(transport);
+
+      final snapshot = await harness.client.getThread(threadId: _threadId);
+
+      expect(snapshot.textRecovery, isNotNull);
+      expect(snapshot.textRecovery?.latestRun, isNull);
+      expect(snapshot.textRecovery?.canContinue, isFalse);
+      expect(transport.calls.every((call) => call.method == 'GET'), isTrue);
+      transport.expectDone();
+    });
+
+    test('replays one in-flight retry only after explicit continuation', () async {
+      const text = 'Continue the existing retry.';
+      const clientMessageId = 'message_retry_restore';
+      final retryRun = _runJson(
+        id: _retryRunId,
+        status: 'running',
+        attempt: 2,
+        retryOfRunId: _runId,
+        clientRetryId: 'retry:$_runId',
+      );
+      final transport = _ScriptedTransport([
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-threads/$_threadId',
+          response: _jsonResponse(HttpStatus.ok, _threadJson()),
+        ),
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-threads/$_threadId/messages',
+          response: _jsonResponse(HttpStatus.ok, {
+            'messages': [
+              _messageJson(
+                id: _userMessageId,
+                sequence: 1,
+                role: 'user',
+                content: text,
+                clientMessageId: clientMessageId,
+              ),
+            ],
+          }),
+        ),
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-threads/$_threadId/runs/latest',
+          response: _jsonResponse(HttpStatus.ok, {'run': retryRun}),
+        ),
+        _Step(
+          method: 'POST',
+          path: '/v1/agent-runs/$_runId/retries',
+          verify: (call) {
+            expect(jsonDecode(call.body!), {'client_retry_id': 'retry:$_runId'});
+          },
+          response: _jsonResponse(HttpStatus.accepted, retryRun),
+        ),
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-runs/$_retryRunId',
+          response: _jsonResponse(
+            HttpStatus.ok,
+            _runJson(
+              id: _retryRunId,
+              status: 'completed',
+              attempt: 2,
+              retryOfRunId: _runId,
+              clientRetryId: 'retry:$_runId',
+            ),
+          ),
+        ),
+        _messagesStep(
+          userContent: text,
+          clientMessageId: clientMessageId,
+          assistantRunId: _retryRunId,
+        ),
+      ]);
+      final harness = _Harness(transport, maxRunPollAttempts: 2);
+
+      final snapshot = await harness.client.getThread(threadId: _threadId);
+
+      expect(snapshot.textRecovery?.latestRun?.attempt, 2);
+      expect(transport.calls.where((call) => call.method == 'POST'), isEmpty);
+
+      final exchange = await harness.client.sendText(
+        threadId: _threadId,
+        text: text,
+        clientMessageId: clientMessageId,
+      );
+
+      expect(exchange.assistantMessage?.producedByRunId, _retryRunId);
+      expect(transport.calls.where((call) => call.method == 'POST'), hasLength(1));
+      transport.expectDone();
+    });
+
+    test('hydrates a just-completed Run using GET requests only', () async {
+      const text = 'The response completed during restoration.';
+      const clientMessageId = 'message_completed_restore';
+      final transport = _ScriptedTransport([
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-threads/$_threadId',
+          response: _jsonResponse(HttpStatus.ok, _threadJson()),
+        ),
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-threads/$_threadId/messages',
+          response: _jsonResponse(HttpStatus.ok, {
+            'messages': [
+              _messageJson(
+                id: _userMessageId,
+                sequence: 1,
+                role: 'user',
+                content: text,
+                clientMessageId: clientMessageId,
+              ),
+            ],
+          }),
+        ),
+        _Step(
+          method: 'GET',
+          path: '/v1/agent-threads/$_threadId/runs/latest',
+          response: _jsonResponse(
+            HttpStatus.ok,
+            {'run': _runJson(status: 'completed')},
+          ),
+        ),
+        _messagesStep(
+          userContent: text,
+          clientMessageId: clientMessageId,
+        ),
+      ]);
+      final harness = _Harness(transport);
+
+      final snapshot = await harness.client.getThread(threadId: _threadId);
+
+      expect(snapshot.textRecovery, isNull);
+      expect(snapshot.messages, hasLength(2));
+      expect(snapshot.messages.last.id, _assistantMessageId);
+      expect(transport.calls.every((call) => call.method == 'GET'), isTrue);
+      transport.expectDone();
+    });
 
     test('rejects unknown response fields and unsafe ordering', () async {
       final malformedThread = _threadJson()..['unexpected'] = true;

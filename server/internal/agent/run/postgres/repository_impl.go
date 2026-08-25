@@ -307,6 +307,44 @@ func (r *Repository) Find(
 	return findRun(ctx, r.database, ownerID, runID)
 }
 
+func (r *Repository) FindLatestForThread(
+	ctx context.Context,
+	ownerID string,
+	threadID string,
+) (agentrun.Run, bool, error) {
+	run, err := scanRun(r.database.QueryRow(ctx, `
+SELECT `+runSelectColumns+`
+FROM agent_runs AS runs
+INNER JOIN agent_threads AS threads ON threads.id = runs.thread_id
+INNER JOIN agent_messages AS input_messages
+    ON input_messages.id = runs.input_message_id
+    AND input_messages.thread_id = runs.thread_id
+WHERE runs.thread_id = $1
+    AND threads.user_id = $2
+    AND threads.deleted_at IS NULL
+ORDER BY input_messages.sequence_no DESC, runs.attempt_no DESC
+LIMIT 1`, threadID, ownerID))
+	if err == nil {
+		return run, true, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return agentrun.Run{}, false, mapRunPostgresError(err)
+	}
+	var owned bool
+	if err := r.database.QueryRow(ctx, `
+SELECT EXISTS (
+    SELECT 1
+    FROM agent_threads
+    WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+)`, threadID, ownerID).Scan(&owned); err != nil {
+		return agentrun.Run{}, false, agentrun.ErrRepository
+	}
+	if !owned {
+		return agentrun.Run{}, false, agentrun.ErrNotFound
+	}
+	return agentrun.Run{}, false, nil
+}
+
 func (r *Repository) SaveContextSnapshot(
 	ctx context.Context,
 	ownerID string,

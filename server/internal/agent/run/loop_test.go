@@ -1890,6 +1890,14 @@ func (loopRepository) Find(context.Context, string, string) (Run, error) {
 	panic("unexpected Find")
 }
 
+func (loopRepository) FindLatestForThread(
+	context.Context,
+	string,
+	string,
+) (Run, bool, error) {
+	panic("unexpected FindLatestForThread")
+}
+
 func (loopRepository) SaveContextSnapshot(
 	context.Context,
 	string,
