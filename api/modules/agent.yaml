@@ -788,6 +788,32 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/Conflict
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/agent-threads/{thread_id}/runs/latest:
+    parameters:
+      - $ref: '#/components/parameters/AgentThreadId'
+    get:
+      tags:
+        - Agent
+      summary: Read the latest durable AgentRun for one owned Thread
+      description: |
+        This safe read never creates, claims, retries, or resumes a Run. The
+        `run` property is absent when the owned Thread has no Run. Latest means
+        the Run for the highest input Message sequence, with the highest attempt
+        number breaking ties.
+      operationId: getLatestAgentRunForThread
+      responses:
+        '200':
+          description: The latest durable Run state, if one exists.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LatestAgentRun'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
   /v1/agent-threads/{thread_id}/runs/stream:
     parameters:
       - $ref: '#/components/parameters/AgentThreadId'
@@ -1703,6 +1729,12 @@ components:
           type: string
           format: date-time
           readOnly: true
+    LatestAgentRun:
+      type: object
+      additionalProperties: false
+      properties:
+        run:
+          $ref: '#/components/schemas/AgentRun'
     AgentMessageList:
       type: object
       additionalProperties: false

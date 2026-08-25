@@ -75,6 +75,7 @@ final class WireAgentClient
   int _accountGeneration = 0;
   final Set<Future<void>> _inFlightOperations = <Future<void>>{};
   final Map<String, _FailedRun> _failedRuns = <String, _FailedRun>{};
+  final Map<String, AgentRun> _restoredRuns = <String, AgentRun>{};
   final Set<String> _ambiguousSubmissions = <String>{};
   _AmbiguousThreadCreation? _ambiguousThreadCreation;
   Future<void>? _cleanupFuture;
@@ -97,6 +98,7 @@ final class WireAgentClient
   Future<void> _performAccountCleanup() async {
     _accountGeneration++;
     _failedRuns.clear();
+    _restoredRuns.clear();
     _ambiguousSubmissions.clear();
     _ambiguousThreadCreation = null;
     final staleOperations = List<Future<void>>.of(_inFlightOperations);
@@ -230,7 +232,7 @@ final class WireAgentClient
       threadId: thread.id,
     );
     _requireCurrentGeneration(generation);
-    final recovery = await _restoreLastTextRun(
+    final recovery = await _readLastTextRun(
       generation: generation,
       threadId: thread.id,
       messages: messagePage.messages,
@@ -238,7 +240,7 @@ final class WireAgentClient
     return AgentThreadSnapshot(
       threadId: thread.id,
       title: thread.title,
-      textRecovery: recovery.failure,
+      textRecovery: recovery.recovery,
       messages: <AgentMessage>[
         for (final message in messagePage.messages) message.presentation,
         ?recovery.completedAssistant,
@@ -249,7 +251,7 @@ final class WireAgentClient
     );
   }
 
-  Future<_RestoredTextRun> _restoreLastTextRun({
+  Future<_RestoredTextRun> _readLastTextRun({
     required int generation,
     required String threadId,
     required List<AgentWireMessage> messages,
@@ -272,28 +274,29 @@ final class WireAgentClient
       );
     }
     final operationKey = '$threadId\u{0}$clientMessageId';
-    final terminalRun = await _pollUntilTerminal(
+    final latestRun = await _getLatestThreadRun(
       generation: generation,
-      initialRun: await _submitRun(
-        generation: generation,
-        threadId: threadId,
-        text: userMessage.content,
-        clientMessageId: clientMessageId,
-        imageAssetIds: imageAssetIds,
-      ),
+      threadId: threadId,
     );
     _requireCurrentGeneration(generation);
-    if (terminalRun.inputMessageId != userMessage.id) {
-      throw const AgentClientException(
-        kind: AgentClientFailureKind.invalidResponse,
-        retryable: true,
+    if (latestRun == null || latestRun.inputMessageId != userMessage.id) {
+      _failedRuns.remove(operationKey);
+      _restoredRuns.remove(operationKey);
+      return _RestoredTextRun(
+        recovery: AgentTextRecovery(
+          text: userMessage.content,
+          clientMessageId: clientMessageId,
+          latestRun: null,
+          imageAssetIds: imageAssetIds,
+        ),
       );
     }
-    if (terminalRun.status == AgentRunStatus.completed) {
+    if (latestRun.status == AgentRunStatus.completed) {
       _failedRuns.remove(operationKey);
+      _restoredRuns.remove(operationKey);
       final exchange = await _loadCompletedExchange(
         generation: generation,
-        run: terminalRun,
+        run: latestRun,
         expectedUserContent: userMessage.content,
         expectedClientMessageId: clientMessageId,
         expectedImageAssetIds: imageAssetIds,
@@ -308,32 +311,50 @@ final class WireAgentClient
       return _RestoredTextRun(completedAssistant: exchange.assistantMessage);
     }
 
-    final failureKind = terminalRun.failureKind;
-    if (failureKind == null) {
+    if (latestRun.status == AgentRunStatus.failed) {
+      _restoredRuns.remove(operationKey);
+      if (latestRun.failureRetryable) {
+        _failedRuns[operationKey] = _FailedRun(
+          run: latestRun,
+          clientMessageId: clientMessageId,
+          content: userMessage.content,
+          imageAssetIds: imageAssetIds,
+        );
+      } else {
+        _failedRuns.remove(operationKey);
+      }
+    } else {
+      _failedRuns.remove(operationKey);
+      _restoredRuns[operationKey] = latestRun;
+    }
+    return _RestoredTextRun(
+      recovery: AgentTextRecovery(
+        text: userMessage.content,
+        clientMessageId: clientMessageId,
+        latestRun: latestRun,
+        imageAssetIds: imageAssetIds,
+      ),
+    );
+  }
+
+  Future<AgentRun?> _getLatestThreadRun({
+    required int generation,
+    required String threadId,
+  }) async {
+    final response = await _send(
+      generation: generation,
+      method: 'GET',
+      path: '/v1/agent-threads/$threadId/runs/latest',
+    );
+    _requireStatus(response, const <int>{HttpStatus.ok});
+    final run = _decodeLatestRun(response.body);
+    if (run != null && run.threadId != threadId) {
       throw const AgentClientException(
         kind: AgentClientFailureKind.invalidResponse,
         retryable: true,
       );
     }
-    if (terminalRun.failureRetryable) {
-      _failedRuns[operationKey] = _FailedRun(
-        run: terminalRun,
-        clientMessageId: clientMessageId,
-        content: userMessage.content,
-        imageAssetIds: imageAssetIds,
-      );
-    } else {
-      _failedRuns.remove(operationKey);
-    }
-    return _RestoredTextRun(
-      failure: AgentTextRecovery(
-        text: userMessage.content,
-        clientMessageId: clientMessageId,
-        failureKind: failureKind,
-        retryable: terminalRun.failureRetryable,
-        imageAssetIds: imageAssetIds,
-      ),
-    );
+    return run;
   }
 
   Future<_WireThread> _createWireThread(int generation) async {
@@ -437,7 +458,16 @@ final class WireAgentClient
       _requireContent(text);
       _requireImageAssetIds(imageAssetIds);
       final operationKey = '$threadId\u{0}$clientMessageId';
+      final restoredRun = _restoredRuns[operationKey];
       var failedRun = _failedRuns[operationKey];
+      if (restoredRun != null &&
+          (restoredRun.threadId != threadId ||
+              restoredRun.inputMessageId.trim().isEmpty)) {
+        throw const AgentClientException(
+          kind: AgentClientFailureKind.invalidResponse,
+          retryable: true,
+        );
+      }
       if (failedRun != null &&
           (failedRun.threadId != threadId ||
               failedRun.clientMessageId != clientMessageId ||
@@ -484,7 +514,16 @@ final class WireAgentClient
       }
 
       late AgentRun initialRun;
-      if (failedRun != null) {
+      if (restoredRun != null) {
+        initialRun = await _resumeRestoredRun(
+          generation: generation,
+          restoredRun: restoredRun,
+          threadId: threadId,
+          text: text,
+          clientMessageId: clientMessageId,
+          imageAssetIds: imageAssetIds,
+        );
+      } else if (failedRun != null) {
         initialRun = await _retryRun(
           generation: generation,
           failedRun: failedRun,
@@ -553,6 +592,7 @@ final class WireAgentClient
       _ambiguousSubmissions.remove(operationKey);
 
       if (resolvedRun.status == AgentRunStatus.failed) {
+        _restoredRuns.remove(operationKey);
         if (resolvedRun.failureRetryable) {
           _failedRuns[operationKey] = _FailedRun(
             run: resolvedRun,
@@ -571,13 +611,15 @@ final class WireAgentClient
       }
 
       _failedRuns.remove(operationKey);
-      return _loadCompletedExchange(
+      final exchange = await _loadCompletedExchange(
         generation: generation,
         run: resolvedRun,
         expectedUserContent: text,
         expectedClientMessageId: clientMessageId,
         expectedImageAssetIds: imageAssetIds,
       );
+      _restoredRuns.remove(operationKey);
+      return exchange;
     });
   }
 
@@ -1197,6 +1239,54 @@ final class WireAgentClient
     return run;
   }
 
+  Future<AgentRun> _resumeRestoredRun({
+    required int generation,
+    required AgentRun restoredRun,
+    required String threadId,
+    required String text,
+    required String clientMessageId,
+    required List<String> imageAssetIds,
+  }) async {
+    late final AgentRun current;
+    if (restoredRun.attempt == 1) {
+      current = await _submitRun(
+        generation: generation,
+        threadId: threadId,
+        text: text,
+        clientMessageId: clientMessageId,
+        imageAssetIds: imageAssetIds,
+      );
+    } else {
+      final sourceRunId = restoredRun.retryOfRunId;
+      final retryClientId = restoredRun.clientRetryId;
+      if (sourceRunId == null || retryClientId == null) {
+        throw const AgentClientException(
+          kind: AgentClientFailureKind.invalidResponse,
+          retryable: true,
+        );
+      }
+      final response = await _send(
+        generation: generation,
+        method: 'POST',
+        path: '/v1/agent-runs/$sourceRunId/retries',
+        body: <String, Object?>{'client_retry_id': retryClientId},
+      );
+      _requireStatus(response, const <int>{
+        HttpStatus.created,
+        HttpStatus.accepted,
+      });
+      current = _decodeRun(response.body);
+      _validateRunWriteStatus(response.statusCode, current);
+    }
+    if (!sameAgentRunIdentity(current, restoredRun)) {
+      throw const AgentClientException(
+        kind: AgentClientFailureKind.invalidResponse,
+        retryable: true,
+      );
+    }
+    return current;
+  }
+
   Future<AgentRun> _retryRun({
     required int generation,
     required _FailedRun failedRun,
@@ -1664,9 +1754,9 @@ final class _WireThreadPage {
 }
 
 final class _RestoredTextRun {
-  const _RestoredTextRun({this.failure, this.completedAssistant});
+  const _RestoredTextRun({this.recovery, this.completedAssistant});
 
-  final AgentTextRecovery? failure;
+  final AgentTextRecovery? recovery;
   final AgentMessage? completedAssistant;
 }
 
@@ -1784,6 +1874,17 @@ AgentWireMessage _decodeMessageObject(
 
 AgentRun _decodeRun(String body) {
   return _decodeBody(body, decodeAgentWireRun);
+}
+
+AgentRun? _decodeLatestRun(String body) {
+  return _decodeBody(body, (value) {
+    final object = _strictObject(
+      value,
+      allowed: const <String>{'run'},
+      required: const <String>{},
+    );
+    return _absentOnlyOptional(object, 'run', decodeAgentWireRun);
+  });
 }
 
 void _validateRunWriteStatus(int statusCode, AgentRun run) {

@@ -85,6 +85,10 @@ final class ConversationController extends ChangeNotifier {
   bool get isComposerBlocked =>
       _replyPending || _threadTransitionInFlight || (_busy && !isRestoring);
   bool get canRetry => _retry != null;
+  String get retryActionLabel => switch (_retry) {
+    _TextRetry(restored: true) => '继续',
+    _ => '重试',
+  };
 
   Future<void> initialize() async {
     if (_initialized || _disposed) {
@@ -185,16 +189,26 @@ final class ConversationController extends ChangeNotifier {
   void _applyRestoredTextState(AgentThreadSnapshot thread) {
     final textRecovery = thread.textRecovery;
     if (textRecovery != null) {
-      _retry = textRecovery.retryable
+      final latestRun = textRecovery.latestRun;
+      final inputMessageID =
+          latestRun?.inputMessageId ?? thread.messages.last.id;
+      _retry = textRecovery.canContinue
           ? _TextRetry(
               text: textRecovery.text,
               clientMessageId: textRecovery.clientMessageId,
               imageAssetIds: textRecovery.imageAssetIds,
+              committedUserMessageID: inputMessageID,
+              restored: true,
             )
           : null;
-      _errorMessage = textRecovery.retryable
-          ? '上次 Agent 运行未能完成，可以继续重试。'
-          : '上次 Agent 运行未能完成，服务端不允许重试。';
+      _errorMessage = switch (latestRun?.status) {
+        AgentRunStatus.pending || AgentRunStatus.running => '上次回复未完成，点击“继续”恢复。',
+        AgentRunStatus.failed when latestRun!.failureRetryable =>
+          '上次回复未完成，可以继续。',
+        AgentRunStatus.failed => '上次回复未完成，服务端不允许继续。',
+        AgentRunStatus.completed => null,
+        null => '上次回复未完成，但没有可恢复的运行记录。',
+      };
     }
   }
 
@@ -642,6 +656,7 @@ final class ConversationController extends ChangeNotifier {
     final retry = _retry;
     final operation =
         retry is _TextRetry &&
+            !retry.restored &&
             retry.text == text &&
             listEquals(retry.imageAssetIds, imageAssetIds)
         ? retry
@@ -662,7 +677,9 @@ final class ConversationController extends ChangeNotifier {
     _retry = null;
     _errorMessage = null;
     _setReplyPending(true);
-    if (operation.imageAssetIds.isEmpty && client is AgentStreamingTextClient) {
+    if (!operation.restored &&
+        operation.imageAssetIds.isEmpty &&
+        client is AgentStreamingTextClient) {
       final streamingClient = client as AgentStreamingTextClient;
       final committedUserMessageID = operation.committedUserMessageID;
       final reuseCommittedUser =
@@ -1441,12 +1458,28 @@ final class ConversationController extends ChangeNotifier {
         (snapshot.nextMessageCursor != null &&
             (snapshot.nextMessageCursor!.isEmpty ||
                 snapshot.nextMessageCursor!.runes.length > 1024)) ||
-        (recovery != null &&
-            (recovery.text.trim().isEmpty ||
-                recovery.clientMessageId.trim().isEmpty ||
-                recovery.failureKind.trim().isEmpty))) {
+        (recovery != null && !_validTextRecovery(snapshot, recovery))) {
       throw StateError('Invalid Agent Thread snapshot.');
     }
+  }
+
+  bool _validTextRecovery(
+    AgentThreadSnapshot snapshot,
+    AgentTextRecovery recovery,
+  ) {
+    final message = snapshot.messages.lastOrNull;
+    final run = recovery.latestRun;
+    return recovery.text.trim().isNotEmpty &&
+        recovery.clientMessageId.trim().isNotEmpty &&
+        message != null &&
+        message.role == AgentMessageRole.user &&
+        message.modality != AgentMessageModality.voice &&
+        message.text == recovery.text &&
+        message.clientMessageId == recovery.clientMessageId &&
+        (run == null ||
+            (run.threadId == snapshot.threadId &&
+                run.inputMessageId == message.id &&
+                run.status != AgentRunStatus.completed));
   }
 
   void _validateThreadSummary(AgentThreadSummary summary) {
@@ -1561,12 +1594,15 @@ final class _TextRetry extends _ConversationRetry {
     required this.text,
     required this.clientMessageId,
     this.imageAssetIds = const <String>[],
+    this.committedUserMessageID,
+    this.restored = false,
   });
 
   final String text;
   final String clientMessageId;
   final List<String> imageAssetIds;
   String? committedUserMessageID;
+  final bool restored;
 }
 
 final Random _clientIdRandom = Random.secure();

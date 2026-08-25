@@ -119,21 +119,90 @@ void main() {
     expect(controller.canRetry, isFalse);
   });
 
-  test('restores a failed text operation with its server identity', () async {
+  test(
+    'restores an incomplete text operation with its server identity',
+    () async {
+      final client = _SnapshotAgentClient(
+        AgentThreadSnapshot(
+          threadId: 'thread_restored_text',
+          textRecovery: AgentTextRecovery(
+            text: 'retry the restored text',
+            clientMessageId: 'message_restored_stable',
+            latestRun: _recoveryRun(),
+          ),
+          messages: const <AgentMessage>[
+            AgentMessage(
+              id: 'message_restored_user',
+              role: AgentMessageRole.user,
+              text: 'retry the restored text',
+              clientMessageId: 'message_restored_stable',
+            ),
+          ],
+        ),
+      );
+      final controller = ConversationController(client: client);
+
+      await controller.initialize();
+
+      expect(controller.canRetry, isTrue);
+      expect(controller.messages, hasLength(1));
+      expect(controller.errorMessage, contains('上次回复未完成'));
+      expect(controller.retryActionLabel, '继续');
+
+      final first = controller.retryLastOperation();
+      final duplicate = controller.retryLastOperation();
+      await Future.wait(<Future<void>>[first, duplicate]);
+
+      expect(client.messageClientIds, <String>['message_restored_stable']);
+      expect(controller.messages, hasLength(2));
+      expect(controller.canRetry, isFalse);
+    },
+  );
+
+  test('composer sends matching restored text as a new operation', () async {
     final client = _SnapshotAgentClient(
-      const AgentThreadSnapshot(
+      AgentThreadSnapshot(
         threadId: 'thread_restored_text',
         textRecovery: AgentTextRecovery(
           text: 'retry the restored text',
           clientMessageId: 'message_restored_stable',
-          failureKind: 'timeout',
-          retryable: true,
+          latestRun: _recoveryRun(),
         ),
-        messages: <AgentMessage>[
+        messages: const <AgentMessage>[
           AgentMessage(
             id: 'message_restored_user',
             role: AgentMessageRole.user,
             text: 'retry the restored text',
+            clientMessageId: 'message_restored_stable',
+          ),
+        ],
+      ),
+    );
+    final controller = ConversationController(client: client);
+
+    await controller.initialize();
+    expect(await controller.sendText('retry the restored text'), isTrue);
+
+    expect(client.messageClientIds, hasLength(1));
+    expect(client.messageClientIds.single, isNot('message_restored_stable'));
+    expect(controller.canRetry, isFalse);
+  });
+
+  test('renders missing Run evidence without offering continuation', () async {
+    final client = _SnapshotAgentClient(
+      const AgentThreadSnapshot(
+        threadId: 'thread_missing_run',
+        textRecovery: AgentTextRecovery(
+          text: 'input without a Run',
+          clientMessageId: 'message_missing_run',
+          latestRun: null,
+        ),
+        messages: <AgentMessage>[
+          AgentMessage(
+            id: 'message_missing_run_id',
+            role: AgentMessageRole.user,
+            text: 'input without a Run',
+            clientMessageId: 'message_missing_run',
           ),
         ],
       ),
@@ -142,15 +211,9 @@ void main() {
 
     await controller.initialize();
 
-    expect(controller.canRetry, isTrue);
-    expect(controller.messages, hasLength(1));
-    expect(controller.errorMessage, contains('继续重试'));
-
-    await controller.retryLastOperation();
-
-    expect(client.messageClientIds, <String>['message_restored_stable']);
-    expect(controller.messages, hasLength(2));
+    expect(controller.errorMessage, contains('没有可恢复的运行记录'));
     expect(controller.canRetry, isFalse);
+    expect(client.messageClientIds, isEmpty);
   });
 
   test('restore exposes an executable operation-specific retry', () async {
@@ -792,6 +855,25 @@ void main() {
       controller.dispose();
     }
   });
+}
+
+AgentRun _recoveryRun() {
+  final createdAt = DateTime.utc(2026, 8, 25, 8);
+  return AgentRun(
+    id: 'run_restored_failed',
+    threadId: 'thread_restored_text',
+    inputMessageId: 'message_restored_user',
+    attempt: 1,
+    status: AgentRunStatus.failed,
+    requestedProvider: 'fake',
+    requestedModel: 'fake-model',
+    maxOutputTokens: 256,
+    failure: const AgentRunFailure(kind: 'timeout', retryable: true),
+    createdAt: createdAt,
+    startedAt: createdAt.add(const Duration(seconds: 1)),
+    completedAt: createdAt.add(const Duration(seconds: 2)),
+    updatedAt: createdAt.add(const Duration(seconds: 2)),
+  );
 }
 
 class _DelegatingAgentClient implements AgentClient {

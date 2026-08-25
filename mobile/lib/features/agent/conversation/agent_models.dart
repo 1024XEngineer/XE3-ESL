@@ -330,7 +330,7 @@ final class AgentThreadSnapshot {
   final String? nextMessageCursor;
 }
 
-/// A server-restored failed text operation that keeps its idempotency identity.
+/// A server-restored incomplete text operation and its latest durable evidence.
 ///
 /// This is a transient presentation projection. The durable Message and Run
 /// remain authoritative on the server.
@@ -338,16 +338,20 @@ final class AgentTextRecovery {
   const AgentTextRecovery({
     required this.text,
     required this.clientMessageId,
-    required this.failureKind,
-    required this.retryable,
+    required this.latestRun,
     this.imageAssetIds = const <String>[],
   });
 
   final String text;
   final String clientMessageId;
-  final String failureKind;
-  final bool retryable;
+  final AgentRun? latestRun;
   final List<String> imageAssetIds;
+
+  bool get canContinue => switch (latestRun?.status) {
+    AgentRunStatus.pending || AgentRunStatus.running => true,
+    AgentRunStatus.failed => latestRun!.failureRetryable,
+    AgentRunStatus.completed || null => false,
+  };
 }
 
 final class AgentExchange {
