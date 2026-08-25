@@ -76,8 +76,13 @@ func NewClient(configuration ClientConfig) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load ISE relay client certificate: %w", err)
 	}
+	dialer := &net.Dialer{
+		Timeout:   10 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
 	transport := &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           dialer.DialContext,
 		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: rootCAs, Certificates: []tls.Certificate{certificate}},
 		TLSHandshakeTimeout:   15 * time.Second,
 		ResponseHeaderTimeout: 15 * time.Second,

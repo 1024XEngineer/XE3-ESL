@@ -16,11 +16,13 @@ import (
 	"math/big"
 	"mime"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -43,6 +45,7 @@ func TestNewClientLoadsMTLSConfiguration(t *testing.T) {
 	}
 	transport, ok := client.httpClient.Transport.(*http.Transport)
 	if !ok || transport.TLSClientConfig == nil ||
+		transport.DialContext == nil ||
 		transport.TLSClientConfig.MinVersion != tls.VersionTLS13 ||
 		transport.TLSHandshakeTimeout != 15*time.Second ||
 		len(transport.TLSClientConfig.Certificates) != 1 ||
@@ -315,6 +318,39 @@ func TestClientNormalizesExhaustedTransportRetries(t *testing.T) {
 	if !ok || failure.StableCategory() != FailureProviderUnavailable ||
 		!failure.Retryable() || attempts != requestMaxAttempts {
 		t.Fatalf("exhausted retries: error=%#v attempts=%d", err, attempts)
+	}
+}
+
+func TestClientRetriesBoundedDialTimeouts(t *testing.T) {
+	var dials int
+	transport := &http.Transport{
+		DialContext: func(
+			context.Context,
+			string,
+			string,
+		) (net.Conn, error) {
+			dials++
+			return nil, &net.OpError{
+				Op:  "dial",
+				Net: "tcp",
+				Err: syscall.ETIMEDOUT,
+			}
+		},
+	}
+	defer transport.CloseIdleConnections()
+	client, err := newClientForTest(
+		"http://relay.example.test",
+		&http.Client{Transport: transport},
+		time.Millisecond,
+	)
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	_, err = client.Evaluate(t.Context(), validAssessment())
+	failure, ok := err.(RelayError)
+	if !ok || failure.StableCategory() != FailureProviderUnavailable ||
+		!failure.Retryable() || dials != requestMaxAttempts {
+		t.Fatalf("dial timeout retries: error=%#v dials=%d", err, dials)
 	}
 }
 
