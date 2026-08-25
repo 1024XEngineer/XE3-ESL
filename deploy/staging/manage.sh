@@ -943,7 +943,11 @@ verify_runtime() {
         env.STAGING_POSTGRES_DB + "?sslmode=disable") and
       exact_env("SERVER_HOST"; "0.0.0.0") and
       exact_env("SERVER_PORT"; "8080") and
-      (.Mounts | length == 0) and
+      (.Mounts | length == 1) and
+      .Mounts[0].Type == "bind" and
+      .Mounts[0].Source == "/etc/speakup/staging-ise-relay" and
+      .Mounts[0].Destination == "/run/secrets/ise-relay" and
+      .Mounts[0].RW == false and
       .NetworkSettings.Ports == {
         "8080/tcp": [{"HostIp": "127.0.0.1", "HostPort": "28083"}]
       } and

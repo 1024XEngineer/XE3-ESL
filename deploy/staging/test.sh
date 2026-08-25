@@ -697,7 +697,7 @@ if [[ "${1:-}" == inspect && "$#" == 2 ]]; then
       id=$server_id
       service=server
       image="ghcr.io/1024xengineer/xe3-esl-server@${TEST_RUNTIME_SERVER_DIGEST:-sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}"
-      mounts='[]'
+      mounts='[{"Type":"bind","Source":"/etc/speakup/staging-ise-relay","Destination":"/run/secrets/ise-relay","RW":false}]'
       ports='{"8080/tcp":[{"HostIp":"127.0.0.1","HostPort":"28083"}]}'
       networks='{"xe3-speakup-staging_database":{},"xe3-speakup-staging_server_edge":{}}'
       environment='["TEXT_GENERATION_PROVIDER=test-fixture","DATABASE_URL=postgres://speakup_staging:0123456789abcdef0123456789abcdef@postgres:5432/speakup_staging?sslmode=disable","SERVER_HOST=0.0.0.0","SERVER_PORT=8080"]'
@@ -1108,6 +1108,7 @@ wrong Portal loopback port|TEST_BAD_PORT_SERVICE|portal
 wrong Server network membership|TEST_BAD_NETWORK_SERVICE|server
 public database network|TEST_DATABASE_NETWORK_PUBLIC|1
 wrong Portal volume mount|TEST_BAD_VOLUME_SERVICE|portal
+wrong Server Relay certificate mount|TEST_BAD_VOLUME_SERVICE|server
 wrong PostgreSQL volume label|TEST_BAD_VOLUME_LABEL|postgres_data
 EOF
 
