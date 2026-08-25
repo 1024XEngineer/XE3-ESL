@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -135,22 +136,13 @@ class ProfilePage extends StatelessWidget {
                     ],
                   ),
                 ),
-                if (user != null)
+                if (user != null &&
+                    (onLogout != null || coachingProfileController != null))
                   Align(
                     alignment: Alignment.topRight,
-                    child: PopupMenuButton<String>(
-                      key: const Key('profile-account-menu'),
-                      tooltip: '账号菜单',
-                      enabled: onLogout != null,
-                      icon: const Icon(Icons.more_horiz_rounded),
-                      onSelected: (_) => onLogout?.call(),
-                      itemBuilder: (_) => const [
-                        PopupMenuItem<String>(
-                          key: Key('profile-logout-button'),
-                          value: 'logout',
-                          child: Text('退出登录'),
-                        ),
-                      ],
+                    child: _ProfileMoreMenu(
+                      coachingProfileController: coachingProfileController,
+                      onLogout: onLogout,
                     ),
                   ),
               ],
@@ -164,10 +156,6 @@ class ProfilePage extends StatelessWidget {
               ),
             ],
             const SizedBox(height: SpeakUpDesign.space32),
-            if (coachingProfileController != null) ...[
-              CoachingProfileCard(controller: coachingProfileController!),
-              const SizedBox(height: SpeakUpDesign.space24),
-            ],
             CurrentIeltsAbilityProfile(
               historyController: reviewHistoryController,
             ),
@@ -268,6 +256,246 @@ class ProfilePage extends StatelessWidget {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
+  }
+}
+
+class _ProfileMoreMenu extends StatefulWidget {
+  const _ProfileMoreMenu({
+    required this.coachingProfileController,
+    required this.onLogout,
+  });
+
+  final CoachingProfileController? coachingProfileController;
+  final VoidCallback? onLogout;
+
+  @override
+  State<_ProfileMoreMenu> createState() => _ProfileMoreMenuState();
+}
+
+class _ProfileMoreMenuState extends State<_ProfileMoreMenu> {
+  Future<void>? _coachingProfileLoad;
+
+  @override
+  void initState() {
+    super.initState();
+    _coachingProfileLoad = widget.coachingProfileController?.load();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ProfileMoreMenu oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(
+      oldWidget.coachingProfileController,
+      widget.coachingProfileController,
+    )) {
+      _coachingProfileLoad = widget.coachingProfileController?.load();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hasCoachingProfile = widget.coachingProfileController != null;
+    final hasLogout = widget.onLogout != null;
+    return MenuAnchor(
+      key: const Key('profile-more-menu-anchor'),
+      animated: true,
+      reservedPadding: const EdgeInsets.all(SpeakUpDesign.space16),
+      alignmentOffset: const Offset(-184, SpeakUpDesign.space4),
+      style: MenuStyle(
+        alignment: AlignmentDirectional.bottomEnd,
+        backgroundColor: const WidgetStatePropertyAll(SpeakUpDesign.surface),
+        surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
+        shadowColor: const WidgetStatePropertyAll(Color(0x26000000)),
+        elevation: const WidgetStatePropertyAll(6),
+        padding: const WidgetStatePropertyAll(
+          EdgeInsets.fromLTRB(
+            SpeakUpDesign.space8,
+            SpeakUpDesign.space16,
+            SpeakUpDesign.space8,
+            SpeakUpDesign.space8,
+          ),
+        ),
+        minimumSize: const WidgetStatePropertyAll(Size(184, 0)),
+        maximumSize: const WidgetStatePropertyAll(Size(184, double.infinity)),
+        side: const WidgetStatePropertyAll(
+          BorderSide(color: SpeakUpDesign.border),
+        ),
+        shape: const WidgetStatePropertyAll(_ProfileMenuCalloutBorder()),
+      ),
+      menuChildren: [
+        if (hasCoachingProfile)
+          MenuItemButton(
+            key: const Key('profile-coaching-memory-button'),
+            leadingIcon: const Icon(Icons.psychology_alt_outlined, size: 20),
+            style: _menuItemStyle(),
+            onPressed: () => unawaited(_openCoachingProfile()),
+            child: const Text('教练记忆'),
+          ),
+        if (hasCoachingProfile && hasLogout)
+          const Divider(
+            height: 1,
+            indent: SpeakUpDesign.space12,
+            endIndent: SpeakUpDesign.space12,
+          ),
+        if (hasLogout)
+          MenuItemButton(
+            key: const Key('profile-logout-button'),
+            leadingIcon: const Icon(Icons.logout_rounded, size: 20),
+            style: _menuItemStyle(destructive: true),
+            onPressed: widget.onLogout,
+            child: const Text('退出登录'),
+          ),
+      ],
+      builder: (context, controller, _) => IconButton(
+        key: const Key('profile-account-menu'),
+        tooltip: '更多',
+        constraints: const BoxConstraints.tightFor(
+          width: SpeakUpDesign.minTapTarget,
+          height: SpeakUpDesign.minTapTarget,
+        ),
+        style: ButtonStyle(
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          shape: WidgetStatePropertyAll(
+            RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
+            ),
+          ),
+          overlayColor: const WidgetStatePropertyAll(
+            SpeakUpDesign.primaryMuted,
+          ),
+        ),
+        onPressed: hasCoachingProfile || hasLogout
+            ? () => controller.isOpen ? controller.close() : controller.open()
+            : null,
+        icon: const Icon(Icons.more_horiz_rounded),
+      ),
+    );
+  }
+
+  ButtonStyle _menuItemStyle({bool destructive = false}) {
+    final foreground = destructive ? SpeakUpDesign.error : SpeakUpDesign.ink;
+    return ButtonStyle(
+      minimumSize: const WidgetStatePropertyAll(Size(168, 48)),
+      padding: const WidgetStatePropertyAll(
+        EdgeInsets.symmetric(horizontal: SpeakUpDesign.space12),
+      ),
+      alignment: Alignment.centerLeft,
+      foregroundColor: WidgetStatePropertyAll(foreground),
+      iconColor: WidgetStatePropertyAll(foreground),
+      textStyle: WidgetStatePropertyAll(
+        SpeakUpDesign.body.copyWith(fontWeight: FontWeight.w600),
+      ),
+      shape: WidgetStatePropertyAll(
+        RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openCoachingProfile() async {
+    final controller = widget.coachingProfileController;
+    if (controller == null) return;
+    await _coachingProfileLoad;
+    if (!mounted || !identical(controller, widget.coachingProfileController)) {
+      return;
+    }
+    if (controller.profile == null) {
+      _coachingProfileLoad = controller.load();
+      await _coachingProfileLoad;
+    }
+    if (!mounted || !identical(controller, widget.coachingProfileController)) {
+      return;
+    }
+    if (controller.profile == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(controller.errorMessage ?? '记忆暂时无法读取，请重试。')),
+      );
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => CoachingProfilePage(controller: controller),
+      ),
+    );
+  }
+}
+
+class _ProfileMenuCalloutBorder extends OutlinedBorder {
+  const _ProfileMenuCalloutBorder({
+    super.side,
+    this.radius = SpeakUpDesign.radiusCard,
+    this.arrowHeight = SpeakUpDesign.space8,
+    this.arrowWidth = SpeakUpDesign.space16,
+    this.arrowEndInset = SpeakUpDesign.minTapTarget / 2,
+  });
+
+  final double radius;
+  final double arrowHeight;
+  final double arrowWidth;
+  final double arrowEndInset;
+
+  @override
+  EdgeInsetsGeometry get dimensions {
+    final inset = side.strokeInset > 0 ? side.strokeInset : 0.0;
+    return EdgeInsets.fromLTRB(inset, arrowHeight + inset, inset, inset);
+  }
+
+  @override
+  _ProfileMenuCalloutBorder copyWith({
+    BorderSide? side,
+    double? radius,
+    double? arrowHeight,
+    double? arrowWidth,
+    double? arrowEndInset,
+  }) => _ProfileMenuCalloutBorder(
+    side: side ?? this.side,
+    radius: radius ?? this.radius,
+    arrowHeight: arrowHeight ?? this.arrowHeight,
+    arrowWidth: arrowWidth ?? this.arrowWidth,
+    arrowEndInset: arrowEndInset ?? this.arrowEndInset,
+  );
+
+  @override
+  ShapeBorder scale(double t) => _ProfileMenuCalloutBorder(
+    side: side.scale(t),
+    radius: radius * t,
+    arrowHeight: arrowHeight * t,
+    arrowWidth: arrowWidth * t,
+    arrowEndInset: arrowEndInset * t,
+  );
+
+  @override
+  Path getInnerPath(Rect rect, {TextDirection? textDirection}) {
+    return getOuterPath(rect.deflate(side.strokeInset));
+  }
+
+  @override
+  Path getOuterPath(Rect rect, {TextDirection? textDirection}) {
+    final bodyTop = rect.top + arrowHeight;
+    final body = Path()
+      ..addRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTRB(rect.left, bodyTop, rect.right, rect.bottom),
+          Radius.circular(radius),
+        ),
+      );
+    final arrowCenter = rect.right - arrowEndInset;
+    final arrow = Path()
+      ..moveTo(arrowCenter - arrowWidth / 2, bodyTop)
+      ..lineTo(arrowCenter, rect.top)
+      ..lineTo(arrowCenter + arrowWidth / 2, bodyTop)
+      ..close();
+    return Path.combine(PathOperation.union, body, arrow);
+  }
+
+  @override
+  void paint(Canvas canvas, Rect rect, {TextDirection? textDirection}) {
+    if (side.style == BorderStyle.none) return;
+    canvas.drawPath(
+      getOuterPath(rect.deflate(side.strokeInset)),
+      side.toPaint(),
+    );
   }
 }
 
