@@ -72,7 +72,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('教练记忆'), findsOneWidget);
-    expect(find.widgetWithText(TextFormField, '职业'), findsOneWidget);
+    expect(find.byKey(const Key('coaching-profile-page')), findsOneWidget);
+    expect(find.text('关于你'), findsOneWidget);
     expect(loggedOut, isFalse);
   });
 
