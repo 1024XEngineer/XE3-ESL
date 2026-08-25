@@ -293,6 +293,53 @@ loopback bindings, the exact runtime identities and image digests, and the clean
 database schema from the selected manifest. Public HTTPS and business-route
 smoke tests remain part of the higher-level release Workflow.
 
+## Rehearse a schema upgrade without touching Production
+
+Before promoting a Release Candidate that advances schema 7 to schema 9, run
+the isolated rehearsal with the finalized Production backup, the reviewed
+manifest, and both immutable Server image identities. The command is a dry-run
+unless `--execute` is present. When a distinct forward-hotfix image exists, add
+its immutable official digest with `--forward-server-image`; it must differ from
+both the candidate and previous images:
+
+```sh
+./deploy/production/rehearse-schema-upgrade.sh \
+  --backup /var/lib/speakup/postgres-backups/20260825T010203Z-predeploy \
+  --manifest /opt/speakup/releases/v0.1.6/release-manifest.json \
+  --previous-server-image ghcr.io/1024xengineer/xe3-esl-server@sha256:DIGEST \
+  --forward-server-image ghcr.io/1024xengineer/xe3-esl-server@sha256:FORWARD_DIGEST \
+  --server-env-file /etc/speakup/production-server.env \
+  --receipt /opt/speakup/releases/v0.1.6/schema-rehearsal-receipt.json \
+  --lock-timeout-seconds 5
+```
+
+The dry-run validates the backup metadata, manifest, private Server environment
+file, image references and no-clobber receipt path. It does not read the dump,
+inspect images, create Docker resources or write a receipt. After reviewing the
+output, repeat the exact command with `--execute`.
+
+Execution restores the dump into a uniquely named, labeled volume on an
+internal Docker network with no host ports or Production network attachment. It
+runs the manifest-pinned migration image with a finite PostgreSQL lock timeout,
+then verifies clean schema 9, the five product-health views, the IELTS
+evaluation constraint, candidate readiness, the old image's readiness-only
+boundary, rollback fail-closed behavior and a same-schema redeploy of the same
+candidate image. If a distinct forward image is supplied, that final step uses
+the forward image instead and records its OCI version and revision only after
+its migration preserves clean schema 9 and its Server passes readiness.
+The old image is **not** claimed to process schema-9 profiles correctly. Success
+or failure produces a mode `0600`, redacted receipt after owned-resource cleanup;
+failure or interruption never removes unlabeled or differently labeled Docker
+resources.
+
+This repository test uses a synthetic schema-7 backup and local fixture images.
+It does not replace the required runtime evidence from the selected finalized
+Production backup and the actual immutable Release Candidate and previous image.
+Without `--forward-server-image`, the receipt explicitly records that no forward
+image was provided. If an incident later requires a distinct hotfix image, rerun
+the rehearsal with that immutable image before promoting it; the earlier
+same-candidate redeploy is not forward-hotfix evidence.
+
 ## Capture the initial Production baseline
 
 Create the first receipt once, before the first automated promotion. The live
@@ -539,6 +586,7 @@ database.
 
 ```sh
 make check-production-backup
+make check-production-rehearsal
 make check-android-download
 make check-production-deploy
 make check-production-nginx

@@ -25,6 +25,8 @@ readonly server_readiness_url="http://127.0.0.1:18083/readyz"
 usage() {
   cat >&2 <<'EOF'
 Usage:
+  manage.sh validate-manifest --manifest FILE
+  manage.sh validate-rollback-schema --current-schema N --target-schema N
   manage.sh validate --manifest FILE --env-file FILE
   manage.sh baseline --manifest FILE --env-file FILE --receipt FILE
   manage.sh deploy --manifest FILE --env-file FILE --bundle DIRECTORY --current-receipt FILE --receipt FILE
@@ -819,6 +821,18 @@ validate_receipt_target() {
   require_owned_directory "Production receipt directory" "$directory"
   [[ -w "$directory" ]] ||
     fail "Production receipt directory is not writable: $directory"
+}
+
+require_matching_rollback_schema() {
+  local current_schema=$1
+  local target_schema=$2
+
+  [[ "$current_schema" =~ ^[1-9][0-9]*$ ]] ||
+    fail "current rollback schema must be a positive integer"
+  [[ "$target_schema" =~ ^[1-9][0-9]*$ ]] ||
+    fail "target rollback schema must be a positive integer"
+  [[ "$current_schema" == "$target_schema" ]] ||
+    fail "rollback requires the current database schema to match the target release"
 }
 
 require_safe_lock_file() {
@@ -1660,8 +1674,8 @@ rollback_production() {
     fail "a Production receipt changed while waiting for the deployment lock"
   validate_receipt_matches_release TARGET
   validate_current_receipt_state "$current_receipt" CURRENT
-  [[ "$CURRENT_SCHEMA_VERSION" == "$SELECTED_SCHEMA_VERSION" ]] ||
-    fail "rollback requires the current database schema to match the target release"
+  require_matching_rollback_schema \
+    "$CURRENT_SCHEMA_VERSION" "$SELECTED_SCHEMA_VERSION"
   acquire_backup_locks
 
   use_release_state SELECTED
@@ -1708,6 +1722,8 @@ main() {
   local receipt=""
   local current_receipt=""
   local target_receipt=""
+  local current_schema=""
+  local target_schema=""
 
   [[ -n "$command" ]] || {
     usage
@@ -1751,11 +1767,46 @@ main() {
         target_receipt=$2
         shift 2
         ;;
+      --current-schema)
+        (($# >= 2)) || fail "--current-schema requires a value"
+        current_schema=$2
+        shift 2
+        ;;
+      --target-schema)
+        (($# >= 2)) || fail "--target-schema requires a value"
+        target_schema=$2
+        shift 2
+        ;;
       *)
         fail "unknown argument: $1"
         ;;
     esac
   done
+
+  if [[ "$command" == "validate-manifest" ]]; then
+    [[ -n "$manifest" ]] || fail "validate-manifest requires --manifest"
+    [[ -z "$environment_file$output$bundle$receipt$current_receipt$target_receipt$current_schema$target_schema" ]] ||
+      fail "validate-manifest accepts only --manifest"
+    validate_manifest "$manifest"
+    printf 'version=%s git_sha=%s schema=%s manifest_sha256=%s validated=true\n' \
+      "$RELEASE_VERSION" "$RELEASE_GIT_SHA" "$RELEASE_SCHEMA_VERSION" \
+      "$RELEASE_MANIFEST_SHA256"
+    return
+  fi
+
+  if [[ "$command" == "validate-rollback-schema" ]]; then
+    [[ -n "$current_schema" && -n "$target_schema" ]] ||
+      fail "validate-rollback-schema requires both schema values"
+    [[ -z "$manifest$environment_file$output$bundle$receipt$current_receipt$target_receipt" ]] ||
+      fail "validate-rollback-schema accepts only schema values"
+    require_matching_rollback_schema "$current_schema" "$target_schema"
+    printf 'current_schema=%s target_schema=%s rollback_allowed=true\n' \
+      "$current_schema" "$target_schema"
+    return
+  fi
+
+  [[ -z "$current_schema$target_schema" ]] ||
+    fail "$command does not accept rollback schema values"
 
   [[ -n "$environment_file" ]] || fail "--env-file is required"
   load_configuration "$environment_file"
