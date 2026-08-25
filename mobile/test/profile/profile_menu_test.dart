@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/speak_up_theme.dart';
 import 'package:speakup/features/coaching/profile/coaching_profile.dart';
 import 'package:speakup/features/profile/profile_page.dart';
 import 'package:speakup/identity/model/identity_models.dart';
 
 void main() {
-  testWidgets('more menu owns coaching memory and opens its existing editor', (
+  testWidgets('profile settings own coaching memory and open its editor', (
     tester,
   ) async {
     final client = _ProfileClient();
@@ -20,53 +19,20 @@ void main() {
 
     expect(client.loads, 1);
     expect(find.byKey(const Key('coaching-profile-card')), findsNothing);
-    expect(find.text('当前 IELTS 能力'), findsOneWidget);
-
-    await tester.tap(find.byKey(const Key('profile-account-menu')));
-    await tester.pumpAndSettle();
-
+    expect(find.byKey(const Key('profile-account-menu')), findsNothing);
+    expect(find.text('当前 IELTS 能力'), findsNothing);
     expect(
       find.byKey(const Key('profile-coaching-memory-button')),
       findsOneWidget,
     );
+    expect(
+      find.byKey(const Key('profile-ielts-ability-button')),
+      findsOneWidget,
+    );
     expect(find.byKey(const Key('profile-logout-button')), findsOneWidget);
-    final buttonBottom = tester
-        .getBottomRight(find.byKey(const Key('profile-account-menu')))
-        .dy;
-    final menuTop = tester
-        .getTopLeft(find.byKey(const Key('profile-coaching-memory-button')))
-        .dy;
-    expect(menuTop, greaterThan(buttonBottom));
-    final triggerRect = tester.getRect(
-      find.byKey(const Key('profile-account-menu')),
-    );
-    final firstItemRect = tester.getRect(
-      find.byKey(const Key('profile-coaching-memory-button')),
-    );
-    expect(
-      firstItemRect.right + SpeakUpDesign.space8,
-      closeTo(triggerRect.right, 0.01),
-    );
-    expect(
-      firstItemRect.left - SpeakUpDesign.space8,
-      greaterThanOrEqualTo(SpeakUpDesign.space16),
-    );
-
-    final anchor = tester.widget<MenuAnchor>(
-      find.byKey(const Key('profile-more-menu-anchor')),
-    );
-    expect(anchor.style!.alignment, AlignmentDirectional.bottomEnd);
-    expect(anchor.crossAxisUnconstrained, isFalse);
-    expect(anchor.reservedPadding, const EdgeInsets.all(SpeakUpDesign.space16));
-    expect(anchor.alignmentOffset, const Offset(-184, SpeakUpDesign.space4));
-    expect(
-      anchor.style!.maximumSize!.resolve(<WidgetState>{}),
-      const Size(184, double.infinity),
-    );
-    final shape = anchor.style!.shape!.resolve(<WidgetState>{});
-    expect(shape!.dimensions.vertical, SpeakUpDesign.space8);
-    final menuPath = shape.getOuterPath(const Rect.fromLTWH(0, 0, 184, 120));
-    expect(menuPath.contains(const Offset(162, 4)), isTrue);
+    expect(find.byIcon(Icons.auto_awesome_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.workspace_premium_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.power_settings_new_rounded), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('profile-coaching-memory-button')));
     await tester.pumpAndSettle();
@@ -77,28 +43,32 @@ void main() {
     expect(loggedOut, isFalse);
   });
 
-  testWidgets('logout remains a distinct destructive menu action', (
-    tester,
-  ) async {
+  testWidgets('IELTS ability opens on its own page', (tester) async {
+    await tester.pumpWidget(_app(onLogout: () {}));
+
+    await tester.tap(find.byKey(const Key('profile-ielts-ability-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('current-ielts-ability-page')), findsOneWidget);
+    expect(find.text('IELTS 能力'), findsOneWidget);
+    expect(find.text('当前 IELTS 能力'), findsOneWidget);
+    expect(find.byKey(const Key('review-ability-empty')), findsOneWidget);
+  });
+
+  testWidgets('logout remains a distinct settings action', (tester) async {
     var loggedOut = false;
     await tester.pumpWidget(_app(onLogout: () => loggedOut = true));
 
-    await tester.tap(find.byKey(const Key('profile-account-menu')));
-    await tester.pumpAndSettle();
-
-    final logout = tester.widget<MenuItemButton>(
-      find.byKey(const Key('profile-logout-button')),
+    final logoutIcon = tester.widget<Icon>(
+      find.byIcon(Icons.power_settings_new_rounded),
     );
-    expect(
-      logout.style!.foregroundColor!.resolve(<WidgetState>{}),
-      SpeakUpDesign.error,
-    );
+    expect(logoutIcon.color, Colors.white);
     await tester.tap(find.byKey(const Key('profile-logout-button')));
     await tester.pumpAndSettle();
     expect(loggedOut, isTrue);
   });
 
-  testWidgets('more menu remains usable on a narrow large-text screen', (
+  testWidgets('settings remain usable on a narrow large-text screen', (
     tester,
   ) async {
     tester.view.devicePixelRatio = 1;
@@ -117,25 +87,17 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('profile-account-menu')));
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('profile-logout-button')),
+      240,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.pumpAndSettle();
 
     expect(find.text('教练记忆'), findsOneWidget);
+    expect(find.text('IELTS 能力'), findsOneWidget);
     expect(find.text('退出登录'), findsOneWidget);
-    final triggerRect = tester.getRect(
-      find.byKey(const Key('profile-account-menu')),
-    );
-    final firstItemRect = tester.getRect(
-      find.byKey(const Key('profile-coaching-memory-button')),
-    );
-    expect(
-      firstItemRect.right + SpeakUpDesign.space8,
-      closeTo(triggerRect.right, 0.01),
-    );
-    expect(
-      firstItemRect.left - SpeakUpDesign.space8,
-      greaterThanOrEqualTo(SpeakUpDesign.space16),
-    );
+    expect(find.byKey(const Key('profile-account-menu')), findsNothing);
     expect(tester.takeException(), isNull);
   });
 }
