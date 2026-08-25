@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"strings"
 
@@ -165,20 +164,20 @@ func compactFeedbackItemsWithProjection(
 		!validSpeechFeedbackIdentifier(generated.RequestID) ||
 		len(generated.Content) == 0 ||
 		len(generated.Content) > maxSpeechFeedbackProviderPayload {
-		return nil, compactProviderError("provider response metadata is invalid")
+		return nil, compactProviderError(compactNormalizeReasonResponseMetadataInvalid)
 	}
 	decoder := json.NewDecoder(bytes.NewBufferString(generated.Content))
 	decoder.DisallowUnknownFields()
 	var envelope compactProviderEnvelope
 	if err := decoder.Decode(&envelope); err != nil {
-		return nil, compactProviderError(fmt.Sprintf("decode provider response: %v", err))
+		return nil, compactProviderError(compactNormalizeReasonResponseJSONInvalid)
 	}
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF {
-		return nil, compactProviderError("provider response has trailing JSON")
+		return nil, compactProviderError(compactNormalizeReasonResponseJSONInvalid)
 	}
 	if len(envelope.Items) == 0 || len(envelope.Items) > maxSpeechFeedbackProviderItems {
-		return nil, compactProviderError("provider item count is invalid")
+		return nil, compactProviderError(compactNormalizeReasonItemCountInvalid)
 	}
 	for _, generatedItem := range envelope.Items {
 		if generatedItem.Kind == SpeechFeedbackItemStrength {
@@ -194,7 +193,7 @@ func compactFeedbackItemsWithProjection(
 			if len(envelope.Items) != 1 || !sourcePresent || sourceText != nil ||
 				!occurrencePresent || sourceOccurrence != nil ||
 				!suggestedPresent || suggestedText != nil {
-				return nil, compactProviderError("STRENGTH must be the only item")
+				return nil, compactProviderError(compactNormalizeReasonStrengthContractInvalid)
 			}
 			item := evaluation.FeedbackItemDraft{
 				Category: string(SpeechFeedbackItemStrength),
@@ -212,7 +211,7 @@ func compactFeedbackItemsWithProjection(
 				RepracticeMode: "NONE",
 			}
 			if !item.Valid() {
-				return nil, compactProviderError("normalized feedback item is invalid")
+				return nil, compactProviderError(compactNormalizeReasonNormalizedItemInvalid)
 			}
 			return []evaluation.FeedbackItemDraft{item}, nil
 		}
@@ -236,20 +235,20 @@ func compactFeedbackItemsWithProjection(
 			*sourceOccurrence < 1 ||
 			!suggestedPresent || suggestedTextValue == nil ||
 			!validSpeechFeedbackAdviceText(*suggestedTextValue) {
-			return nil, compactProviderError("provider suggestion is invalid")
+			return nil, compactProviderError(compactNormalizeReasonSuggestionContractInvalid)
 		}
 		sourceText := strings.TrimSpace(*sourceTextValue)
 		suggestedText := strings.TrimSpace(*suggestedTextValue)
 		if !speechFeedbackEnglishWordPattern.MatchString(sourceText) ||
 			!speechFeedbackEnglishWordPattern.MatchString(suggestedText) {
-			return nil, compactProviderError("provider suggestion has no language evidence")
+			return nil, compactProviderError(compactNormalizeReasonSuggestionLanguageInvalid)
 		}
 		start, end, located := projection.excerptRange(
 			sourceText,
 			*sourceOccurrence,
 		)
 		if !located {
-			return nil, compactProviderError("provider source text is not evidence")
+			return nil, compactProviderError(compactNormalizeReasonEvidenceInvalid)
 		}
 		if sameSpeechFeedbackLexicalContent(sourceText, suggestedText) {
 			continue
@@ -286,14 +285,14 @@ func compactFeedbackItemsWithProjection(
 		case SpeechFeedbackItemRecommendedExpression:
 			item.Severity = "LOW"
 		default:
-			return nil, compactProviderError("provider item kind is invalid")
+			return nil, compactProviderError(compactNormalizeReasonItemKindInvalid)
 		}
 		if !item.Valid() {
-			return nil, compactProviderError("normalized feedback item is invalid")
+			return nil, compactProviderError(compactNormalizeReasonNormalizedItemInvalid)
 		}
 		key := item.Category + "\x00" + item.Recommendation + "\x00" + item.Correction
 		if _, duplicate := seen[key]; duplicate {
-			return nil, compactProviderError("provider returned duplicate items")
+			return nil, compactProviderError(compactNormalizeReasonDuplicateItem)
 		}
 		seen[key] = struct{}{}
 		items = append(items, item)
@@ -311,7 +310,7 @@ func compactFeedbackItemsWithProjection(
 			RepracticeMode: "NONE",
 		}
 		if !item.Valid() {
-			return nil, compactProviderError("normalized feedback item is invalid")
+			return nil, compactProviderError(compactNormalizeReasonNormalizedItemInvalid)
 		}
 		items = append(items, item)
 	}
@@ -380,15 +379,53 @@ func encodeCompactSpeechResult(
 	return encoded, items, nil
 }
 
-type compactProviderFailure struct{ message string }
+type compactNormalizeReason string
 
-func (failure compactProviderFailure) Error() string            { return failure.message }
+const (
+	compactNormalizeReasonResponseMetadataInvalid   compactNormalizeReason = "response_metadata_invalid"
+	compactNormalizeReasonResponseJSONInvalid       compactNormalizeReason = "response_json_invalid"
+	compactNormalizeReasonItemCountInvalid          compactNormalizeReason = "item_count_invalid"
+	compactNormalizeReasonStrengthContractInvalid   compactNormalizeReason = "strength_contract_invalid"
+	compactNormalizeReasonSuggestionContractInvalid compactNormalizeReason = "suggestion_contract_invalid"
+	compactNormalizeReasonSuggestionLanguageInvalid compactNormalizeReason = "suggestion_language_invalid"
+	compactNormalizeReasonEvidenceInvalid           compactNormalizeReason = "evidence_invalid"
+	compactNormalizeReasonItemKindInvalid           compactNormalizeReason = "item_kind_invalid"
+	compactNormalizeReasonNormalizedItemInvalid     compactNormalizeReason = "normalized_item_invalid"
+	compactNormalizeReasonDuplicateItem             compactNormalizeReason = "duplicate_item"
+)
+
+func (reason compactNormalizeReason) valid() bool {
+	switch reason {
+	case compactNormalizeReasonResponseMetadataInvalid,
+		compactNormalizeReasonResponseJSONInvalid,
+		compactNormalizeReasonItemCountInvalid,
+		compactNormalizeReasonStrengthContractInvalid,
+		compactNormalizeReasonSuggestionContractInvalid,
+		compactNormalizeReasonSuggestionLanguageInvalid,
+		compactNormalizeReasonEvidenceInvalid,
+		compactNormalizeReasonItemKindInvalid,
+		compactNormalizeReasonNormalizedItemInvalid,
+		compactNormalizeReasonDuplicateItem:
+		return true
+	default:
+		return false
+	}
+}
+
+type compactProviderFailure struct{ reason compactNormalizeReason }
+
+func (compactProviderFailure) Error() string {
+	return "evaluation: speech feedback provider response invalid"
+}
 func (failure compactProviderFailure) StableCategory() string   { return "PROVIDER_RESPONSE_INVALID" }
 func (failure compactProviderFailure) Retryable() bool          { return false }
 func (failure compactProviderFailure) AutomaticRetryable() bool { return true }
+func (failure compactProviderFailure) EvaluationNormalizeReason() string {
+	return string(failure.reason)
+}
 
-func compactProviderError(message string) error {
-	return compactProviderFailure{message: message}
+func compactProviderError(reason compactNormalizeReason) error {
+	return compactProviderFailure{reason: reason}
 }
 
 var _ evaluation.SpeechEvaluators = (*CompactEvaluator)(nil)

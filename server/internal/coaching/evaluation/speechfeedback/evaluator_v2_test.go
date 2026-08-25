@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
@@ -32,6 +33,133 @@ func TestCompactProviderSemanticFailureIsAutomaticOnly(t *testing.T) {
 	var automatic interface{ AutomaticRetryable() bool }
 	if !errors.As(err, &automatic) || !automatic.AutomaticRetryable() {
 		t.Fatalf("automatic retry contract missing from %T", err)
+	}
+	var normalization interface{ EvaluationNormalizeReason() string }
+	if !errors.As(err, &normalization) ||
+		normalization.EvaluationNormalizeReason() != "evidence_invalid" {
+		t.Fatalf("normalization failure = %#v", normalization)
+	}
+	if strings.Contains(err.Error(), "missing excerpt") {
+		t.Fatalf("normalization failure leaked provider content: %q", err)
+	}
+}
+
+func TestCompactProviderNormalizationReasonsAreBoundedAndContentFree(t *testing.T) {
+	t.Parallel()
+
+	const evidenceRefID = "30000000-0000-4000-8000-000000000001"
+	baseSnapshot := evaluation.SpeechInputSnapshot{
+		Transcript:    "I has a plan, and I can start today.",
+		EvidenceRefID: evidenceRefID,
+	}
+	strength := `{"items":[{"kind":"STRENGTH","explanation":"表达清晰。","source_text":null,"source_occurrence":null,"suggested_text":null}]}`
+	longTranscript := strings.Repeat("word ", 900) + "and I need help."
+	tests := []struct {
+		name     string
+		result   TextGenerationResult
+		snapshot evaluation.SpeechInputSnapshot
+		want     compactNormalizeReason
+	}{
+		{
+			name:     "response metadata",
+			result:   TextGenerationResult{},
+			snapshot: baseSnapshot,
+			want:     compactNormalizeReasonResponseMetadataInvalid,
+		},
+		{
+			name:     "response JSON",
+			result:   compactResult(`{"private-provider-field":"must-not-log"}`),
+			snapshot: baseSnapshot,
+			want:     compactNormalizeReasonResponseJSONInvalid,
+		},
+		{
+			name:     "trailing JSON",
+			result:   compactResult(strength + ` {}`),
+			snapshot: baseSnapshot,
+			want:     compactNormalizeReasonResponseJSONInvalid,
+		},
+		{
+			name:     "item count",
+			result:   compactResult(`{"items":[]}`),
+			snapshot: baseSnapshot,
+			want:     compactNormalizeReasonItemCountInvalid,
+		},
+		{
+			name: "strength contract",
+			result: compactResult(`{"items":[{"kind":"STRENGTH","explanation":"表达清晰。","source_text":"I",` +
+				`"source_occurrence":1,"suggested_text":null}]}`),
+			snapshot: baseSnapshot,
+			want:     compactNormalizeReasonStrengthContractInvalid,
+		},
+		{
+			name: "suggestion contract",
+			result: compactResult(`{"items":[{"kind":"CORRECTION","explanation":"需要修改。","source_text":null,` +
+				`"source_occurrence":1,"suggested_text":"have"}]}`),
+			snapshot: baseSnapshot,
+			want:     compactNormalizeReasonSuggestionContractInvalid,
+		},
+		{
+			name: "suggestion language",
+			result: compactResult(`{"items":[{"kind":"CORRECTION","explanation":"需要修改。","source_text":"123",` +
+				`"source_occurrence":1,"suggested_text":"456"}]}`),
+			snapshot: baseSnapshot,
+			want:     compactNormalizeReasonSuggestionLanguageInvalid,
+		},
+		{
+			name: "evidence",
+			result: compactResult(`{"items":[{"kind":"CORRECTION","explanation":"需要修改。","source_text":"missing excerpt",` +
+				`"source_occurrence":1,"suggested_text":"replacement"}]}`),
+			snapshot: baseSnapshot,
+			want:     compactNormalizeReasonEvidenceInvalid,
+		},
+		{
+			name: "item kind",
+			result: compactResult(`{"items":[{"kind":"UNKNOWN","explanation":"需要修改。","source_text":"has",` +
+				`"source_occurrence":1,"suggested_text":"have"}]}`),
+			snapshot: baseSnapshot,
+			want:     compactNormalizeReasonItemKindInvalid,
+		},
+		{
+			name: "normalized item",
+			result: compactResult(`{"items":[{"kind":"CORRECTION","explanation":"需要修改。","source_text":"and",` +
+				`"source_occurrence":1,"suggested_text":"so"}]}`),
+			snapshot: evaluation.SpeechInputSnapshot{
+				Transcript: longTranscript, EvidenceRefID: evidenceRefID,
+			},
+			want: compactNormalizeReasonNormalizedItemInvalid,
+		},
+		{
+			name: "duplicate item",
+			result: compactResult(`{"items":[` +
+				`{"kind":"CORRECTION","explanation":"需要修改。","source_text":"has","source_occurrence":1,"suggested_text":"have"},` +
+				`{"kind":"CORRECTION","explanation":"需要修改。","source_text":"has","source_occurrence":1,"suggested_text":"have"}]}`),
+			snapshot: baseSnapshot,
+			want:     compactNormalizeReasonDuplicateItem,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := compactFeedbackItems(
+				test.result,
+				test.snapshot,
+				test.snapshot.Transcript,
+				"SAME_QUESTION",
+			)
+			if err == nil {
+				t.Fatal("invalid provider response was accepted")
+			}
+			var failure interface{ EvaluationNormalizeReason() string }
+			if !errors.As(err, &failure) ||
+				failure.EvaluationNormalizeReason() != string(test.want) ||
+				!test.want.valid() {
+				t.Fatalf("normalization failure = %#v, want %q", failure, test.want)
+			}
+			if err.Error() != "evaluation: speech feedback provider response invalid" ||
+				strings.Contains(err.Error(), "must-not-log") {
+				t.Fatalf("unsafe public error = %q", err)
+			}
+		})
 	}
 }
 
