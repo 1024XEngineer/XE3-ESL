@@ -1519,16 +1519,24 @@ final class AgentVoiceController extends ChangeNotifier
       notifyListeners();
     }
     final cleanup = Future<void>.sync(() async {
-      await _startWorkflowCleanup(
+      final workflowCleanup = _startWorkflowCleanup(
         realtime: staleRealtime,
         operation: staleOperation,
         recording: staleRecording,
         draft: staleDraft,
       );
       await Future.wait<void>([
+        workflowCleanup,
         Future<void>.sync(recorder.clearAccountState),
         Future<void>.sync(audioPlayer.clearAccountState),
         if (clearClient) Future<void>.sync(client.clearAccountState),
+      ]);
+      // A fenced operation may finish after the first account clear. Make a
+      // final strict pass so no late local recording or playback survives the
+      // account boundary.
+      await Future.wait<void>([
+        Future<void>.sync(recorder.clearAccountState),
+        Future<void>.sync(audioPlayer.clearAccountState),
       ]);
     });
     _cleanupFuture = cleanup;
