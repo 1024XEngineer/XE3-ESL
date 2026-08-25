@@ -291,6 +291,7 @@ void main() {
       practiceClient: _TranslationPracticeClient(),
     );
     addTearDown(controller.dispose);
+    await controller.submitPracticeText('I have a reservation under Chen.');
 
     await tester.pumpWidget(
       MaterialApp(home: ScenarioPracticePage(practiceController: controller)),
@@ -299,11 +300,24 @@ void main() {
 
     final questionId = controller.currentQuestion!.id;
     final tipButton = find.byKey(Key('scenario-question-tip-$questionId'));
+    final conversation = tester.widget<ListView>(
+      find.byKey(const Key('scenario-conversation-history')),
+    );
+    final scrollController = conversation.controller!;
+    final offsetBeforeTip = scrollController.offset;
     expect(tipButton, findsOneWidget);
     await tester.tap(tipButton);
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('practice-question-tip-card')), findsOneWidget);
+    expect(
+      scrollController.position.maxScrollExtent,
+      greaterThan(offsetBeforeTip),
+    );
+    expect(
+      scrollController.offset,
+      moreOrLessEquals(scrollController.position.maxScrollExtent),
+    );
     expect(
       find.text('I would describe the situation and my specific role.'),
       findsOneWidget,
