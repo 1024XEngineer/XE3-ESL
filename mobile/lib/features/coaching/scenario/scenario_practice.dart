@@ -97,13 +97,7 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
     widget.speechFeedbackController?.addListener(_handleFeedbackState);
     _syncSpeechFeedbackSources();
     _syncRecordingTimer();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && _conversationScrollController.hasClients) {
-        _conversationScrollController.jumpTo(
-          _conversationScrollController.position.maxScrollExtent,
-        );
-      }
-    });
+    _scheduleConversationScrollToBottom(animated: false);
   }
 
   @override
@@ -170,6 +164,7 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
       return;
     }
     setState(() => _visibleTipQuestionId = tip.questionId);
+    _scheduleConversationScrollToBottom();
   }
 
   Future<void> _speakQuestionTip() async {
@@ -319,19 +314,28 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
     _syncSpeechFeedbackSources();
     setState(() {});
     if (shouldFollowConversation) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || !_conversationScrollController.hasClients) {
-          return;
-        }
-        unawaited(
-          _conversationScrollController.animateTo(
-            _conversationScrollController.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 220),
-            curve: Curves.easeOutCubic,
-          ),
-        );
-      });
+      _scheduleConversationScrollToBottom();
     }
+  }
+
+  void _scheduleConversationScrollToBottom({bool animated = true}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_conversationScrollController.hasClients) {
+        return;
+      }
+      final target = _conversationScrollController.position.maxScrollExtent;
+      if (!animated) {
+        _conversationScrollController.jumpTo(target);
+        return;
+      }
+      unawaited(
+        _conversationScrollController.animateTo(
+          target,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+        ),
+      );
+    });
   }
 
   void _syncSpeechFeedbackSources() {
