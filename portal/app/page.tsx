@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import BrandMark from "./BrandMark";
 import BrandWordmark from "./BrandWordmark";
 import { HomeAndroidDownloadAction } from "./HomeAndroidRelease";
@@ -39,6 +40,7 @@ export default function Home() {
           <a href="#top">产品介绍</a>
           <a href="#method">怎么练</a>
           <a href="#memory">长期记忆</a>
+          <Link href="/changelog">更新日志</Link>
         </div>
       </nav>
 
@@ -111,7 +113,10 @@ export default function Home() {
           <BrandWordmark />
         </a>
         <p>为真实世界准备英文表达。</p>
-        <span>© 2026 SpeakUp</span>
+        <span className="release-footer-meta">
+          <Link href="/changelog">更新日志</Link>
+          <i aria-hidden="true">·</i>© 2026 SpeakUp
+        </span>
       </footer>
     </main>
   );

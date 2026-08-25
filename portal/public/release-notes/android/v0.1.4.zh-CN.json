@@ -1,0 +1,12 @@
+{
+  "release_notes_version": 1,
+  "locale": "zh-CN",
+  "version": "0.1.4",
+  "published_at": "2026-08-23T20:16:29Z",
+  "changes": [
+    {
+      "type": "fix",
+      "text": "修复部分情况下实时语音识别无法返回文字结果的问题。"
+    }
+  ]
+}

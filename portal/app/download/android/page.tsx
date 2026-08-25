@@ -24,11 +24,15 @@ type ReleaseState =
   | { status: "unavailable" }
   | { status: "ready"; release: AndroidReleaseMetadata };
 
-const supportFields = [
-  ["更新状态", "当前下载状态与版本信息以本页为准"],
-  ["更新日志", "独立更新日志尚未提供"],
-  ["隐私与权限", "正式隐私说明与权限清单尚未提供"],
-  ["问题反馈", "正式反馈入口尚未提供"],
+const supportFields: Array<{ label: string; value: string; href?: string }> = [
+  { label: "更新状态", value: "当前下载状态与版本信息以本页为准" },
+  {
+    label: "更新日志",
+    value: "查看正式版本更新记录 →",
+    href: "/changelog",
+  },
+  { label: "隐私与权限", value: "正式隐私说明与权限清单尚未提供" },
+  { label: "问题反馈", value: "正式反馈入口尚未提供" },
 ];
 
 function formatBytes(bytes: number) {
@@ -113,6 +117,7 @@ export default function AndroidDownloadPage() {
         </Link>
         <div className="nav-links">
           <Link href="/">产品首页</Link>
+          <Link href="/changelog">更新日志</Link>
           <a href="#verify">验证信息</a>
         </div>
         <Link className="button button-small" href="/">
@@ -212,10 +217,18 @@ export default function AndroidDownloadPage() {
           <h2 id="support-title">已提供与待补充的信息，都明确说明。</h2>
         </div>
         <dl className="download-facts">
-          {supportFields.map(([label, value]) => (
-            <div key={label}>
-              <dt>{label}</dt>
-              <dd>{value}</dd>
+          {supportFields.map((field) => (
+            <div key={field.label}>
+              <dt>{field.label}</dt>
+              <dd>
+                {field.href ? (
+                  <Link className="download-inline-link" href={field.href}>
+                    {field.value}
+                  </Link>
+                ) : (
+                  field.value
+                )}
+              </dd>
             </div>
           ))}
         </dl>
