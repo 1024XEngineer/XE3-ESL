@@ -128,7 +128,7 @@ func (evaluator *CompactEvaluator) evaluate(
 			UserPrompt:   string(repairPayload),
 		})
 		if repairErr != nil {
-			return nil, nil, compactRepairFailure{cause: repairErr}
+			return nil, nil, repairErr
 		}
 		items, repairErr = compactFeedbackItemsWithProjection(
 			repaired,
