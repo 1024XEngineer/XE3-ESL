@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"io"
 	"strings"
 
@@ -20,7 +20,7 @@ func Lineage(provider string, model string) (evaluation.ConfigLineage, error) {
 		SchemaVersion:   evaluation.ConfigLineageSchemaVersion,
 		StrategyRef:     "speech-feedback/v1",
 		PipelineVersion: "speech-evaluation/v2",
-		PromptVersion:   "speech-feedback/v2",
+		PromptVersion:   "speech-feedback/v3",
 		ResultSchema:    SpeechFeedbackSchemaVersion,
 		Provider:        provider,
 		Model:           model,
@@ -92,10 +92,7 @@ func (evaluator *CompactEvaluator) evaluate(
 		projection = projectSpeechFeedbackOralReference(projection)
 	}
 	englishText := projection.text
-	payload, err := json.Marshal(struct {
-		Kind        evaluation.Kind `json:"kind"`
-		EnglishText string          `json:"english_text"`
-	}{Kind: kind, EnglishText: englishText})
+	payload, err := encodeCompactGenerationPayload(kind, englishText, "")
 	if err != nil {
 		return nil, nil, ErrInvalidSpeechFeedback
 	}
@@ -114,7 +111,35 @@ func (evaluator *CompactEvaluator) evaluate(
 		repracticeMode,
 	)
 	if err != nil {
-		return nil, nil, err
+		var failure compactProviderFailure
+		if !errors.As(err, &failure) || !failure.reason.repairable() {
+			return nil, nil, err
+		}
+		repairPayload, encodeErr := encodeCompactGenerationPayload(
+			kind,
+			englishText,
+			failure.reason,
+		)
+		if encodeErr != nil {
+			return nil, nil, ErrInvalidSpeechFeedback
+		}
+		repaired, repairErr := evaluator.generator.Generate(ctx, TextGenerationRequest{
+			SystemPrompt: speechFeedbackRepairSystemPrompt,
+			UserPrompt:   string(repairPayload),
+		})
+		if repairErr != nil {
+			return nil, nil, compactRepairFailure{cause: repairErr}
+		}
+		items, repairErr = compactFeedbackItemsWithProjection(
+			repaired,
+			snapshot,
+			englishText,
+			projection,
+			repracticeMode,
+		)
+		if repairErr != nil {
+			return nil, nil, compactRepairFailure{cause: repairErr}
+		}
 	}
 	result := evaluation.SpeechResult{
 		SchemaVersion:      SpeechFeedbackSchemaVersion,
@@ -124,6 +149,22 @@ func (evaluator *CompactEvaluator) evaluate(
 		Acoustic:           *snapshot.Acoustic,
 	}
 	return encodeCompactSpeechResult(result, items)
+}
+
+type compactGenerationPayload struct {
+	Kind            evaluation.Kind        `json:"kind"`
+	EnglishText     string                 `json:"english_text"`
+	NormalizeReason compactNormalizeReason `json:"normalize_reason,omitempty"`
+}
+
+func encodeCompactGenerationPayload(
+	kind evaluation.Kind,
+	englishText string,
+	reason compactNormalizeReason,
+) ([]byte, error) {
+	return json.Marshal(compactGenerationPayload{
+		Kind: kind, EnglishText: englishText, NormalizeReason: reason,
+	})
 }
 
 type compactProviderItem struct {
@@ -165,20 +206,20 @@ func compactFeedbackItemsWithProjection(
 		!validSpeechFeedbackIdentifier(generated.RequestID) ||
 		len(generated.Content) == 0 ||
 		len(generated.Content) > maxSpeechFeedbackProviderPayload {
-		return nil, compactProviderError("provider response metadata is invalid")
+		return nil, compactProviderError(compactNormalizeReasonResponseMetadataInvalid)
 	}
 	decoder := json.NewDecoder(bytes.NewBufferString(generated.Content))
 	decoder.DisallowUnknownFields()
 	var envelope compactProviderEnvelope
 	if err := decoder.Decode(&envelope); err != nil {
-		return nil, compactProviderError(fmt.Sprintf("decode provider response: %v", err))
+		return nil, compactProviderError(compactNormalizeReasonResponseJSONInvalid)
 	}
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF {
-		return nil, compactProviderError("provider response has trailing JSON")
+		return nil, compactProviderError(compactNormalizeReasonResponseJSONInvalid)
 	}
 	if len(envelope.Items) == 0 || len(envelope.Items) > maxSpeechFeedbackProviderItems {
-		return nil, compactProviderError("provider item count is invalid")
+		return nil, compactProviderError(compactNormalizeReasonItemCountInvalid)
 	}
 	for _, generatedItem := range envelope.Items {
 		if generatedItem.Kind == SpeechFeedbackItemStrength {
@@ -194,7 +235,7 @@ func compactFeedbackItemsWithProjection(
 			if len(envelope.Items) != 1 || !sourcePresent || sourceText != nil ||
 				!occurrencePresent || sourceOccurrence != nil ||
 				!suggestedPresent || suggestedText != nil {
-				return nil, compactProviderError("STRENGTH must be the only item")
+				return nil, compactProviderError(compactNormalizeReasonStrengthContractInvalid)
 			}
 			item := evaluation.FeedbackItemDraft{
 				Category: string(SpeechFeedbackItemStrength),
@@ -212,7 +253,7 @@ func compactFeedbackItemsWithProjection(
 				RepracticeMode: "NONE",
 			}
 			if !item.Valid() {
-				return nil, compactProviderError("normalized feedback item is invalid")
+				return nil, compactProviderError(compactNormalizeReasonNormalizedItemInvalid)
 			}
 			return []evaluation.FeedbackItemDraft{item}, nil
 		}
@@ -236,20 +277,20 @@ func compactFeedbackItemsWithProjection(
 			*sourceOccurrence < 1 ||
 			!suggestedPresent || suggestedTextValue == nil ||
 			!validSpeechFeedbackAdviceText(*suggestedTextValue) {
-			return nil, compactProviderError("provider suggestion is invalid")
+			return nil, compactProviderError(compactNormalizeReasonSuggestionContractInvalid)
 		}
 		sourceText := strings.TrimSpace(*sourceTextValue)
 		suggestedText := strings.TrimSpace(*suggestedTextValue)
 		if !speechFeedbackEnglishWordPattern.MatchString(sourceText) ||
 			!speechFeedbackEnglishWordPattern.MatchString(suggestedText) {
-			return nil, compactProviderError("provider suggestion has no language evidence")
+			return nil, compactProviderError(compactNormalizeReasonSuggestionLanguageInvalid)
 		}
 		start, end, located := projection.excerptRange(
 			sourceText,
 			*sourceOccurrence,
 		)
 		if !located {
-			return nil, compactProviderError("provider source text is not evidence")
+			return nil, compactProviderError(compactNormalizeReasonEvidenceInvalid)
 		}
 		if sameSpeechFeedbackLexicalContent(sourceText, suggestedText) {
 			continue
@@ -286,14 +327,14 @@ func compactFeedbackItemsWithProjection(
 		case SpeechFeedbackItemRecommendedExpression:
 			item.Severity = "LOW"
 		default:
-			return nil, compactProviderError("provider item kind is invalid")
+			return nil, compactProviderError(compactNormalizeReasonItemKindInvalid)
 		}
 		if !item.Valid() {
-			return nil, compactProviderError("normalized feedback item is invalid")
+			return nil, compactProviderError(compactNormalizeReasonNormalizedItemInvalid)
 		}
 		key := item.Category + "\x00" + item.Recommendation + "\x00" + item.Correction
 		if _, duplicate := seen[key]; duplicate {
-			return nil, compactProviderError("provider returned duplicate items")
+			return nil, compactProviderError(compactNormalizeReasonDuplicateItem)
 		}
 		seen[key] = struct{}{}
 		items = append(items, item)
@@ -311,7 +352,7 @@ func compactFeedbackItemsWithProjection(
 			RepracticeMode: "NONE",
 		}
 		if !item.Valid() {
-			return nil, compactProviderError("normalized feedback item is invalid")
+			return nil, compactProviderError(compactNormalizeReasonNormalizedItemInvalid)
 		}
 		items = append(items, item)
 	}
@@ -380,16 +421,93 @@ func encodeCompactSpeechResult(
 	return encoded, items, nil
 }
 
-type compactProviderFailure struct{ message string }
+type compactNormalizeReason string
 
-func (failure compactProviderFailure) Error() string            { return failure.message }
-func (failure compactProviderFailure) StableCategory() string   { return "PROVIDER_RESPONSE_INVALID" }
-func (failure compactProviderFailure) Retryable() bool          { return false }
-func (failure compactProviderFailure) AutomaticRetryable() bool { return true }
+const (
+	compactNormalizeReasonResponseMetadataInvalid   compactNormalizeReason = "response_metadata_invalid"
+	compactNormalizeReasonResponseJSONInvalid       compactNormalizeReason = "response_json_invalid"
+	compactNormalizeReasonItemCountInvalid          compactNormalizeReason = "item_count_invalid"
+	compactNormalizeReasonStrengthContractInvalid   compactNormalizeReason = "strength_contract_invalid"
+	compactNormalizeReasonSuggestionContractInvalid compactNormalizeReason = "suggestion_contract_invalid"
+	compactNormalizeReasonSuggestionLanguageInvalid compactNormalizeReason = "suggestion_language_invalid"
+	compactNormalizeReasonEvidenceInvalid           compactNormalizeReason = "evidence_invalid"
+	compactNormalizeReasonItemKindInvalid           compactNormalizeReason = "item_kind_invalid"
+	compactNormalizeReasonNormalizedItemInvalid     compactNormalizeReason = "normalized_item_invalid"
+	compactNormalizeReasonDuplicateItem             compactNormalizeReason = "duplicate_item"
+)
 
-func compactProviderError(message string) error {
-	return compactProviderFailure{message: message}
+func (reason compactNormalizeReason) valid() bool {
+	switch reason {
+	case compactNormalizeReasonResponseMetadataInvalid,
+		compactNormalizeReasonResponseJSONInvalid,
+		compactNormalizeReasonItemCountInvalid,
+		compactNormalizeReasonStrengthContractInvalid,
+		compactNormalizeReasonSuggestionContractInvalid,
+		compactNormalizeReasonSuggestionLanguageInvalid,
+		compactNormalizeReasonEvidenceInvalid,
+		compactNormalizeReasonItemKindInvalid,
+		compactNormalizeReasonNormalizedItemInvalid,
+		compactNormalizeReasonDuplicateItem:
+		return true
+	default:
+		return false
+	}
 }
+
+func (reason compactNormalizeReason) repairable() bool {
+	switch reason {
+	case compactNormalizeReasonResponseJSONInvalid,
+		compactNormalizeReasonItemCountInvalid,
+		compactNormalizeReasonStrengthContractInvalid,
+		compactNormalizeReasonSuggestionContractInvalid,
+		compactNormalizeReasonSuggestionLanguageInvalid,
+		compactNormalizeReasonEvidenceInvalid,
+		compactNormalizeReasonItemKindInvalid,
+		compactNormalizeReasonDuplicateItem:
+		return true
+	case compactNormalizeReasonResponseMetadataInvalid,
+		compactNormalizeReasonNormalizedItemInvalid:
+		return false
+	default:
+		return false
+	}
+}
+
+type compactProviderFailure struct{ reason compactNormalizeReason }
+
+func (compactProviderFailure) Error() string {
+	return "evaluation: speech feedback provider response invalid"
+}
+func (failure compactProviderFailure) StableCategory() string { return "PROVIDER_RESPONSE_INVALID" }
+func (failure compactProviderFailure) Retryable() bool        { return false }
+func (failure compactProviderFailure) AutomaticRetryable() bool {
+	return failure.reason.repairable()
+}
+func (failure compactProviderFailure) EvaluationNormalizeReason() string {
+	return string(failure.reason)
+}
+
+func compactProviderError(reason compactNormalizeReason) error {
+	return compactProviderFailure{reason: reason}
+}
+
+type compactRepairFailure struct{ cause error }
+
+func (compactRepairFailure) Error() string {
+	return "evaluation: speech feedback repair failed"
+}
+func (failure compactRepairFailure) Unwrap() error { return failure.cause }
+func (failure compactRepairFailure) StableCategory() string {
+	var generated GenerationFailure
+	if errors.As(failure.cause, &generated) &&
+		validSpeechFeedbackIdentifier(generated.StableCategory()) {
+		return generated.StableCategory()
+	}
+	return "PROVIDER_RESPONSE_INVALID"
+}
+func (compactRepairFailure) Retryable() bool          { return false }
+func (compactRepairFailure) AutomaticRetryable() bool { return false }
 
 var _ evaluation.SpeechEvaluators = (*CompactEvaluator)(nil)
 var _ GenerationFailure = compactProviderFailure{}
+var _ GenerationFailure = compactRepairFailure{}

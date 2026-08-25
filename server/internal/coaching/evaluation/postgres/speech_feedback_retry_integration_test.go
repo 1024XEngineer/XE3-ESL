@@ -33,34 +33,15 @@ func TestSpeechFeedbackPart1InvalidThenValidReusesAcoustics(t *testing.T) {
 	queueSpeechRetry(t, store, "I usually read before work.")
 
 	processed, err := worker.ProcessSpeech(context.Background())
-	if !processed || err == nil {
-		t.Fatalf("first ProcessSpeech = (%t, %v)", processed, err)
-	}
-	queued, err := store.GetRecordBySource(
-		context.Background(), speechRetryUserID,
-		evaluation.KindPracticeTurnFeedback, speechRetryTurnID,
-	)
-	if err != nil || queued.Status != evaluation.JobQueued ||
-		queued.AttemptCount != 1 || queued.Error != nil {
-		t.Fatalf("queued retry = %#v, %v", queued, err)
-	}
-	var checkpointed evaluation.SpeechInputSnapshot
-	if evaluation.DecodeStrict(queued.InputSnapshot, &checkpointed) != nil ||
-		checkpointed.Acoustic == nil ||
-		checkpointed.Acoustic.Status != evaluation.AcousticAssessed {
-		t.Fatalf("checkpointed input = %#v", checkpointed)
-	}
-
-	processed, err = worker.ProcessSpeech(context.Background())
 	if err != nil || !processed {
-		t.Fatalf("second ProcessSpeech = (%t, %v)", processed, err)
+		t.Fatalf("ProcessSpeech = (%t, %v)", processed, err)
 	}
 	ready, err := store.GetRecordBySource(
 		context.Background(), speechRetryUserID,
 		evaluation.KindPracticeTurnFeedback, speechRetryTurnID,
 	)
 	if err != nil || ready.Status != evaluation.JobReady ||
-		ready.AttemptCount != 2 || ready.Error != nil ||
+		ready.AttemptCount != 1 || ready.Error != nil ||
 		acoustics.calls != 1 || generator.calls != 2 {
 		t.Fatalf(
 			"ready=%#v err=%v acoustic=%d text=%d",
@@ -149,29 +130,8 @@ func TestSpeechFeedbackAcousticAndTextRetriesHaveIndependentBudgets(t *testing.T
 			}
 
 			processed, err := worker.ProcessSpeech(context.Background())
-			if !processed || err == nil {
-				t.Fatalf("first text ProcessSpeech = (%t, %v)", processed, err)
-			}
-			queued, getErr := store.GetRecordBySource(
-				context.Background(),
-				speechRetryUserID,
-				evaluation.KindPracticeTurnFeedback,
-				speechRetryTurnID,
-			)
-			if getErr != nil || queued.Status != evaluation.JobQueued ||
-				queued.AttemptCount != 1 || queued.Error != nil {
-				t.Fatalf("queued text retry = %#v, %v", queued, getErr)
-			}
-			var checkpointed evaluation.SpeechInputSnapshot
-			if evaluation.DecodeStrict(queued.InputSnapshot, &checkpointed) != nil ||
-				checkpointed.Acoustic == nil ||
-				checkpointed.Acoustic.Status != test.wantStatus {
-				t.Fatalf("checkpointed input = %#v", checkpointed)
-			}
-
-			processed, err = worker.ProcessSpeech(context.Background())
 			if err != nil || !processed {
-				t.Fatalf("second text ProcessSpeech = (%t, %v)", processed, err)
+				t.Fatalf("text ProcessSpeech = (%t, %v)", processed, err)
 			}
 			ready, getErr := store.GetRecordBySource(
 				context.Background(),
@@ -180,7 +140,7 @@ func TestSpeechFeedbackAcousticAndTextRetriesHaveIndependentBudgets(t *testing.T
 				speechRetryTurnID,
 			)
 			if getErr != nil || ready.Status != evaluation.JobReady ||
-				ready.AttemptCount != 2 || ready.Error != nil ||
+				ready.AttemptCount != 1 || ready.Error != nil ||
 				acoustics.calls != 3 || generator.calls != 2 {
 				t.Fatalf(
 					"ready=%#v err=%v acoustic=%d text=%d",
@@ -189,6 +149,12 @@ func TestSpeechFeedbackAcousticAndTextRetriesHaveIndependentBudgets(t *testing.T
 					acoustics.calls,
 					generator.calls,
 				)
+			}
+			var checkpointed evaluation.SpeechInputSnapshot
+			if evaluation.DecodeStrict(ready.InputSnapshot, &checkpointed) != nil ||
+				checkpointed.Acoustic == nil ||
+				checkpointed.Acoustic.Status != test.wantStatus {
+				t.Fatalf("checkpointed input = %#v", checkpointed)
 			}
 		})
 	}
@@ -285,39 +251,28 @@ func TestSpeechFeedbackResumesTextStageAfterAcousticCheckpointCrash(t *testing.T
 	}
 }
 
-func TestSpeechFeedbackPart3ThreeInvalidResponsesFailPubliclyNonRetryable(t *testing.T) {
+func TestSpeechFeedbackPart3RepairExhaustionFailsWithoutWorkerRequeue(t *testing.T) {
 	pool := evaluationTestDatabase(t)
 	insertEvaluationTestUser(t, pool, speechRetryUserID, "speech-retry-part3@example.com")
 	const invalid = `{"items":[{"kind":"STRENGTH","explanation":"无需修改。","source_text":"technology","source_occurrence":1,"suggested_text":null}]}`
-	generator := &speechRetryGenerator{contents: []string{invalid, invalid, invalid}}
+	generator := &speechRetryGenerator{contents: []string{invalid, invalid}}
 	acoustics := &speechRetryAcoustics{}
 	store, worker := speechRetryWorker(t, pool, generator, acoustics)
 	const transcript = "I think technology can improve education when teachers guide its use."
 	queueSpeechRetry(t, store, transcript)
 
-	for attempt := 1; attempt <= 3; attempt++ {
-		processed, err := worker.ProcessSpeech(context.Background())
-		if !processed || err == nil {
-			t.Fatalf("ProcessSpeech attempt %d = (%t, %v)", attempt, processed, err)
-		}
-		record, getErr := store.GetRecordBySource(
-			context.Background(), speechRetryUserID,
-			evaluation.KindPracticeTurnFeedback, speechRetryTurnID,
-		)
-		if getErr != nil || record.AttemptCount != attempt {
-			t.Fatalf("record attempt %d = %#v, %v", attempt, record, getErr)
-		}
-		if attempt < 3 && (record.Status != evaluation.JobQueued || record.Error != nil) {
-			t.Fatalf("intermediate record %d = %#v", attempt, record)
-		}
+	processed, processErr := worker.ProcessSpeech(context.Background())
+	if !processed || processErr == nil {
+		t.Fatalf("ProcessSpeech = (%t, %v)", processed, processErr)
 	}
 	failed, err := store.GetRecordBySource(
 		context.Background(), speechRetryUserID,
 		evaluation.KindPracticeTurnFeedback, speechRetryTurnID,
 	)
 	if err != nil || failed.Status != evaluation.JobFailed ||
+		failed.AttemptCount != 1 ||
 		failed.Error == nil || failed.Error.Code != "PROVIDER_RESPONSE_INVALID" ||
-		failed.Error.Retryable || acoustics.calls != 1 || generator.calls != 3 {
+		failed.Error.Retryable || acoustics.calls != 1 || generator.calls != 2 {
 		t.Fatalf(
 			"failed=%#v err=%v acoustic=%d text=%d",
 			failed, err, acoustics.calls, generator.calls,
@@ -343,7 +298,7 @@ func TestSpeechFeedbackCombinedRetryBudgetsTerminate(t *testing.T) {
 		"speech-combined-retries@example.com",
 	)
 	const invalid = `{"items":[{"kind":"STRENGTH","explanation":"无需修改。","source_text":"technology","source_occurrence":1,"suggested_text":null}]}`
-	generator := &speechRetryGenerator{contents: []string{invalid, invalid, invalid}}
+	generator := &speechRetryGenerator{contents: []string{invalid, invalid}}
 	acoustics := &speechRetryAcoustics{errors: []error{
 		speechRetryAcousticFailure{},
 		speechRetryAcousticFailure{},
@@ -353,7 +308,7 @@ func TestSpeechFeedbackCombinedRetryBudgetsTerminate(t *testing.T) {
 	const transcript = "I think technology can improve education when teachers guide its use."
 	queueSpeechRetry(t, store, transcript)
 
-	wantAttemptCounts := []int{1, 2, 1, 2, 3}
+	wantAttemptCounts := []int{1, 2, 1}
 	for processingAttempt, wantAttemptCount := range wantAttemptCounts {
 		processed, err := worker.ProcessSpeech(context.Background())
 		if !processed || err == nil {
@@ -394,9 +349,9 @@ func TestSpeechFeedbackCombinedRetryBudgetsTerminate(t *testing.T) {
 		speechRetryTurnID,
 	)
 	if err != nil || failed.Status != evaluation.JobFailed ||
-		failed.AttemptCount != 3 || failed.Error == nil ||
+		failed.AttemptCount != 1 || failed.Error == nil ||
 		failed.Error.Code != "PROVIDER_RESPONSE_INVALID" ||
-		failed.Error.Retryable || acoustics.calls != 3 || generator.calls != 3 {
+		failed.Error.Retryable || acoustics.calls != 3 || generator.calls != 2 {
 		t.Fatalf(
 			"failed=%#v err=%v acoustic=%d text=%d",
 			failed,
