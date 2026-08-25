@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:speakup/identity/network/authenticated_web_socket.dart';
@@ -26,9 +27,19 @@ final class RealtimeVoiceInputEnvelope {
 }
 
 final class RealtimeVoiceInputTransport {
-  const RealtimeVoiceInputTransport({required this.connector});
+  RealtimeVoiceInputTransport({
+    required this.connector,
+    this.connectionTimeout = const Duration(seconds: 15),
+    this.pingInterval = const Duration(seconds: 10),
+  }) {
+    if (connectionTimeout <= Duration.zero || pingInterval <= Duration.zero) {
+      throw ArgumentError('Realtime voice input timing is invalid.');
+    }
+  }
 
   final SessionAuthenticatedWebSocketConnector connector;
+  final Duration connectionTimeout;
+  final Duration pingInterval;
 
   Stream<RealtimeVoiceInputEnvelope> stream({
     required Uri uri,
@@ -54,8 +65,9 @@ final class RealtimeVoiceInputTransport {
     final senderControl = _RealtimeVoiceInputSenderControl();
     var receivedTerminalEvent = false;
     try {
-      connection = await connector.connect(uri: uri);
+      connection = await _connect(uri);
       ensureCurrent();
+      connection.socket.pingInterval = pingInterval;
       connection.socket.add(
         jsonEncode(<String, Object>{
           'type': 'start',
@@ -70,6 +82,16 @@ final class RealtimeVoiceInputTransport {
         ensureCurrent: ensureCurrent,
         maximumChunkBytes: maximumChunkBytes,
         control: senderControl,
+        onAudioFinished: () {
+          // The server stops reading after `finish` while it waits for the
+          // provider terminal result. Bound that phase at the controller
+          // instead of treating a missing control-frame pong as a disconnect.
+          try {
+            connection?.socket.pingInterval = null;
+          } catch (_) {
+            // The socket may already have closed because the sender failed.
+          }
+        },
       );
       await for (final message in connection.socket) {
         ensureCurrent();
@@ -122,7 +144,42 @@ final class RealtimeVoiceInputTransport {
           // cancelled consumer only needs its socket and microphone released.
         }
       }
-      await connection?.socket.close();
+      if (connection != null) {
+        await _closeBestEffort(connection.socket);
+      }
+    }
+  }
+
+  Future<SessionAuthenticatedWebSocketConnection> _connect(Uri uri) async {
+    final pending = connector.connect(uri: uri);
+    try {
+      return await pending.timeout(connectionTimeout);
+    } on TimeoutException {
+      unawaited(_closeLateConnection(pending));
+      throw const RealtimeVoiceInputException(
+        RealtimeVoiceInputFailureKind.network,
+      );
+    }
+  }
+
+  Future<void> _closeLateConnection(
+    Future<SessionAuthenticatedWebSocketConnection> pending,
+  ) async {
+    try {
+      final connection = await pending;
+      await _closeBestEffort(connection.socket);
+    } catch (_) {
+      // The timed-out dial either failed independently or was closed here.
+    }
+  }
+
+  Future<void> _closeBestEffort(WebSocket socket) async {
+    socket.pingInterval = null;
+    try {
+      await socket.close().timeout(connectionTimeout);
+    } catch (_) {
+      // Closing is terminal cleanup. The active stream already exposes the
+      // protocol, network, or cancellation result that selected this path.
     }
   }
 }
@@ -133,6 +190,7 @@ Future<void> _sendAudio({
   required void Function() ensureCurrent,
   required int maximumChunkBytes,
   required _RealtimeVoiceInputSenderControl control,
+  required void Function() onAudioFinished,
 }) async {
   try {
     while (await chunks.moveNext()) {
@@ -162,6 +220,8 @@ Future<void> _sendAudio({
       // Preserve the capture or account-fence failure that ended the stream.
     }
     Error.throwWithStackTrace(error, stackTrace);
+  } finally {
+    onAudioFinished();
   }
 }
 

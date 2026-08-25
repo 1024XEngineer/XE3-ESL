@@ -13,6 +13,7 @@ import 'package:speakup/features/agent/composer/voice/agent_voice_models.dart';
 import 'package:speakup/providers/agent/wire_agent_voice_client.dart';
 import 'package:speakup/features/coaching/preparation/practice_plan_client_action.dart';
 import 'package:speakup/identity/auth_state.dart';
+import 'package:speakup/identity/network/authenticated_web_socket.dart';
 
 void main() {
   test('receives assistant PCM before text input stream completes', () async {
@@ -162,6 +163,195 @@ void main() {
     expect(jsonDecode(received.last as String), <String, Object?>{
       'type': 'finish',
     });
+  });
+
+  test(
+    'realtime connection timeout is retryable and closes a late socket',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+      final connected = Completer<void>();
+      final disconnected = Completer<void>();
+      server.listen((request) async {
+        final socket = await WebSocketTransformer.upgrade(
+          request,
+          protocolSelector: (_) => 'speakup.voice-input.v1',
+        );
+        connected.complete();
+        await for (final _ in socket) {}
+        disconnected.complete();
+      });
+      final gate = Completer<void>();
+      final client = WireAgentVoiceClient(
+        baseUri: Uri.parse('http://${server.address.address}:${server.port}'),
+        credentialProvider: () => _credential,
+        invalidateSession: _ignoreInvalidation,
+        apiTransport: _ScriptedVoiceTransport(const <_Step>[]),
+        signedAudioTransport: _ScriptedVoiceTransport(const <_Step>[]),
+        realtimeConnector: _DelayedRealtimeConnector(gate.future),
+        realtimeConnectionTimeout: const Duration(milliseconds: 10),
+      );
+      addTearDown(client.dispose);
+
+      await expectLater(
+        client
+            .createDraftRealtime(
+              threadId: _threadId,
+              audioChunks: Stream<Uint8List>.value(
+                Uint8List.fromList(const <int>[1, 0]),
+              ),
+              idempotencyKey: 'voice_connect_timeout_001',
+            )
+            .toList(),
+        throwsA(
+          isA<AgentClientException>()
+              .having(
+                (error) => error.kind,
+                'kind',
+                AgentClientFailureKind.network,
+              )
+              .having((error) => error.retryable, 'retryable', isTrue),
+        ),
+      );
+
+      gate.complete();
+      await connected.future.timeout(const Duration(seconds: 2));
+      await disconnected.future.timeout(const Duration(seconds: 2));
+    },
+  );
+
+  test(
+    'cancelling durable realtime input sends cancel without finish',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+      final receivedTypes = <String>[];
+      final started = Completer<void>();
+      final cancelled = Completer<void>();
+      server.listen((request) async {
+        final socket = await WebSocketTransformer.upgrade(
+          request,
+          protocolSelector: (_) => 'speakup.voice-input.v1',
+        );
+        await for (final message in socket) {
+          if (message is! String) {
+            continue;
+          }
+          final type = (jsonDecode(message) as Map<String, dynamic>)['type'];
+          if (type is! String) {
+            continue;
+          }
+          receivedTypes.add(type);
+          if (type == 'start') {
+            socket.add(
+              jsonEncode(const <String, Object>{
+                'type': 'transcription.updated',
+                'data': <String, Object>{
+                  'transcript': 'Partial transcript',
+                  'final': false,
+                },
+              }),
+            );
+          } else if (type == 'cancel') {
+            cancelled.complete();
+            await socket.close();
+            break;
+          }
+        }
+      });
+      final client = WireAgentVoiceClient(
+        baseUri: Uri.parse('http://${server.address.address}:${server.port}'),
+        credentialProvider: () => _credential,
+        invalidateSession: _ignoreInvalidation,
+        apiTransport: _ScriptedVoiceTransport(const <_Step>[]),
+        signedAudioTransport: _ScriptedVoiceTransport(const <_Step>[]),
+      );
+      addTearDown(client.dispose);
+      final audio = StreamController<Uint8List>();
+      addTearDown(audio.close);
+      final subscription = client
+          .createDraftRealtime(
+            threadId: _threadId,
+            audioChunks: audio.stream,
+            idempotencyKey: 'voice_cancel_001',
+          )
+          .listen((event) {
+            if (event is AgentVoiceTranscriptUpdated && !started.isCompleted) {
+              started.complete();
+            }
+          });
+
+      await started.future.timeout(const Duration(seconds: 2));
+      final cancellation = subscription.cancel();
+      await cancelled.future.timeout(
+        const Duration(seconds: 2),
+        onTimeout: () => throw TimeoutException(
+          'Server did not receive the realtime cancellation.',
+        ),
+      );
+      await cancellation.timeout(
+        const Duration(seconds: 2),
+        onTimeout: () => throw TimeoutException(
+          'Realtime cancellation did not finish local cleanup.',
+        ),
+      );
+
+      expect(
+        receivedTypes,
+        containsAllInOrder(const <String>['start', 'cancel']),
+      );
+      expect(receivedTypes, isNot(contains('finish')));
+    },
+  );
+
+  test('peer disconnect before a terminal event is retryable', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(server.close);
+    final disconnected = Completer<void>();
+    server.listen((request) async {
+      final socket = await WebSocketTransformer.upgrade(
+        request,
+        protocolSelector: (_) => 'speakup.voice-input.v1',
+      );
+      await for (final message in socket) {
+        if (message is String &&
+            (jsonDecode(message) as Map<String, dynamic>)['type'] == 'start') {
+          await socket.close(WebSocketStatus.goingAway, 'network_lost');
+          disconnected.complete();
+          break;
+        }
+      }
+    });
+    final client = WireAgentVoiceClient(
+      baseUri: Uri.parse('http://${server.address.address}:${server.port}'),
+      credentialProvider: () => _credential,
+      invalidateSession: _ignoreInvalidation,
+      apiTransport: _ScriptedVoiceTransport(const <_Step>[]),
+      signedAudioTransport: _ScriptedVoiceTransport(const <_Step>[]),
+    );
+    addTearDown(client.dispose);
+
+    await expectLater(
+      client
+          .createDraftRealtime(
+            threadId: _threadId,
+            audioChunks: Stream<Uint8List>.value(
+              Uint8List.fromList(const <int>[1, 0]),
+            ),
+            idempotencyKey: 'voice_disconnect_001',
+          )
+          .toList(),
+      throwsA(
+        isA<AgentClientException>()
+            .having(
+              (error) => error.kind,
+              'kind',
+              AgentClientFailureKind.network,
+            )
+            .having((error) => error.retryable, 'retryable', isTrue),
+      ),
+    );
+    await disconnected.future.timeout(const Duration(seconds: 2));
   });
 
   test(
@@ -1060,6 +1250,28 @@ const _credential = AuthSessionCredential(
   sessionToken: 'sess_voice',
   generation: 1,
 );
+
+final class _DelayedRealtimeConnector
+    implements AuthenticatedWebSocketConnector {
+  const _DelayedRealtimeConnector(this.gate);
+
+  final Future<void> gate;
+
+  @override
+  Future<WebSocket> connect({
+    required Uri uri,
+    required String sessionToken,
+  }) async {
+    await gate;
+    return WebSocket.connect(
+      uri.toString(),
+      protocols: const <String>['speakup.voice-input.v1'],
+      headers: <String, String>{
+        HttpHeaders.authorizationHeader: 'Bearer $sessionToken',
+      },
+    );
+  }
+}
 
 final class _ScriptedVoiceTransport implements AgentVoiceWireTransport {
   _ScriptedVoiceTransport(Iterable<_Step> steps)

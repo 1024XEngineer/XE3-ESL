@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -37,6 +38,286 @@ void main() {
     expect(controller.state, AgentVoiceComposerState.awaitingConfirmation);
     expect(controller.editedTranscript, 'Draft text');
   });
+
+  test(
+    'stuck realtime cancellation gates cleanup and permits a second recording',
+    () async {
+      final cancelGate = Completer<void>();
+      final client = _StallingRealtimeVoiceClient(cancelGate: cancelGate);
+      final recorder = _StreamingVoiceRecorder();
+      final controller = _controller(
+        client,
+        <AgentMessage>[],
+        recorder: recorder,
+      );
+      addTearDown(controller.dispose);
+      await controller.bindThread('thread-a');
+
+      await controller.startRecording();
+      await client.sessions.single.listened.future.timeout(
+        const Duration(seconds: 1),
+      );
+      final stopping = controller.stopRecording();
+      await _waitUntil(
+        () => controller.state == AgentVoiceComposerState.transcribing,
+      );
+
+      final cancelling = controller.cancel();
+      await client.sessions.single.cancelRequested.future.timeout(
+        const Duration(seconds: 1),
+      );
+      expect(controller.state, AgentVoiceComposerState.idle);
+      expect(controller.canStartRecording, isFalse);
+      await controller.startRecording();
+      expect(client.realtimeCalls, 1);
+
+      cancelGate.complete();
+      await cancelling.timeout(const Duration(seconds: 1));
+      await stopping.timeout(const Duration(seconds: 1));
+      expect(controller.canStartRecording, isTrue);
+
+      await controller.startRecording();
+      await client.sessions[1].listened.future.timeout(
+        const Duration(seconds: 1),
+      );
+      expect(controller.state, AgentVoiceComposerState.recording);
+      expect(client.realtimeCalls, 2);
+      await controller.cancel();
+    },
+  );
+
+  test('cancelling while capture starts gates the next recording', () async {
+    final startGate = Completer<void>();
+    final recorder = _StreamingVoiceRecorder(firstStartGate: startGate);
+    final client = _StallingRealtimeVoiceClient();
+    final controller = _controller(
+      client,
+      <AgentMessage>[],
+      recorder: recorder,
+    );
+    addTearDown(controller.dispose);
+    await controller.bindThread('thread-a');
+
+    final starting = controller.startRecording();
+    await recorder.firstStartRequested.future.timeout(
+      const Duration(seconds: 1),
+    );
+    final cancelling = controller.cancel();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(controller.state, AgentVoiceComposerState.idle);
+    expect(controller.canStartRecording, isFalse);
+    await controller.startRecording();
+    expect(recorder.startCalls, 1);
+
+    startGate.complete();
+    await Future.wait<void>([
+      starting,
+      cancelling,
+    ]).timeout(const Duration(seconds: 1));
+    expect(controller.canStartRecording, isTrue);
+
+    await controller.startRecording();
+    await client.sessions.single.listened.future.timeout(
+      const Duration(seconds: 1),
+    );
+    expect(controller.state, AgentVoiceComposerState.recording);
+    expect(recorder.startCalls, 2);
+    expect(client.realtimeCalls, 1);
+    await controller.cancel();
+  });
+
+  test('terminal timeout retains WAV and retries with one identity', () async {
+    final client = _StallingRealtimeVoiceClient();
+    final recorder = _StreamingVoiceRecorder();
+    final controller = _controller(
+      client,
+      <AgentMessage>[],
+      recorder: recorder,
+      realtimeCompletionTimeout: const Duration(milliseconds: 10),
+    );
+    addTearDown(controller.dispose);
+    await controller.bindThread('thread-a');
+
+    await controller.startRecording();
+    await client.sessions.single.listened.future.timeout(
+      const Duration(seconds: 1),
+    );
+    await controller.stopRecording().timeout(const Duration(seconds: 1));
+
+    expect(controller.state, AgentVoiceComposerState.failed);
+    expect(controller.canRetry, isTrue);
+    expect(controller.recording?.path, '/tmp/realtime.wav');
+    expect(controller.errorMessage, contains('检查网络'));
+    expect(client.sessions.single.cancelRequested.isCompleted, isTrue);
+
+    await controller.retry();
+
+    expect(controller.state, AgentVoiceComposerState.awaitingConfirmation);
+    expect(controller.recording, isNull);
+    expect(client.fileUploadCalls, 1);
+    expect(client.fileUploadKeys, client.realtimeKeys);
+  });
+
+  test(
+    'Thread switch cancels stuck realtime input and fences late work',
+    () async {
+      final client = _StallingRealtimeVoiceClient();
+      final controller = _controller(
+        client,
+        <AgentMessage>[],
+        recorder: _StreamingVoiceRecorder(),
+      );
+      addTearDown(controller.dispose);
+      await controller.bindThread('thread-a');
+      await controller.startRecording();
+      final session = client.sessions.single;
+      await session.listened.future.timeout(const Duration(seconds: 1));
+
+      await controller
+          .bindThread('thread-b')
+          .timeout(const Duration(seconds: 1));
+
+      expect(session.cancelRequested.isCompleted, isTrue);
+      expect(controller.threadId, 'thread-b');
+      expect(controller.state, AgentVoiceComposerState.idle);
+      expect(controller.liveTranscript, isEmpty);
+      expect(controller.canStartRecording, isTrue);
+    },
+  );
+
+  test(
+    'account cleanup cancels stuck realtime input without hanging',
+    () async {
+      final client = _StallingRealtimeVoiceClient();
+      final recorder = _StreamingVoiceRecorder();
+      final controller = _controller(
+        client,
+        <AgentMessage>[],
+        recorder: recorder,
+      );
+      addTearDown(controller.dispose);
+      await controller.bindThread('thread-a');
+      await controller.startRecording();
+      final session = client.sessions.single;
+      await session.listened.future.timeout(const Duration(seconds: 1));
+
+      await controller.clearPrivateState().timeout(const Duration(seconds: 1));
+
+      expect(session.cancelRequested.isCompleted, isTrue);
+      expect(controller.threadId, isNull);
+      expect(controller.state, AgentVoiceComposerState.idle);
+      expect(controller.liveTranscript, isEmpty);
+      expect(recorder.clearAccountCalls, 2);
+    },
+  );
+
+  test(
+    'account cleanup serializes native stop across a late recorder start',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'agent-voice-controller-late-start-',
+      );
+      final native = _GatedNativeVoiceRecorder();
+      addTearDown(() async {
+        native.releaseFirstStart();
+        native.releaseStop(1);
+        native.releaseStop(2);
+        await native.dispose();
+        await directory.delete(recursive: true);
+      });
+      final recorder = IosAgentVoiceRecorder(
+        recorder: native,
+        temporaryDirectory: () async => directory,
+      );
+      final controller = _controller(
+        _StallingRealtimeVoiceClient(),
+        <AgentMessage>[],
+        recorder: recorder,
+        workflowCleanupTimeout: const Duration(milliseconds: 10),
+      );
+      addTearDown(controller.dispose);
+      await controller.bindThread('thread-account-a');
+
+      final starting = controller.startRecording();
+      await native.firstStartRequested.future.timeout(
+        const Duration(seconds: 1),
+        onTimeout: () =>
+            throw StateError('first native start was not requested'),
+      );
+      final cleanup = controller.clearPrivateState();
+      await native.firstStopRequested.future.timeout(
+        const Duration(seconds: 1),
+        onTimeout: () =>
+            throw StateError('first native stop was not requested'),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+
+      expect(native.stopCalls, 1);
+      expect(native.maximumConcurrentStops, 1);
+      await expectLater(
+        recorder.startAudioStream(),
+        throwsA(
+          isA<AgentVoiceRecordingException>().having(
+            (error) => error.kind,
+            'kind',
+            AgentVoiceRecordingFailureKind.alreadyRecording,
+          ),
+        ),
+      );
+
+      final bindingAccountB = controller.bindThread('thread-account-b');
+      native.releaseFirstStart();
+      native.releaseStop(1);
+      await native.secondStopRequested.future.timeout(
+        const Duration(seconds: 1),
+        onTimeout: () =>
+            throw StateError('second native stop was not requested'),
+      );
+      expect(native.maximumConcurrentStops, 1);
+
+      await controller.startRecording();
+      expect(native.startCalls, 1);
+
+      native.releaseStop(2);
+      await Future.wait<void>([starting, cleanup, bindingAccountB]).timeout(
+        const Duration(seconds: 1),
+        onTimeout: () => throw StateError('late start cleanup stayed blocked'),
+      );
+      expect(native.maximumConcurrentStops, 1);
+      expect(controller.threadId, 'thread-account-b');
+      expect(controller.canStartRecording, isTrue);
+
+      await controller.startRecording();
+      expect(native.startCalls, 2);
+      expect(controller.state, AgentVoiceComposerState.recording);
+      await controller.cancel();
+    },
+  );
+
+  test(
+    'dispose cancels stuck realtime input without waiting on a terminal',
+    () async {
+      final client = _StallingRealtimeVoiceClient();
+      final controller = _controller(
+        client,
+        <AgentMessage>[],
+        recorder: _StreamingVoiceRecorder(),
+      );
+      await controller.bindThread('thread-a');
+      await controller.startRecording();
+      final session = client.sessions.single;
+      await session.listened.future.timeout(const Duration(seconds: 1));
+
+      controller.dispose();
+
+      await session.cancelRequested.future.timeout(const Duration(seconds: 1));
+      await session.cancelled.future.timeout(const Duration(seconds: 1));
+      await _waitUntil(() => client.disposeCalls == 1);
+      expect(client.disposeCalls, 1);
+    },
+  );
+
   test('late upload result cannot cross the Thread fence', () async {
     final client = _ControlledVoiceClient();
     final committed = <AgentMessage>[];
@@ -899,12 +1180,32 @@ Future<void> _pumpVoiceOperation(WidgetTester tester) async {
   await tester.pump(const Duration(milliseconds: 50));
 }
 
+Future<void> _waitUntil(bool Function() condition) async {
+  for (var attempt = 0; attempt < 100 && !condition(); attempt++) {
+    await Future<void>.delayed(Duration.zero);
+  }
+  if (!condition()) {
+    throw TimeoutException('Timed out waiting for the voice controller state.');
+  }
+}
+
 final class _StreamingVoiceRecorder
     implements AgentVoiceRecorder, AgentVoiceStreamingRecorder {
+  _StreamingVoiceRecorder({this.firstStartGate});
+
+  final Completer<void>? firstStartGate;
+  final Completer<void> firstStartRequested = Completer<void>();
   StreamController<Uint8List>? _stream;
+  int startCalls = 0;
+  int clearAccountCalls = 0;
 
   @override
   Future<Stream<Uint8List>> startAudioStream() async {
+    startCalls++;
+    if (startCalls == 1) {
+      firstStartRequested.complete();
+      await firstStartGate?.future;
+    }
     final stream = StreamController<Uint8List>();
     _stream = stream;
     stream.add(Uint8List.fromList(<int>[1, 2, 3, 4]));
@@ -931,15 +1232,104 @@ final class _StreamingVoiceRecorder
 
   @override
   Future<void> discardCurrent() async {
-    await _stream?.close();
+    final stream = _stream;
     _stream = null;
+    if (stream == null) {
+      return;
+    }
+    if (stream.hasListener) {
+      await stream.close();
+    } else {
+      unawaited(stream.close());
+    }
   }
 
   @override
   Future<void> discard(AgentVoiceLocalRecording recording) async {}
 
   @override
-  Future<void> clearAccountState() => discardCurrent();
+  Future<void> clearAccountState() async {
+    clearAccountCalls++;
+    await discardCurrent();
+  }
+}
+
+final class _GatedNativeVoiceRecorder implements NativeAgentVoiceRecorder {
+  final Completer<void> firstStartRequested = Completer<void>();
+  final Completer<void> _firstStartGate = Completer<void>();
+  final Completer<void> firstStopRequested = Completer<void>();
+  final Completer<void> secondStopRequested = Completer<void>();
+  final List<Completer<void>> _stopGates = <Completer<void>>[
+    Completer<void>(),
+    Completer<void>(),
+  ];
+  final List<StreamController<Uint8List>> _streams =
+      <StreamController<Uint8List>>[];
+  int startCalls = 0;
+  int stopCalls = 0;
+  int maximumConcurrentStops = 0;
+  int _concurrentStops = 0;
+
+  void releaseFirstStart() {
+    if (!_firstStartGate.isCompleted) {
+      _firstStartGate.complete();
+    }
+  }
+
+  void releaseStop(int ordinal) {
+    final index = ordinal - 1;
+    if (index >= 0 &&
+        index < _stopGates.length &&
+        !_stopGates[index].isCompleted) {
+      _stopGates[index].complete();
+    }
+  }
+
+  Future<void> dispose() async {
+    for (final stream in _streams) {
+      await stream.close();
+    }
+  }
+
+  @override
+  Future<bool> hasPermission() async => true;
+
+  @override
+  Future<void> startWav(String path) => throw UnimplementedError();
+
+  @override
+  Future<Stream<Uint8List>> startPcm16Stream() async {
+    startCalls++;
+    final stream = StreamController<Uint8List>();
+    _streams.add(stream);
+    if (startCalls == 1) {
+      firstStartRequested.complete();
+      await _firstStartGate.future;
+    }
+    return stream.stream;
+  }
+
+  @override
+  Future<String?> stop() async {
+    final ordinal = ++stopCalls;
+    _concurrentStops++;
+    if (_concurrentStops > maximumConcurrentStops) {
+      maximumConcurrentStops = _concurrentStops;
+    }
+    if (ordinal == 1) {
+      firstStopRequested.complete();
+    } else if (ordinal == 2) {
+      secondStopRequested.complete();
+    }
+    try {
+      if (ordinal <= _stopGates.length) {
+        await _stopGates[ordinal - 1].future;
+      }
+      return null;
+    } finally {
+      _concurrentStops--;
+    }
+  }
 }
 
 AgentVoiceController _controller(
@@ -949,6 +1339,8 @@ AgentVoiceController _controller(
   AgentVoiceRecorder? recorder,
   AgentVoiceControllerClock? clock,
   Duration recordingLimit = const Duration(seconds: 58),
+  Duration realtimeCompletionTimeout = const Duration(seconds: 75),
+  Duration workflowCleanupTimeout = const Duration(seconds: 2),
   AgentVoiceAssistantStreamStarted? onAssistantStreamStarted,
   AgentVoiceAssistantStreamDelta? onAssistantStreamDelta,
   AgentVoiceAssistantStreamCompleted? onAssistantStreamCompleted,
@@ -969,6 +1361,8 @@ AgentVoiceController _controller(
     idFactory: (scope) => '${scope}_${++sequence}'.replaceAll('-', '_'),
     clock: clock ?? DateTime.now,
     recordingLimit: recordingLimit,
+    realtimeCompletionTimeout: realtimeCompletionTimeout,
+    workflowCleanupTimeout: workflowCleanupTimeout,
     pollInterval: Duration.zero,
     maximumDraftPolls: 2,
     maximumRunPolls: 2,
@@ -1205,8 +1599,11 @@ class _ControlledVoiceClient
   final List<String> getRunCalls = <String>[];
   final List<String> getMessageCalls = <String>[];
   final List<String> deletedDraftIds = <String>[];
+  final List<String> realtimeKeys = <String>[];
+  final List<String> fileUploadKeys = <String>[];
   int realtimeCalls = 0;
   int fileUploadCalls = 0;
+  int disposeCalls = 0;
 
   @override
   Stream<AgentVoiceTranscriptionEvent> createDraftStream({
@@ -1215,6 +1612,7 @@ class _ControlledVoiceClient
     required String idempotencyKey,
   }) async* {
     fileUploadCalls++;
+    fileUploadKeys.add(idempotencyKey);
     final draft = await createDraft(
       threadId: threadId,
       recording: recording,
@@ -1230,6 +1628,7 @@ class _ControlledVoiceClient
     required String idempotencyKey,
   }) async* {
     realtimeCalls++;
+    realtimeKeys.add(idempotencyKey);
     await for (final _ in audioChunks) {}
     yield const AgentVoiceTranscriptUpdated(
       text: 'Realtime draft text.',
@@ -1371,7 +1770,59 @@ class _ControlledVoiceClient
   Future<void> clearAccountState() async {}
 
   @override
-  Future<void> dispose() async {}
+  Future<void> dispose() async {
+    disposeCalls++;
+  }
+}
+
+final class _StallingRealtimeVoiceClient extends _ControlledVoiceClient {
+  _StallingRealtimeVoiceClient({this.cancelGate});
+
+  final Completer<void>? cancelGate;
+  final List<_StallingRealtimeSession> sessions = <_StallingRealtimeSession>[];
+
+  @override
+  Stream<AgentVoiceTranscriptionEvent> createDraftRealtime({
+    required String threadId,
+    required Stream<Uint8List> audioChunks,
+    required String idempotencyKey,
+  }) {
+    realtimeCalls++;
+    realtimeKeys.add(idempotencyKey);
+    StreamSubscription<Uint8List>? audioSubscription;
+    late final _StallingRealtimeSession session;
+    late final StreamController<AgentVoiceTranscriptionEvent> events;
+    events = StreamController<AgentVoiceTranscriptionEvent>(
+      onListen: () {
+        audioSubscription = audioChunks.listen((_) {});
+        if (!session.listened.isCompleted) {
+          session.listened.complete();
+        }
+      },
+      onCancel: () async {
+        if (!session.cancelRequested.isCompleted) {
+          session.cancelRequested.complete();
+        }
+        await cancelGate?.future;
+        await audioSubscription?.cancel();
+        if (!session.cancelled.isCompleted) {
+          session.cancelled.complete();
+        }
+      },
+    );
+    session = _StallingRealtimeSession(events);
+    sessions.add(session);
+    return events.stream;
+  }
+}
+
+final class _StallingRealtimeSession {
+  _StallingRealtimeSession(this.events);
+
+  final StreamController<AgentVoiceTranscriptionEvent> events;
+  final Completer<void> listened = Completer<void>();
+  final Completer<void> cancelRequested = Completer<void>();
+  final Completer<void> cancelled = Completer<void>();
 }
 
 final class _StreamingControlledVoiceClient extends _ControlledVoiceClient
