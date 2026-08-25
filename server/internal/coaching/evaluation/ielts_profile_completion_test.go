@@ -134,7 +134,7 @@ func TestSessionCommandBuilderKeepsStandaloneIELTSOnV2(t *testing.T) {
 	builder, err := NewSessionCommandBuilder(SessionLineages{
 		Interview:     lineage(InterviewStrategyRef, "interview-report/v2"),
 		IELTSPractice: lineage(IELTSStrategyRef, "ielts-report/v2"),
-		IELTS:         lineage(IELTSStrategyRef, "ielts-report/v3"),
+		IELTS:         lineage(IELTSStrategyRef, "ielts-report/v4"),
 		General:       lineage(GeneralStrategyRef, "general-report/v2"),
 	}, false)
 	if err != nil {
@@ -145,7 +145,7 @@ func TestSessionCommandBuilderKeepsStandaloneIELTSOnV2(t *testing.T) {
 		t.Fatalf("standalone IELTS lineage = %#v, %v", standalone, err)
 	}
 	fullMock, err := builder.lineageFor(IELTSSpeakingFullMockEvaluationPolicyRef)
-	if err != nil || fullMock.PromptVersion != "ielts-report/v3" {
+	if err != nil || fullMock.PromptVersion != "ielts-report/v4" {
 		t.Fatalf("full mock IELTS lineage = %#v, %v", fullMock, err)
 	}
 }

@@ -429,7 +429,6 @@ func run() int {
 				RetryDelay:                time.Second,
 				DependencyDelay:           evaluationDependencyDelay,
 				AcousticDependencyMaxWait: acousticDependencyMaxWait,
-				ProfileDependencyMaxWait:  20 * time.Second,
 				FinalizeTimeout:           5 * time.Second,
 			},
 		},
