@@ -90,13 +90,13 @@ final class WireAgentVoiceClient
     AuthenticatedWebSocketConnector? assistantSpeechConnector,
     AgentVoiceNow? now,
     Duration requestTimeout = const Duration(seconds: 75),
+    Duration realtimeConnectionTimeout = const Duration(seconds: 15),
+    Duration realtimePingInterval = const Duration(seconds: 10),
   }) {
-    if (requestTimeout <= Duration.zero) {
-      throw ArgumentError.value(
-        requestTimeout,
-        'requestTimeout',
-        'must be positive',
-      );
+    if (requestTimeout <= Duration.zero ||
+        realtimeConnectionTimeout <= Duration.zero ||
+        realtimePingInterval <= Duration.zero) {
+      throw ArgumentError('Agent voice client timing must be positive.');
     }
     final createTransport =
         transportFactory ??
@@ -132,6 +132,8 @@ final class WireAgentVoiceClient
         trustedBaseUri: _webSocketBaseUri(baseUri),
       ),
       requestTimeout,
+      realtimeConnectionTimeout,
+      realtimePingInterval,
       now ?? _utcNow,
     );
   }
@@ -149,6 +151,8 @@ final class WireAgentVoiceClient
     this._realtimeConnector,
     this._assistantSpeechConnector,
     this._requestTimeout,
+    this._realtimeConnectionTimeout,
+    this._realtimePingInterval,
     this._now,
   );
 
@@ -171,6 +175,8 @@ final class WireAgentVoiceClient
   final SessionAuthenticatedWebSocketConnector _realtimeConnector;
   final SessionAuthenticatedWebSocketConnector _assistantSpeechConnector;
   final Duration _requestTimeout;
+  final Duration _realtimeConnectionTimeout;
+  final Duration _realtimePingInterval;
   final AgentVoiceNow _now;
 
   int _accountGeneration = 0;
@@ -304,6 +310,8 @@ final class WireAgentVoiceClient
     try {
       final transport = RealtimeVoiceInputTransport(
         connector: _realtimeConnector,
+        connectionTimeout: _realtimeConnectionTimeout,
+        pingInterval: _realtimePingInterval,
       );
       await for (final envelope in transport.stream(
         uri: uri,
@@ -357,6 +365,8 @@ final class WireAgentVoiceClient
     try {
       final transport = RealtimeVoiceInputTransport(
         connector: _realtimeConnector,
+        connectionTimeout: _realtimeConnectionTimeout,
+        pingInterval: _realtimePingInterval,
       );
       await for (final envelope in transport.stream(
         uri: uri,
