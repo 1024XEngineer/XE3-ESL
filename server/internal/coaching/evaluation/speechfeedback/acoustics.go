@@ -11,6 +11,7 @@ const (
 )
 
 type AcousticAssessmentRequest struct {
+	RequestID     string
 	Audio         []byte
 	ReferenceText string
 	TopicTitle    string

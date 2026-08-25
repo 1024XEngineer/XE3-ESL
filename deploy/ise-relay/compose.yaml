@@ -1,0 +1,51 @@
+name: xe3-speakup-ise-relay
+
+x-speakup-logging: &speakup-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  relay:
+    image: ${ISE_RELAY_IMAGE:?ISE_RELAY_IMAGE is required}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    logging: *speakup-logging
+    env_file:
+      - ${ISE_RELAY_ENV_FILE:?ISE_RELAY_ENV_FILE is required}
+    environment:
+      ISE_RELAY_ADDRESS: :18443
+      ISE_RELAY_INTERNAL_ADDRESS: :18080
+      ISE_RELAY_SERVER_CERT_FILE: /run/secrets/server.pem
+      ISE_RELAY_SERVER_KEY_FILE: /run/secrets/server-key.pem
+      ISE_RELAY_CLIENT_CA_FILE: /run/secrets/client-ca.pem
+    ports:
+      - "18443:18443"
+    volumes:
+      - ${ISE_RELAY_SECRETS_DIR:?ISE_RELAY_SECRETS_DIR is required}:/run/secrets:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 384m
+    cpus: 1.0
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "-T",
+          "2",
+          "--spider",
+          "http://127.0.0.1:18080/healthz",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s

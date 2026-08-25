@@ -40,6 +40,8 @@ and server environment are externally injected and are not committed.
 - A certificate whose SANs are exactly both Staging hostnames, issued and
   verified through [`deploy/tls/`](../tls/README.md).
 - A populated htpasswd file and a real Staging Server environment file.
+- A dedicated `/etc/speakup/staging-ise-relay` directory containing the mTLS
+  CA, client certificate and client private key when the ISE Relay is enabled.
 - Registry credentials with read access to the two GHCR images.
 - A real, current-UID-owned `STAGING_PUBLIC_ROOT` that is not group- or
   world-writable.
@@ -49,6 +51,24 @@ configuration required by the application. Use the repository `.env.example`
 only as a key reference; do not copy local defaults as deployment values and do
 not disable OSS or OCR to bypass missing configuration. It must not define
 `DATABASE_URL`, `SERVER_HOST`, or `SERVER_PORT`; Compose owns those three values.
+
+For the ISE Relay, create the files for the Server image's non-root UID and set
+the following values in the Staging Server environment:
+
+```text
+ISE_RELAY_ENDPOINT=https://122.51.24.153:18443
+ISE_RELAY_CA_FILE=/run/secrets/ise-relay/ca.pem
+ISE_RELAY_CLIENT_CERT_FILE=/run/secrets/ise-relay/client.pem
+ISE_RELAY_CLIENT_KEY_FILE=/run/secrets/ise-relay/client-key.pem
+ISE_RELAY_POLL_INTERVAL=500ms
+ISE_RELAY_TIMEOUT=165s
+```
+
+Install the three files outside the repository with directory mode `0500`,
+file mode `0400`, and numeric owner/group `10001:10001`. Remove `APPID`,
+`APIKey`, `APISecret`, `XFYUN_ISE_ENDPOINT`, and `XFYUN_ISE_TIMEOUT` from the
+Staging Server environment when enabling the Relay; configuring both direct
+ISE and Relay settings fails closed. Production is not changed by this mount.
 
 ## 1. Acquire a manifest and configuration
 

@@ -11,6 +11,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/config"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/providerobservability"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/providers/iserelay"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/providers/xfyun"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -54,6 +55,39 @@ func newEvaluationAcousticEvaluator(
 	)
 	if err != nil {
 		return nil, err
+	}
+	return newEvaluationAcousticEvaluatorWithProvider(database, store, provider)
+}
+
+func (factory *ProviderFactory) EvaluationAcousticRelayEvaluator(
+	database *pgxpool.Pool,
+	store objectstore.Store,
+	configuration config.ISERelayConfig,
+) (evaluation.AcousticEvaluator, error) {
+	if database == nil || store == nil {
+		return nil, errors.New("bootstrap: Evaluation acoustic dependencies are required")
+	}
+	provider, err := iserelay.NewClient(iserelay.ClientConfig{
+		Endpoint:       configuration.Endpoint,
+		CAFile:         configuration.CAFile,
+		ClientCertFile: configuration.ClientCertFile,
+		ClientKeyFile:  configuration.ClientKeyFile,
+		PollInterval:   configuration.PollInterval,
+		Observer:       factory.observer,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return newEvaluationAcousticEvaluatorWithProvider(database, store, provider)
+}
+
+func newEvaluationAcousticEvaluatorWithProvider(
+	database *pgxpool.Pool,
+	store objectstore.Store,
+	provider speechfeedback.AcousticEvaluator,
+) (evaluation.AcousticEvaluator, error) {
+	if database == nil || store == nil || provider == nil {
+		return nil, errors.New("bootstrap: Evaluation acoustic dependencies are required")
 	}
 	repository, err := mediapostgres.New(database)
 	if err != nil {

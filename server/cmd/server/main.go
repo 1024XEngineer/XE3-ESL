@@ -335,30 +335,51 @@ func run() int {
 	var acousticEvaluator evaluation.AcousticEvaluator
 	var acousticProviderTimeout time.Duration
 	iseConfigured := config.ISEConfigured()
-	if iseConfigured && recordingStore == nil {
+	iseRelayConfigured := config.ISERelayConfigured()
+	if iseConfigured && iseRelayConfigured {
+		logger.Error(
+			"Multiple Evaluation acoustic providers configured",
+			slog.String("error_kind", "configuration"),
+		)
+		return 1
+	}
+	acousticProviderConfigured := iseConfigured || iseRelayConfigured
+	if acousticProviderConfigured && recordingStore == nil {
 		logger.Error(
 			"Evaluation acoustics configured without object storage",
 			slog.String("error_kind", "configuration"),
 		)
 		return 1
 	}
-	acousticsEnabled := recordingStore != nil && iseConfigured
+	acousticsEnabled := recordingStore != nil && acousticProviderConfigured
 	if acousticsEnabled {
-		iseConfig, configurationErr := config.LoadISE()
-		if configurationErr != nil {
-			logger.Error(
-				"iFlytek ISE configuration failed",
-				slog.String("error_kind", "configuration"),
+		if iseRelayConfigured {
+			relayConfig, configurationErr := config.LoadISERelay()
+			if configurationErr != nil {
+				logger.Error(
+					"ISE relay configuration failed",
+					slog.String("error_kind", "configuration"),
+				)
+				return 1
+			}
+			acousticProviderTimeout = relayConfig.Timeout
+			acousticEvaluator, err = providerFactory.EvaluationAcousticRelayEvaluator(
+				databasePool.Native(), recordingStore, relayConfig,
 			)
-			return 1
+		} else {
+			iseConfig, configurationErr := config.LoadISE()
+			if configurationErr != nil {
+				logger.Error(
+					"iFlytek ISE configuration failed",
+					slog.String("error_kind", "configuration"),
+				)
+				return 1
+			}
+			acousticProviderTimeout = iseConfig.Timeout
+			acousticEvaluator, err = providerFactory.EvaluationAcousticEvaluator(
+				databasePool.Native(), recordingStore, iseConfig,
+			)
 		}
-		acousticProviderTimeout = iseConfig.Timeout
-		acousticEvaluator, err =
-			providerFactory.EvaluationAcousticEvaluator(
-				databasePool.Native(),
-				recordingStore,
-				iseConfig,
-			)
 		if err != nil {
 			logger.Error(
 				"Evaluation acoustic provider failed",

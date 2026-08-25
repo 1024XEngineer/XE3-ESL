@@ -46,6 +46,7 @@ func (evaluator *CompactAcousticEvaluator) EvaluateAcoustic(
 	reference := speechFeedbackEnglishReferenceText(snapshot.Transcript)
 	category := speechFeedbackAcousticCategory(reference)
 	result, err := evaluator.evaluator.Evaluate(ctx, AcousticAssessmentRequest{
+		RequestID:     record.LeaseToken,
 		Audio:         pcm,
 		ReferenceText: reference,
 		Category:      category,

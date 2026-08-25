@@ -10,6 +10,7 @@ import (
 
 func TestCompactAcousticEvaluatorAcceptsOpaqueProviderSession(t *testing.T) {
 	score, rejected := 75.2, false
+	var providerRequest AcousticAssessmentRequest
 	evaluator, err := NewCompactAcousticEvaluator(
 		acousticAudioReaderFake{audio: acousticTestWAV()},
 		acousticProviderFake{result: AcousticAssessmentResult{
@@ -21,14 +22,17 @@ func TestCompactAcousticEvaluatorAcceptsOpaqueProviderSession(t *testing.T) {
 				IntegrityScore: &score,
 				Rejected:       &rejected,
 			},
-		}},
+		}, request: &providerRequest},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	checkpoint, err := evaluator.EvaluateAcoustic(
 		context.Background(),
-		evaluation.Record{Kind: evaluation.KindPracticeTurnFeedback},
+		evaluation.Record{
+			Kind:       evaluation.KindPracticeTurnFeedback,
+			LeaseToken: "20000000-0000-4000-8000-000000000001",
+		},
 		evaluation.SpeechInputSnapshot{
 			Transcript:   "I enjoy upbeat music.",
 			AudioAssetID: "10000000-0000-4000-8000-000000000001",
@@ -38,7 +42,8 @@ func TestCompactAcousticEvaluatorAcceptsOpaqueProviderSession(t *testing.T) {
 		t.Fatalf("EvaluateAcoustic() error = %v", err)
 	}
 	if !checkpoint.Valid() ||
-		checkpoint.ProviderSession != "ise000da9a8@gz1a0092fc5e55075812" {
+		checkpoint.ProviderSession != "ise000da9a8@gz1a0092fc5e55075812" ||
+		providerRequest.RequestID != "20000000-0000-4000-8000-000000000001" {
 		t.Fatalf("checkpoint = %#v", checkpoint)
 	}
 }
@@ -63,7 +68,10 @@ func TestCompactAcousticEvaluatorAcceptsWordAssessmentWithoutSentenceDimensions(
 	}
 	checkpoint, err := evaluator.EvaluateAcoustic(
 		context.Background(),
-		evaluation.Record{Kind: evaluation.KindPracticeTurnFeedback},
+		evaluation.Record{
+			Kind:       evaluation.KindPracticeTurnFeedback,
+			LeaseToken: "20000000-0000-4000-8000-000000000002",
+		},
 		evaluation.SpeechInputSnapshot{
 			Transcript:   "No.",
 			AudioAssetID: "10000000-0000-4000-8000-000000000002",
@@ -86,12 +94,18 @@ func (reader acousticAudioReaderFake) ReadOwnedAudio(
 	return reader.audio, nil
 }
 
-type acousticProviderFake struct{ result AcousticAssessmentResult }
+type acousticProviderFake struct {
+	result  AcousticAssessmentResult
+	request *AcousticAssessmentRequest
+}
 
 func (provider acousticProviderFake) Evaluate(
-	context.Context,
-	AcousticAssessmentRequest,
+	_ context.Context,
+	request AcousticAssessmentRequest,
 ) (AcousticAssessmentResult, error) {
+	if provider.request != nil {
+		*provider.request = request
+	}
 	return provider.result, nil
 }
 

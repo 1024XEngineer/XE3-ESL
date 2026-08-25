@@ -64,6 +64,8 @@ services:
       METRICS_HOST: 0.0.0.0
     ports:
       - "127.0.0.1:28083:8080"
+    volumes:
+      - /etc/speakup/staging-ise-relay:/run/secrets/ise-relay:ro
     depends_on:
       postgres:
         condition: service_healthy
