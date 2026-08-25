@@ -1,0 +1,24 @@
+{
+  "release_notes_version": 1,
+  "locale": "zh-CN",
+  "version": "0.1.7",
+  "published_at": "2026-08-25T14:05:30Z",
+  "changes": [
+    {
+      "type": "fix",
+      "text": "修复断网后实时语音无法再次录音的问题。"
+    },
+    {
+      "type": "fix",
+      "text": "修复语音反馈结果异常时可能重复失败的问题。"
+    },
+    {
+      "type": "improvement",
+      "text": "优化语音评测与文字反馈的重试等待，减少报告长时间卡住。"
+    },
+    {
+      "type": "fix",
+      "text": "修复进入历史练习时可能自动触发新回复的问题。"
+    }
+  ]
+}
