@@ -11,6 +11,7 @@ SHELL := /bin/bash
 	check-flutter-analyze \
 	check-flutter-test \
 	check-flutter-coverage \
+	check-ios-simulator-stub \
 	check-android-release-guard \
 	check-go \
 	check-go-coverage \
@@ -48,6 +49,7 @@ help:
 		'  make check          Run Flutter, Go, and API checks' \
 		'  make check-flutter  Run Flutter dependency, format, analysis, and test checks' \
 		'  make check-flutter-coverage  Run Flutter checks and write mobile/coverage/lcov.info' \
+		'  make check-ios-simulator-stub  Verify the Intel simulator AvatarKit contract' \
 		'  make check-android-release-guard  Verify release signing fails closed' \
 		'  make check-go       Run Go format, vet, and test checks' \
 		'  make check-go-coverage  Run Go checks and write server/coverage.out' \
@@ -87,11 +89,20 @@ check-flutter-format: check-flutter-dependencies
 check-flutter-analyze: check-flutter-format
 	cd mobile && flutter analyze --no-pub
 
-check-flutter-test: check-flutter-analyze
+check-flutter-test: check-flutter-analyze check-ios-simulator-stub
 	cd mobile && flutter test --no-pub
 
-check-flutter-coverage: check-flutter-analyze check-android-release-guard
+check-flutter-coverage: check-flutter-analyze check-android-release-guard check-ios-simulator-stub
 	cd mobile && flutter test --no-pub --coverage
+
+check-ios-simulator-stub:
+	@set -euo pipefail; \
+	stub_dir="$$(mktemp -d)"; \
+	trap 'rm -rf "$$stub_dir"' EXIT; \
+	cp -R tools/ios-simulator-dev/avatar_kit_stub/. "$$stub_dir/"; \
+	cd "$$stub_dir"; \
+	flutter pub get; \
+	flutter test --no-pub
 
 check-android-release-guard: check-flutter-dependencies
 	@set -euo pipefail; \
