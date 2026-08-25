@@ -121,6 +121,7 @@ final class IosAgentVoiceRecorder
   static const _minimumWavBytes = 45;
   static const _maximumWavBytes = 7400000;
   static const _maximumPCMBytes = 16000 * 2 * 60;
+  static const _nativeCleanupTimeout = Duration(seconds: 2);
 
   final NativeAgentVoiceRecorder _recorder;
   final Future<Directory> Function() _temporaryDirectory;
@@ -130,68 +131,126 @@ final class IosAgentVoiceRecorder
   String? _activePath;
   DateTime? _startedAt;
   Pcm16StreamCapture? _streamCapture;
+  int _startGeneration = 0;
+  bool _startPending = false;
+  Future<String?>? _nativeStop;
 
   @override
   Future<void> start() async {
-    if (_activePath != null) {
-      throw const AgentVoiceRecordingException(
-        AgentVoiceRecordingFailureKind.alreadyRecording,
-      );
-    }
-    await _retryPendingDeletions();
-    if (!await _recorder.hasPermission()) {
-      throw const AgentVoiceRecordingException(
-        AgentVoiceRecordingFailureKind.permissionDenied,
-      );
-    }
-    final directory = await _managedDirectory();
-    final path = '${directory.path}/${_newFileName()}';
-    _activePath = path;
-    _startedAt = _clock();
+    final generation = _beginStart();
+    String? path;
+    var started = false;
     try {
+      await _retryPendingDeletions();
+      _requireStartCurrent(generation);
+      final hasPermission = await _recorder.hasPermission();
+      _requireStartCurrent(generation);
+      if (!hasPermission) {
+        throw const AgentVoiceRecordingException(
+          AgentVoiceRecordingFailureKind.permissionDenied,
+        );
+      }
+      final directory = await _managedDirectory();
+      _requireStartCurrent(generation);
+      path = '${directory.path}/${_newFileName()}';
+      _activePath = path;
+      _startedAt = _clock();
       await _recorder.startWav(path);
+      _requireStartCurrent(generation);
+      if (_activePath != path) {
+        throw const AgentVoiceRecordingException(
+          AgentVoiceRecordingFailureKind.unavailable,
+        );
+      }
+      started = true;
+    } on AgentVoiceRecordingException {
+      rethrow;
     } catch (_) {
-      _activePath = null;
-      _startedAt = null;
-      await _deletePath(path);
       throw const AgentVoiceRecordingException(
         AgentVoiceRecordingFailureKind.unavailable,
       );
+    } finally {
+      try {
+        if (!started) {
+          if (path != null) {
+            await _stopNativeBestEffort(forceAfterCurrent: true);
+          }
+          if (_activePath == path) {
+            _activePath = null;
+            _startedAt = null;
+          }
+          if (path != null) {
+            await _deletePath(path);
+          }
+        }
+      } finally {
+        _startPending = false;
+      }
     }
   }
 
   @override
   Future<Stream<Uint8List>> startAudioStream() async {
-    if (_activePath != null) {
-      throw const AgentVoiceRecordingException(
-        AgentVoiceRecordingFailureKind.alreadyRecording,
-      );
-    }
-    await _retryPendingDeletions();
-    if (!await _recorder.hasPermission()) {
-      throw const AgentVoiceRecordingException(
-        AgentVoiceRecordingFailureKind.permissionDenied,
-      );
-    }
-    final directory = await _managedDirectory();
-    final path = '${directory.path}/${_newFileName()}';
-    _activePath = path;
-    _startedAt = _clock();
+    final generation = _beginStart();
+    String? path;
+    Pcm16StreamCapture? capture;
+    var started = false;
     try {
+      await _retryPendingDeletions();
+      _requireStartCurrent(generation);
+      final hasPermission = await _recorder.hasPermission();
+      _requireStartCurrent(generation);
+      if (!hasPermission) {
+        throw const AgentVoiceRecordingException(
+          AgentVoiceRecordingFailureKind.permissionDenied,
+        );
+      }
+      final directory = await _managedDirectory();
+      _requireStartCurrent(generation);
+      path = '${directory.path}/${_newFileName()}';
+      _activePath = path;
+      _startedAt = _clock();
       final input = await _recorder.startPcm16Stream();
-      final capture = Pcm16StreamCapture(
+      capture = Pcm16StreamCapture(
         input: input,
         maximumPcmBytes: _maximumPCMBytes,
       );
+      _requireStartCurrent(generation);
+      if (_activePath != path) {
+        throw const AgentVoiceRecordingException(
+          AgentVoiceRecordingFailureKind.unavailable,
+        );
+      }
       _streamCapture = capture;
+      started = true;
       return capture.stream;
+    } on AgentVoiceRecordingException {
+      rethrow;
     } catch (_) {
-      _clearStreamingState();
-      _activePath = null;
-      _startedAt = null;
       throw const AgentVoiceRecordingException(
         AgentVoiceRecordingFailureKind.unavailable,
       );
+    } finally {
+      try {
+        if (!started) {
+          await Future.wait<void>([
+            _cancelCaptureBestEffort(capture),
+            if (path != null) _stopNativeBestEffort(forceAfterCurrent: true),
+          ]);
+          if (identical(_streamCapture, capture)) {
+            _clearStreamingState();
+          }
+          if (_activePath == path) {
+            _activePath = null;
+            _startedAt = null;
+          }
+          if (path != null) {
+            await _deletePath(path);
+          }
+        }
+      } finally {
+        _startPending = false;
+      }
     }
   }
 
@@ -208,7 +267,7 @@ final class IosAgentVoiceRecorder
     _startedAt = null;
     String? stoppedPath;
     try {
-      stoppedPath = await _recorder.stop();
+      stoppedPath = await _stopNative();
     } catch (_) {
       await _deletePath(expectedPath);
       throw const AgentVoiceRecordingException(
@@ -273,7 +332,7 @@ final class IosAgentVoiceRecorder
     _activePath = null;
     _startedAt = null;
     try {
-      await _recorder.stop();
+      await _stopNative();
       final wav = await capture.finish();
       await File(path).writeAsBytes(wav, flush: true);
       final elapsed = _boundedRecordingDuration(startedAt);
@@ -315,7 +374,7 @@ final class IosAgentVoiceRecorder
     _activePath = null;
     _startedAt = null;
     try {
-      await _recorder.stop();
+      await _stopNative();
       await capture.finishAndDiscard();
     } on Pcm16StreamCaptureException catch (error) {
       await capture.cancel();
@@ -336,22 +395,84 @@ final class IosAgentVoiceRecorder
 
   @override
   Future<void> discardCurrent() async {
+    _startGeneration++;
     final path = _activePath;
     final capture = _streamCapture;
+    final shouldStopNative = path != null || capture != null || _startPending;
     _activePath = null;
     _startedAt = null;
+    _clearStreamingState();
+    await Future.wait<void>([
+      _cancelCaptureBestEffort(capture),
+      if (shouldStopNative) _stopNativeBestEffort(),
+    ]);
     if (path == null) {
       await _retryPendingDeletions();
       return;
     }
-    await capture?.cancel();
-    try {
-      await _recorder.stop();
-    } catch (_) {
-      // The owned path is still removed below.
-    }
-    _clearStreamingState();
     await _deletePath(path);
+  }
+
+  int _beginStart() {
+    if (_activePath != null ||
+        _streamCapture != null ||
+        _startPending ||
+        _nativeStop != null) {
+      throw const AgentVoiceRecordingException(
+        AgentVoiceRecordingFailureKind.alreadyRecording,
+      );
+    }
+    _startPending = true;
+    return ++_startGeneration;
+  }
+
+  void _requireStartCurrent(int generation) {
+    if (generation != _startGeneration) {
+      throw const AgentVoiceRecordingException(
+        AgentVoiceRecordingFailureKind.unavailable,
+      );
+    }
+  }
+
+  Future<String?> _stopNative({bool forceAfterCurrent = false}) {
+    final existing = _nativeStop;
+    if (existing != null && !forceAfterCurrent) {
+      return existing;
+    }
+    // Cleanup callers share one stop. A fenced late start queues one successor
+    // because an earlier stop may have run before native capture became active.
+    final predecessor = existing == null
+        ? Future<void>.value()
+        : existing.then<void>((_) {}, onError: (Object _, StackTrace _) {});
+    late final Future<String?> stop;
+    stop = predecessor.then((_) => _recorder.stop()).whenComplete(() {
+      if (identical(_nativeStop, stop)) {
+        _nativeStop = null;
+      }
+    });
+    _nativeStop = stop;
+    return stop;
+  }
+
+  Future<void> _stopNativeBestEffort({bool forceAfterCurrent = false}) async {
+    try {
+      await _stopNative(
+        forceAfterCurrent: forceAfterCurrent,
+      ).timeout(_nativeCleanupTimeout);
+    } catch (_) {
+      // The owned local state is still cleared by the caller.
+    }
+  }
+
+  Future<void> _cancelCaptureBestEffort(Pcm16StreamCapture? capture) async {
+    if (capture == null) {
+      return;
+    }
+    try {
+      await capture.cancel().timeout(_nativeCleanupTimeout);
+    } catch (_) {
+      // The paired native stop still releases the microphone at the fence.
+    }
   }
 
   Duration _boundedRecordingDuration(DateTime startedAt) {

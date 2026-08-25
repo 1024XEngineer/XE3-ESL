@@ -207,8 +207,11 @@ void main() {
     );
     expect(find.byKey(const Key('profile-avatar')), findsOneWidget);
     expect(find.byKey(const Key('profile-display-name')), findsOneWidget);
-    expect(find.text('当前 IELTS 能力'), findsOneWidget);
-    expect(find.text('完成一次全真模考后，这里会显示四维能力与当前估分。'), findsOneWidget);
+    expect(
+      find.byKey(const Key('profile-ielts-ability-button')),
+      findsOneWidget,
+    );
+    expect(find.text('当前 IELTS 能力'), findsNothing);
     expect(find.text('管理账号与练习身份。'), findsNothing);
     await _tapPrimaryDestination(
       tester,
@@ -605,6 +608,33 @@ void main() {
       isSemantics(label: '正在加载对话'),
     );
   });
+
+  testWidgets(
+    'an incomplete restored reply exposes an explicit continue action',
+    (tester) async {
+      var continueCalls = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ConversationPage(
+            errorMessage: '上次回复未完成，点击“继续”恢复。',
+            retryOperationLabel: '继续',
+            onRetryOperation: () => continueCalls++,
+          ),
+        ),
+      );
+
+      expect(find.text('上次回复未完成，点击“继续”恢复。'), findsOneWidget);
+      expect(find.text('继续'), findsOneWidget);
+      expect(find.text('SpeakUp 正在回复…'), findsNothing);
+
+      tester
+          .widget<TextButton>(
+            find.byKey(const Key('agent-retry-operation-button')),
+          )
+          .onPressed!();
+      expect(continueCalls, 1);
+    },
+  );
 
   testWidgets('older Message pagination is visible and accessible', (
     tester,

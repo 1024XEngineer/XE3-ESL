@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -56,8 +57,10 @@ class ProfilePage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       key: const Key('profile-page'),
+      backgroundColor: SpeakUpDesign.surfaceMuted,
       appBar: showBackButton
           ? AppBar(
+              backgroundColor: SpeakUpDesign.surfaceMuted,
               leading: IconButton(
                 key: const Key('profile-route-back-button'),
                 tooltip: '返回',
@@ -71,89 +74,64 @@ class ProfilePage extends StatelessWidget {
         child: ListView(
           padding: EdgeInsets.fromLTRB(
             SpeakUpDesign.horizontalInset(context),
-            SpeakUpDesign.space24,
+            SpeakUpDesign.space32,
             SpeakUpDesign.horizontalInset(context),
             140,
           ),
           children: [
-            Stack(
-              children: [
-                Center(
-                  child: Column(
+            Center(
+              child: Column(
+                children: [
+                  ProfileAvatarView(
+                    avatarKey: const Key('profile-avatar'),
+                    size: 132,
+                    avatarBytes: avatarBytes,
+                    editable: user != null && onUploadAvatar != null,
+                    saving: avatarSaving,
+                    onTap: () => _editAvatar(context),
+                  ),
+                  const SizedBox(height: SpeakUpDesign.space20),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      ProfileAvatarView(
-                        avatarKey: const Key('profile-avatar'),
-                        size: 132,
-                        avatarBytes: avatarBytes,
-                        editable: user != null && onUploadAvatar != null,
-                        saving: avatarSaving,
-                        onTap: () => _editAvatar(context),
-                      ),
-                      const SizedBox(height: SpeakUpDesign.space20),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 220),
-                            child: Text(
-                              profile?.displayName ??
-                                  (user == null ? '本地界面预览' : '尚未设置昵称'),
-                              key: const Key('profile-display-name'),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: SpeakUpDesign.pageTitle.copyWith(
-                                fontSize: 28,
-                              ),
-                            ),
-                          ),
-                          if (user != null)
-                            IconButton(
-                              key: const Key('profile-edit-display-name'),
-                              tooltip: '编辑昵称',
-                              onPressed:
-                                  profileSaving || onSaveDisplayName == null
-                                  ? null
-                                  : () => _editDisplayName(context),
-                              icon: Icon(
-                                Icons.edit_rounded,
-                                size: 18,
-                                color: profileSaving
-                                    ? SpeakUpDesign.tertiary
-                                    : SpeakUpDesign.secondary,
-                              ),
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: SpeakUpDesign.space4),
-                      Text(
-                        user?.email ?? '尚未连接正式账号',
-                        textAlign: TextAlign.center,
-                        style: SpeakUpDesign.body.copyWith(
-                          color: SpeakUpDesign.tertiary,
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 220),
+                        child: Text(
+                          profile?.displayName ??
+                              (user == null ? '本地界面预览' : '尚未设置昵称'),
+                          key: const Key('profile-display-name'),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: SpeakUpDesign.pageTitle.copyWith(fontSize: 28),
                         ),
                       ),
+                      if (user != null)
+                        IconButton(
+                          key: const Key('profile-edit-display-name'),
+                          tooltip: '编辑昵称',
+                          onPressed: profileSaving || onSaveDisplayName == null
+                              ? null
+                              : () => _editDisplayName(context),
+                          icon: Icon(
+                            Icons.edit_rounded,
+                            size: 18,
+                            color: profileSaving
+                                ? SpeakUpDesign.tertiary
+                                : SpeakUpDesign.secondary,
+                          ),
+                        ),
                     ],
                   ),
-                ),
-                if (user != null)
-                  Align(
-                    alignment: Alignment.topRight,
-                    child: PopupMenuButton<String>(
-                      key: const Key('profile-account-menu'),
-                      tooltip: '账号菜单',
-                      enabled: onLogout != null,
-                      icon: const Icon(Icons.more_horiz_rounded),
-                      onSelected: (_) => onLogout?.call(),
-                      itemBuilder: (_) => const [
-                        PopupMenuItem<String>(
-                          key: Key('profile-logout-button'),
-                          value: 'logout',
-                          child: Text('退出登录'),
-                        ),
-                      ],
+                  const SizedBox(height: SpeakUpDesign.space4),
+                  Text(
+                    user?.email ?? '尚未连接正式账号',
+                    textAlign: TextAlign.center,
+                    style: SpeakUpDesign.body.copyWith(
+                      color: SpeakUpDesign.tertiary,
                     ),
                   ),
-              ],
+                ],
+              ),
             ),
             if (profileErrorMessage != null) ...[
               const SizedBox(height: SpeakUpDesign.space16),
@@ -164,12 +142,10 @@ class ProfilePage extends StatelessWidget {
               ),
             ],
             const SizedBox(height: SpeakUpDesign.space32),
-            if (coachingProfileController != null) ...[
-              CoachingProfileCard(controller: coachingProfileController!),
-              const SizedBox(height: SpeakUpDesign.space24),
-            ],
-            CurrentIeltsAbilityProfile(
+            _ProfileSettingsSection(
+              coachingProfileController: coachingProfileController,
               historyController: reviewHistoryController,
+              onLogout: onLogout,
             ),
             if (appUpdateService != null && onCheckForUpdate != null) ...[
               const SizedBox(height: SpeakUpDesign.space24),
@@ -268,6 +244,234 @@ class ProfilePage extends StatelessWidget {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
+  }
+}
+
+class _ProfileSettingsSection extends StatefulWidget {
+  const _ProfileSettingsSection({
+    required this.coachingProfileController,
+    required this.historyController,
+    required this.onLogout,
+  });
+
+  final CoachingProfileController? coachingProfileController;
+  final ReviewHistoryController? historyController;
+  final VoidCallback? onLogout;
+
+  @override
+  State<_ProfileSettingsSection> createState() =>
+      _ProfileSettingsSectionState();
+}
+
+class _ProfileSettingsSectionState extends State<_ProfileSettingsSection> {
+  Future<void>? _coachingProfileLoad;
+
+  @override
+  void initState() {
+    super.initState();
+    _coachingProfileLoad = widget.coachingProfileController?.load();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ProfileSettingsSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(
+      oldWidget.coachingProfileController,
+      widget.coachingProfileController,
+    )) {
+      _coachingProfileLoad = widget.coachingProfileController?.load();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hasCoachingProfile = widget.coachingProfileController != null;
+    final hasLogout = widget.onLogout != null;
+    return Column(
+      children: [
+        _ProfileSettingsCard(
+          children: [
+            if (hasCoachingProfile)
+              _ProfileSettingsRow(
+                key: const Key('profile-coaching-memory-button'),
+                icon: Icons.auto_awesome_rounded,
+                iconBackground: const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFF7A5AF8), Color(0xFFA78BFA)],
+                ),
+                title: '教练记忆',
+                subtitle: '管理称呼、背景与沟通偏好',
+                onTap: () => unawaited(_openCoachingProfile()),
+              ),
+            if (hasCoachingProfile) const Divider(indent: 68),
+            _ProfileSettingsRow(
+              key: const Key('profile-ielts-ability-button'),
+              icon: Icons.workspace_premium_rounded,
+              iconBackground: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFF1687F8), Color(0xFF55B6FF)],
+              ),
+              title: 'IELTS 能力',
+              subtitle: '查看四维能力与当前估分',
+              onTap: _openIeltsAbility,
+            ),
+          ],
+        ),
+        if (hasLogout) ...[
+          const SizedBox(height: SpeakUpDesign.space16),
+          _ProfileSettingsCard(
+            children: [
+              _ProfileSettingsRow(
+                key: const Key('profile-logout-button'),
+                icon: Icons.power_settings_new_rounded,
+                iconBackground: const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFFE86B5A), Color(0xFFB83A2B)],
+                ),
+                title: '退出登录',
+                titleColor: SpeakUpDesign.error,
+                onTap: widget.onLogout!,
+              ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+
+  void _openIeltsAbility() {
+    unawaited(
+      Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => CurrentIeltsAbilityPage(
+            historyController: widget.historyController,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openCoachingProfile() async {
+    final controller = widget.coachingProfileController;
+    if (controller == null) return;
+    await _coachingProfileLoad;
+    if (!mounted || !identical(controller, widget.coachingProfileController)) {
+      return;
+    }
+    if (controller.profile == null) {
+      _coachingProfileLoad = controller.load();
+      await _coachingProfileLoad;
+    }
+    if (!mounted || !identical(controller, widget.coachingProfileController)) {
+      return;
+    }
+    if (controller.profile == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(controller.errorMessage ?? '记忆暂时无法读取，请重试。')),
+      );
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => CoachingProfilePage(controller: controller),
+      ),
+    );
+  }
+}
+
+class _ProfileSettingsCard extends StatelessWidget {
+  const _ProfileSettingsCard({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: SpeakUpDesign.surface,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
+        side: const BorderSide(color: SpeakUpDesign.border),
+      ),
+      child: Column(children: children),
+    );
+  }
+}
+
+class _ProfileSettingsRow extends StatelessWidget {
+  const _ProfileSettingsRow({
+    required this.icon,
+    required this.iconBackground,
+    required this.title,
+    required this.onTap,
+    this.subtitle,
+    this.titleColor,
+    super.key,
+  });
+
+  final IconData icon;
+  final Gradient iconBackground;
+  final String title;
+  final String? subtitle;
+  final Color? titleColor;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 76),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: SpeakUpDesign.space16,
+            vertical: SpeakUpDesign.space12,
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  gradient: iconBackground,
+                  borderRadius: BorderRadius.circular(
+                    SpeakUpDesign.radiusControl,
+                  ),
+                ),
+                child: Icon(icon, color: Colors.white, size: 21),
+              ),
+              const SizedBox(width: SpeakUpDesign.space12),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: SpeakUpDesign.cardTitle.copyWith(
+                        color: titleColor,
+                      ),
+                    ),
+                    if (subtitle case final value?) ...[
+                      const SizedBox(height: SpeakUpDesign.space4),
+                      Text(value, style: SpeakUpDesign.meta),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: SpeakUpDesign.space8),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: SpeakUpDesign.tertiary,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 

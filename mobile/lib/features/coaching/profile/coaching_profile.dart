@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -250,84 +249,6 @@ final class CoachingProfileController extends ChangeNotifier {
   }
 }
 
-class CoachingProfileCard extends StatefulWidget {
-  const CoachingProfileCard({required this.controller, super.key});
-
-  final CoachingProfileController controller;
-
-  @override
-  State<CoachingProfileCard> createState() => _CoachingProfileCardState();
-}
-
-class _CoachingProfileCardState extends State<CoachingProfileCard> {
-  @override
-  void initState() {
-    super.initState();
-    unawaited(widget.controller.load());
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: widget.controller,
-      builder: (context, _) {
-        final profile = widget.controller.profile;
-        return InkWell(
-          key: const Key('coaching-profile-card'),
-          borderRadius: BorderRadius.circular(22),
-          onTap: profile == null
-              ? widget.controller.load
-              : () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) =>
-                        CoachingProfilePage(controller: widget.controller),
-                  ),
-                ),
-          child: Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              border: Border.all(color: const Color(0xFFE5E5E5)),
-              borderRadius: BorderRadius.circular(22),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.psychology_alt_outlined, size: 28),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('教练记忆', style: SpeakUpDesign.sectionTitle),
-                      const SizedBox(height: 4),
-                      Text(
-                        widget.controller.loading
-                            ? '正在读取…'
-                            : profile == null
-                            ? widget.controller.errorMessage ?? '点按重试'
-                            : !profile.memoryEnabled
-                            ? '已关闭，不会注入 Agent 对话'
-                            : profile.data.isEmpty
-                            ? '尚未保存称呼、职业或偏好'
-                            : _profileSummary(profile.data),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: SpeakUpDesign.body.copyWith(
-                          color: SpeakUpDesign.secondary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const Icon(Icons.chevron_right_rounded),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
 class CoachingProfilePage extends StatefulWidget {
   const CoachingProfilePage({required this.controller, super.key});
 
@@ -371,74 +292,100 @@ class _CoachingProfilePageState extends State<CoachingProfilePage> {
   Widget build(BuildContext context) {
     final profile = widget.controller.profile!;
     return Scaffold(
-      appBar: AppBar(title: const Text('教练记忆')),
+      key: const Key('coaching-profile-page'),
+      appBar: AppBar(
+        leading: IconButton(
+          key: const Key('coaching-profile-back-button'),
+          tooltip: '返回',
+          onPressed: () => Navigator.of(context).maybePop(),
+          icon: const Icon(Icons.arrow_back_rounded),
+        ),
+        title: const Text('教练记忆'),
+      ),
       body: AnimatedBuilder(
         animation: widget.controller,
-        builder: (context, _) => ListView(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 40),
-          children: [
-            SwitchListTile.adaptive(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('在 Agent 对话中使用这些记忆'),
-              subtitle: const Text('关闭后仍保留内容，但不会注入对话上下文。'),
-              value: widget.controller.profile?.memoryEnabled ?? false,
-              onChanged: widget.controller.saving
-                  ? null
-                  : widget.controller.setMemoryEnabled,
+        builder: (context, _) => Form(
+          key: _formKey,
+          child: ListView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            padding: EdgeInsets.fromLTRB(
+              SpeakUpDesign.horizontalInset(context),
+              SpeakUpDesign.space8,
+              SpeakUpDesign.horizontalInset(context),
+              MediaQuery.viewPaddingOf(context).bottom + SpeakUpDesign.space24,
             ),
-            const SizedBox(height: 16),
-            Form(
-              key: _formKey,
-              child: Column(
-                children: [
-                  _field(_fields[0], '希望怎么称呼你', 64),
-                  _field(_fields[1], '职业', 120),
-                  _field(_fields[2], '职业背景', 500, maxLines: 4),
-                  _field(_fields[3], '母语', 64),
-                  _field(_fields[4], '讲解语言', 64),
-                  DropdownButtonFormField<CoachingResponseDetail?>(
-                    initialValue: _detail,
-                    decoration: const InputDecoration(labelText: '回答详细程度'),
-                    items: const [
-                      DropdownMenuItem(value: null, child: Text('未设置')),
-                      DropdownMenuItem(
-                        value: CoachingResponseDetail.concise,
-                        child: Text('简洁'),
-                      ),
-                      DropdownMenuItem(
-                        value: CoachingResponseDetail.balanced,
-                        child: Text('适中'),
-                      ),
-                      DropdownMenuItem(
-                        value: CoachingResponseDetail.detailed,
-                        child: Text('详细'),
-                      ),
-                    ],
-                    onChanged: (value) => _detail = value,
-                  ),
-                  _field(_interests, '兴趣（用逗号或顿号分隔，最多 8 个）', 520),
-                ],
+            children: [
+              _MemoryStatusPanel(
+                enabled: widget.controller.profile?.memoryEnabled ?? false,
+                saving: widget.controller.saving,
+                onChanged: widget.controller.setMemoryEnabled,
               ),
-            ),
-            if (widget.controller.errorMessage case final error?) ...[
-              const SizedBox(height: 12),
-              Text(
-                error,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              const SizedBox(height: SpeakUpDesign.space32),
+              const _ProfileSectionHeading(
+                key: Key('coaching-profile-about-section'),
+                title: '关于你',
+                subtitle: '让教练更准确地理解你的背景。',
+              ),
+              const SizedBox(height: SpeakUpDesign.space16),
+              _field(_fields[0], '希望怎么称呼你', 64),
+              _field(_fields[1], '职业', 120),
+              _field(_fields[2], '职业背景', 500, maxLines: 4),
+              const SizedBox(height: SpeakUpDesign.space16),
+              const _ProfileSectionHeading(
+                key: Key('coaching-profile-preferences-section'),
+                title: '沟通偏好',
+                subtitle: '调整教练与你交流和讲解的方式。',
+              ),
+              const SizedBox(height: SpeakUpDesign.space16),
+              _field(_fields[3], '母语', 64),
+              _field(_fields[4], '讲解语言', 64),
+              _ProfileSelectField<CoachingResponseDetail?>(
+                label: '回答详细程度',
+                value: _detail,
+                items: const [
+                  DropdownMenuItem(value: null, child: Text('未设置')),
+                  DropdownMenuItem(
+                    value: CoachingResponseDetail.concise,
+                    child: Text('简洁'),
+                  ),
+                  DropdownMenuItem(
+                    value: CoachingResponseDetail.balanced,
+                    child: Text('适中'),
+                  ),
+                  DropdownMenuItem(
+                    value: CoachingResponseDetail.detailed,
+                    child: Text('详细'),
+                  ),
+                ],
+                onChanged: (value) => _detail = value,
+              ),
+              _field(_interests, '兴趣', 520, hint: '用逗号或顿号分隔，最多 8 个'),
+              if (widget.controller.errorMessage case final error?) ...[
+                const SizedBox(height: SpeakUpDesign.space4),
+                _ProfileError(message: error),
+              ],
+              const SizedBox(height: SpeakUpDesign.space24),
+              FilledButton(
+                key: const Key('coaching-profile-save-button'),
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size.fromHeight(52),
+                ),
+                onPressed: widget.controller.saving ? null : _save,
+                child: Text(widget.controller.saving ? '正在保存…' : '保存'),
+              ),
+              const SizedBox(height: SpeakUpDesign.space4),
+              TextButton(
+                key: const Key('coaching-profile-clear-button'),
+                style: TextButton.styleFrom(
+                  foregroundColor: SpeakUpDesign.error,
+                ),
+                onPressed: widget.controller.saving || profile.data.isEmpty
+                    ? null
+                    : _clear,
+                child: const Text('清空教练记忆'),
               ),
             ],
-            const SizedBox(height: 24),
-            FilledButton(
-              onPressed: widget.controller.saving ? null : _save,
-              child: Text(widget.controller.saving ? '正在保存…' : '保存'),
-            ),
-            TextButton(
-              onPressed: widget.controller.saving || profile.data.isEmpty
-                  ? null
-                  : _clear,
-              child: const Text('清空教练记忆'),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -449,9 +396,11 @@ class _CoachingProfilePageState extends State<CoachingProfilePage> {
     String label,
     int maxLength, {
     int maxLines = 1,
-  }) => TextFormField(
+    String? hint,
+  }) => _ProfileTextField(
     controller: controller,
-    decoration: InputDecoration(labelText: label),
+    label: label,
+    hint: hint,
     maxLength: maxLength,
     maxLines: maxLines,
   );
@@ -504,6 +453,213 @@ class _CoachingProfilePageState extends State<CoachingProfilePage> {
     if (confirmed == true && await widget.controller.clear() && mounted) {
       Navigator.of(context).pop();
     }
+  }
+}
+
+class _MemoryStatusPanel extends StatelessWidget {
+  const _MemoryStatusPanel({
+    required this.enabled,
+    required this.saving,
+    required this.onChanged,
+  });
+
+  final bool enabled;
+  final bool saving;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const Key('coaching-profile-memory-panel'),
+      padding: const EdgeInsets.fromLTRB(
+        SpeakUpDesign.space16,
+        SpeakUpDesign.space16,
+        SpeakUpDesign.space12,
+        SpeakUpDesign.space16,
+      ),
+      decoration: BoxDecoration(
+        color: SpeakUpDesign.surfaceMuted,
+        borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('在 Agent 对话中使用这些记忆', style: SpeakUpDesign.cardTitle),
+                const SizedBox(height: SpeakUpDesign.space4),
+                Text(
+                  '关闭后仍保留内容，但不会注入对话上下文。',
+                  style: SpeakUpDesign.body.copyWith(fontSize: 13),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: SpeakUpDesign.space12),
+          Switch.adaptive(
+            key: const Key('coaching-profile-memory-switch'),
+            value: enabled,
+            onChanged: saving ? null : onChanged,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProfileSectionHeading extends StatelessWidget {
+  const _ProfileSectionHeading({
+    required this.title,
+    required this.subtitle,
+    super.key,
+  });
+
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: SpeakUpDesign.sectionTitle),
+        const SizedBox(height: SpeakUpDesign.space4),
+        Text(subtitle, style: SpeakUpDesign.body),
+      ],
+    );
+  }
+}
+
+class _ProfileTextField extends StatelessWidget {
+  const _ProfileTextField({
+    required this.controller,
+    required this.label,
+    required this.maxLength,
+    required this.maxLines,
+    this.hint,
+  });
+
+  final TextEditingController controller;
+  final String label;
+  final String? hint;
+  final int maxLength;
+  final int maxLines;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: SpeakUpDesign.space16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(child: Text(label, style: SpeakUpDesign.label)),
+              ValueListenableBuilder<TextEditingValue>(
+                valueListenable: controller,
+                builder: (context, value, _) => Text(
+                  '${value.text.length}/$maxLength',
+                  style: SpeakUpDesign.meta.copyWith(
+                    color: value.text.length == maxLength
+                        ? SpeakUpDesign.ink
+                        : SpeakUpDesign.tertiary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: SpeakUpDesign.space8),
+          TextFormField(
+            controller: controller,
+            maxLength: maxLength,
+            maxLines: maxLines,
+            minLines: maxLines > 1 ? 3 : 1,
+            textInputAction: maxLines > 1
+                ? TextInputAction.newline
+                : TextInputAction.next,
+            decoration: InputDecoration(
+              hintText: hint,
+              counterText: '',
+              alignLabelWithHint: maxLines > 1,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProfileSelectField<T> extends StatelessWidget {
+  const _ProfileSelectField({
+    required this.label,
+    required this.value,
+    required this.items,
+    required this.onChanged,
+  });
+
+  final String label;
+  final T value;
+  final List<DropdownMenuItem<T>> items;
+  final ValueChanged<T?> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: SpeakUpDesign.space16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: SpeakUpDesign.label),
+          const SizedBox(height: SpeakUpDesign.space8),
+          DropdownButtonFormField<T>(
+            key: const Key('coaching-profile-detail-field'),
+            initialValue: value,
+            isExpanded: true,
+            decoration: const InputDecoration(),
+            items: items,
+            onChanged: onChanged,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProfileError extends StatelessWidget {
+  const _ProfileError({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      liveRegion: true,
+      child: Container(
+        key: const Key('coaching-profile-error'),
+        padding: const EdgeInsets.all(SpeakUpDesign.space12),
+        decoration: BoxDecoration(
+          color: SpeakUpDesign.errorMuted,
+          borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
+        ),
+        child: Row(
+          children: [
+            const Icon(
+              Icons.error_outline_rounded,
+              size: 20,
+              color: SpeakUpDesign.error,
+            ),
+            const SizedBox(width: SpeakUpDesign.space8),
+            Expanded(
+              child: Text(
+                message,
+                style: SpeakUpDesign.body.copyWith(color: SpeakUpDesign.error),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -564,13 +720,4 @@ CoachingProfile _decodeProfile(String body) {
           : const <String>[],
     ),
   );
-}
-
-String _profileSummary(CoachingProfileData data) {
-  final values = <String>[
-    if (data.formOfAddress.isNotEmpty) data.formOfAddress,
-    if (data.occupation.isNotEmpty) data.occupation,
-    ...data.interests.take(2),
-  ];
-  return values.isEmpty ? '已保存个性化偏好' : values.join(' · ');
 }

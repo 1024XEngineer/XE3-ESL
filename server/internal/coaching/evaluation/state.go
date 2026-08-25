@@ -136,6 +136,9 @@ type SnapshotCheckpoint struct {
 	LeaseToken    string
 	InputSnapshot json.RawMessage
 	InputHash     [sha256.Size]byte
+	// RestartAttemptBudget marks the first durable acoustic checkpoint as the
+	// start of the speech text-feedback retry stage.
+	RestartAttemptBudget bool
 }
 
 type RetrySource struct {
@@ -151,10 +154,16 @@ func (source RetrySource) Valid() bool {
 }
 
 func (checkpoint SnapshotCheckpoint) Valid() bool {
-	return validUUID(checkpoint.UserID) && validUUID(checkpoint.ID) &&
+	valid := validUUID(checkpoint.UserID) && validUUID(checkpoint.ID) &&
 		validUUID(checkpoint.LeaseToken) &&
 		len(checkpoint.InputSnapshot) > 0 &&
 		sha256.Sum256(checkpoint.InputSnapshot) == checkpoint.InputHash
+	if !valid || !checkpoint.RestartAttemptBudget {
+		return valid
+	}
+	var snapshot SpeechInputSnapshot
+	return DecodeStrict(checkpoint.InputSnapshot, &snapshot) == nil &&
+		snapshot.Valid(KindPracticeTurnFeedback) && snapshot.Acoustic != nil
 }
 
 type Store interface {

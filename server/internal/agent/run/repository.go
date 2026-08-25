@@ -21,6 +21,7 @@ type Repository interface {
 	CreateRetry(stdcontext.Context, string, string, string, Configuration) (Retry, error)
 	Claim(stdcontext.Context, string, string) (Run, bool, error)
 	Find(stdcontext.Context, string, string) (Run, error)
+	FindLatestForThread(stdcontext.Context, string, string) (Run, bool, error)
 	SaveContextSnapshot(
 		stdcontext.Context,
 		string,
@@ -115,5 +116,10 @@ type Application interface {
 		StreamObserver,
 	) (Retry, error)
 	GetRun(stdcontext.Context, requestcontext.Actor, string) (Run, error)
+	GetLatestRun(
+		stdcontext.Context,
+		requestcontext.Actor,
+		string,
+	) (Run, bool, error)
 	ProcessPending(stdcontext.Context, requestcontext.Actor, Run) (Run, error)
 }

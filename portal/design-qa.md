@@ -1,11 +1,15 @@
 # Portal design QA
 
 - Reference: ByteDance Seed's restrained editorial layout, adapted rather than
-  copied: quiet full-width navigation, black-and-white hierarchy, one primary
-  action, generous spacing, and product media on the right.
-- Product continuity: retained the existing SpeakUp mascot, real interview
-  practice screenshot, product positioning, practice method, and long-term
-  memory explanation.
+  copied: quiet full-width navigation, neutral hierarchy, one primary action,
+  generous spacing, and product media on the right.
+- Brand: replaced only the 3D mascot with the approved flat SpeakUp mark and
+  retained the existing handwritten SpeakUp wordmark. Two rising opening quotes
+  use violet `#7157E8` and coral `#FF654F`; there is no gradient, shadow, glow,
+  character, or decorative UI restyle. The same SVG remains legible at favicon
+  and navigation sizes.
+- Product continuity: retained the real interview practice screenshot, product
+  positioning, practice method, and long-term memory explanation.
 - Public homepage: presents one Android APK action at the top. It does not
   expose signing, SHA-256, ABI, FAQ, release promises, or a second download
   route.
@@ -28,6 +32,19 @@
   for the brand, navigation links, and action.
 - Runtime: no application console errors were observed during the desktop and
   mobile checks.
+- Changelog: checked `/changelog` at 1280 × 720, 390 × 844, and 320 × 800.
+  The page uses the homepage's restrained black-and-white editorial language,
+  one flat release list, clear version/date/category hierarchy, and no cards,
+  gradients, glow, or horizontal overflow.
+- Changelog release state: the browser rendered v0.1.4 only after the active
+  Android metadata matched the versioned Chinese notes, including the
+  Asia/Shanghai date `2026年8月24日` and the verified user-facing fix copy.
+- Changelog discovery: both the homepage navigation and the Android detail
+  page's “查看正式版本更新记录” link navigated to `/changelog`. The mobile
+  navigation collapses at narrow widths; the footer becomes one-column at
+  320 px, keeps the entry visible, and provides a 44 px-high touch target.
+- Changelog runtime: no application console warnings, errors, or Vinext error
+  overlays were observed during the desktop and mobile checks.
 - Automated verification: lint, unit tests, rendered HTML checks, production
   build, and `git diff --check` must pass on the final clean worktree.
 

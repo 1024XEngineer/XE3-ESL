@@ -38,6 +38,7 @@ func NewHandler(
 func (handler *Handler) RegisterRoutes(routes gin.IRoutes) {
 	routes.POST("/v1/agent-threads/:thread_id/runs", handler.submit)
 	routes.POST("/v1/agent-threads/:thread_id/runs/stream", handler.submitStream)
+	routes.GET("/v1/agent-threads/:thread_id/runs/latest", handler.getLatest)
 	routes.GET("/v1/agent-runs/:run_id", handler.get)
 	routes.POST("/v1/agent-runs/:run_id/retries", handler.retry)
 	routes.POST("/v1/agent-runs/:run_id/retries/stream", handler.retryStream)
@@ -194,6 +195,26 @@ func (handler *Handler) get(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, RunResponse(run))
+}
+
+func (handler *Handler) getLatest(c *gin.Context) {
+	actor, ok := requestcontext.ActorFromContext(c.Request.Context())
+	if !ok {
+		handler.write(c, authenticationRequired())
+		return
+	}
+	run, found, err := handler.application.GetLatestRun(
+		c.Request.Context(), actor, c.Param("thread_id"),
+	)
+	if err != nil {
+		handler.write(c, mapError(err))
+		return
+	}
+	response := gin.H{}
+	if found {
+		response["run"] = RunResponse(run)
+	}
+	c.JSON(http.StatusOK, response)
 }
 
 func (handler *Handler) finishStream(

@@ -349,6 +349,149 @@
   color: #111;
 }
 
+.release-footer-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.release-footer-meta i {
+  color: var(--muted);
+  font-style: normal;
+}
+
+.release-footer-meta a,
+.download-page .download-inline-link {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+}
+
+.release-footer-meta a:focus-visible,
+.download-page .download-inline-link:focus-visible,
+.changelog-page .changelog-back:focus-visible {
+  outline: 3px solid #2d62ff;
+  outline-offset: 3px;
+}
+
+/* User-facing production release notes. */
+.changelog-page .nav-links a[aria-current="page"] {
+  border-color: #111;
+}
+
+.changelog-page .changelog-hero,
+.changelog-page .changelog-list {
+  width: min(960px, calc(100% - var(--page-gutter) * 2));
+  margin-inline: auto;
+}
+
+.changelog-page .changelog-hero {
+  padding: clamp(72px, 8vw, 108px) 0 clamp(68px, 7vw, 96px);
+}
+
+.changelog-page .changelog-back {
+  display: inline-block;
+  margin-bottom: clamp(58px, 6vw, 82px);
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.changelog-page .changelog-hero h1 {
+  max-width: 760px;
+  font-size: clamp(52px, 7vw, 88px);
+  font-weight: 700;
+  line-height: 1;
+}
+
+.changelog-page .changelog-intro {
+  max-width: 660px;
+  margin-top: 24px;
+  color: var(--muted);
+  font-size: clamp(17px, 1.7vw, 20px);
+  line-height: 1.7;
+}
+
+.changelog-page .changelog-list {
+  margin-bottom: clamp(92px, 10vw, 140px);
+}
+
+.changelog-page .changelog-release {
+  padding: clamp(44px, 5vw, 64px) 0;
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) minmax(0, 1fr);
+  gap: clamp(48px, 7vw, 80px);
+  border-top: 1px solid var(--line);
+}
+
+.changelog-page .changelog-release:last-child {
+  border-bottom: 1px solid var(--line);
+}
+
+.changelog-page .changelog-release-meta {
+  padding-top: 7px;
+}
+
+.changelog-page .changelog-release-meta p {
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 680;
+}
+
+.changelog-page .changelog-release-meta time {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.changelog-page .changelog-release-body h2 {
+  font-size: clamp(32px, 3.6vw, 42px);
+  font-weight: 680;
+  line-height: 1.1;
+}
+
+.changelog-page .changelog-change-group {
+  margin-top: 34px;
+}
+
+.changelog-page .changelog-change-group h3 {
+  margin: 0 0 14px;
+  font-size: 18px;
+  font-weight: 680;
+  letter-spacing: -0.025em;
+}
+
+.changelog-page .changelog-change-group ul {
+  margin: 0;
+  padding-left: 1.15em;
+}
+
+.changelog-page .changelog-change-group li {
+  padding-left: 6px;
+  color: #333;
+  font-size: 17px;
+  line-height: 1.75;
+}
+
+.changelog-page .changelog-status {
+  min-height: 220px;
+  padding: clamp(44px, 5vw, 64px) 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.changelog-page .changelog-status h2 {
+  font-size: clamp(30px, 3.6vw, 40px);
+  font-weight: 680;
+}
+
+.changelog-page .changelog-status p {
+  max-width: 620px;
+  margin-top: 16px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
 /* Detailed Android release and verification page. */
 .download-page .download-hero,
 .download-page .download-section,
@@ -610,6 +753,11 @@
   .download-page .download-section {
     grid-template-columns: 1fr;
   }
+
+  .changelog-page .changelog-release {
+    grid-template-columns: 1fr;
+    gap: 30px;
+  }
 }
 
 @media (max-width: 640px) {
@@ -708,6 +856,22 @@
     font-size: 44px;
   }
 
+  .changelog-page .changelog-hero {
+    padding: 58px 0 64px;
+  }
+
+  .changelog-page .changelog-back {
+    margin-bottom: 56px;
+  }
+
+  .changelog-page .changelog-hero h1 {
+    font-size: clamp(46px, 13vw, 54px);
+  }
+
+  .changelog-page .changelog-release {
+    padding: 40px 0 44px;
+  }
+
   .download-page .download-hero {
     padding: 58px 0 86px;
     gap: 50px;
@@ -764,12 +928,25 @@
   }
 
   .release-site footer {
-    grid-template-columns: 1fr auto;
+    grid-template-columns: 1fr;
+    gap: 10px;
     padding: 28px 20px;
   }
 
   .release-site footer p {
     display: none;
+  }
+
+  .release-site footer > .release-footer-meta {
+    justify-self: start;
+    flex-wrap: wrap;
+    white-space: normal;
+  }
+
+  .release-footer-meta a {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
   }
 }
 

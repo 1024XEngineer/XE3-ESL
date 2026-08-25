@@ -411,6 +411,17 @@ func (service *Service) GetRun(
 	return service.repository.Find(ctx, actor.UserID, runID)
 }
 
+func (service *Service) GetLatestRun(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	threadID string,
+) (Run, bool, error) {
+	if !actor.Valid() || !ValidUUID(threadID) {
+		return Run{}, false, ErrNotFound
+	}
+	return service.repository.FindLatestForThread(ctx, actor.UserID, threadID)
+}
+
 func (service *Service) GetClientActions(
 	ctx context.Context,
 	actor requestcontext.Actor,

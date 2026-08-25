@@ -3,6 +3,7 @@ package postgres_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -75,6 +76,76 @@ SELECT id FROM users WHERE id = $1 FOR UPDATE`, actor.UserID); err != nil {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run claim did not resume after owner unlock")
+	}
+}
+
+func TestLatestAgentRunReadDistinguishesEmptyAndOwnedThread(t *testing.T) {
+	database := newAgentTestDatabase(t)
+	conversationService, runService, _ := newAgentRunServices(
+		t,
+		database.pool,
+		newFixedTextGenerator(successfulTextResult()),
+		testRunConfiguration,
+	)
+	ctx := context.Background()
+	actor := testActorA()
+	thread, err := conversationService.CreateThread(ctx, actor)
+	if err != nil {
+		t.Fatalf("create Thread: %v", err)
+	}
+
+	if run, found, err := runService.GetLatestRun(ctx, actor, thread.ID); err != nil || found || run != (agentrun.Run{}) {
+		t.Fatalf("empty latest Run = (%#v, %t, %v)", run, found, err)
+	}
+	first, err := runService.SubmitText(
+		ctx,
+		actor,
+		thread.ID,
+		"latest-run-first",
+		"Create the first durable Run.",
+	)
+	if err != nil {
+		t.Fatalf("submit first Run: %v", err)
+	}
+	second, err := runService.SubmitText(
+		ctx,
+		actor,
+		thread.ID,
+		"latest-run-second",
+		"Create the second durable Run.",
+	)
+	if err != nil {
+		t.Fatalf("submit second Run: %v", err)
+	}
+	latest, found, err := runService.GetLatestRun(ctx, actor, thread.ID)
+	if err != nil || !found || latest.ID != second.Run.ID || latest.ID == first.Run.ID {
+		t.Fatalf(
+			"latest Run = (%#v, %t, %v), want second %q",
+			latest,
+			found,
+			err,
+			second.Run.ID,
+		)
+	}
+	if _, _, err := runService.GetLatestRun(ctx, testActorB(), thread.ID); !errors.Is(err, agentrun.ErrNotFound) {
+		t.Fatalf("cross-owner latest Run error = %v, want not found", err)
+	}
+	if err := conversationService.DeleteThread(ctx, actor, thread.ID); err != nil {
+		t.Fatalf("delete Thread with Runs: %v", err)
+	}
+	if _, _, err := runService.GetLatestRun(ctx, actor, thread.ID); !errors.Is(err, agentrun.ErrNotFound) {
+		t.Fatalf("deleted Thread latest Run error = %v, want not found", err)
+	}
+
+	emptyThread, err := conversationService.CreateThread(ctx, actor)
+	if err != nil {
+		t.Fatalf("create empty Thread: %v", err)
+	}
+	if err := conversationService.DeleteThread(ctx, actor, emptyThread.ID); err != nil {
+		t.Fatalf("delete empty Thread: %v", err)
+	}
+	if _, _, err := runService.GetLatestRun(ctx, actor, emptyThread.ID); !errors.Is(err, agentrun.ErrNotFound) {
+		t.Fatalf("deleted empty Thread latest Run error = %v, want not found", err)
 	}
 }
 

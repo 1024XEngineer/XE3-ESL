@@ -68,6 +68,7 @@ class ConversationPage extends StatefulWidget {
     this.isReplyPending = false,
     this.isComposerBlocked = false,
     this.errorMessage,
+    this.retryOperationLabel = '重试',
     this.onSubmitText,
     this.onRetryOperation,
     this.onLoadEarlierMessages,
@@ -111,6 +112,7 @@ class ConversationPage extends StatefulWidget {
   final bool isReplyPending;
   final bool isComposerBlocked;
   final String? errorMessage;
+  final String retryOperationLabel;
   final Future<bool> Function(String)? onSubmitText;
   final VoidCallback? onRetryOperation;
   final VoidCallback? onLoadEarlierMessages;
@@ -325,6 +327,7 @@ class ConversationPage extends StatefulWidget {
                             _InlineError(
                               message: message,
                               onRetry: onRetryOperation,
+                              retryLabel: retryOperationLabel,
                             ),
                           ],
                         ],
@@ -1032,10 +1035,15 @@ class _MessageList extends StatelessWidget {
 }
 
 class _InlineError extends StatelessWidget {
-  const _InlineError({required this.message, required this.onRetry});
+  const _InlineError({
+    required this.message,
+    required this.onRetry,
+    required this.retryLabel,
+  });
 
   final String message;
   final VoidCallback? onRetry;
+  final String retryLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -1057,7 +1065,7 @@ class _InlineError extends StatelessWidget {
               TextButton(
                 key: const Key('agent-retry-operation-button'),
                 onPressed: onRetry,
-                child: const Text('重试'),
+                child: Text(retryLabel),
               ),
           ],
         ),

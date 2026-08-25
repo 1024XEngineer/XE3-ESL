@@ -46,12 +46,16 @@ final class AgentVoiceController extends ChangeNotifier
     this.maximumDraftPolls = 75,
     this.maximumRunPolls = 75,
     this.recordingLimit = const Duration(seconds: 58),
+    this.realtimeCompletionTimeout = const Duration(seconds: 75),
+    this.workflowCleanupTimeout = const Duration(seconds: 2),
   }) {
     if (pollInterval.isNegative ||
         maximumDraftPolls < 1 ||
         maximumRunPolls < 1 ||
         recordingLimit <= Duration.zero ||
-        recordingLimit > const Duration(seconds: 60)) {
+        recordingLimit > const Duration(seconds: 60) ||
+        realtimeCompletionTimeout <= Duration.zero ||
+        workflowCleanupTimeout <= Duration.zero) {
       throw ArgumentError('Agent voice controller configuration is invalid.');
     }
     _completionSubscription = audioPlayer.onComplete.listen((_) {
@@ -76,6 +80,8 @@ final class AgentVoiceController extends ChangeNotifier
   final int maximumDraftPolls;
   final int maximumRunPolls;
   final Duration recordingLimit;
+  final Duration realtimeCompletionTimeout;
+  final Duration workflowCleanupTimeout;
 
   String? _threadId;
   AgentVoiceComposerState _state = AgentVoiceComposerState.idle;
@@ -104,7 +110,8 @@ final class AgentVoiceController extends ChangeNotifier
   bool _backgrounded = false;
   int _lifecycleGeneration = 0;
   Future<void>? _workflowOperation;
-  Future<_RealtimeDraftResult>? _realtimeDraft;
+  _RealtimeDraftSession? _realtimeSession;
+  Future<void>? _workflowCleanup;
   Future<void>? _cleanupFuture;
 
   bool _draftPlaying = false;
@@ -123,6 +130,8 @@ final class AgentVoiceController extends ChangeNotifier
   bool get canStartRecording =>
       !_disposed &&
       !_backgrounded &&
+      _workflowCleanup == null &&
+      _workflowOperation == null &&
       _threadId != null &&
       _state == AgentVoiceComposerState.idle;
   bool get canStopRecording => _state == AgentVoiceComposerState.recording;
@@ -143,11 +152,24 @@ final class AgentVoiceController extends ChangeNotifier
   /// A local playback cleanup failure is surfaced as retryable Composer state;
   /// it never rolls back or desynchronizes the server-confirmed Thread focus.
   Future<void> bindThread(String? threadId) async {
+    final cleanup = _workflowCleanup;
+    if (cleanup != null) {
+      await cleanup;
+    }
     if (threadId == _threadId) {
+      // A concurrent bind may have installed cleanup after the first await.
+      // Starting capture must wait for that cleanup instead of becoming a
+      // silent no-op behind [canStartRecording].
+      final concurrentCleanup = _workflowCleanup;
+      if (concurrentCleanup != null) {
+        await concurrentCleanup;
+      }
       return;
     }
     final staleRecording = _recording;
     final staleDraft = _draft;
+    final staleRealtime = _realtimeSession;
+    final staleOperation = _workflowOperation;
     _workflowGeneration++;
     _draftPlaybackGeneration++;
     _cancelRecordingTimers();
@@ -158,13 +180,12 @@ final class AgentVoiceController extends ChangeNotifier
       notifyListeners();
     }
     try {
-      await Future.wait<void>([
-        _discardCurrentBestEffort(),
-        if (staleRecording != null) _discardRecordingBestEffort(staleRecording),
-        Future<void>.sync(audioPlayer.stop),
-        if (staleDraft != null && !_isConfirmed(staleDraft))
-          _deleteDraftBestEffort(staleDraft.id),
-      ]);
+      await _startWorkflowCleanup(
+        realtime: staleRealtime,
+        operation: staleOperation,
+        recording: staleRecording,
+        draft: staleDraft,
+      );
     } catch (_) {
       if (!_disposed && _threadId == threadId) {
         _state = AgentVoiceComposerState.failed;
@@ -209,14 +230,18 @@ final class AgentVoiceController extends ChangeNotifier
           when client is AgentVoiceRealtimeInputClient) {
         final idempotencyKey = _newId('voice-upload');
         final chunks = await streamingRecorder.startAudioStream();
+        if (!_isWorkflowCurrent(fence)) {
+          await recorder.discardCurrent();
+          return;
+        }
         _uploadIdempotencyKey = idempotencyKey;
-        _realtimeDraft = _collectRealtimeDraft(
-          fence,
-          (client as AgentVoiceRealtimeInputClient).createDraftRealtime(
+        _realtimeSession = _RealtimeDraftSession(
+          events: (client as AgentVoiceRealtimeInputClient).createDraftRealtime(
             threadId: fence.threadId,
             audioChunks: chunks,
             idempotencyKey: idempotencyKey,
           ),
+          collect: (events) => _collectRealtimeDraft(fence, events),
         );
       } else {
         await recorder.start();
@@ -268,9 +293,9 @@ final class AgentVoiceController extends ChangeNotifier
   }
 
   Future<void> _stopRecording(_WorkflowFence fence) async {
-    final usedRealtimeInput = _realtimeDraft != null;
+    final realtime = _realtimeSession;
+    final usedRealtimeInput = realtime != null;
     try {
-      final realtime = _realtimeDraft;
       final recording =
           realtime != null && recorder is AgentVoiceStreamingRecorder
           ? await (recorder as AgentVoiceStreamingRecorder).stopAudioStream()
@@ -287,8 +312,24 @@ final class AgentVoiceController extends ChangeNotifier
       } else {
         _state = AgentVoiceComposerState.transcribing;
         notifyListeners();
-        final result = await realtime;
-        _realtimeDraft = null;
+        final result = await realtime.result.timeout(
+          realtimeCompletionTimeout,
+          onTimeout: () async {
+            await _cancelRealtimeBestEffort(realtime);
+            return const _RealtimeDraftResult(
+              error: AgentClientException(
+                kind: AgentClientFailureKind.network,
+                retryable: true,
+              ),
+            );
+          },
+        );
+        if (identical(_realtimeSession, realtime)) {
+          _realtimeSession = null;
+        }
+        if (!_isWorkflowCurrent(fence)) {
+          return;
+        }
         if (result.error case final error?) {
           throw error;
         }
@@ -311,7 +352,9 @@ final class AgentVoiceController extends ChangeNotifier
       _retry = null;
     } catch (error) {
       if (_isWorkflowCurrent(fence)) {
-        _realtimeDraft = null;
+        if (identical(_realtimeSession, realtime)) {
+          _realtimeSession = null;
+        }
         _state = AgentVoiceComposerState.failed;
         if (usedRealtimeInput && _recording != null) {
           _errorMessage = _uploadFailureMessage(error);
@@ -329,11 +372,12 @@ final class AgentVoiceController extends ChangeNotifier
 
   Future<_RealtimeDraftResult> _collectRealtimeDraft(
     _WorkflowFence fence,
-    Stream<AgentVoiceTranscriptionEvent> events,
+    StreamIterator<AgentVoiceTranscriptionEvent> events,
   ) async {
     AgentVoiceDraft? completed;
     try {
-      await for (final event in events) {
+      while (await events.moveNext()) {
+        final event = events.current;
         if (!_isWorkflowCurrent(fence)) {
           if (event case AgentVoiceDraftCompleted(:final draft)) {
             await _deleteDraftBestEffort(draft.id);
@@ -355,24 +399,29 @@ final class AgentVoiceController extends ChangeNotifier
   }
 
   Future<void> cancel() async {
+    final existingCleanup = _workflowCleanup;
+    if (existingCleanup != null) {
+      await existingCleanup;
+      return;
+    }
     final staleRecording = _recording;
     final staleDraft = _draft;
+    final staleRealtime = _realtimeSession;
+    final staleOperation = _workflowOperation;
     _workflowGeneration++;
     _draftPlaybackGeneration++;
     _cancelRecordingTimers();
     _resetWorkflowPresentation();
-    _realtimeDraft = null;
     _resetDraftPlayback();
     if (!_disposed) {
       notifyListeners();
     }
-    await Future.wait<void>([
-      _discardCurrentBestEffort(),
-      if (staleRecording != null) _discardRecordingBestEffort(staleRecording),
-      Future<void>.sync(audioPlayer.stop),
-      if (staleDraft != null && !_isConfirmed(staleDraft))
-        _deleteDraftBestEffort(staleDraft.id),
-    ]);
+    await _startWorkflowCleanup(
+      realtime: staleRealtime,
+      operation: staleOperation,
+      recording: staleRecording,
+      draft: staleDraft,
+    );
   }
 
   Future<void> rerecord() async {
@@ -1384,12 +1433,79 @@ final class AgentVoiceController extends ChangeNotifier
     await operation;
   }
 
+  Future<void> _startWorkflowCleanup({
+    required _RealtimeDraftSession? realtime,
+    required Future<void>? operation,
+    required AgentVoiceLocalRecording? recording,
+    required AgentVoiceDraft? draft,
+  }) {
+    final existing = _workflowCleanup;
+    if (existing != null) {
+      return existing;
+    }
+    late final Future<void> cleanup;
+    cleanup =
+        Future<void>.sync(() async {
+          await _cancelRealtimeBestEffort(realtime);
+          await _awaitOperationBestEffort(operation);
+          await Future.wait<void>([
+            _discardCurrentBestEffort(),
+            if (recording != null) _discardRecordingBestEffort(recording),
+            Future<void>.sync(audioPlayer.stop),
+            if (draft != null && !_isConfirmed(draft))
+              _deleteDraftBestEffort(draft.id),
+          ]);
+        }).whenComplete(() {
+          if (identical(_workflowCleanup, cleanup)) {
+            _workflowCleanup = null;
+            if (!_disposed) {
+              notifyListeners();
+            }
+          }
+        });
+    _workflowCleanup = cleanup;
+    if (!_disposed) {
+      notifyListeners();
+    }
+    return cleanup;
+  }
+
+  Future<void> _cancelRealtimeBestEffort(
+    _RealtimeDraftSession? realtime,
+  ) async {
+    if (realtime == null) {
+      return;
+    }
+    try {
+      await realtime.cancel().timeout(workflowCleanupTimeout);
+    } catch (_) {
+      // The workflow fence and recorder cleanup still isolate stale input.
+    }
+  }
+
+  Future<void> _awaitOperationBestEffort(Future<void>? operation) async {
+    if (operation == null) {
+      return;
+    }
+    try {
+      await operation.timeout(workflowCleanupTimeout);
+    } catch (_) {
+      // The generation fence prevents the stale operation from publishing.
+      // Keeping `_workflowOperation` set until its source actually completes
+      // also prevents a new recording from running concurrently with it.
+    }
+  }
+
   Future<void> clearPrivateState({bool clearClient = true}) async {
     final existing = _cleanupFuture;
     if (existing != null) {
       await existing;
       return;
     }
+    final staleRecording = _recording;
+    final staleDraft = _draft;
+    final staleRealtime = _realtimeSession;
+    final staleOperation = _workflowOperation;
     _accountEpoch++;
     _workflowGeneration++;
     _draftPlaybackGeneration++;
@@ -1402,17 +1518,30 @@ final class AgentVoiceController extends ChangeNotifier
     if (!_disposed) {
       notifyListeners();
     }
-    final cleanup = Future.wait<void>([
-      Future<void>.sync(recorder.clearAccountState),
-      Future<void>.sync(audioPlayer.clearAccountState),
-      if (clearClient) Future<void>.sync(client.clearAccountState),
-    ]);
+    final cleanup = Future<void>.sync(() async {
+      final workflowCleanup = _startWorkflowCleanup(
+        realtime: staleRealtime,
+        operation: staleOperation,
+        recording: staleRecording,
+        draft: staleDraft,
+      );
+      await Future.wait<void>([
+        workflowCleanup,
+        Future<void>.sync(recorder.clearAccountState),
+        Future<void>.sync(audioPlayer.clearAccountState),
+        if (clearClient) Future<void>.sync(client.clearAccountState),
+      ]);
+      // A fenced operation may finish after the first account clear. Make a
+      // final strict pass so no late local recording or playback survives the
+      // account boundary.
+      await Future.wait<void>([
+        Future<void>.sync(recorder.clearAccountState),
+        Future<void>.sync(audioPlayer.clearAccountState),
+      ]);
+    });
     _cleanupFuture = cleanup;
     try {
       await cleanup;
-      await _workflowOperation;
-      await recorder.clearAccountState();
-      await audioPlayer.clearAccountState();
     } finally {
       if (identical(_cleanupFuture, cleanup)) {
         _cleanupFuture = null;
@@ -1528,6 +1657,8 @@ final class AgentVoiceController extends ChangeNotifier
     if (_disposed) {
       return;
     }
+    final staleRealtime = _realtimeSession;
+    final staleOperation = _workflowOperation;
     _disposed = true;
     WidgetsBinding.instance.removeObserver(this);
     _accountEpoch++;
@@ -1536,10 +1667,21 @@ final class AgentVoiceController extends ChangeNotifier
     _lifecycleGeneration++;
     _cancelRecordingTimers();
     unawaited(_completionSubscription?.cancel());
-    unawaited(recorder.discardCurrent());
-    unawaited(audioPlayer.dispose());
-    unawaited(client.dispose());
+    unawaited(_disposeResources(staleRealtime, staleOperation));
     super.dispose();
+  }
+
+  Future<void> _disposeResources(
+    _RealtimeDraftSession? realtime,
+    Future<void>? operation,
+  ) async {
+    await _cancelRealtimeBestEffort(realtime);
+    await _awaitOperationBestEffort(operation);
+    await Future.wait<void>([
+      Future<void>.sync(recorder.discardCurrent),
+      Future<void>.sync(audioPlayer.dispose),
+      Future<void>.sync(client.dispose),
+    ]);
   }
 
   void _startRecordingTimers(_WorkflowFence fence) {
@@ -1601,7 +1743,7 @@ final class AgentVoiceController extends ChangeNotifier
     _confirmationCommand = null;
     _runRetrySourceRunId = null;
     _runRetryId = null;
-    _realtimeDraft = null;
+    _realtimeSession = null;
     _recordingElapsed = Duration.zero;
   }
 
@@ -1962,6 +2104,34 @@ final class _RealtimeDraftResult {
 
   final AgentVoiceDraft? draft;
   final Object? error;
+}
+
+final class _RealtimeDraftSession {
+  _RealtimeDraftSession({
+    required Stream<AgentVoiceTranscriptionEvent> events,
+    required Future<_RealtimeDraftResult> Function(
+      StreamIterator<AgentVoiceTranscriptionEvent> events,
+    )
+    collect,
+  }) {
+    final iterator = StreamIterator<AgentVoiceTranscriptionEvent>(events);
+    _events = iterator;
+    result = collect(iterator);
+  }
+
+  late final StreamIterator<AgentVoiceTranscriptionEvent> _events;
+  late final Future<_RealtimeDraftResult> result;
+  Future<void>? _cancellation;
+
+  Future<void> cancel() {
+    final existing = _cancellation;
+    if (existing != null) {
+      return existing;
+    }
+    final cancellation = Future<void>.sync(_events.cancel);
+    _cancellation = cancellation;
+    return cancellation;
+  }
 }
 
 final class _AsrRetryCommand {
