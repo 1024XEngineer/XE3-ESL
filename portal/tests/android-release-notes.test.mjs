@@ -10,30 +10,42 @@ import {
 } from "../lib/android-release-notes.mjs";
 
 const release = {
-  version: "0.1.4",
-  published_at: "2026-08-23T20:16:29Z",
+  version: "0.1.7",
+  published_at: "2026-08-25T14:05:30Z",
 };
 
 function validNotes() {
   return {
     release_notes_version: 1,
     locale: "zh-CN",
-    version: "0.1.4",
-    published_at: "2026-08-23T20:16:29Z",
+    version: "0.1.7",
+    published_at: "2026-08-25T14:05:30Z",
     changes: [
       {
         type: "fix",
-        text: "修复部分情况下实时语音识别无法返回文字结果的问题。",
+        text: "修复断网后实时语音无法再次录音的问题。",
+      },
+      {
+        type: "fix",
+        text: "修复语音反馈结果异常时可能重复失败的问题。",
+      },
+      {
+        type: "improvement",
+        text: "优化语音评测与文字反馈的重试等待，减少报告长时间卡住。",
+      },
+      {
+        type: "fix",
+        text: "修复进入历史练习时可能自动触发新回复的问题。",
       },
     ],
   };
 }
 
-test("publishes an honest v0.1.4 user-facing release note", () => {
+test("publishes an honest v0.1.7 user-facing release note", () => {
   const notes = JSON.parse(
     readFileSync(
       new URL(
-        "../public/release-notes/android/v0.1.4.zh-CN.json",
+        "../public/release-notes/android/v0.1.7.zh-CN.json",
         import.meta.url,
       ),
       "utf8",
@@ -44,7 +56,19 @@ test("publishes an honest v0.1.4 user-facing release note", () => {
   assert.deepEqual(notes.changes, [
     {
       type: "fix",
-      text: "修复部分情况下实时语音识别无法返回文字结果的问题。",
+      text: "修复断网后实时语音无法再次录音的问题。",
+    },
+    {
+      type: "fix",
+      text: "修复语音反馈结果异常时可能重复失败的问题。",
+    },
+    {
+      type: "improvement",
+      text: "优化语音评测与文字反馈的重试等待，减少报告长时间卡住。",
+    },
+    {
+      type: "fix",
+      text: "修复进入历史练习时可能自动触发新回复的问题。",
     },
   ]);
 });
@@ -54,8 +78,8 @@ test("parses strict, single-version Android release notes", () => {
 
   assert.equal(parseAndroidReleaseNotes(notes), notes);
   assert.equal(
-    androidReleaseNotesPath("0.1.4"),
-    "/release-notes/android/v0.1.4.zh-CN.json",
+    androidReleaseNotesPath("0.1.7"),
+    "/release-notes/android/v0.1.7.zh-CN.json",
   );
   assert.equal(matchAndroidReleaseNotes(release, notes), notes);
 });
@@ -79,7 +103,7 @@ test("rejects malformed Android release notes", () => {
         ...validNotes().changes,
         {
           type: "improvement",
-          text: "修复部分情况下实时语音识别无法返回文字结果的问题。",
+          text: "修复断网后实时语音无法再次录音的问题。",
         },
       ],
     },
@@ -95,13 +119,13 @@ test("rejects malformed Android release notes", () => {
 
 test("requires current notes to match production version and publication time", () => {
   assert.throws(
-    () => matchAndroidReleaseNotes({ ...release, version: "0.1.5" }, validNotes()),
+    () => matchAndroidReleaseNotes({ ...release, version: "0.1.6" }, validNotes()),
     /Android release notes are invalid/,
   );
   assert.throws(
     () =>
       matchAndroidReleaseNotes(
-        { ...release, published_at: "2026-08-23T20:17:00Z" },
+        { ...release, published_at: "2026-08-25T14:06:00Z" },
         validNotes(),
       ),
     /Android release notes are invalid/,
@@ -121,7 +145,7 @@ test("loads only the versioned notes for the active production release", async (
   assert.equal(ready.status, "ready");
   assert.deepEqual(requests, [
     {
-      url: "/release-notes/android/v0.1.4.zh-CN.json",
+      url: "/release-notes/android/v0.1.7.zh-CN.json",
       options: {
         cache: "force-cache",
         headers: { accept: "application/json" },
