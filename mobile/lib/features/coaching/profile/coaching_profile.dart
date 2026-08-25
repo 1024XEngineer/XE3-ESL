@@ -1,10 +1,8 @@
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/identity/auth_state.dart';
 import 'package:speakup/identity/network/identity_http_transport.dart';
 
@@ -250,84 +248,6 @@ final class CoachingProfileController extends ChangeNotifier {
   }
 }
 
-class CoachingProfileCard extends StatefulWidget {
-  const CoachingProfileCard({required this.controller, super.key});
-
-  final CoachingProfileController controller;
-
-  @override
-  State<CoachingProfileCard> createState() => _CoachingProfileCardState();
-}
-
-class _CoachingProfileCardState extends State<CoachingProfileCard> {
-  @override
-  void initState() {
-    super.initState();
-    unawaited(widget.controller.load());
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: widget.controller,
-      builder: (context, _) {
-        final profile = widget.controller.profile;
-        return InkWell(
-          key: const Key('coaching-profile-card'),
-          borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
-          onTap: profile == null
-              ? widget.controller.load
-              : () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) =>
-                        CoachingProfilePage(controller: widget.controller),
-                  ),
-                ),
-          child: Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              border: Border.all(color: const Color(0xFFE5E5E5)),
-              borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.psychology_alt_outlined, size: 28),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('教练记忆', style: SpeakUpDesign.sectionTitle),
-                      const SizedBox(height: 4),
-                      Text(
-                        widget.controller.loading
-                            ? '正在读取…'
-                            : profile == null
-                            ? widget.controller.errorMessage ?? '点按重试'
-                            : !profile.memoryEnabled
-                            ? '已关闭，不会注入 Agent 对话'
-                            : profile.data.isEmpty
-                            ? '尚未保存称呼、职业或偏好'
-                            : _profileSummary(profile.data),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: SpeakUpDesign.body.copyWith(
-                          color: SpeakUpDesign.secondary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const Icon(Icons.chevron_right_rounded),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
 class CoachingProfilePage extends StatefulWidget {
   const CoachingProfilePage({required this.controller, super.key});
 
@@ -564,13 +484,4 @@ CoachingProfile _decodeProfile(String body) {
           : const <String>[],
     ),
   );
-}
-
-String _profileSummary(CoachingProfileData data) {
-  final values = <String>[
-    if (data.formOfAddress.isNotEmpty) data.formOfAddress,
-    if (data.occupation.isNotEmpty) data.occupation,
-    ...data.interests.take(2),
-  ];
-  return values.isEmpty ? '已保存个性化偏好' : values.join(' · ');
 }
