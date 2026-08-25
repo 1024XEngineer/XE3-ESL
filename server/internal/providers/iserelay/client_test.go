@@ -2,6 +2,7 @@ package iserelay
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -10,7 +11,11 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
+	"io"
 	"math/big"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -20,6 +25,7 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/speechfeedback"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/providerobservability"
 )
 
 func TestNewClientLoadsMTLSConfiguration(t *testing.T) {
@@ -38,6 +44,7 @@ func TestNewClientLoadsMTLSConfiguration(t *testing.T) {
 	transport, ok := client.httpClient.Transport.(*http.Transport)
 	if !ok || transport.TLSClientConfig == nil ||
 		transport.TLSClientConfig.MinVersion != tls.VersionTLS13 ||
+		transport.TLSHandshakeTimeout != 15*time.Second ||
 		len(transport.TLSClientConfig.Certificates) != 1 ||
 		len(transport.TLSClientConfig.RootCAs.Subjects()) != 1 {
 		t.Fatalf("unexpected mTLS transport: %#v", client.httpClient.Transport)
@@ -162,6 +169,217 @@ func TestClientCreatesAndPollsEvaluation(t *testing.T) {
 	}
 	if polls.Load() != 1 || result.Provider != "xfyun_ise" || result.RawResult != "" {
 		t.Fatalf("unexpected relay result: %#v, polls=%d", result, polls.Load())
+	}
+}
+
+func TestClientRetriesLostCreateResponseWithIdenticalRequest(t *testing.T) {
+	var requestBodies [][]byte
+	var contentTypes []string
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Method == http.MethodGet {
+			return clientResponse(
+				t,
+				request,
+				http.StatusOK,
+				resultResponse(testRequestID, testResult()),
+			), nil
+		}
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatalf("read create request: %v", err)
+		}
+		requestBodies = append(requestBodies, body)
+		contentTypes = append(contentTypes, request.Header.Get("content-type"))
+		if len(requestBodies) == 1 {
+			return nil, io.ErrUnexpectedEOF
+		}
+		return clientResponse(
+			t,
+			request,
+			http.StatusAccepted,
+			processingResponse(testRequestID),
+		), nil
+	})
+	client, err := newClientForTest(
+		"http://relay.example.test",
+		&http.Client{Transport: transport},
+		time.Millisecond,
+	)
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	if _, err := client.Evaluate(t.Context(), validAssessment()); err != nil {
+		t.Fatalf("evaluate after lost create response: %v", err)
+	}
+	if len(requestBodies) != 2 || !bytes.Equal(requestBodies[0], requestBodies[1]) ||
+		contentTypes[0] != contentTypes[1] {
+		t.Fatalf("create retry changed request: bodies=%d content-types=%v", len(requestBodies), contentTypes)
+	}
+	_, parameters, err := mime.ParseMediaType(contentTypes[0])
+	if err != nil {
+		t.Fatalf("parse multipart content type: %v", err)
+	}
+	form, err := multipart.NewReader(
+		bytes.NewReader(requestBodies[0]),
+		parameters["boundary"],
+	).ReadForm(int64(len(requestBodies[0])))
+	if err != nil {
+		t.Fatalf("parse create request: %v", err)
+	}
+	defer form.RemoveAll()
+	if values := form.Value["request_id"]; len(values) != 1 || values[0] != testRequestID {
+		t.Fatalf("create retry request_id = %v", values)
+	}
+}
+
+func TestClientRetriesTransientPollFailure(t *testing.T) {
+	var polls int
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Method == http.MethodPost {
+			return clientResponse(
+				t,
+				request,
+				http.StatusAccepted,
+				processingResponse(testRequestID),
+			), nil
+		}
+		polls++
+		if polls == 1 {
+			return nil, io.EOF
+		}
+		return clientResponse(
+			t,
+			request,
+			http.StatusOK,
+			resultResponse(testRequestID, testResult()),
+		), nil
+	})
+	client, err := newClientForTest(
+		"http://relay.example.test",
+		&http.Client{Transport: transport},
+		time.Millisecond,
+	)
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	if _, err := client.Evaluate(t.Context(), validAssessment()); err != nil {
+		t.Fatalf("evaluate after transient poll failure: %v", err)
+	}
+	if polls != 2 {
+		t.Fatalf("poll attempts = %d, want 2", polls)
+	}
+}
+
+func TestClientDoesNotRetryConflictResponse(t *testing.T) {
+	var attempts int
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		attempts++
+		return clientResponse(
+			t,
+			request,
+			http.StatusConflict,
+			map[string]string{"error": "IDEMPOTENCY_CONFLICT"},
+		), nil
+	})
+	client, err := newClientForTest(
+		"http://relay.example.test",
+		&http.Client{Transport: transport},
+		time.Millisecond,
+	)
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	_, err = client.Evaluate(t.Context(), validAssessment())
+	failure, ok := err.(RelayError)
+	if !ok || failure.Retryable() || attempts != 1 {
+		t.Fatalf("conflict response: error=%#v attempts=%d", err, attempts)
+	}
+}
+
+func TestClientNormalizesExhaustedTransportRetries(t *testing.T) {
+	var attempts int
+	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		attempts++
+		return nil, io.EOF
+	})
+	client, err := newClientForTest(
+		"http://relay.example.test",
+		&http.Client{Transport: transport},
+		time.Millisecond,
+	)
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	_, err = client.Evaluate(t.Context(), validAssessment())
+	failure, ok := err.(RelayError)
+	if !ok || failure.StableCategory() != FailureProviderUnavailable ||
+		!failure.Retryable() || attempts != requestMaxAttempts {
+		t.Fatalf("exhausted retries: error=%#v attempts=%d", err, attempts)
+	}
+}
+
+func TestClientStopsRetryingWhenContextIsCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	recorder := &relayProviderRecorder{}
+	var attempts int
+	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		attempts++
+		cancel()
+		return nil, io.EOF
+	})
+	client, err := newClientForTest(
+		"http://relay.example.test",
+		&http.Client{Transport: transport},
+		time.Millisecond,
+	)
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	client.observer = recorder
+	_, err = client.Evaluate(ctx, validAssessment())
+	if !errors.Is(err, context.Canceled) || attempts != 1 {
+		t.Fatalf("canceled request: error=%v attempts=%d", err, attempts)
+	}
+	if len(recorder.observations) != 1 ||
+		recorder.observations[0].ErrorKind != providerobservability.ErrorCancelled {
+		t.Fatalf("canceled observation: %#v", recorder.observations)
+	}
+}
+
+type relayProviderRecorder struct {
+	observations []providerobservability.Observation
+}
+
+func (recorder *relayProviderRecorder) Record(
+	observation providerobservability.Observation,
+) {
+	recorder.observations = append(recorder.observations, observation)
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (roundTrip roundTripFunc) RoundTrip(
+	request *http.Request,
+) (*http.Response, error) {
+	return roundTrip(request)
+}
+
+func clientResponse(
+	t *testing.T,
+	request *http.Request,
+	status int,
+	value any,
+) *http.Response {
+	t.Helper()
+	body, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal relay response: %v", err)
+	}
+	return &http.Response{
+		StatusCode: status,
+		Header:     http.Header{"content-type": []string{"application/json"}},
+		Body:       io.NopCloser(bytes.NewReader(body)),
+		Request:    request,
 	}
 }
 

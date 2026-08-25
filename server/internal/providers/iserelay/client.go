@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -19,6 +20,11 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/speechfeedback"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/providerobservability"
+)
+
+const (
+	requestMaxAttempts = 3
+	requestRetryDelay  = 200 * time.Millisecond
 )
 
 type ClientConfig struct {
@@ -73,7 +79,7 @@ func NewClient(configuration ClientConfig) (*Client, error) {
 	transport := &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
 		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: rootCAs, Certificates: []tls.Certificate{certificate}},
-		TLSHandshakeTimeout:   10 * time.Second,
+		TLSHandshakeTimeout:   15 * time.Second,
 		ResponseHeaderTimeout: 15 * time.Second,
 		IdleConnTimeout:       30 * time.Second,
 	}
@@ -166,17 +172,15 @@ func (client *Client) create(
 	if err := writer.Close(); err != nil {
 		return StatusResponse{}, err
 	}
-	request, err := http.NewRequestWithContext(
+	return client.doWithRetry(
 		ctx,
 		http.MethodPost,
 		client.resolve("/v1/evaluations"),
-		&body,
+		body.Bytes(),
+		writer.FormDataContentType(),
+		http.StatusAccepted,
+		http.StatusOK,
 	)
-	if err != nil {
-		return StatusResponse{}, err
-	}
-	request.Header.Set("content-type", writer.FormDataContentType())
-	return client.do(request, http.StatusAccepted, http.StatusOK)
 }
 
 func (client *Client) poll(
@@ -195,19 +199,19 @@ func (client *Client) poll(
 			return StatusResponse{}, ctx.Err()
 		case <-timer.C:
 		}
-		request, err := http.NewRequestWithContext(
+		polled, err := client.doWithRetry(
 			ctx,
 			http.MethodGet,
 			client.resolve("/v1/evaluations/"+url.PathEscape(requestID)),
 			nil,
+			"",
+			http.StatusOK,
+			http.StatusAccepted,
 		)
 		if err != nil {
 			return StatusResponse{}, err
 		}
-		response, err = client.do(request, http.StatusOK, http.StatusAccepted)
-		if err != nil {
-			return StatusResponse{}, err
-		}
+		response = polled
 		if response.RequestID != requestID {
 			return StatusResponse{}, relayResponseMismatch()
 		}
@@ -220,6 +224,69 @@ func (client *Client) poll(
 		}
 	}
 	return response, nil
+}
+
+func (client *Client) doWithRetry(
+	ctx context.Context,
+	method string,
+	target string,
+	body []byte,
+	contentType string,
+	allowed ...int,
+) (StatusResponse, error) {
+	for attempt := 1; ; attempt++ {
+		request, err := http.NewRequestWithContext(
+			ctx,
+			method,
+			target,
+			bytes.NewReader(body),
+		)
+		if err != nil {
+			return StatusResponse{}, err
+		}
+		if contentType != "" {
+			request.Header.Set("content-type", contentType)
+		}
+		response, err := client.do(request, allowed...)
+		if err == nil {
+			return response, nil
+		}
+		if ctx.Err() != nil {
+			return StatusResponse{}, ctx.Err()
+		}
+		if !retryableRequestError(err) {
+			return StatusResponse{}, err
+		}
+		if attempt == requestMaxAttempts {
+			return StatusResponse{}, RelayError{
+				code:      FailureProviderUnavailable,
+				retryable: true,
+			}
+		}
+		timer := time.NewTimer(requestRetryDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return StatusResponse{}, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func retryableRequestError(err error) bool {
+	var relayFailure RelayError
+	if errors.As(err, &relayFailure) {
+		return relayFailure.Retryable()
+	}
+	var urlFailure *url.Error
+	if errors.As(err, &urlFailure) {
+		err = urlFailure.Err
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	var networkFailure net.Error
+	return errors.As(err, &networkFailure)
 }
 
 func (client *Client) do(
@@ -289,7 +356,9 @@ func (client *Client) record(startedAt time.Time, err error) {
 	kind := providerobservability.ErrorNone
 	if err != nil {
 		kind = providerobservability.ErrorProviderUnavailable
-		if errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(err, context.Canceled) {
+			kind = providerobservability.ErrorCancelled
+		} else if errors.Is(err, context.DeadlineExceeded) {
 			kind = providerobservability.ErrorTimeout
 		}
 		var relayFailure RelayError

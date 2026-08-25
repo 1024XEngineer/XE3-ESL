@@ -99,7 +99,7 @@ func run() int {
 		Addr:              runtimeConfiguration.Address,
 		Handler:           handler.Routes(),
 		TLSConfig:         tlsConfiguration,
-		ReadHeaderTimeout: 5 * time.Second,
+		ReadHeaderTimeout: 15 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       30 * time.Second,
