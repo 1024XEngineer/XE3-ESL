@@ -40,6 +40,7 @@ test("renders the standalone SpeakUp portal", async () => {
   assert.match(html, /speak-up-wordmark-black\.png/);
   assert.match(html, /speakup-mark\.svg/);
   assert.doesNotMatch(html, /speakup-mascot-blue/);
+  assert.match(html, /href="\/changelog"[^>]*>更新日志<\/a>/);
   assert.doesNotMatch(html, /href="\/download\/android"/);
   assert.doesNotMatch(html, /常见问题|唯一官方下载|制品信息完整/);
   assert.doesNotMatch(html, /SHA-256|签名证书|ABI/);
@@ -58,7 +59,7 @@ test("renders an honest Android download preparing state", async () => {
   assert.match(html, /更新日志/);
   assert.match(html, /隐私与权限/);
   assert.match(html, /问题反馈/);
-  assert.match(html, /独立更新日志尚未提供/);
+  assert.match(html, /href="\/changelog"[^>]*>查看正式版本更新记录/);
   assert.match(html, /正式隐私说明与权限清单尚未提供/);
   assert.match(html, /正式反馈入口尚未提供/);
   assert.doesNotMatch(html, /开放下载前公开/);
@@ -66,6 +67,20 @@ test("renders an honest Android download preparing state", async () => {
   assert.match(html, /安装未知应用/);
   assert.doesNotMatch(html, /\.apk(?:"|\?)/);
   assert.doesNotMatch(html, /versionName:\s*\d/);
+});
+
+test("renders the user-facing changelog without guessing a release", async () => {
+  const response = await render("/changelog");
+  assert.equal(response.status, 200);
+
+  const html = await response.text();
+  assert.match(html, /<title>更新日志 · SpeakUp<\/title>/);
+  assert.match(html, /<h1>更新日志<\/h1>/);
+  assert.match(html, /记录 SpeakUp 已正式发布的功能、体验优化与问题修复/);
+  assert.match(html, /正在确认当前正式版本/);
+  assert.match(html, /href="\/changelog"[^>]*aria-current="page"/);
+  assert.doesNotMatch(html, /v0\.1\.4/);
+  assert.doesNotMatch(html, /实时语音识别无法返回文字结果/);
 });
 
 test("renders the password-gated portal admin page", async () => {
