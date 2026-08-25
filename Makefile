@@ -333,6 +333,7 @@ check-production-nginx:
 	./deploy/production/test-nginx.sh
 
 check-staging-deploy:
+	node --test deploy/staging/uat.test.mjs
 	./deploy/staging/test.sh
 
 check-staging-nginx:
