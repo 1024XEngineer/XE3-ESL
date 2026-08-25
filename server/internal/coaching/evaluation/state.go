@@ -112,12 +112,15 @@ func (completion Completion) Valid() bool {
 }
 
 type Failure struct {
-	UserID      string
-	ID          string
-	LeaseToken  string
-	Error       JobError
-	RetryAt     time.Time
-	MaxAttempts int
+	UserID     string
+	ID         string
+	LeaseToken string
+	Error      JobError
+	// AutomaticRetryable controls worker requeueing independently from the
+	// public/manual retry contract carried by Error.Retryable.
+	AutomaticRetryable bool
+	RetryAt            time.Time
+	MaxAttempts        int
 }
 
 func (failure Failure) Valid() bool {

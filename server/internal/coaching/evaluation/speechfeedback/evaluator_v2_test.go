@@ -3,10 +3,37 @@ package speechfeedback
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 )
+
+func TestCompactProviderSemanticFailureIsAutomaticOnly(t *testing.T) {
+	snapshot := evaluation.SpeechInputSnapshot{
+		Transcript:    "I usually read before work.",
+		EvidenceRefID: "30000000-0000-4000-8000-000000000001",
+	}
+	_, err := compactFeedbackItems(
+		compactResult(`{"items":[{"kind":"CORRECTION","explanation":"动词形式需要修改。","source_text":"missing excerpt","source_occurrence":1,"suggested_text":"read"}]}`),
+		snapshot,
+		snapshot.Transcript,
+		"SAME_QUESTION",
+	)
+	if err == nil {
+		t.Fatal("semantic-invalid provider response was accepted")
+	}
+	var publicFailure GenerationFailure
+	if !errors.As(err, &publicFailure) ||
+		publicFailure.StableCategory() != "PROVIDER_RESPONSE_INVALID" ||
+		publicFailure.Retryable() {
+		t.Fatalf("public failure = %#v", publicFailure)
+	}
+	var automatic interface{ AutomaticRetryable() bool }
+	if !errors.As(err, &automatic) || !automatic.AutomaticRetryable() {
+		t.Fatalf("automatic retry contract missing from %T", err)
+	}
+}
 
 func TestCompactEvaluatorUsesOralReferenceWithoutChangingEvidence(t *testing.T) {
 	generator := &recordingCompactGenerator{

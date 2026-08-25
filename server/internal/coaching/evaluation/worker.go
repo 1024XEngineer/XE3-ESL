@@ -716,12 +716,13 @@ func (worker *Worker) fail(ctx context.Context, claim Claim, cause error) error 
 	finalizeContext, cancel := worker.finalizeContext(ctx)
 	defer cancel()
 	err := worker.store.FailClaim(finalizeContext, Failure{
-		UserID:      claim.UserID,
-		ID:          claim.ID,
-		LeaseToken:  claim.LeaseToken,
-		Error:       failure,
-		RetryAt:     time.Now().UTC().Add(worker.configuration.RetryDelay),
-		MaxAttempts: maxAttemptsFor(claim.Kind, worker.configuration),
+		UserID:             claim.UserID,
+		ID:                 claim.ID,
+		LeaseToken:         claim.LeaseToken,
+		Error:              failure,
+		AutomaticRetryable: automaticRetryable(cause, failure),
+		RetryAt:            time.Now().UTC().Add(worker.configuration.RetryDelay),
+		MaxAttempts:        maxAttemptsFor(claim.Kind, worker.configuration),
 	})
 	if err != nil {
 		return errors.Join(processing, err)
@@ -740,6 +741,18 @@ type stableFailure interface {
 	error
 	StableCategory() string
 	Retryable() bool
+}
+
+type automaticRetryableFailure interface {
+	AutomaticRetryable() bool
+}
+
+func automaticRetryable(err error, publicFailure JobError) bool {
+	var automatic automaticRetryableFailure
+	if errors.As(err, &automatic) {
+		return automatic.AutomaticRetryable()
+	}
+	return publicFailure.Retryable
 }
 
 func stableJobError(err error) JobError {

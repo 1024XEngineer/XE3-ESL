@@ -411,7 +411,8 @@ func TestWorkerRetriesTransientAcousticFailureWhileAttemptsRemain(t *testing.T) 
 	processed, err := worker.ProcessSpeech(context.Background())
 	if !processed || err == nil || acoustics.calls != 1 || speech.practiceCalls != 0 ||
 		len(store.checkpoints) != 0 || len(store.completions) != 0 ||
-		len(store.failures) != 1 || !store.failures[0].Error.Retryable {
+		len(store.failures) != 1 || !store.failures[0].Error.Retryable ||
+		!store.failures[0].AutomaticRetryable {
 		t.Fatalf(
 			"ProcessSpeech=(%v,%v) acoustic=%d text=%d checkpoints=%d completions=%d failures=%#v",
 			processed, err, acoustics.calls, speech.practiceCalls,
