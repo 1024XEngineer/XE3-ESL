@@ -633,11 +633,12 @@ func (worker *Worker) evaluateSpeech(
 		updated, checkpointErr := worker.store.CheckpointSnapshot(
 			finalizeContext,
 			SnapshotCheckpoint{
-				UserID:        claim.UserID,
-				ID:            claim.ID,
-				LeaseToken:    claim.LeaseToken,
-				InputSnapshot: encoded,
-				InputHash:     digest,
+				UserID:               claim.UserID,
+				ID:                   claim.ID,
+				LeaseToken:           claim.LeaseToken,
+				InputSnapshot:        encoded,
+				InputHash:            digest,
+				RestartAttemptBudget: true,
 			},
 		)
 		finalizeCancel()

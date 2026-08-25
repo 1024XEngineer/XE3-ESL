@@ -153,7 +153,8 @@ func TestStoreQueueClaimCheckpointDeferCompleteAndItems(t *testing.T) {
 			InputSnapshot: checkpointInput, InputHash: checkpointHash,
 		},
 	)
-	if err != nil || checkpointed.InputHash != checkpointHash {
+	if err != nil || checkpointed.InputHash != checkpointHash ||
+		checkpointed.AttemptCount != 1 {
 		t.Fatalf("CheckpointSnapshot = %#v, %v", checkpointed, err)
 	}
 	if err := store.DeferClaim(context.Background(), evaluation.Deferral{
@@ -207,6 +208,170 @@ func TestStoreQueueClaimCheckpointDeferCompleteAndItems(t *testing.T) {
 			"Queue(changed config after checkpoint) = %#v, %v, %v",
 			afterCheckpoint, replayed, err,
 		)
+	}
+}
+
+func TestCheckpointSnapshotAtomicallyRestartsAndFencesAttemptBudget(t *testing.T) {
+	pool := evaluationTestDatabase(t)
+	insertEvaluationTestUser(t, pool, testUserA, "evaluation-checkpoint@example.com")
+	store := mustStore(t, pool)
+	command := speechQueueCommand(t, testUserA, testTurnA, testSessionA, nil)
+	if _, _, err := store.Queue(context.Background(), command); err != nil {
+		t.Fatal(err)
+	}
+	lane := speechLane(3)
+	first, err := store.ClaimNext(context.Background(), lane)
+	if err != nil || first.AttemptCount != 1 {
+		t.Fatalf("first ClaimNext = %#v, %v", first, err)
+	}
+	if err := store.FailClaim(context.Background(), evaluation.Failure{
+		UserID:     first.UserID,
+		ID:         first.ID,
+		LeaseToken: first.LeaseToken,
+		Error: evaluation.JobError{
+			Code:      "PROVIDER_UNAVAILABLE",
+			Retryable: true,
+			Message:   "Evaluation provider is temporarily unavailable.",
+		},
+		AutomaticRetryable: true,
+		RetryAt:            time.Now().UTC().Add(-time.Second),
+		MaxAttempts:        3,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.ClaimNext(context.Background(), lane)
+	if err != nil || second.AttemptCount != 2 {
+		t.Fatalf("second ClaimNext = %#v, %v", second, err)
+	}
+	pronunciation := 91.0
+	checkpointInput, checkpointHash := speechInput(t, testTurnA,
+		&evaluation.AcousticCheckpoint{
+			Status:          evaluation.AcousticAssessed,
+			Pronunciation:   &pronunciation,
+			Provider:        "iflytek",
+			ProviderSession: "ise-session-restart",
+		})
+	checkpointed, err := store.CheckpointSnapshot(
+		context.Background(),
+		evaluation.SnapshotCheckpoint{
+			UserID:               second.UserID,
+			ID:                   second.ID,
+			LeaseToken:           second.LeaseToken,
+			InputSnapshot:        checkpointInput,
+			InputHash:            checkpointHash,
+			RestartAttemptBudget: true,
+		},
+	)
+	if err != nil || checkpointed.AttemptCount != 1 ||
+		checkpointed.InputHash != checkpointHash {
+		t.Fatalf("CheckpointSnapshot restart = %#v, %v", checkpointed, err)
+	}
+	_, err = store.CheckpointSnapshot(
+		context.Background(),
+		evaluation.SnapshotCheckpoint{
+			UserID:               second.UserID,
+			ID:                   second.ID,
+			LeaseToken:           second.LeaseToken,
+			InputSnapshot:        checkpointInput,
+			InputHash:            checkpointHash,
+			RestartAttemptBudget: true,
+		},
+	)
+	if !errors.Is(err, evaluation.ErrClaimLost) {
+		t.Fatalf("repeated attempt restart error = %v", err)
+	}
+
+	fallbackInput, fallbackHash := speechInput(t, testTurnA,
+		&evaluation.AcousticCheckpoint{
+			Status: evaluation.AcousticNotAssessed,
+			Reason: "ACOUSTIC_ASSESSMENT_FAILED",
+		})
+	_, err = store.CheckpointSnapshot(
+		context.Background(),
+		evaluation.SnapshotCheckpoint{
+			UserID:               second.UserID,
+			ID:                   second.ID,
+			LeaseToken:           first.LeaseToken,
+			InputSnapshot:        fallbackInput,
+			InputHash:            fallbackHash,
+			RestartAttemptBudget: true,
+		},
+	)
+	if !errors.Is(err, evaluation.ErrClaimLost) {
+		t.Fatalf("stale checkpoint error = %v", err)
+	}
+
+	expireClaim(t, pool, second.ID)
+	_, err = store.CheckpointSnapshot(
+		context.Background(),
+		evaluation.SnapshotCheckpoint{
+			UserID:               second.UserID,
+			ID:                   second.ID,
+			LeaseToken:           second.LeaseToken,
+			InputSnapshot:        fallbackInput,
+			InputHash:            fallbackHash,
+			RestartAttemptBudget: true,
+		},
+	)
+	if !errors.Is(err, evaluation.ErrClaimLost) {
+		t.Fatalf("expired checkpoint error = %v", err)
+	}
+	var attemptCount int
+	var storedHash []byte
+	if err := pool.QueryRow(context.Background(), `SELECT attempt_count, input_hash
+		FROM evaluations WHERE id=$1`, second.ID).Scan(&attemptCount, &storedHash); err != nil {
+		t.Fatal(err)
+	}
+	if attemptCount != 1 || hex.EncodeToString(storedHash) !=
+		hex.EncodeToString(checkpointHash[:]) {
+		t.Fatalf("expired checkpoint changed row: count=%d hash=%x", attemptCount, storedHash)
+	}
+}
+
+func TestCheckpointSnapshotRejectsAttemptRestartForSessionKind(t *testing.T) {
+	pool := evaluationTestDatabase(t)
+	insertEvaluationTestUser(t, pool, testUserA, "evaluation-session-checkpoint@example.com")
+	store := mustStore(t, pool)
+	command := sessionQueueCommand(t, testUserA, testSessionA)
+	queued, _, err := store.Queue(context.Background(), command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := store.ClaimNext(context.Background(), sessionLane(3))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pronunciation := 91.0
+	checkpointInput, checkpointHash := speechInput(t, testTurnA,
+		&evaluation.AcousticCheckpoint{
+			Status:          evaluation.AcousticAssessed,
+			Pronunciation:   &pronunciation,
+			Provider:        "iflytek",
+			ProviderSession: "ise-session-wrong-kind",
+		})
+	_, err = store.CheckpointSnapshot(
+		context.Background(),
+		evaluation.SnapshotCheckpoint{
+			UserID:               claim.UserID,
+			ID:                   claim.ID,
+			LeaseToken:           claim.LeaseToken,
+			InputSnapshot:        checkpointInput,
+			InputHash:            checkpointHash,
+			RestartAttemptBudget: true,
+		},
+	)
+	if !errors.Is(err, evaluation.ErrClaimLost) {
+		t.Fatalf("session attempt restart error = %v", err)
+	}
+	var attemptCount int
+	var storedHash []byte
+	if err := pool.QueryRow(context.Background(), `SELECT attempt_count, input_hash
+		FROM evaluations WHERE id=$1`, claim.ID).Scan(&attemptCount, &storedHash); err != nil {
+		t.Fatal(err)
+	}
+	if attemptCount != 1 || hex.EncodeToString(storedHash) !=
+		hex.EncodeToString(queued.InputHash[:]) {
+		t.Fatalf("session checkpoint changed row: count=%d hash=%x", attemptCount, storedHash)
 	}
 }
 

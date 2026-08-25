@@ -150,6 +150,9 @@ func TestWorkerPart2ProfileReusesReadyPart1Profile(t *testing.T) {
 			processed, err, profiles.calls, profiles.last,
 			len(store.checkpoints), len(store.completions))
 	}
+	if store.checkpoints[0].RestartAttemptBudget {
+		t.Fatal("profile checkpoint must preserve its attempt budget")
+	}
 }
 
 func TestWorkerPart2ProfileDefersWhilePart1IsRunning(t *testing.T) {
@@ -235,6 +238,9 @@ func TestWorkerFinalReportResolvesPart2ProfileReadyAfter45Seconds(t *testing.T) 
 		t.Fatalf("ProcessSession=(%t,%v), calls=%d snapshot=%#v checkpoints=%d completions=%d",
 			processed, err, sessions.ieltsCalls, sessions.lastIELTSSnapshot,
 			len(store.checkpoints), len(store.completions))
+	}
+	if store.checkpoints[0].RestartAttemptBudget {
+		t.Fatal("session checkpoint must preserve its attempt budget")
 	}
 }
 
@@ -381,6 +387,9 @@ func TestWorkerReusesAcousticCheckpointAfterTextEvaluationRetry(t *testing.T) {
 			len(store.failures),
 		)
 	}
+	if !store.checkpoints[0].RestartAttemptBudget {
+		t.Fatal("speech acoustic checkpoint must restart the text attempt budget")
+	}
 	store.claims[1].InputSnapshot = store.checkpoints[0].InputSnapshot
 	store.claims[1].InputHash = store.checkpoints[0].InputHash
 
@@ -397,6 +406,94 @@ func TestWorkerReusesAcousticCheckpointAfterTextEvaluationRetry(t *testing.T) {
 			speech.practiceCalls,
 			len(store.completions),
 		)
+	}
+}
+
+func TestWorkerRestartsTextBudgetAfterFinalAcousticAttempt(t *testing.T) {
+	now := time.Now().UTC()
+	claim := speechClaimFixture(t, now, KindPracticeTurnFeedback, nil)
+	claim.AttemptCount = workerConfigurationFixture().SpeechLane.MaxAttempts
+	store := &workerStoreFake{claims: []Claim{claim}}
+	speech := &speechEvaluatorsFake{failFirst: true}
+	acoustics := &acousticEvaluatorFake{err: errors.New("provider unavailable")}
+	worker := workerFixture(t, store, &sessionEvaluatorsFake{}, speech, acoustics)
+
+	processed, err := worker.ProcessSpeech(context.Background())
+	var processing *processingFailure
+	if !processed || !errors.As(err, &processing) ||
+		processing.record.AttemptCount != 1 || acoustics.calls != 1 ||
+		speech.practiceCalls != 1 || len(store.checkpoints) != 1 ||
+		!store.checkpoints[0].RestartAttemptBudget ||
+		len(store.completions) != 0 || len(store.failures) != 1 ||
+		store.failures[0].MaxAttempts != worker.configuration.SpeechLane.MaxAttempts ||
+		!store.failures[0].AutomaticRetryable {
+		t.Fatalf(
+			"ProcessSpeech=(%t,%v) processing=%#v acoustic=%d text=%d checkpoints=%#v failures=%#v",
+			processed, err, processing, acoustics.calls, speech.practiceCalls,
+			store.checkpoints, store.failures,
+		)
+	}
+}
+
+func TestSpeechCheckpointRemainsReadableByV016(t *testing.T) {
+	pronunciation := 84.0
+	snapshot := speechSnapshotFixture(&AcousticCheckpoint{
+		Status:          AcousticAssessed,
+		Pronunciation:   &pronunciation,
+		Provider:        "iflytek",
+		ProviderSession: "ise-session-1",
+	})
+	encoded, _, err := EncodeStrict(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var legacy struct {
+		SchemaVersion string              `json:"schema_version"`
+		Transcript    string              `json:"transcript"`
+		EvidenceRefID string              `json:"evidence_ref_id"`
+		QuestionID    string              `json:"question_id,omitempty"`
+		PromptText    string              `json:"prompt_text,omitempty"`
+		AudioAssetID  string              `json:"audio_asset_id,omitempty"`
+		Acoustic      *AcousticCheckpoint `json:"acoustic,omitempty"`
+	}
+	if err := DecodeStrict(encoded, &legacy); err != nil {
+		t.Fatalf("v0.1.6 SpeechInputSnapshot cannot decode checkpoint: %v", err)
+	}
+	if legacy.SchemaVersion != SpeechInputSchemaVersion ||
+		legacy.Acoustic == nil || legacy.Acoustic.Status != AcousticAssessed {
+		t.Fatalf("v0.1.6 checkpoint = %#v", legacy)
+	}
+}
+
+func TestSnapshotCheckpointRequiresAcousticBeforeRestartingAttemptBudget(t *testing.T) {
+	now := time.Now().UTC()
+	claim := speechClaimFixture(t, now, KindPracticeTurnFeedback, nil)
+	withoutAcoustic := SnapshotCheckpoint{
+		UserID:               claim.UserID,
+		ID:                   claim.ID,
+		LeaseToken:           claim.LeaseToken,
+		InputSnapshot:        claim.InputSnapshot,
+		InputHash:            claim.InputHash,
+		RestartAttemptBudget: true,
+	}
+	if withoutAcoustic.Valid() {
+		t.Fatal("attempt budget restart without a durable acoustic checkpoint is invalid")
+	}
+	pronunciation := 84.0
+	withAcoustic := speechSnapshotFixture(&AcousticCheckpoint{
+		Status:          AcousticAssessed,
+		Pronunciation:   &pronunciation,
+		Provider:        "iflytek",
+		ProviderSession: "ise-session-1",
+	})
+	encoded, digest, err := EncodeStrict(withAcoustic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withoutAcoustic.InputSnapshot = encoded
+	withoutAcoustic.InputHash = digest
+	if !withoutAcoustic.Valid() {
+		t.Fatal("durable acoustic checkpoint should allow one attempt budget restart")
 	}
 }
 
@@ -924,10 +1021,16 @@ func (store *workerStoreFake) CheckpointSnapshot(
 	_ context.Context,
 	checkpoint SnapshotCheckpoint,
 ) (Record, error) {
-	store.checkpoints = append(store.checkpoints, checkpoint)
 	record := store.claims[store.claimIndex-1].Record
+	if checkpoint.RestartAttemptBudget && record.Kind != KindPracticeTurnFeedback {
+		return Record{}, ErrClaimLost
+	}
+	store.checkpoints = append(store.checkpoints, checkpoint)
 	record.InputSnapshot = checkpoint.InputSnapshot
 	record.InputHash = checkpoint.InputHash
+	if checkpoint.RestartAttemptBudget {
+		record.AttemptCount = 1
+	}
 	return record, nil
 }
 
