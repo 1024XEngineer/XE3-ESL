@@ -57,8 +57,10 @@ class ProfilePage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       key: const Key('profile-page'),
+      backgroundColor: SpeakUpDesign.surfaceMuted,
       appBar: showBackButton
           ? AppBar(
+              backgroundColor: SpeakUpDesign.surfaceMuted,
               leading: IconButton(
                 key: const Key('profile-route-back-button'),
                 tooltip: '返回',
@@ -72,80 +74,64 @@ class ProfilePage extends StatelessWidget {
         child: ListView(
           padding: EdgeInsets.fromLTRB(
             SpeakUpDesign.horizontalInset(context),
-            SpeakUpDesign.space24,
+            SpeakUpDesign.space32,
             SpeakUpDesign.horizontalInset(context),
             140,
           ),
           children: [
-            Stack(
-              children: [
-                Center(
-                  child: Column(
+            Center(
+              child: Column(
+                children: [
+                  ProfileAvatarView(
+                    avatarKey: const Key('profile-avatar'),
+                    size: 132,
+                    avatarBytes: avatarBytes,
+                    editable: user != null && onUploadAvatar != null,
+                    saving: avatarSaving,
+                    onTap: () => _editAvatar(context),
+                  ),
+                  const SizedBox(height: SpeakUpDesign.space20),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      ProfileAvatarView(
-                        avatarKey: const Key('profile-avatar'),
-                        size: 132,
-                        avatarBytes: avatarBytes,
-                        editable: user != null && onUploadAvatar != null,
-                        saving: avatarSaving,
-                        onTap: () => _editAvatar(context),
-                      ),
-                      const SizedBox(height: SpeakUpDesign.space20),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 220),
-                            child: Text(
-                              profile?.displayName ??
-                                  (user == null ? '本地界面预览' : '尚未设置昵称'),
-                              key: const Key('profile-display-name'),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: SpeakUpDesign.pageTitle.copyWith(
-                                fontSize: 28,
-                              ),
-                            ),
-                          ),
-                          if (user != null)
-                            IconButton(
-                              key: const Key('profile-edit-display-name'),
-                              tooltip: '编辑昵称',
-                              onPressed:
-                                  profileSaving || onSaveDisplayName == null
-                                  ? null
-                                  : () => _editDisplayName(context),
-                              icon: Icon(
-                                Icons.edit_rounded,
-                                size: 18,
-                                color: profileSaving
-                                    ? SpeakUpDesign.tertiary
-                                    : SpeakUpDesign.secondary,
-                              ),
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: SpeakUpDesign.space4),
-                      Text(
-                        user?.email ?? '尚未连接正式账号',
-                        textAlign: TextAlign.center,
-                        style: SpeakUpDesign.body.copyWith(
-                          color: SpeakUpDesign.tertiary,
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 220),
+                        child: Text(
+                          profile?.displayName ??
+                              (user == null ? '本地界面预览' : '尚未设置昵称'),
+                          key: const Key('profile-display-name'),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: SpeakUpDesign.pageTitle.copyWith(fontSize: 28),
                         ),
                       ),
+                      if (user != null)
+                        IconButton(
+                          key: const Key('profile-edit-display-name'),
+                          tooltip: '编辑昵称',
+                          onPressed: profileSaving || onSaveDisplayName == null
+                              ? null
+                              : () => _editDisplayName(context),
+                          icon: Icon(
+                            Icons.edit_rounded,
+                            size: 18,
+                            color: profileSaving
+                                ? SpeakUpDesign.tertiary
+                                : SpeakUpDesign.secondary,
+                          ),
+                        ),
                     ],
                   ),
-                ),
-                if (user != null &&
-                    (onLogout != null || coachingProfileController != null))
-                  Align(
-                    alignment: Alignment.topRight,
-                    child: _ProfileMoreMenu(
-                      coachingProfileController: coachingProfileController,
-                      onLogout: onLogout,
+                  const SizedBox(height: SpeakUpDesign.space4),
+                  Text(
+                    user?.email ?? '尚未连接正式账号',
+                    textAlign: TextAlign.center,
+                    style: SpeakUpDesign.body.copyWith(
+                      color: SpeakUpDesign.tertiary,
                     ),
                   ),
-              ],
+                ],
+              ),
             ),
             if (profileErrorMessage != null) ...[
               const SizedBox(height: SpeakUpDesign.space16),
@@ -156,8 +142,10 @@ class ProfilePage extends StatelessWidget {
               ),
             ],
             const SizedBox(height: SpeakUpDesign.space32),
-            CurrentIeltsAbilityProfile(
+            _ProfileSettingsSection(
+              coachingProfileController: coachingProfileController,
               historyController: reviewHistoryController,
+              onLogout: onLogout,
             ),
             if (appUpdateService != null && onCheckForUpdate != null) ...[
               const SizedBox(height: SpeakUpDesign.space24),
@@ -259,23 +247,23 @@ class ProfilePage extends StatelessWidget {
   }
 }
 
-class _ProfileMoreMenu extends StatefulWidget {
-  const _ProfileMoreMenu({
+class _ProfileSettingsSection extends StatefulWidget {
+  const _ProfileSettingsSection({
     required this.coachingProfileController,
+    required this.historyController,
     required this.onLogout,
   });
 
   final CoachingProfileController? coachingProfileController;
+  final ReviewHistoryController? historyController;
   final VoidCallback? onLogout;
 
   @override
-  State<_ProfileMoreMenu> createState() => _ProfileMoreMenuState();
+  State<_ProfileSettingsSection> createState() =>
+      _ProfileSettingsSectionState();
 }
 
-class _ProfileMoreMenuState extends State<_ProfileMoreMenu> {
-  static const double _menuWidth = 184;
-  static const double _menuItemWidth = _menuWidth - SpeakUpDesign.space8 * 2;
-
+class _ProfileSettingsSectionState extends State<_ProfileSettingsSection> {
   Future<void>? _coachingProfileLoad;
 
   @override
@@ -285,7 +273,7 @@ class _ProfileMoreMenuState extends State<_ProfileMoreMenu> {
   }
 
   @override
-  void didUpdateWidget(covariant _ProfileMoreMenu oldWidget) {
+  void didUpdateWidget(covariant _ProfileSettingsSection oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!identical(
       oldWidget.coachingProfileController,
@@ -299,103 +287,68 @@ class _ProfileMoreMenuState extends State<_ProfileMoreMenu> {
   Widget build(BuildContext context) {
     final hasCoachingProfile = widget.coachingProfileController != null;
     final hasLogout = widget.onLogout != null;
-    return MenuAnchor(
-      key: const Key('profile-more-menu-anchor'),
-      animated: true,
-      crossAxisUnconstrained: false,
-      reservedPadding: const EdgeInsets.all(SpeakUpDesign.space16),
-      // MenuAnchor positions the menu's leading edge at bottomEnd in LTR.
-      // Shift by its width so the callout end stays attached to the trigger.
-      alignmentOffset: const Offset(-_menuWidth, SpeakUpDesign.space4),
-      style: MenuStyle(
-        alignment: AlignmentDirectional.bottomEnd,
-        backgroundColor: const WidgetStatePropertyAll(SpeakUpDesign.surface),
-        surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
-        shadowColor: const WidgetStatePropertyAll(Color(0x26000000)),
-        elevation: const WidgetStatePropertyAll(6),
-        padding: const WidgetStatePropertyAll(
-          EdgeInsets.fromLTRB(
-            SpeakUpDesign.space8,
-            SpeakUpDesign.space16,
-            SpeakUpDesign.space8,
-            SpeakUpDesign.space8,
-          ),
-        ),
-        minimumSize: const WidgetStatePropertyAll(Size(_menuWidth, 0)),
-        maximumSize: const WidgetStatePropertyAll(
-          Size(_menuWidth, double.infinity),
-        ),
-        side: const WidgetStatePropertyAll(
-          BorderSide(color: SpeakUpDesign.border),
-        ),
-        shape: const WidgetStatePropertyAll(_ProfileMenuCalloutBorder()),
-      ),
-      menuChildren: [
-        if (hasCoachingProfile)
-          MenuItemButton(
-            key: const Key('profile-coaching-memory-button'),
-            leadingIcon: const Icon(Icons.psychology_alt_outlined, size: 20),
-            style: _menuItemStyle(),
-            onPressed: () => unawaited(_openCoachingProfile()),
-            child: const Text('教练记忆'),
-          ),
-        if (hasCoachingProfile && hasLogout)
-          const Divider(
-            height: 1,
-            indent: SpeakUpDesign.space12,
-            endIndent: SpeakUpDesign.space12,
-          ),
-        if (hasLogout)
-          MenuItemButton(
-            key: const Key('profile-logout-button'),
-            leadingIcon: const Icon(Icons.logout_rounded, size: 20),
-            style: _menuItemStyle(destructive: true),
-            onPressed: widget.onLogout,
-            child: const Text('退出登录'),
-          ),
-      ],
-      builder: (context, controller, _) => IconButton(
-        key: const Key('profile-account-menu'),
-        tooltip: '更多',
-        constraints: const BoxConstraints.tightFor(
-          width: SpeakUpDesign.minTapTarget,
-          height: SpeakUpDesign.minTapTarget,
-        ),
-        style: ButtonStyle(
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          shape: WidgetStatePropertyAll(
-            RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
+    return Column(
+      children: [
+        _ProfileSettingsCard(
+          children: [
+            if (hasCoachingProfile)
+              _ProfileSettingsRow(
+                key: const Key('profile-coaching-memory-button'),
+                icon: Icons.auto_awesome_rounded,
+                iconBackground: const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFF7A5AF8), Color(0xFFA78BFA)],
+                ),
+                title: '教练记忆',
+                subtitle: '管理称呼、背景与沟通偏好',
+                onTap: () => unawaited(_openCoachingProfile()),
+              ),
+            if (hasCoachingProfile) const Divider(indent: 68),
+            _ProfileSettingsRow(
+              key: const Key('profile-ielts-ability-button'),
+              icon: Icons.workspace_premium_rounded,
+              iconBackground: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFF1687F8), Color(0xFF55B6FF)],
+              ),
+              title: 'IELTS 能力',
+              subtitle: '查看四维能力与当前估分',
+              onTap: _openIeltsAbility,
             ),
-          ),
-          overlayColor: const WidgetStatePropertyAll(
-            SpeakUpDesign.primaryMuted,
-          ),
+          ],
         ),
-        onPressed: hasCoachingProfile || hasLogout
-            ? () => controller.isOpen ? controller.close() : controller.open()
-            : null,
-        icon: const Icon(Icons.more_horiz_rounded),
-      ),
+        if (hasLogout) ...[
+          const SizedBox(height: SpeakUpDesign.space16),
+          _ProfileSettingsCard(
+            children: [
+              _ProfileSettingsRow(
+                key: const Key('profile-logout-button'),
+                icon: Icons.power_settings_new_rounded,
+                iconBackground: const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFFE86B5A), Color(0xFFB83A2B)],
+                ),
+                title: '退出登录',
+                titleColor: SpeakUpDesign.error,
+                onTap: widget.onLogout!,
+              ),
+            ],
+          ),
+        ],
+      ],
     );
   }
 
-  ButtonStyle _menuItemStyle({bool destructive = false}) {
-    final foreground = destructive ? SpeakUpDesign.error : SpeakUpDesign.ink;
-    return ButtonStyle(
-      minimumSize: const WidgetStatePropertyAll(Size(_menuItemWidth, 48)),
-      padding: const WidgetStatePropertyAll(
-        EdgeInsets.symmetric(horizontal: SpeakUpDesign.space12),
-      ),
-      alignment: Alignment.centerLeft,
-      foregroundColor: WidgetStatePropertyAll(foreground),
-      iconColor: WidgetStatePropertyAll(foreground),
-      textStyle: WidgetStatePropertyAll(
-        SpeakUpDesign.body.copyWith(fontWeight: FontWeight.w600),
-      ),
-      shape: WidgetStatePropertyAll(
-        RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
+  void _openIeltsAbility() {
+    unawaited(
+      Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => CurrentIeltsAbilityPage(
+            historyController: widget.historyController,
+          ),
         ),
       ),
     );
@@ -429,80 +382,95 @@ class _ProfileMoreMenuState extends State<_ProfileMoreMenu> {
   }
 }
 
-class _ProfileMenuCalloutBorder extends OutlinedBorder {
-  const _ProfileMenuCalloutBorder({
-    super.side,
-    this.radius = SpeakUpDesign.radiusCard,
-    this.arrowHeight = SpeakUpDesign.space8,
-    this.arrowWidth = SpeakUpDesign.space16,
-    this.arrowEndInset = SpeakUpDesign.minTapTarget / 2,
+class _ProfileSettingsCard extends StatelessWidget {
+  const _ProfileSettingsCard({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: SpeakUpDesign.surface,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
+        side: const BorderSide(color: SpeakUpDesign.border),
+      ),
+      child: Column(children: children),
+    );
+  }
+}
+
+class _ProfileSettingsRow extends StatelessWidget {
+  const _ProfileSettingsRow({
+    required this.icon,
+    required this.iconBackground,
+    required this.title,
+    required this.onTap,
+    this.subtitle,
+    this.titleColor,
+    super.key,
   });
 
-  final double radius;
-  final double arrowHeight;
-  final double arrowWidth;
-  final double arrowEndInset;
+  final IconData icon;
+  final Gradient iconBackground;
+  final String title;
+  final String? subtitle;
+  final Color? titleColor;
+  final VoidCallback onTap;
 
   @override
-  EdgeInsetsGeometry get dimensions {
-    final inset = side.strokeInset > 0 ? side.strokeInset : 0.0;
-    return EdgeInsets.fromLTRB(inset, arrowHeight + inset, inset, inset);
-  }
-
-  @override
-  _ProfileMenuCalloutBorder copyWith({
-    BorderSide? side,
-    double? radius,
-    double? arrowHeight,
-    double? arrowWidth,
-    double? arrowEndInset,
-  }) => _ProfileMenuCalloutBorder(
-    side: side ?? this.side,
-    radius: radius ?? this.radius,
-    arrowHeight: arrowHeight ?? this.arrowHeight,
-    arrowWidth: arrowWidth ?? this.arrowWidth,
-    arrowEndInset: arrowEndInset ?? this.arrowEndInset,
-  );
-
-  @override
-  ShapeBorder scale(double t) => _ProfileMenuCalloutBorder(
-    side: side.scale(t),
-    radius: radius * t,
-    arrowHeight: arrowHeight * t,
-    arrowWidth: arrowWidth * t,
-    arrowEndInset: arrowEndInset * t,
-  );
-
-  @override
-  Path getInnerPath(Rect rect, {TextDirection? textDirection}) {
-    return getOuterPath(rect.deflate(side.strokeInset));
-  }
-
-  @override
-  Path getOuterPath(Rect rect, {TextDirection? textDirection}) {
-    final bodyTop = rect.top + arrowHeight;
-    final body = Path()
-      ..addRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTRB(rect.left, bodyTop, rect.right, rect.bottom),
-          Radius.circular(radius),
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 76),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: SpeakUpDesign.space16,
+            vertical: SpeakUpDesign.space12,
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  gradient: iconBackground,
+                  borderRadius: BorderRadius.circular(
+                    SpeakUpDesign.radiusControl,
+                  ),
+                ),
+                child: Icon(icon, color: Colors.white, size: 21),
+              ),
+              const SizedBox(width: SpeakUpDesign.space12),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: SpeakUpDesign.cardTitle.copyWith(
+                        color: titleColor,
+                      ),
+                    ),
+                    if (subtitle case final value?) ...[
+                      const SizedBox(height: SpeakUpDesign.space4),
+                      Text(value, style: SpeakUpDesign.meta),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: SpeakUpDesign.space8),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: SpeakUpDesign.tertiary,
+              ),
+            ],
+          ),
         ),
-      );
-    final arrowCenter = rect.right - arrowEndInset;
-    final arrow = Path()
-      ..moveTo(arrowCenter - arrowWidth / 2, bodyTop)
-      ..lineTo(arrowCenter, rect.top)
-      ..lineTo(arrowCenter + arrowWidth / 2, bodyTop)
-      ..close();
-    return Path.combine(PathOperation.union, body, arrow);
-  }
-
-  @override
-  void paint(Canvas canvas, Rect rect, {TextDirection? textDirection}) {
-    if (side.style == BorderStyle.none) return;
-    canvas.drawPath(
-      getOuterPath(rect.deflate(side.strokeInset)),
-      side.toPaint(),
+      ),
     );
   }
 }

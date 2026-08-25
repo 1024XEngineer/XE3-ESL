@@ -105,6 +105,43 @@ class CurrentIeltsAbilityProfile extends StatelessWidget {
   }
 }
 
+class CurrentIeltsAbilityPage extends StatelessWidget {
+  const CurrentIeltsAbilityPage({required this.historyController, super.key});
+
+  final ReviewHistoryController? historyController;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      key: const Key('current-ielts-ability-page'),
+      backgroundColor: SpeakUpDesign.surfaceMuted,
+      appBar: AppBar(
+        backgroundColor: SpeakUpDesign.surfaceMuted,
+        leading: IconButton(
+          key: const Key('current-ielts-ability-back-button'),
+          tooltip: '返回',
+          onPressed: () => Navigator.of(context).maybePop(),
+          icon: const Icon(Icons.arrow_back_rounded),
+        ),
+        title: const Text('IELTS 能力'),
+      ),
+      body: SafeArea(
+        child: ListView(
+          padding: EdgeInsets.fromLTRB(
+            SpeakUpDesign.horizontalInset(context),
+            SpeakUpDesign.space16,
+            SpeakUpDesign.horizontalInset(context),
+            SpeakUpDesign.space24,
+          ),
+          children: [
+            CurrentIeltsAbilityProfile(historyController: historyController),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _CurrentIeltsAbility extends StatelessWidget {
   const _CurrentIeltsAbility({required this.report, required this.loading});
 
