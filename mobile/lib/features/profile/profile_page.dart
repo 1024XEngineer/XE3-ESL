@@ -273,6 +273,9 @@ class _ProfileMoreMenu extends StatefulWidget {
 }
 
 class _ProfileMoreMenuState extends State<_ProfileMoreMenu> {
+  static const double _menuWidth = 184;
+  static const double _menuItemWidth = _menuWidth - SpeakUpDesign.space8 * 2;
+
   Future<void>? _coachingProfileLoad;
 
   @override
@@ -299,8 +302,11 @@ class _ProfileMoreMenuState extends State<_ProfileMoreMenu> {
     return MenuAnchor(
       key: const Key('profile-more-menu-anchor'),
       animated: true,
+      crossAxisUnconstrained: false,
       reservedPadding: const EdgeInsets.all(SpeakUpDesign.space16),
-      alignmentOffset: const Offset(-184, SpeakUpDesign.space4),
+      // MenuAnchor positions the menu's leading edge at bottomEnd in LTR.
+      // Shift by its width so the callout end stays attached to the trigger.
+      alignmentOffset: const Offset(-_menuWidth, SpeakUpDesign.space4),
       style: MenuStyle(
         alignment: AlignmentDirectional.bottomEnd,
         backgroundColor: const WidgetStatePropertyAll(SpeakUpDesign.surface),
@@ -315,8 +321,10 @@ class _ProfileMoreMenuState extends State<_ProfileMoreMenu> {
             SpeakUpDesign.space8,
           ),
         ),
-        minimumSize: const WidgetStatePropertyAll(Size(184, 0)),
-        maximumSize: const WidgetStatePropertyAll(Size(184, double.infinity)),
+        minimumSize: const WidgetStatePropertyAll(Size(_menuWidth, 0)),
+        maximumSize: const WidgetStatePropertyAll(
+          Size(_menuWidth, double.infinity),
+        ),
         side: const WidgetStatePropertyAll(
           BorderSide(color: SpeakUpDesign.border),
         ),
@@ -375,7 +383,7 @@ class _ProfileMoreMenuState extends State<_ProfileMoreMenu> {
   ButtonStyle _menuItemStyle({bool destructive = false}) {
     final foreground = destructive ? SpeakUpDesign.error : SpeakUpDesign.ink;
     return ButtonStyle(
-      minimumSize: const WidgetStatePropertyAll(Size(168, 48)),
+      minimumSize: const WidgetStatePropertyAll(Size(_menuItemWidth, 48)),
       padding: const WidgetStatePropertyAll(
         EdgeInsets.symmetric(horizontal: SpeakUpDesign.space12),
       ),

@@ -37,11 +37,26 @@ void main() {
         .getTopLeft(find.byKey(const Key('profile-coaching-memory-button')))
         .dy;
     expect(menuTop, greaterThan(buttonBottom));
+    final triggerRect = tester.getRect(
+      find.byKey(const Key('profile-account-menu')),
+    );
+    final firstItemRect = tester.getRect(
+      find.byKey(const Key('profile-coaching-memory-button')),
+    );
+    expect(
+      firstItemRect.right + SpeakUpDesign.space8,
+      closeTo(triggerRect.right, 0.01),
+    );
+    expect(
+      firstItemRect.left - SpeakUpDesign.space8,
+      greaterThanOrEqualTo(SpeakUpDesign.space16),
+    );
 
     final anchor = tester.widget<MenuAnchor>(
       find.byKey(const Key('profile-more-menu-anchor')),
     );
     expect(anchor.style!.alignment, AlignmentDirectional.bottomEnd);
+    expect(anchor.crossAxisUnconstrained, isFalse);
     expect(anchor.reservedPadding, const EdgeInsets.all(SpeakUpDesign.space16));
     expect(anchor.alignmentOffset, const Offset(-184, SpeakUpDesign.space4));
     expect(
@@ -85,6 +100,10 @@ void main() {
   testWidgets('more menu remains usable on a narrow large-text screen', (
     tester,
   ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(320, 700);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
     await tester.pumpWidget(
       _app(
         controller: CoachingProfileController(client: _ProfileClient()),
@@ -102,6 +121,20 @@ void main() {
 
     expect(find.text('教练记忆'), findsOneWidget);
     expect(find.text('退出登录'), findsOneWidget);
+    final triggerRect = tester.getRect(
+      find.byKey(const Key('profile-account-menu')),
+    );
+    final firstItemRect = tester.getRect(
+      find.byKey(const Key('profile-coaching-memory-button')),
+    );
+    expect(
+      firstItemRect.right + SpeakUpDesign.space8,
+      closeTo(triggerRect.right, 0.01),
+    );
+    expect(
+      firstItemRect.left - SpeakUpDesign.space8,
+      greaterThanOrEqualTo(SpeakUpDesign.space16),
+    );
     expect(tester.takeException(), isNull);
   });
 }
