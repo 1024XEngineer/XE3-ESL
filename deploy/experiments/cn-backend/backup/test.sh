@@ -103,6 +103,13 @@ assert_unit_contracts() {
   for service in "$backup_service" "$restore_service"; do
     assert_unit_directive "$service" Service TimeoutStartSec 1h
     assert_unit_directive "$service" Service StateDirectoryMode 0700
+    assert_unit_directive \
+      "$service" Service RuntimeDirectory \
+      xe3-speakup-cn-experiment-postgres-backup
+    assert_unit_directive "$service" Service RuntimeDirectoryMode 0700
+    assert_unit_directive \
+      "$service" Service Environment \
+      DOCKER_CONFIG=/run/xe3-speakup-cn-experiment-postgres-backup
     assert_unit_directive "$service" Service UMask 0077
     assert_unit_directive "$service" Service PrivateNetwork true
     assert_unit_directive "$service" Service RestrictAddressFamilies AF_UNIX

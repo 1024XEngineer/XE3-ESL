@@ -8,6 +8,9 @@ Type=oneshot
 TimeoutStartSec=1h
 StateDirectory=speakup-cn-experiment/postgres-backups speakup-cn-experiment/backup-checks
 StateDirectoryMode=0700
+RuntimeDirectory=xe3-speakup-cn-experiment-postgres-backup
+RuntimeDirectoryMode=0700
+Environment=DOCKER_CONFIG=/run/xe3-speakup-cn-experiment-postgres-backup
 UMask=0077
 ExecStartPre=/usr/bin/rm --force -- /var/lib/speakup-cn-experiment/backup-checks/latest-restore.success
 ExecStart=/usr/bin/flock --wait 900 /run/lock/xe3-speakup-cn-experiment-postgres-backup.lock /usr/bin/env EXPERIMENT_POSTGRES_BACKUP_ROOT=/var/lib/speakup-cn-experiment/postgres-backups /usr/local/sbin/xe3-speakup-cn-experiment-postgres-backup restore-check
