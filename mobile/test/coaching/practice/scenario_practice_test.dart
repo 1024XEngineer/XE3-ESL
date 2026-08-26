@@ -489,62 +489,56 @@ void main() {
     expect(find.byKey(const Key('scenario-record')), findsOneWidget);
   });
 
-  testWidgets(
-    'keeps pending feedback silent without breaking the composer row',
-    (tester) async {
-      final controller = await _scenarioController(
-        practiceClient: _AsyncReviewPracticeClient(),
-      );
-      addTearDown(controller.dispose);
-      for (var turn = 0; turn < 3; turn++) {
-        await controller.startRecording();
-        await controller.stopRecording();
-        await controller.confirmTranscript();
-      }
-      expect(controller.recordingState, PracticeRecordingState.completed);
+  testWidgets('shows pending optimization without breaking the composer row', (
+    tester,
+  ) async {
+    final controller = await _scenarioController(
+      practiceClient: _AsyncReviewPracticeClient(),
+    );
+    addTearDown(controller.dispose);
+    for (var turn = 0; turn < 3; turn++) {
+      await controller.startRecording();
+      await controller.stopRecording();
+      await controller.confirmTranscript();
+    }
+    expect(controller.recordingState, PracticeRecordingState.completed);
 
-      final feedbackController = SpeechFeedbackController(
-        client: _PendingSpeechFeedbackClient(),
-      );
-      addTearDown(feedbackController.dispose);
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: SpeakUpTheme.light,
-          home: ScenarioPracticePage(
-            practiceController: controller,
-            speechFeedbackController: feedbackController,
-          ),
+    final feedbackController = SpeechFeedbackController(
+      client: _PendingSpeechFeedbackClient(),
+    );
+    addTearDown(feedbackController.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: SpeakUpTheme.light,
+        home: ScenarioPracticePage(
+          practiceController: controller,
+          speechFeedbackController: feedbackController,
         ),
-      );
-      await tester.pump();
+      ),
+    );
+    await tester.pump();
 
-      expect(tester.takeException(), isNull);
-      expect(
-        find.byKey(const Key('speech-feedback-loading-indicator')),
-        findsNothing,
-      );
-      expect(find.byType(SpeechFeedbackDisclosure), findsNothing);
-      expect(find.text('正在生成评分与纠错…'), findsNothing);
-      expect(
-        find.byKey(const Key('scenario-completion-sheet')),
-        findsOneWidget,
-      );
-      expect(find.text('场景练习已完成'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    expect(find.byKey(const Key('inline-language-optimizing')), findsWidgets);
+    expect(find.text('优化中'), findsNothing);
+    expect(find.byType(SpeechFeedbackDisclosure), findsNothing);
+    expect(find.text('正在生成评分与纠错…'), findsNothing);
+    expect(find.byKey(const Key('scenario-completion-sheet')), findsOneWidget);
+    expect(find.text('场景练习已完成'), findsOneWidget);
 
-      await tester.timedDrag(
-        find.byKey(const Key('scenario-completion-drag-region')),
-        const Offset(0, 200),
-        const Duration(milliseconds: 600),
-      );
-      await tester.pumpAndSettle();
+    await tester.timedDrag(
+      find.byKey(const Key('scenario-completion-drag-region')),
+      const Offset(0, 200),
+      const Duration(milliseconds: 600),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
 
-      expect(find.byKey(const Key('scenario-completion-sheet')), findsNothing);
-      expect(
-        find.byKey(const Key('scenario-conversation-history')),
-        findsOneWidget,
-      );
-    },
-  );
+    expect(find.byKey(const Key('scenario-completion-sheet')), findsNothing);
+    expect(
+      find.byKey(const Key('scenario-conversation-history')),
+      findsOneWidget,
+    );
+  });
 
   testWidgets('hands completed scenario to the generic completion callback', (
     tester,

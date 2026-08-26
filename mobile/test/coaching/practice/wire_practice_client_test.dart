@@ -874,7 +874,7 @@ void main() {
     transport.expectDone();
   });
 
-  test('retains a valid optional audio asset', () async {
+  test('retains current-turn audio and feedback without a restore', () async {
     final state = <String, Object?>{
       ..._sessionJson(),
       'session_version': 2,
@@ -898,6 +898,7 @@ void main() {
         'effective_turns': 1,
         'session_completed': false,
         'audio_asset_id': '00000000-0000-4000-8000-000000000001',
+        'speech_feedback_status_url': '/v1/practice-turns/$_turnId/evaluation',
       },
     };
     final transport = _Transport([
@@ -916,6 +917,14 @@ void main() {
     );
 
     expect(confirmation.audioAssetId, '00000000-0000-4000-8000-000000000001');
+    expect(
+      confirmation.answer.audioAssetId,
+      '00000000-0000-4000-8000-000000000001',
+    );
+    expect(
+      confirmation.answer.speechFeedbackStatusUrl,
+      '/v1/practice-turns/$_turnId/evaluation',
+    );
     transport.expectDone();
   });
 

@@ -1432,6 +1432,7 @@ PracticeTurnConfirmation _confirmationFromState(
       id: turn.id,
       role: PracticeMessageRole.user,
       text: turn.answerText,
+      audioAssetId: turn.audioAssetId,
       speechFeedbackStatusUrl: turn.speechFeedbackStatusUrl,
     ),
     completedTurns: state.completedTurns,

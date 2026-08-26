@@ -31,6 +31,7 @@ class InlineLanguageFeedback extends StatefulWidget {
     this.onSpeakSuggestion,
     this.suggestionLoading = false,
     this.suggestionPlaying = false,
+    this.feedbackLoading = false,
     this.optimizeIconOnly = false,
     this.onExpandedChanged,
     this.foregroundColor = SpeakUpDesign.primary,
@@ -48,6 +49,7 @@ class InlineLanguageFeedback extends StatefulWidget {
   final ValueChanged<String>? onSpeakSuggestion;
   final bool suggestionLoading;
   final bool suggestionPlaying;
+  final bool feedbackLoading;
   final bool optimizeIconOnly;
   final ValueChanged<bool>? onExpandedChanged;
   final Color foregroundColor;
@@ -97,6 +99,16 @@ class _InlineLanguageFeedbackState extends State<InlineLanguageFeedback> {
           selected: _expanded,
           color: widget.foregroundColor,
           onPressed: _toggle,
+        ),
+      if (!hasFeedback && widget.feedbackLoading)
+        _InlineFeedbackAction(
+          key: const Key('inline-language-optimizing'),
+          icon: Icons.auto_awesome_outlined,
+          label: '优化中',
+          loading: true,
+          iconOnly: widget.optimizeIconOnly,
+          color: widget.foregroundColor,
+          onPressed: null,
         ),
     ];
     final actionWrap = Wrap(
@@ -201,6 +213,64 @@ class _InlineLanguageFeedbackState extends State<InlineLanguageFeedback> {
       ],
     );
   }
+}
+
+class InlineVoicePlaybackAction extends StatelessWidget {
+  const InlineVoicePlaybackAction({
+    required this.loading,
+    required this.playing,
+    required this.onPressed,
+    this.duration,
+    super.key,
+  });
+
+  final bool loading;
+  final bool playing;
+  final Duration? duration;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final durationLabel = duration == null
+        ? ''
+        : '，${_formatInlineDuration(duration!)}';
+    return Semantics(
+      button: true,
+      enabled: onPressed != null,
+      label: playing ? '停止播放原声' : '播放原声$durationLabel',
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
+          child: SizedBox.square(
+            dimension: SpeakUpDesign.minTapTarget,
+            child: Center(
+              child: loading
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Icon(
+                      playing ? Icons.pause_rounded : Icons.graphic_eq_rounded,
+                      size: 24,
+                      color: onPressed == null
+                          ? SpeakUpDesign.tertiary
+                          : SpeakUpDesign.primary,
+                    ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+String _formatInlineDuration(Duration value) {
+  final totalSeconds = value.inSeconds.clamp(0, 3599);
+  final minutes = totalSeconds ~/ 60;
+  final seconds = totalSeconds % 60;
+  return '$minutes:${seconds.toString().padLeft(2, '0')}';
 }
 
 class _InlineFeedbackHeading extends StatelessWidget {

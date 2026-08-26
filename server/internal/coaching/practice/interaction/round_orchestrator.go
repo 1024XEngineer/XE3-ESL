@@ -64,44 +64,30 @@ type PracticePort interface {
 	) (string, error)
 }
 
-type TurnFeedbackReference struct {
-	StatusURL  string
-	Applicable bool
-}
-
-type TurnFeedbackPort interface {
-	EnsureTurn(
-		context.Context,
-		requestcontext.Actor,
-		string,
-		string,
-	) (TurnFeedbackReference, error)
-}
-
 // RoundOrchestrator owns the cross-module voice-round saga. It never
 // reaches into a module Repository and relies on stable Turn and Session IDs
 // for idempotent recovery after any completed step.
 type RoundOrchestrator struct {
 	rounds   RoundPort
 	practice PracticePort
-	feedback TurnFeedbackPort
+	feedback TurnFeedbackStatusReader
 }
 
 func NewRoundOrchestrator(
 	rounds RoundPort,
 	practice PracticePort,
-	feedbackPorts ...TurnFeedbackPort,
+	feedbackReaders ...TurnFeedbackStatusReader,
 ) (*RoundOrchestrator, error) {
-	if rounds == nil || practice == nil || len(feedbackPorts) > 1 ||
-		(len(feedbackPorts) == 1 && feedbackPorts[0] == nil) {
+	if rounds == nil || practice == nil || len(feedbackReaders) > 1 ||
+		(len(feedbackReaders) == 1 && feedbackReaders[0] == nil) {
 		return nil, errors.New("practice interaction: round dependency is required")
 	}
 	orchestrator := &RoundOrchestrator{
 		rounds:   rounds,
 		practice: practice,
 	}
-	if len(feedbackPorts) == 1 {
-		orchestrator.feedback = feedbackPorts[0]
+	if len(feedbackReaders) == 1 {
+		orchestrator.feedback = feedbackReaders[0]
 	}
 	return orchestrator, nil
 }
@@ -197,22 +183,21 @@ func (orchestrator *RoundOrchestrator) attachTurnFeedback(
 	if orchestrator.feedback == nil {
 		return turn, nil
 	}
-	reference, err := orchestrator.feedback.EnsureTurn(
+	statusURL, found, err := orchestrator.feedback.StatusURLForTurn(
 		ctx,
 		actor,
-		turn.SessionID,
 		turn.ID,
 	)
 	if err != nil {
 		return practice.Turn{}, err
 	}
-	if !reference.Applicable {
+	if !found {
 		return turn, nil
 	}
-	if strings.TrimSpace(reference.StatusURL) == "" {
+	if strings.TrimSpace(statusURL) == "" {
 		return practice.Turn{}, ErrInvalidContext
 	}
-	turn.SpeechFeedbackStatusURL = reference.StatusURL
+	turn.SpeechFeedbackStatusURL = statusURL
 	return turn, nil
 }
 
@@ -255,7 +240,11 @@ func (orchestrator *RoundOrchestrator) SubmitText(
 	if err != nil {
 		return practice.Turn{}, err
 	}
-	return orchestrator.finishTurn(ctx, actor, candidate, turn)
+	turn, err = orchestrator.finishTurn(ctx, actor, candidate, turn)
+	if err != nil {
+		return practice.Turn{}, err
+	}
+	return orchestrator.attachTurnFeedback(ctx, actor, turn)
 }
 
 func (orchestrator *RoundOrchestrator) finishTurn(

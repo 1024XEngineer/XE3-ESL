@@ -749,6 +749,7 @@ class _SceneConversationMessageList extends StatelessWidget {
             PracticeMessageBubble(
               key: ValueKey('practice-${message.role.name}-${message.id}'),
               message: message,
+              practiceController: controller,
               feedbackProjection: _feedbackProjection(message),
               onFeedbackRepractice: controller.canStartSpeechFeedbackRetry
                   ? onRepractice
