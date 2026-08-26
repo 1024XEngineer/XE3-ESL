@@ -38,8 +38,6 @@ export default function Home() {
         </a>
         <div className="nav-links">
           <a href="#top">产品介绍</a>
-          <a href="#method">怎么练</a>
-          <a href="#memory">长期记忆</a>
           <Link href="/changelog">更新日志</Link>
         </div>
       </nav>

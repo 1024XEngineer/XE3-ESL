@@ -26,12 +26,12 @@ test("renders the standalone SpeakUp portal", async () => {
   );
   assert.match(html, /Android 版本准备中/);
   assert.match(html, /正式 APK 就绪后开放下载/);
-  assert.match(html, /href="#method"[^>]*>怎么练<\/a>/);
+  assert.doesNotMatch(html, /href="#method"[^>]*>怎么练<\/a>/);
   assert.match(
     html,
     /<section class="release-method" id="method"[^>]*><div class="release-section-heading"><h2 id="method-title">/,
   );
-  assert.match(html, /href="#memory"[^>]*>长期记忆<\/a>/);
+  assert.doesNotMatch(html, /href="#memory"[^>]*>长期记忆<\/a>/);
   assert.match(
     html,
     /<section class="release-memory" id="memory"[^>]*><div><h2 id="memory-title">/,
