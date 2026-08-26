@@ -1,0 +1,26 @@
+[Unit]
+Description=SpeakUp Staging rootless Docker Engine
+Documentation=https://docs.docker.com/engine/security/rootless/
+
+[Service]
+Environment=HOME=/var/lib/speakup/staging-runtime
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=DOCKERD_ROOTLESS_ROOTLESSKIT_STATE_DIR=%t/speakup-staging-rootlesskit
+ExecStart=/usr/bin/dockerd-rootless.sh --host=unix://%t/docker.sock --config-file=/var/lib/speakup/staging-runtime/.config/docker/daemon.json
+ExecStartPost=/usr/bin/chmod 0600 %t/docker.sock
+ExecReload=/bin/kill -s HUP $MAINPID
+TimeoutStartSec=0
+TimeoutStopSec=120
+Restart=always
+RestartSec=2
+LimitNOFILE=infinity
+LimitNPROC=infinity
+LimitCORE=infinity
+TasksMax=infinity
+Delegate=yes
+Type=notify
+NotifyAccess=all
+KillMode=mixed
+
+[Install]
+WantedBy=default.target

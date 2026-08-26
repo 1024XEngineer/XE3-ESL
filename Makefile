@@ -33,6 +33,7 @@ SHELL := /bin/bash
 	check-production-deploy \
 	check-production-nginx \
 	check-staging-deploy \
+	check-staging-host-access \
 	check-staging-nginx \
 	dev-android \
 	dev-ios-simulator \
@@ -65,6 +66,7 @@ help:
 		'  make check-production-deploy  Validate the immutable Production contract' \
 		'  make check-production-nginx  Run nginx -t against the Production template' \
 		'  make check-staging-deploy  Validate Staging runtime-env, schema, lock, and receipt contracts' \
+		'  make check-staging-host-access  Validate restricted Staging SSH and rootless host access' \
 		'  make check-staging-nginx  Validate the Staging edge-env and rendered Nginx contract' \
 		'  make dev-android    Start the backend and run the App on an Android device' \
 		'  make dev-ios-simulator  Start the backend on an iOS Simulator' \
@@ -340,6 +342,9 @@ check-production-nginx:
 check-staging-deploy:
 	node --test deploy/staging/uat.test.mjs
 	./deploy/staging/test.sh
+
+check-staging-host-access:
+	./deploy/staging/test-host-access.sh
 
 check-staging-nginx:
 	./deploy/staging/test-nginx.sh

@@ -23,6 +23,7 @@ usage() {
 Usage:
   manage.sh validate --manifest FILE --runtime-env-file FILE
   manage.sh deploy --manifest FILE --runtime-env-file FILE --receipt FILE
+  manage.sh rollback --manifest TARGET --current-manifest CURRENT --runtime-env-file FILE --receipt FILE
   manage.sh verify --manifest FILE --runtime-env-file FILE
   manage.sh status --manifest FILE --runtime-env-file FILE
   manage.sh down --manifest FILE --runtime-env-file FILE
@@ -619,6 +620,43 @@ validate_manifest() {
   export PORTAL_IMAGE_DIGEST SERVER_IMAGE_DIGEST
 }
 
+save_release_state() {
+  local prefix=$1
+
+  printf -v "${prefix}_MANIFEST_SHA256" '%s' "$RELEASE_MANIFEST_SHA256"
+  printf -v "${prefix}_VERSION" '%s' "$RELEASE_VERSION"
+  printf -v "${prefix}_GIT_SHA" '%s' "$RELEASE_GIT_SHA"
+  printf -v "${prefix}_SCHEMA_VERSION" '%s' "$RELEASE_SCHEMA_VERSION"
+  printf -v "${prefix}_PORTAL_IMAGE_DIGEST" '%s' "$PORTAL_IMAGE_DIGEST"
+  printf -v "${prefix}_SERVER_IMAGE_DIGEST" '%s' "$SERVER_IMAGE_DIGEST"
+}
+
+use_release_state() {
+  local prefix=$1
+  local manifest_name="${prefix}_MANIFEST_SHA256"
+  local version_name="${prefix}_VERSION"
+  local git_name="${prefix}_GIT_SHA"
+  local schema_name="${prefix}_SCHEMA_VERSION"
+  local portal_name="${prefix}_PORTAL_IMAGE_DIGEST"
+  local server_name="${prefix}_SERVER_IMAGE_DIGEST"
+
+  RELEASE_MANIFEST_SHA256=${!manifest_name}
+  RELEASE_VERSION=${!version_name}
+  RELEASE_GIT_SHA=${!git_name}
+  RELEASE_SCHEMA_VERSION=${!schema_name}
+  PORTAL_IMAGE_DIGEST=${!portal_name}
+  SERVER_IMAGE_DIGEST=${!server_name}
+  export PORTAL_IMAGE_DIGEST SERVER_IMAGE_DIGEST
+}
+
+require_matching_rollback_schema() {
+  local current_schema=$1
+  local target_schema=$2
+
+  [[ "$current_schema" == "$target_schema" ]] ||
+    fail "rollback requires the current database schema to match the target release"
+}
+
 compose() {
   docker compose \
     --env-file /dev/null \
@@ -1038,12 +1076,51 @@ write_deployment_receipt() {
     rm -f "$temporary"
     fail "cannot render deployment receipt"
   fi
-  chmod 0644 "$temporary"
+  chmod 0444 "$temporary"
   if ! ln "$temporary" "$receipt"; then
     rm -f "$temporary"
     fail "deployment receipt already exists: $receipt"
   fi
   rm -f "$temporary"
+}
+
+rollback_staging() {
+  local target_manifest=$1
+  local current_manifest=$2
+  local receipt=$3
+  local initial_target_manifest_sha initial_current_manifest_sha
+
+  validate_receipt_target "$receipt"
+  save_release_state TARGET
+  initial_target_manifest_sha=$TARGET_MANIFEST_SHA256
+  validate_manifest "$current_manifest"
+  save_release_state CURRENT
+  initial_current_manifest_sha=$CURRENT_MANIFEST_SHA256
+
+  acquire_deployment_lock
+  validate_runtime_all "$target_manifest"
+  save_release_state TARGET
+  validate_manifest "$current_manifest"
+  save_release_state CURRENT
+  [[ "$TARGET_MANIFEST_SHA256" == "$initial_target_manifest_sha" &&
+    "$CURRENT_MANIFEST_SHA256" == "$initial_current_manifest_sha" ]] ||
+    fail "a Staging release manifest changed while waiting for the deployment lock"
+  validate_receipt_target "$receipt"
+
+  use_release_state CURRENT
+  verify_deployment
+  require_matching_rollback_schema \
+    "$CURRENT_SCHEMA_VERSION" "$TARGET_SCHEMA_VERSION"
+
+  use_release_state TARGET
+  verify_runtime_image \
+    portal "$portal_image_repository@$PORTAL_IMAGE_DIGEST" true
+  verify_runtime_image \
+    server "$server_image_repository@$SERVER_IMAGE_DIGEST" true
+  compose up --pull never --detach --no-build --no-deps --wait --wait-timeout 90 \
+    portal server
+  verify_deployment
+  write_deployment_receipt "$target_manifest" "$receipt"
 }
 
 validate_runtime_all() {
@@ -1056,6 +1133,8 @@ validate_runtime_all() {
 
 main() {
   local command=${1:-}
+  local current_manifest=""
+  local current_manifest_seen=false
   local edge_environment_file=""
   local edge_environment_file_seen=false
   local manifest=""
@@ -1079,6 +1158,14 @@ main() {
         (($# >= 2)) || fail "--manifest requires a value"
         manifest_seen=true
         manifest=$2
+        shift 2
+        ;;
+      --current-manifest)
+        ! $current_manifest_seen ||
+          fail "--current-manifest may only be provided once"
+        (($# >= 2)) || fail "--current-manifest requires a value"
+        current_manifest_seen=true
+        current_manifest=$2
         shift 2
         ;;
       --runtime-env-file)
@@ -1129,6 +1216,8 @@ main() {
       ! $runtime_environment_file_seen ||
         fail "render-nginx does not accept --runtime-env-file"
       ! $manifest_seen || fail "render-nginx does not accept --manifest"
+      ! $current_manifest_seen ||
+        fail "render-nginx does not accept --current-manifest"
       ! $receipt_seen || fail "render-nginx does not accept --receipt"
       $output_seen || fail "render-nginx requires --output"
       [[ -n "$output" ]] || fail "render-nginx requires --output"
@@ -1137,7 +1226,7 @@ main() {
       render_nginx "$output"
       printf 'rendered=%s\n' "$output"
       ;;
-    validate | deploy | verify | status | down)
+    validate | deploy | rollback | verify | status | down)
       $runtime_environment_file_seen ||
         fail "$command requires --runtime-env-file"
       [[ -n "$runtime_environment_file" ]] ||
@@ -1147,11 +1236,19 @@ main() {
       $manifest_seen || fail "$command requires --manifest"
       [[ -n "$manifest" ]] || fail "$command requires --manifest"
       ! $output_seen || fail "$command does not accept --output"
-      if [[ "$command" == deploy ]]; then
-        $receipt_seen || fail "deploy requires --receipt"
-        [[ -n "$receipt" ]] || fail "deploy requires --receipt"
+      if [[ "$command" == deploy || "$command" == rollback ]]; then
+        $receipt_seen || fail "$command requires --receipt"
+        [[ -n "$receipt" ]] || fail "$command requires --receipt"
       else
         ! $receipt_seen || fail "$command does not accept --receipt"
+      fi
+      if [[ "$command" == rollback ]]; then
+        $current_manifest_seen || fail "rollback requires --current-manifest"
+        [[ -n "$current_manifest" ]] ||
+          fail "rollback requires --current-manifest"
+      else
+        ! $current_manifest_seen ||
+          fail "$command does not accept --current-manifest"
       fi
       load_runtime_configuration "$runtime_environment_file"
       validate_runtime_all "$manifest"
@@ -1177,7 +1274,13 @@ main() {
           printf 'version=%s git_sha=%s receipt=%s deployed=true\n' \
             "$RELEASE_VERSION" "$RELEASE_GIT_SHA" "$receipt"
           ;;
+        rollback)
+          rollback_staging "$manifest" "$current_manifest" "$receipt"
+          printf 'version=%s git_sha=%s receipt=%s rolled_back=true database_restored=false\n' \
+            "$RELEASE_VERSION" "$RELEASE_GIT_SHA" "$receipt"
+          ;;
         verify)
+          acquire_deployment_lock
           verify_deployment
           printf 'version=%s verified=true\n' "$RELEASE_VERSION"
           ;;
