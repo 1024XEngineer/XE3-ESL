@@ -3,10 +3,13 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  androidReleaseNotesIndexPath,
   androidReleaseNotesPath,
-  loadAndroidReleaseNotes,
+  loadAndroidReleaseHistory,
   matchAndroidReleaseNotes,
+  matchAndroidReleaseNotesHistory,
   parseAndroidReleaseNotes,
+  parseAndroidReleaseNotesIndex,
 } from "../lib/android-release-notes.mjs";
 
 const release = {
@@ -41,19 +44,62 @@ function validNotes() {
   };
 }
 
-test("publishes an honest v0.1.7 user-facing release note", () => {
-  const notes = JSON.parse(
+function validLegacyNotes() {
+  return {
+    release_notes_version: 1,
+    locale: "zh-CN",
+    version: "0.1.4",
+    published_at: "2026-08-23T20:16:29Z",
+    changes: [
+      {
+        type: "fix",
+        text: "修复部分情况下实时语音识别无法返回文字结果的问题。",
+      },
+    ],
+  };
+}
+
+function validIndex() {
+  return {
+    release_notes_index_version: 1,
+    locale: "zh-CN",
+    versions: ["0.1.7", "0.1.4"],
+  };
+}
+
+function jsonResponse(value, status = 200) {
+  return new Response(JSON.stringify(value), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+test("publishes an honest Android release history", () => {
+  const index = JSON.parse(
     readFileSync(
       new URL(
-        "../public/release-notes/android/v0.1.7.zh-CN.json",
+        "../public/release-notes/android/index.zh-CN.json",
         import.meta.url,
       ),
       "utf8",
     ),
   );
+  const notes = index.versions.map((version) =>
+    JSON.parse(
+      readFileSync(
+        new URL(
+          `../public/release-notes/android/v${version}.zh-CN.json`,
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    ),
+  );
 
-  assert.equal(matchAndroidReleaseNotes(release, notes), notes);
-  assert.deepEqual(notes.changes, [
+  assert.equal(parseAndroidReleaseNotesIndex(index), index);
+  assert.deepEqual(index.versions, ["0.1.7", "0.1.4"]);
+  assert.deepEqual(matchAndroidReleaseNotesHistory(release, index, notes), notes);
+  assert.deepEqual(notes[0].changes, [
     {
       type: "fix",
       text: "修复断网后实时语音无法再次录音的问题。",
@@ -71,12 +117,19 @@ test("publishes an honest v0.1.7 user-facing release note", () => {
       text: "修复进入历史练习时可能自动触发新回复的问题。",
     },
   ]);
+  assert.deepEqual(notes[1], validLegacyNotes());
 });
 
-test("parses strict, single-version Android release notes", () => {
+test("parses strict Android release notes and their ordered index", () => {
   const notes = validNotes();
+  const index = validIndex();
 
   assert.equal(parseAndroidReleaseNotes(notes), notes);
+  assert.equal(parseAndroidReleaseNotesIndex(index), index);
+  assert.equal(
+    androidReleaseNotesIndexPath,
+    "/release-notes/android/index.zh-CN.json",
+  );
   assert.equal(
     androidReleaseNotesPath("0.1.7"),
     "/release-notes/android/v0.1.7.zh-CN.json",
@@ -117,6 +170,25 @@ test("rejects malformed Android release notes", () => {
   }
 });
 
+test("rejects malformed or unordered release note indexes", () => {
+  const invalidCases = [
+    { ...validIndex(), unexpected: true },
+    { ...validIndex(), release_notes_index_version: 2 },
+    { ...validIndex(), locale: "en-US" },
+    { ...validIndex(), versions: [] },
+    { ...validIndex(), versions: ["0.1.7", "0.1.7"] },
+    { ...validIndex(), versions: ["0.1.4", "0.1.7"] },
+    { ...validIndex(), versions: ["v0.1.7", "0.1.4"] },
+  ];
+
+  for (const index of invalidCases) {
+    assert.throws(
+      () => parseAndroidReleaseNotesIndex(index),
+      /Android release notes are invalid/,
+    );
+  }
+});
+
 test("requires current notes to match production version and publication time", () => {
   assert.throws(
     () => matchAndroidReleaseNotes({ ...release, version: "0.1.6" }, validNotes()),
@@ -132,18 +204,81 @@ test("requires current notes to match production version and publication time", 
   );
 });
 
-test("loads only the versioned notes for the active production release", async () => {
+test("matches the current release to a complete descending history", () => {
+  const notes = [validNotes(), validLegacyNotes()];
+  assert.deepEqual(
+    matchAndroidReleaseNotesHistory(release, validIndex(), notes),
+    notes,
+  );
+
+  const futureIndex = {
+    ...validIndex(),
+    versions: ["0.1.8", "0.1.7", "0.1.4"],
+  };
+  assert.deepEqual(
+    matchAndroidReleaseNotesHistory(release, futureIndex, notes),
+    notes,
+  );
+
+  assert.throws(
+    () =>
+      matchAndroidReleaseNotesHistory(release, validIndex(), [
+        validNotes(),
+        { ...validLegacyNotes(), version: "0.1.3" },
+      ]),
+    /Android release notes are invalid/,
+  );
+  assert.throws(
+    () =>
+      matchAndroidReleaseNotesHistory(release, validIndex(), [
+        validNotes(),
+        {
+          ...validLegacyNotes(),
+          published_at: "2026-08-25T15:05:30Z",
+        },
+      ]),
+    /Android release notes are invalid/,
+  );
+});
+
+test("loads visible release notes in parallel without exposing a future version", async () => {
   const requests = [];
-  const ready = await loadAndroidReleaseNotes(release, async (url, options) => {
+  const noteResolvers = new Map();
+  const futureIndex = {
+    ...validIndex(),
+    versions: ["0.1.8", "0.1.7", "0.1.4"],
+  };
+  const loading = loadAndroidReleaseHistory(release, async (url, options) => {
     requests.push({ url, options });
-    return new Response(JSON.stringify(validNotes()), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    });
+    if (url === androidReleaseNotesIndexPath) return jsonResponse(futureIndex);
+    if (url === androidReleaseNotesPath("0.1.7")) {
+      return new Promise((resolve) => {
+        noteResolvers.set(url, () => resolve(jsonResponse(validNotes())));
+      });
+    }
+    if (url === androidReleaseNotesPath("0.1.4")) {
+      return new Promise((resolve) => {
+        noteResolvers.set(url, () => resolve(jsonResponse(validLegacyNotes())));
+      });
+    }
+    throw new Error(`Unexpected release note request: ${url}`);
   });
 
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(noteResolvers.size, 2);
+  for (const resolve of noteResolvers.values()) resolve();
+
+  const ready = await loading;
   assert.equal(ready.status, "ready");
+  assert.deepEqual(ready.notes, [validNotes(), validLegacyNotes()]);
   assert.deepEqual(requests, [
+    {
+      url: "/release-notes/android/index.zh-CN.json",
+      options: {
+        cache: "no-store",
+        headers: { accept: "application/json" },
+      },
+    },
     {
       url: "/release-notes/android/v0.1.7.zh-CN.json",
       options: {
@@ -151,10 +286,37 @@ test("loads only the versioned notes for the active production release", async (
         headers: { accept: "application/json" },
       },
     },
+    {
+      url: "/release-notes/android/v0.1.4.zh-CN.json",
+      options: {
+        cache: "force-cache",
+        headers: { accept: "application/json" },
+      },
+    },
   ]);
+});
 
-  const unavailable = await loadAndroidReleaseNotes(release, async () =>
+test("reports unavailable instead of rendering an incomplete history", async () => {
+  const missingIndex = await loadAndroidReleaseHistory(release, async () =>
     new Response("Not found", { status: 404 }),
   );
-  assert.deepEqual(unavailable, { status: "unavailable" });
+  assert.deepEqual(missingIndex, { status: "unavailable" });
+
+  const missingHistory = await loadAndroidReleaseHistory(
+    release,
+    async (url) => {
+      if (url === androidReleaseNotesIndexPath) return jsonResponse(validIndex());
+      if (url === androidReleaseNotesPath("0.1.7")) {
+        return jsonResponse(validNotes());
+      }
+      return new Response("Not found", { status: 404 });
+    },
+  );
+  assert.deepEqual(missingHistory, { status: "unavailable" });
+
+  const currentMissing = await loadAndroidReleaseHistory(
+    { ...release, version: "0.1.6" },
+    async () => jsonResponse(validIndex()),
+  );
+  assert.deepEqual(currentMissing, { status: "unavailable" });
 });

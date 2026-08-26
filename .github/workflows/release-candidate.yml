@@ -1,16 +1,14 @@
 name: Release Candidate
 
 on:
-  push:
-    tags:
-      - "v[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
 
 permissions:
   actions: read
   contents: read
 
 concurrency:
-  group: release-candidate-${{ github.ref }}
+  group: release-candidate
   cancel-in-progress: false
 
 env:
@@ -31,6 +29,7 @@ jobs:
       - name: Check out complete release history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -39,27 +38,46 @@ jobs:
         with:
           node-version: "24.18.0"
 
-      - name: Reject moved or deleted Tag events
+      - name: Require an official main Candidate
         env:
-          TAG_CREATED: ${{ github.event.created }}
-          TAG_DELETED: ${{ github.event.deleted }}
-          TAG_FORCED: ${{ github.event.forced }}
+          CANDIDATE_EVENT: ${{ github.event_name }}
+          CANDIDATE_REPOSITORY: ${{ github.repository }}
+          CANDIDATE_REF: ${{ github.ref }}
+          CANDIDATE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_REF_TYPE" != "tag" ||
-                "$TAG_CREATED" != "true" ||
-                "$TAG_DELETED" == "true" ||
-                "$TAG_FORCED" == "true" ]]; then
-            echo "Release Candidate requires a newly created immutable Tag." >&2
+          if [[ "$CANDIDATE_EVENT" != "workflow_dispatch" ||
+                "$CANDIDATE_REPOSITORY" != "1024XEngineer/XE3-ESL" ||
+                "$CANDIDATE_REF" != "refs/heads/main" ]]; then
+            echo "Release Candidate must be dispatched from official main." >&2
+            exit 1
+          fi
+          if [[ ! "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Release Candidate requires a full lowercase commit SHA." >&2
             exit 1
           fi
 
-      - name: Validate Tag, version, commit, and database schema
+      - name: Validate Candidate, version, commit, and database schema
         id: release
         run: >-
           node tools/release-candidate/metadata.mjs
-          --tag "$GITHUB_REF_NAME"
+          --candidate-sha "$GITHUB_SHA"
           --main-ref refs/remotes/origin/main
+
+      - name: Record Candidate identity
+        env:
+          CANDIDATE_VERSION: ${{ steps.release.outputs.version }}
+          CANDIDATE_VERSION_CODE: ${{ steps.release.outputs.version_code }}
+          CANDIDATE_SHA: ${{ steps.release.outputs.git_sha }}
+          CANDIDATE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          {
+            printf '## Release Candidate\n\n'
+            printf -- '- Version: `%s`\n' "$CANDIDATE_VERSION"
+            printf -- '- Version code: `%s`\n' "$CANDIDATE_VERSION_CODE"
+            printf -- '- Commit: `%s`\n' "$CANDIDATE_SHA"
+            printf -- '- Run: %s\n' "$CANDIDATE_RUN_URL"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   quality:
     name: Full quality checks
@@ -94,6 +112,7 @@ jobs:
       - name: Check out release commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Sign in to GHCR
@@ -165,6 +184,7 @@ jobs:
       - name: Check out release commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Set up Flutter
@@ -304,6 +324,7 @@ jobs:
       - name: Check out complete release history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -387,7 +408,7 @@ jobs:
           APK_CERTIFICATE_SHA256="$(tr -d '[:space:]' < "$APK_CERTIFICATE_FILE")"
           export APK_CERTIFICATE_SHA256
           node tools/release-candidate/manifest.mjs \
-            --tag "$GITHUB_REF_NAME" \
+            --candidate-sha "$GITHUB_SHA" \
             --main-ref refs/remotes/origin/main \
             --staging-apk \
               "$RUNNER_TEMP/release-apks/speakup-v$VERSION-staging-arm64.apk" \

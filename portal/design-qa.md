@@ -36,9 +36,10 @@
   The page uses the homepage's restrained black-and-white editorial language,
   one flat release list, clear version/date/category hierarchy, and no cards,
   gradients, glow, or horizontal overflow.
-- Changelog release state: the browser rendered v0.1.4 only after the active
-  Android metadata matched the versioned Chinese notes, including the
-  Asia/Shanghai date `2026年8月24日` and the verified user-facing fix copy.
+- Changelog release state: the browser rendered the active v0.1.7 first and
+  the previously published v0.1.4 beneath it only after the production pointer,
+  ordered history index, and both versioned Chinese notes matched. The compact
+  page heading puts the first release at 213 px on desktop and 162 px on mobile.
 - Changelog discovery: both the homepage navigation and the Android detail
   page's “查看正式版本更新记录” link navigated to `/changelog`. The mobile
   navigation collapses at narrow widths; the footer becomes one-column at

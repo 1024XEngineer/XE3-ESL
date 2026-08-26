@@ -535,8 +535,7 @@
 }
 
 .release-footer-meta a:focus-visible,
-.download-page .download-inline-link:focus-visible,
-.changelog-page .changelog-back:focus-visible {
+.download-page .download-inline-link:focus-visible {
   outline: 3px solid #2d62ff;
   outline-offset: 3px;
 }
@@ -553,30 +552,13 @@
 }
 
 .changelog-page .changelog-hero {
-  padding: clamp(72px, 8vw, 108px) 0 clamp(68px, 7vw, 96px);
-}
-
-.changelog-page .changelog-back {
-  display: inline-block;
-  margin-bottom: clamp(58px, 6vw, 82px);
-  color: var(--muted);
-  font-size: 14px;
-  font-weight: 650;
+  padding: 44px 0 28px;
 }
 
 .changelog-page .changelog-hero h1 {
-  max-width: 760px;
-  font-size: clamp(52px, 7vw, 88px);
+  font-size: clamp(38px, 4vw, 48px);
   font-weight: 700;
-  line-height: 1;
-}
-
-.changelog-page .changelog-intro {
-  max-width: 660px;
-  margin-top: 24px;
-  color: var(--muted);
-  font-size: clamp(17px, 1.7vw, 20px);
-  line-height: 1.7;
+  line-height: 1.1;
 }
 
 .changelog-page .changelog-list {
@@ -1031,19 +1013,32 @@
   }
 
   .changelog-page .changelog-hero {
-    padding: 58px 0 64px;
-  }
-
-  .changelog-page .changelog-back {
-    margin-bottom: 56px;
+    padding: 30px 0 20px;
   }
 
   .changelog-page .changelog-hero h1 {
-    font-size: clamp(46px, 13vw, 54px);
+    font-size: 36px;
   }
 
   .changelog-page .changelog-release {
     padding: 40px 0 44px;
+    gap: 20px;
+  }
+
+  .changelog-page .changelog-release-meta {
+    padding-top: 0;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .changelog-page .changelog-release-meta p {
+    margin-bottom: 0;
+  }
+
+  .changelog-page .changelog-release-meta time {
+    white-space: nowrap;
   }
 
   .download-page .download-hero {

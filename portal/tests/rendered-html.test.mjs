@@ -103,9 +103,14 @@ test("renders the user-facing changelog without guessing a release", async () =>
   const html = await response.text();
   assert.match(html, /<title>更新日志 · SpeakUp<\/title>/);
   assert.match(html, /<h1>更新日志<\/h1>/);
-  assert.match(html, /记录 SpeakUp 已正式发布的功能、体验优化与问题修复/);
+  assert.match(
+    html,
+    /content="查看 SpeakUp 已正式发布的功能、体验优化与问题修复。"/,
+  );
   assert.match(html, /正在确认当前正式版本/);
   assert.match(html, /href="\/changelog"[^>]*aria-current="page"/);
+  assert.doesNotMatch(html, /返回产品首页/);
+  assert.doesNotMatch(html, /class="changelog-intro"/);
   assert.doesNotMatch(html, /v0\.1\.4/);
   assert.doesNotMatch(html, /实时语音识别无法返回文字结果/);
 });
