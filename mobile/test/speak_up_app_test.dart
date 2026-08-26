@@ -945,7 +945,7 @@ void main() {
     );
   });
 
-  testWidgets('keeps available Agent actions above the composer on iPhone', (
+  testWidgets('anchors available Agent actions above the composer', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(402, 874);
@@ -973,7 +973,7 @@ void main() {
     final composerRect = tester.getRect(
       find.byKey(const Key('agent-composer-surface')),
     );
-    expect(composerRect.top - lastActionRect.bottom, greaterThanOrEqualTo(16));
+    expect(composerRect.top - lastActionRect.bottom, closeTo(16, 0.01));
   });
 
   testWidgets('keeps three and four Agent actions on the same bottom edge', (
