@@ -10,6 +10,15 @@ import {
 
 const AUTOPLAY_DELAY_MS = 5000;
 
+type NavigationDirection = "next" | "previous";
+
+type CarouselMotion = {
+  activeIndex: number;
+  direction: NavigationDirection | null;
+  enteringIndex: number | null;
+  transitionId: number;
+};
+
 const productSlides = [
   {
     src: "/assets/portal-shots/interview-entry.webp",
@@ -68,8 +77,33 @@ function getCropStyle(slide: (typeof productSlides)[number]): CSSProperties {
   };
 }
 
+function getNavigatedMotion(
+  current: CarouselMotion,
+  direction: NavigationDirection,
+): CarouselMotion {
+  const length = productSlides.length;
+  const delta = direction === "next" ? 1 : -1;
+  const activeIndex = (current.activeIndex + delta + length) % length;
+  const enteringIndex =
+    direction === "next"
+      ? (activeIndex + 1) % length
+      : (activeIndex - 1 + length) % length;
+
+  return {
+    activeIndex,
+    direction,
+    enteringIndex,
+    transitionId: current.transitionId + 1,
+  };
+}
+
 export default function HeroProductCarousel() {
-  const [activeIndex, setActiveIndex] = useState(0);
+  const [motion, setMotion] = useState<CarouselMotion>({
+    activeIndex: 0,
+    direction: null,
+    enteringIndex: null,
+    transitionId: 0,
+  });
   const [autoplayEnabled, setAutoplayEnabled] = useState(true);
   const [isHovered, setIsHovered] = useState(false);
   const [hasFocus, setHasFocus] = useState(false);
@@ -79,21 +113,38 @@ export default function HeroProductCarousel() {
   const rootRef = useRef<HTMLElement>(null);
 
   const showSlide = (index: number, pauseAutoplay = true) => {
-    setActiveIndex((index + productSlides.length) % productSlides.length);
+    setMotion((current) => {
+      const length = productSlides.length;
+      const activeIndex = (index + length) % length;
+      if (activeIndex === current.activeIndex) return current;
+
+      const forwardDistance = (activeIndex - current.activeIndex + length) % length;
+      const backwardDistance = (current.activeIndex - activeIndex + length) % length;
+      const direction =
+        forwardDistance <= backwardDistance ? "next" : "previous";
+      const enteringIndex =
+        direction === "next"
+          ? (activeIndex + 1) % length
+          : (activeIndex - 1 + length) % length;
+
+      return {
+        activeIndex,
+        direction,
+        enteringIndex,
+        transitionId: current.transitionId + 1,
+      };
+    });
     if (pauseAutoplay) setAutoplayEnabled(false);
   };
 
   const showPrevious = () => {
     setAutoplayEnabled(false);
-    setActiveIndex(
-      (current) =>
-        (current - 1 + productSlides.length) % productSlides.length,
-    );
+    setMotion((current) => getNavigatedMotion(current, "previous"));
   };
 
   const showNext = () => {
     setAutoplayEnabled(false);
-    setActiveIndex((current) => (current + 1) % productSlides.length);
+    setMotion((current) => getNavigatedMotion(current, "next"));
   };
 
   useEffect(() => {
@@ -143,12 +194,12 @@ export default function HeroProductCarousel() {
     if (!shouldAutoplay) return;
 
     const timer = window.setTimeout(() => {
-      setActiveIndex((current) => (current + 1) % productSlides.length);
+      setMotion((current) => getNavigatedMotion(current, "next"));
     }, AUTOPLAY_DELAY_MS);
 
     return () => window.clearTimeout(timer);
   }, [
-    activeIndex,
+    motion.activeIndex,
     autoplayEnabled,
     hasFocus,
     isDocumentVisible,
@@ -163,7 +214,7 @@ export default function HeroProductCarousel() {
     }
   };
 
-  const activeSlide = productSlides[activeIndex];
+  const activeSlide = productSlides[motion.activeIndex];
   const announcementsArePolite = !autoplayEnabled || prefersReducedMotion;
 
   return (
@@ -181,19 +232,42 @@ export default function HeroProductCarousel() {
         <div className="hero-product-carousel__viewport">
           <div className="hero-product-carousel__track">
             {productSlides.map((slide, index) => {
-              const position = getSlidePosition(index, activeIndex);
+              const position = getSlidePosition(index, motion.activeIndex);
               const isActive = position === 0;
               const isAdjacent = Math.abs(position) === 1;
+              const enteringDirection =
+                index === motion.enteringIndex ? motion.direction : undefined;
 
               return (
                 <figure
                   className="hero-product-carousel__slide"
                   data-active={isActive}
                   data-adjacent={isAdjacent}
+                  data-entering={enteringDirection}
+                  data-transition-id={
+                    enteringDirection ? motion.transitionId : undefined
+                  }
                   aria-hidden={!isActive}
                   key={slide.src}
                   style={{
                     transform: `translate3d(calc(-50% + ${position * 82}%), 0, 0) scale(${isActive ? 1 : 0.92})`,
+                  }}
+                  onAnimationEnd={(event) => {
+                    if (event.target !== event.currentTarget) return;
+
+                    setMotion((current) => {
+                      const isCurrentTransition =
+                        current.transitionId === motion.transitionId &&
+                        current.enteringIndex === index;
+
+                      return isCurrentTransition
+                        ? {
+                            ...current,
+                            direction: null,
+                            enteringIndex: null,
+                          }
+                        : current;
+                    });
                   }}
                 >
                   <div className="hero-product-carousel__device">
@@ -252,8 +326,8 @@ export default function HeroProductCarousel() {
               type="button"
               key={slide.src}
               aria-label={`展示第 ${index + 1} 张：${slide.title}`}
-              aria-current={index === activeIndex ? "true" : undefined}
-              data-active={index === activeIndex}
+              aria-current={index === motion.activeIndex ? "true" : undefined}
+              data-active={index === motion.activeIndex}
               onClick={() => showSlide(index)}
             >
               <span />

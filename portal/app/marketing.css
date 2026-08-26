@@ -254,7 +254,7 @@
   pointer-events: none;
   filter: saturate(0.8);
   transition:
-    transform 560ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 620ms cubic-bezier(0.4, 0, 0.2, 1),
     opacity 360ms ease,
     filter 360ms ease;
   will-change: transform, opacity;
@@ -269,6 +269,40 @@
   z-index: 2;
   opacity: 1;
   filter: none;
+}
+
+.release-home .hero-product-carousel__slide[data-entering="next"] {
+  animation: hero-carousel-enter-next 560ms cubic-bezier(0.22, 1, 0.36, 1)
+    both;
+}
+
+.release-home .hero-product-carousel__slide[data-entering="previous"] {
+  animation: hero-carousel-enter-previous 560ms
+    cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes hero-carousel-enter-next {
+  from {
+    opacity: 0;
+    transform: translate3d(calc(-50% - 164%), 0, 0) scale(0.92);
+  }
+
+  to {
+    opacity: 0.42;
+    transform: translate3d(calc(-50% + 82%), 0, 0) scale(0.92);
+  }
+}
+
+@keyframes hero-carousel-enter-previous {
+  from {
+    opacity: 0;
+    transform: translate3d(calc(-50% + 164%), 0, 0) scale(0.92);
+  }
+
+  to {
+    opacity: 0.42;
+    transform: translate3d(calc(-50% - 82%), 0, 0) scale(0.92);
+  }
 }
 
 .release-home .hero-product-carousel__device {
@@ -1144,5 +1178,9 @@
 
   .release-home .hero-product-carousel__slide {
     will-change: auto;
+  }
+
+  .release-home .hero-product-carousel__slide[data-entering] {
+    animation: none !important;
   }
 }
