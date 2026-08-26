@@ -290,6 +290,27 @@ Production 部署入口。
 Deploy Workflow 接收确定的 `version` 和 `environment`，读取 Release manifest
 后部署现有制品，不重新构建。
 
+Staging 主机 contract 先把配置和命令依赖拆成两个互不重叠的接口：
+
+| 输入 | 职责与命令 | 调用身份所需访问 |
+| --- | --- | --- |
+| `staging-runtime.env` | 只包含 PostgreSQL、Portal、Server runtime 输入；`validate`、`deploy`、`verify`、`status`、`down` 只接受 `--runtime-env-file`，负责 manifest、Compose、migration、loopback health、锁和 receipt | 读取 manifest、runtime env 及其引用的 Server env，访问 Staging Docker/Compose runtime，并按命令访问锁和新 receipt；不需要 edge env、TLS key、htpasswd、ACME 或 public root |
+| `staging-edge.env` | 只包含 TLS certificate/key、htpasswd、ACME root 和 public root；`render-nginx` 只接受 `--edge-env-file` 与 `--output` | 读取 edge env 及其引用的边缘文件、遍历边缘目录并创建指定输出；不需要 manifest、runtime/Server env、receipt、Docker 或 Compose |
+
+`staging.speak-up.top` 与 `staging-api.speak-up.top` 固定为仓库 contract，不在两个
+env 中重复配置。两类 env 使用精确 allowlist，未知、重复、交叉 key 或 ambient
+environment 补值均 fail closed，错误不得输出 Secret 值。现有合并式 `staging.env`
+迁移时必须拆出两个 mode `0400`/`0600`、由各自执行 UID 持有的文件，删除两个旧
+hostname key，并分别替换为 `--runtime-env-file` 和 `--edge-env-file`；旧
+`--env-file` 明确失败，不提供兼容 fallback。
+
+这次拆分只消除 runtime 命令读取 edge Secret 的功能依赖，不构成主机级强制隔离。
+当前 runtime 路径仍会调用 Docker Compose；原始 rootful Docker socket、`docker`
+group、无限制 `sudo` 或 root SSH 都具有主机 root 级影响面，未来 CI 不得获得这些
+能力。受限 broker/forced-command、独立 Staging daemon 或更强 VM/主机边界、专用
+身份和资源限制属于后续独立任务。#1001 对应 PR 不创建 Workflow、主机用户、ACL、
+sudoers、systemd service 或 broker，也不授权 CI 连接服务器。
+
 Staging 自动部署并验证：
 
 - Portal、后端和隔离数据库启动成功。
@@ -605,6 +626,9 @@ Workflow 猜测或静默采用默认值。
 
 - [GitHub Deployments and environments](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments)
 - [GitHub Reviewing deployments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/review-deployments)
+- [GitHub secure use of self-hosted runners](https://docs.github.com/en/actions/reference/security/secure-use)
+- [Docker Engine security and daemon attack surface](https://docs.docker.com/engine/security/)
+- [Docker group root-level privileges](https://docs.docker.com/engine/install/linux-postinstall/)
 - [Android Sign your app](https://developer.android.com/studio/publish/app-signing)
 - [Android Version your app](https://developer.android.com/studio/publish/versioning)
 - [Android Release through a website](https://developer.android.com/studio/publish#publishing-website)

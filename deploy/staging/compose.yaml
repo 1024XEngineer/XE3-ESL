@@ -97,7 +97,7 @@ services:
     environment:
       PORTAL_ADMIN_PASSWORD: ${PORTAL_ADMIN_PASSWORD:?PORTAL_ADMIN_PASSWORD is required}
       PORTAL_SQLITE_PATH: /app/.wrangler/portal.sqlite
-      VINEXT_TRUSTED_HOSTS: ${STAGING_PORTAL_HOST:?STAGING_PORTAL_HOST is required}
+      VINEXT_TRUSTED_HOSTS: staging.speak-up.top
     ports:
       - "127.0.0.1:28082:3000"
     volumes:
