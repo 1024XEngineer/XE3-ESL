@@ -443,6 +443,22 @@ Staging-scoped volumes before deleting them by name.
 `down` uses the same exclusive lock as `deploy` and fails rather than running
 unlocked or concurrently with a release.
 
+## Automated Candidate deployment
+
+When an official `Release Candidate` run from `main` succeeds,
+`.github/workflows/staging-deploy.yml` verifies the triggering run without
+environment Secrets, selects its single immutable manifest artifact, and then
+enters the `staging` GitHub Environment. It reads the current broker receipt,
+deploys with optimistic concurrency, verifies the public API and protected
+Portal edge, and stores the broker response as the deployment audit artifact.
+
+The automated path requires ports `127.0.0.1:28082` and `127.0.0.1:28083` to
+belong to the rootless `speakup-staging-runtime` stack. A legacy rootful
+Staging stack using those ports must be stopped by a trusted host operator
+during a separately reviewed one-time cutover; the CI identity cannot and must
+not control the rootful Docker daemon. The workflow fails closed on a port
+conflict and never stops the legacy stack itself.
+
 ## Security boundary and non-goals
 
 CI reaches only the Staging-scoped forced gate and no-argument broker. The
@@ -496,4 +512,6 @@ unchanged.
 - [Nginx TLS module](https://nginx.org/en/docs/http/ngx_http_ssl_module.html)
 - [Nginx Basic Auth module](https://nginx.org/en/docs/http/ngx_http_auth_basic_module.html)
 - [GitHub Actions artifact download](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/download-workflow-artifacts)
+- [GitHub Actions `workflow_run` event](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run)
+- [GitHub Actions deployment environments](https://docs.github.com/en/actions/concepts/workflows-and-actions/deployment-environments)
 - [GitHub secure use of self-hosted runners](https://docs.github.com/en/actions/reference/security/secure-use)
