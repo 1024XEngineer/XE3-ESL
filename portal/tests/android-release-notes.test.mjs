@@ -97,9 +97,34 @@ test("publishes an honest Android release history", () => {
   );
 
   assert.equal(parseAndroidReleaseNotesIndex(index), index);
-  assert.deepEqual(index.versions, ["0.1.7", "0.1.4"]);
-  assert.deepEqual(matchAndroidReleaseNotesHistory(release, index, notes), notes);
+  assert.deepEqual(index.versions, ["0.1.8", "0.1.7", "0.1.4"]);
+  const currentRelease = {
+    version: notes[0].version,
+    published_at: notes[0].published_at,
+  };
+  assert.deepEqual(
+    matchAndroidReleaseNotesHistory(currentRelease, index, notes),
+    notes,
+  );
   assert.deepEqual(notes[0].changes, [
+    {
+      type: "feature",
+      text: "在日常、职场、面试和 IELTS 练习中增加逐句纠错、润色与原声播放。",
+    },
+    {
+      type: "fix",
+      text: "修复 IELTS Speaking Part 2 说明阶段提前播放题目或出现双路语音的问题。",
+    },
+    {
+      type: "fix",
+      text: "修复未录到声音后重新录音可能无法发送或取消的问题。",
+    },
+    {
+      type: "improvement",
+      text: "优化 Android 底部导航选中状态、首页快捷入口布局和用户消息样式。",
+    },
+  ]);
+  assert.deepEqual(notes[1].changes, [
     {
       type: "fix",
       text: "修复断网后实时语音无法再次录音的问题。",
@@ -117,7 +142,7 @@ test("publishes an honest Android release history", () => {
       text: "修复进入历史练习时可能自动触发新回复的问题。",
     },
   ]);
-  assert.deepEqual(notes[1], validLegacyNotes());
+  assert.deepEqual(notes[2], validLegacyNotes());
 });
 
 test("parses strict Android release notes and their ordered index", () => {
