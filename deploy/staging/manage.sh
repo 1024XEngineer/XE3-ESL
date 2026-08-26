@@ -11,6 +11,8 @@ readonly server_image_repository="ghcr.io/1024xengineer/xe3-esl-server"
 readonly postgres_image="postgres:18-bookworm@sha256:7d2695c3aa88e792e8b3b233e7e4adb296a20412c6c0ca361e3edaaacfada108"
 readonly portal_data_volume="${compose_project}_portal_data"
 readonly postgres_data_volume="${compose_project}_postgres_data"
+readonly staging_portal_host="staging.speak-up.top"
+readonly staging_api_host="staging-api.speak-up.top"
 readonly staging_lock_file="${SPEAKUP_STAGING_LOCK_FILE:-/run/lock/xe3-speakup-staging/deploy.lock}"
 readonly portal_health_url="http://127.0.0.1:28082/"
 readonly server_health_url="http://127.0.0.1:28083/health"
@@ -19,12 +21,12 @@ readonly server_readiness_url="http://127.0.0.1:28083/readyz"
 usage() {
   cat >&2 <<'EOF'
 Usage:
-  manage.sh validate --manifest FILE --env-file FILE
-  manage.sh deploy --manifest FILE --env-file FILE --receipt FILE
-  manage.sh verify --manifest FILE --env-file FILE
-  manage.sh status --manifest FILE --env-file FILE
-  manage.sh down --manifest FILE --env-file FILE
-  manage.sh render-nginx --env-file FILE --output FILE
+  manage.sh validate --manifest FILE --runtime-env-file FILE
+  manage.sh deploy --manifest FILE --runtime-env-file FILE --receipt FILE
+  manage.sh verify --manifest FILE --runtime-env-file FILE
+  manage.sh status --manifest FILE --runtime-env-file FILE
+  manage.sh down --manifest FILE --runtime-env-file FILE
+  manage.sh render-nginx --edge-env-file FILE --output FILE
 EOF
 }
 
@@ -375,16 +377,24 @@ require_owned_public_directory() {
     fail "$description cannot be group or world writable: $directory"
 }
 
-allowed_configuration_key() {
+allowed_runtime_configuration_key() {
   case "$1" in
     STAGING_POSTGRES_DB | \
       STAGING_POSTGRES_USER | \
       STAGING_POSTGRES_PASSWORD | \
       PORTAL_ADMIN_PASSWORD | \
-      STAGING_SERVER_ENV_FILE | \
-      STAGING_PORTAL_HOST | \
-      STAGING_API_HOST | \
-      STAGING_TLS_CERTIFICATE | \
+      STAGING_SERVER_ENV_FILE)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+allowed_edge_configuration_key() {
+  case "$1" in
+    STAGING_TLS_CERTIFICATE | \
       STAGING_TLS_CERTIFICATE_KEY | \
       STAGING_HTPASSWD_FILE | \
       STAGING_ACME_ROOT | \
@@ -397,25 +407,28 @@ allowed_configuration_key() {
   esac
 }
 
-load_configuration() {
-  local file=$1
-  local line name value line_number=0
-
-  require_private_file "environment file" "$file"
-
+unset_configuration() {
   unset \
     STAGING_POSTGRES_DB \
     STAGING_POSTGRES_USER \
     STAGING_POSTGRES_PASSWORD \
     PORTAL_ADMIN_PASSWORD \
     STAGING_SERVER_ENV_FILE \
-    STAGING_PORTAL_HOST \
-    STAGING_API_HOST \
     STAGING_TLS_CERTIFICATE \
     STAGING_TLS_CERTIFICATE_KEY \
     STAGING_HTPASSWD_FILE \
     STAGING_ACME_ROOT \
     STAGING_PUBLIC_ROOT
+}
+
+load_configuration() {
+  local file=$1
+  local kind=$2
+  local allowed_key="allowed_${kind}_configuration_key"
+  local line name value line_number=0 seen_keys="|"
+
+  require_private_file "$kind environment file" "$file"
+  unset_configuration
 
   while IFS= read -r line || [[ -n "$line" ]]; do
     line_number=$((line_number + 1))
@@ -431,30 +444,30 @@ load_configuration() {
     value=${line#*=}
     [[ "$name" =~ ^[A-Z][A-Z0-9_]*$ ]] ||
       fail "invalid environment key at line $line_number"
-    allowed_configuration_key "$name" ||
-      fail "unsupported environment key at line $line_number"
+    "$allowed_key" "$name" ||
+      fail "unsupported $kind environment key at line $line_number"
+    case "$seen_keys" in
+      *"|$name|"*)
+        fail "duplicate $kind environment key at line $line_number"
+        ;;
+    esac
+    seen_keys="${seen_keys}${name}|"
     printf -v "$name" '%s' "$value"
     export "$name"
   done <"$file"
 }
 
+load_runtime_configuration() {
+  load_configuration "$1" runtime
+}
+
+load_edge_configuration() {
+  load_configuration "$1" edge
+}
+
 require_value() {
   local name=$1
   [[ -n "${!name:-}" ]] || fail "$name is required"
-}
-
-valid_hostname() {
-  local value=$1
-  local label
-  local -a labels
-
-  [[ ${#value} -le 253 ]] || return 1
-  [[ "$value" != *..* ]] || return 1
-  IFS='.' read -r -a labels <<<"$value"
-  ((${#labels[@]} >= 2)) || return 1
-  for label in "${labels[@]}"; do
-    [[ "$label" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]] || return 1
-  done
 }
 
 valid_absolute_path() {
@@ -467,7 +480,7 @@ valid_absolute_path() {
     [[ "$value" != */. ]]
 }
 
-validate_configuration() {
+validate_runtime_configuration() {
   local name
   local required=(
     STAGING_POSTGRES_DB
@@ -475,13 +488,6 @@ validate_configuration() {
     STAGING_POSTGRES_PASSWORD
     PORTAL_ADMIN_PASSWORD
     STAGING_SERVER_ENV_FILE
-    STAGING_PORTAL_HOST
-    STAGING_API_HOST
-    STAGING_TLS_CERTIFICATE
-    STAGING_TLS_CERTIFICATE_KEY
-    STAGING_HTPASSWD_FILE
-    STAGING_ACME_ROOT
-    STAGING_PUBLIC_ROOT
   )
   for name in "${required[@]}"; do
     require_value "$name"
@@ -495,16 +501,24 @@ validate_configuration() {
     fail "STAGING_POSTGRES_PASSWORD must be at least 24 URL-safe characters"
   [[ ${#PORTAL_ADMIN_PASSWORD} -ge 16 ]] ||
     fail "PORTAL_ADMIN_PASSWORD must be at least 16 characters"
+  valid_absolute_path "$STAGING_SERVER_ENV_FILE" ||
+    fail "STAGING_SERVER_ENV_FILE must be a safe absolute path"
+  require_private_file "server environment file" "$STAGING_SERVER_ENV_FILE"
+}
 
-  valid_hostname "$STAGING_PORTAL_HOST" ||
-    fail "STAGING_PORTAL_HOST must be a lowercase DNS hostname"
-  valid_hostname "$STAGING_API_HOST" ||
-    fail "STAGING_API_HOST must be a lowercase DNS hostname"
-  [[ "$STAGING_PORTAL_HOST" != "$STAGING_API_HOST" ]] ||
-    fail "Staging Portal and API hostnames must be different"
-
+validate_edge_configuration() {
+  local name
+  local required=(
+    STAGING_TLS_CERTIFICATE
+    STAGING_TLS_CERTIFICATE_KEY
+    STAGING_HTPASSWD_FILE
+    STAGING_ACME_ROOT
+    STAGING_PUBLIC_ROOT
+  )
+  for name in "${required[@]}"; do
+    require_value "$name"
+  done
   for name in \
-    STAGING_SERVER_ENV_FILE \
     STAGING_TLS_CERTIFICATE \
     STAGING_TLS_CERTIFICATE_KEY \
     STAGING_HTPASSWD_FILE \
@@ -513,7 +527,6 @@ validate_configuration() {
     valid_absolute_path "${!name}" || fail "$name must be a safe absolute path"
   done
 
-  require_private_file "server environment file" "$STAGING_SERVER_ENV_FILE"
   require_public_certificate "$STAGING_TLS_CERTIFICATE"
   require_private_key_file "TLS certificate key" "$STAGING_TLS_CERTIFICATE_KEY"
   require_private_file "htpasswd file" "$STAGING_HTPASSWD_FILE"
@@ -694,8 +707,8 @@ render_nginx() {
   [[ -d "$(dirname "$output")" ]] || fail "Nginx output directory does not exist"
   temporary=$(mktemp "${output}.tmp.XXXXXX")
   if ! sed \
-    -e "s|__STAGING_PORTAL_HOST__|$STAGING_PORTAL_HOST|g" \
-    -e "s|__STAGING_API_HOST__|$STAGING_API_HOST|g" \
+    -e "s|__STAGING_PORTAL_HOST__|$staging_portal_host|g" \
+    -e "s|__STAGING_API_HOST__|$staging_api_host|g" \
     -e "s|__STAGING_TLS_CERTIFICATE__|$STAGING_TLS_CERTIFICATE|g" \
     -e "s|__STAGING_TLS_CERTIFICATE_KEY__|$STAGING_TLS_CERTIFICATE_KEY|g" \
     -e "s|__STAGING_HTPASSWD_FILE__|$STAGING_HTPASSWD_FILE|g" \
@@ -908,14 +921,16 @@ verify_runtime() {
 
   portal=$(inspect_runtime_service \
     portal "$portal_image_repository@$PORTAL_IMAGE_DIGEST" true)
-  jq --exit-status --arg network "${compose_project}_portal_edge" '
+  jq --exit-status \
+    --arg network "${compose_project}_portal_edge" \
+    --arg portal_host "$staging_portal_host" '
     def exact_env($key; $value):
       [.Config.Env[]? | select(startswith($key + "="))] ==
         [($key + "=" + $value)];
     .[0] |
     exact_env("PORTAL_ADMIN_PASSWORD"; env.PORTAL_ADMIN_PASSWORD) and
     exact_env("PORTAL_SQLITE_PATH"; "/app/.wrangler/portal.sqlite") and
-    exact_env("VINEXT_TRUSTED_HOSTS"; env.STAGING_PORTAL_HOST) and
+    exact_env("VINEXT_TRUSTED_HOSTS"; $portal_host) and
     (.Mounts | length == 1) and
     .Mounts[0].Type == "volume" and
     .Mounts[0].Name == "xe3-speakup-staging_portal_data" and
@@ -1031,24 +1046,26 @@ write_deployment_receipt() {
   rm -f "$temporary"
 }
 
-validate_all() {
+validate_runtime_all() {
   local manifest=$1
-  local rendered
 
-  validate_configuration
+  validate_runtime_configuration
   validate_manifest "$manifest"
   validate_compose
-  rendered=$(mktemp)
-  render_nginx "$rendered"
-  rm -f "$rendered"
 }
 
 main() {
   local command=${1:-}
+  local edge_environment_file=""
+  local edge_environment_file_seen=false
   local manifest=""
-  local environment_file=""
+  local manifest_seen=false
   local output=""
+  local output_seen=false
   local receipt=""
+  local receipt_seen=false
+  local runtime_environment_file=""
+  local runtime_environment_file_seen=false
 
   [[ -n "$command" ]] || {
     usage
@@ -1058,22 +1075,42 @@ main() {
   while (($# > 0)); do
     case "$1" in
       --manifest)
+        ! $manifest_seen || fail "--manifest may only be provided once"
         (($# >= 2)) || fail "--manifest requires a value"
+        manifest_seen=true
         manifest=$2
         shift 2
         ;;
-      --env-file)
-        (($# >= 2)) || fail "--env-file requires a value"
-        environment_file=$2
+      --runtime-env-file)
+        ! $runtime_environment_file_seen ||
+          fail "--runtime-env-file may only be provided once"
+        (($# >= 2)) || fail "--runtime-env-file requires a value"
+        runtime_environment_file_seen=true
+        runtime_environment_file=$2
         shift 2
         ;;
+      --edge-env-file)
+        ! $edge_environment_file_seen ||
+          fail "--edge-env-file may only be provided once"
+        (($# >= 2)) || fail "--edge-env-file requires a value"
+        edge_environment_file_seen=true
+        edge_environment_file=$2
+        shift 2
+        ;;
+      --env-file)
+        fail "--env-file was removed; use --runtime-env-file or --edge-env-file"
+        ;;
       --output)
+        ! $output_seen || fail "--output may only be provided once"
         (($# >= 2)) || fail "--output requires a value"
+        output_seen=true
         output=$2
         shift 2
         ;;
       --receipt)
+        ! $receipt_seen || fail "--receipt may only be provided once"
         (($# >= 2)) || fail "--receipt requires a value"
+        receipt_seen=true
         receipt=$2
         shift 2
         ;;
@@ -1083,27 +1120,41 @@ main() {
     esac
   done
 
-  [[ -n "$environment_file" ]] || fail "--env-file is required"
-  load_configuration "$environment_file"
-
   case "$command" in
     render-nginx)
-      [[ -z "$manifest" ]] || fail "render-nginx does not accept --manifest"
-      [[ -z "$receipt" ]] || fail "render-nginx does not accept --receipt"
+      $edge_environment_file_seen ||
+        fail "render-nginx requires --edge-env-file"
+      [[ -n "$edge_environment_file" ]] ||
+        fail "render-nginx requires --edge-env-file"
+      ! $runtime_environment_file_seen ||
+        fail "render-nginx does not accept --runtime-env-file"
+      ! $manifest_seen || fail "render-nginx does not accept --manifest"
+      ! $receipt_seen || fail "render-nginx does not accept --receipt"
+      $output_seen || fail "render-nginx requires --output"
       [[ -n "$output" ]] || fail "render-nginx requires --output"
-      validate_configuration
+      load_edge_configuration "$edge_environment_file"
+      validate_edge_configuration
       render_nginx "$output"
       printf 'rendered=%s\n' "$output"
       ;;
     validate | deploy | verify | status | down)
+      $runtime_environment_file_seen ||
+        fail "$command requires --runtime-env-file"
+      [[ -n "$runtime_environment_file" ]] ||
+        fail "$command requires --runtime-env-file"
+      ! $edge_environment_file_seen ||
+        fail "$command does not accept --edge-env-file"
+      $manifest_seen || fail "$command requires --manifest"
       [[ -n "$manifest" ]] || fail "$command requires --manifest"
-      [[ -z "$output" ]] || fail "$command does not accept --output"
+      ! $output_seen || fail "$command does not accept --output"
       if [[ "$command" == deploy ]]; then
+        $receipt_seen || fail "deploy requires --receipt"
         [[ -n "$receipt" ]] || fail "deploy requires --receipt"
       else
-        [[ -z "$receipt" ]] || fail "$command does not accept --receipt"
+        ! $receipt_seen || fail "$command does not accept --receipt"
       fi
-      validate_all "$manifest"
+      load_runtime_configuration "$runtime_environment_file"
+      validate_runtime_all "$manifest"
       case "$command" in
         validate)
           printf 'version=%s git_sha=%s schema=%s validated=true\n' \
@@ -1112,7 +1163,7 @@ main() {
         deploy)
           validate_receipt_target "$receipt"
           acquire_deployment_lock
-          validate_all "$manifest"
+          validate_runtime_all "$manifest"
           validate_receipt_target "$receipt"
           compose pull postgres migrate server portal
           compose up --pull never --detach --no-build --wait --wait-timeout 90 \
@@ -1135,7 +1186,7 @@ main() {
           ;;
         down)
           acquire_deployment_lock
-          validate_all "$manifest"
+          validate_runtime_all "$manifest"
           compose down --remove-orphans
           ;;
       esac
