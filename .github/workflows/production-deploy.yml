@@ -608,6 +608,9 @@ jobs:
             ' <<<"$release" >/dev/null
           release_id="$(jq -er '.id' <<<"$release")"
           already_published="$(jq -er '(.draft | not)' <<<"$release")"
+          upload_url="$(jq -er '.upload_url | sub("\\{\\?name,label\\}$"; "")' <<<"$release")"
+          [[ "$upload_url" == \
+            "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$release_id/assets" ]]
 
           expected_assets="$(printf '%s\n' \
             android-release.json \
@@ -623,13 +626,20 @@ jobs:
             done < <(gh api --paginate \
               "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" \
               --jq '.[].id')
-            gh release upload "$tag" \
-              "$assets/android-release.json" \
-              "$assets/$apk" \
-              "$assets/$apk.sha256" \
-              "$assets/production-deployment-receipt.json" \
-              "$assets/release-manifest.json" \
-              "$assets/release-notes.zh-CN.json"
+            for file in "$assets"/*; do
+              name="$(basename "$file")"
+              curl \
+                --fail \
+                --silent \
+                --show-error \
+                --request POST \
+                --header "Accept: application/vnd.github+json" \
+                --header "Authorization: Bearer $GH_TOKEN" \
+                --header "Content-Type: application/octet-stream" \
+                --header "X-GitHub-Api-Version: 2022-11-28" \
+                --data-binary "@$file" \
+                "$upload_url?name=$name" >/dev/null
+            done
           fi
           actual_assets="$(gh api --paginate \
             "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" \
