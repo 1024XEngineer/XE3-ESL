@@ -55,13 +55,10 @@
 ## <img src="https://img.shields.io/badge/SHOWCASE-526A82?style=flat-square" alt="" height="18" /> 产品体验
 
 <p align="center">
-  <img src="portal/public/assets/portal-shots/1-readme-tight.png" alt="SpeakUp Agent 个性化训练方案" width="48%" />
-  <img src="portal/public/assets/portal-shots/2-readme-tight.png" alt="SpeakUp Practice 场景训练" width="48%" />
-</p>
-
-<p align="center">
-  <img src="portal/public/assets/portal-shots/3-readme-tight.png" alt="SpeakUp Review 多维复盘" width="48%" />
-  <img src="portal/public/assets/portal-shots/4-readme-tight.png" alt="SpeakUp Feedback 下一步训练建议" width="48%" />
+  <img src="portal/public/assets/portal-shots/1-readme-tight.png" alt="SpeakUp Agent 个性化训练方案" width="23%" />
+  <img src="portal/public/assets/portal-shots/2-readme-tight.png" alt="SpeakUp Practice 场景训练" width="23%" />
+  <img src="portal/public/assets/portal-shots/3-readme-tight.png" alt="SpeakUp Review 多维复盘" width="23%" />
+  <img src="portal/public/assets/portal-shots/4-readme-tight.png" alt="SpeakUp Feedback 下一步训练建议" width="23%" />
 </p>
 
 <p align="center">
