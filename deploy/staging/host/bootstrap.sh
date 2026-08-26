@@ -124,6 +124,35 @@ require_source_file() {
     fail "$description must be a non-empty regular file"
 }
 
+require_shared_tmp() {
+  local path mode owner group expected_uid expected_gid expected_mode
+  path=$(host_path /tmp)
+  [[ ! -L "$path" && -d "$path" ]] || fail "/tmp must be a real directory"
+  mode=$(path_mode "$path") || fail "cannot inspect /tmp mode"
+  owner=$(path_owner "$path") || fail "cannot inspect /tmp owner"
+  group=$(path_group "$path") || fail "cannot inspect /tmp group"
+  if (( test_mode )); then
+    expected_uid=$(path_owner "$host_root") || fail "cannot inspect test root owner"
+    expected_gid=$test_owner_gid
+    expected_mode=777
+    [[ -k "$path" ]] || fail "/tmp must have the sticky bit"
+  else
+    expected_uid=0
+    expected_gid=0
+    expected_mode=1777
+  fi
+  [[ "$mode" == "$expected_mode" && "$owner" == "$expected_uid" &&
+     "$group" == "$expected_gid" ]] ||
+    fail "/tmp must be owned by root:root with mode 1777"
+}
+
+require_linux_amd64_elf() {
+  local path=$1 header
+  header=$(od -An -tx1 -N20 -- "$path" | tr -d '[:space:]')
+  [[ "$header" =~ ^7f454c46020101[0-9a-f]{18}(0200|0300)3e00$ ]] ||
+    fail "broker binary must be a Linux amd64 ELF executable"
+}
+
 install_directory() {
   local logical_path=$1
   local owner=$2
@@ -204,6 +233,35 @@ ensure_identity() {
       "$name"
   fi
   require_exact_user "$name" "$name" "$home" "$shell"
+}
+
+require_password_state() {
+  local name=$1 expected=$2 status state
+  status=$(passwd -S "$name") || fail "cannot inspect password status for $name"
+  read -r _ state _ <<<"$status"
+  case "$expected" in
+    locked)
+      [[ "$state" == L || "$state" == LK ]] ||
+        fail "$name password must be locked"
+      ;;
+    usable)
+      [[ "$state" == P ]] || fail "$name account must be usable by OpenSSH"
+      ;;
+  esac
+}
+
+ensure_ci_account_usable() {
+  local status state generated_password
+  status=$(passwd -S "$ci_user") ||
+    fail "cannot inspect password status for $ci_user"
+  read -r _ state _ <<<"$status"
+  if [[ "$state" != P ]]; then
+    generated_password=$(openssl rand -hex 48) ||
+      fail "cannot generate the CI account password hash input"
+    printf '%s:%s\n' "$ci_user" "$generated_password" | chpasswd
+    generated_password=""
+  fi
+  require_password_state "$ci_user" usable
 }
 
 require_subordinate_ids() {
@@ -395,11 +453,13 @@ done <"$ssh_public_key_file"
   fail "SSH public key must contain one bare Ed25519 public key"
 
 for command in \
-  awk chgrp chmod chown cmp env getent groupadd id install ln loginctl mktemp mv \
-  rm runuser sleep sshd stat systemctl systemd-tmpfiles useradd \
+  awk chgrp chmod chown chpasswd cmp env getent groupadd id install ln loginctl \
+  mktemp mv od openssl passwd rm runuser sleep sshd stat systemctl \
+  systemd-tmpfiles tr useradd \
   visudo; do
   require_command "$command"
 done
+require_linux_amd64_elf "$broker_binary"
 
 for rootless_binary in \
   /usr/bin/docker \
@@ -413,11 +473,14 @@ require_host_executable /usr/sbin/nologin
 require_id_map_helper /usr/bin/newuidmap
 require_id_map_helper /usr/bin/newgidmap
 require_user_namespace_support
+require_shared_tmp
 
 ensure_identity "$runtime_user" "$runtime_home" /usr/sbin/nologin \
   "SpeakUp Staging runtime"
 ensure_identity "$ci_user" "$ci_home" /bin/bash \
   "SpeakUp Staging CI forced command"
+require_password_state "$runtime_user" locked
+ensure_ci_account_usable
 runtime_uid=$(id -u "$runtime_user")
 runtime_gid=$(id -g "$runtime_user")
 [[ "$(id -u "$ci_user")" != "$runtime_uid" ]] ||
@@ -435,7 +498,7 @@ install_directory "$runtime_home/.config/systemd" root "$runtime_user" 750
 install_directory "$runtime_home/.config/systemd/user" root "$runtime_user" 750
 install_directory "$rootless_wants_directory" root "$runtime_user" 750
 install_directory "$runtime_home/.docker" "$runtime_user" "$runtime_user" 700
-install_directory "$runtime_home/docker-data" "$runtime_user" "$runtime_user" 700
+install_directory "$runtime_home/docker-data" "$runtime_user" "$runtime_user" 710
 install_directory /var/lib/speakup/staging-broker "$runtime_user" "$runtime_user" 700
 install_directory /var/lib/speakup/staging-broker/manifests "$runtime_user" "$runtime_user" 700
 install_directory /var/lib/speakup/staging-broker/receipts "$runtime_user" "$runtime_user" 700
@@ -487,7 +550,7 @@ cleanup() {
 }
 trap cleanup EXIT
 printf 'restrict %s\n' "$public_key" >"$authorized_keys_temporary"
-install_file "$authorized_keys_temporary" "$authorized_keys_file" root root 600
+install_file "$authorized_keys_temporary" "$authorized_keys_file" root root 644
 
 release_logical="$control_root/releases/$contract_revision"
 release_path=$(host_path "$release_logical")

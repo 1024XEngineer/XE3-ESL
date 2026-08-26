@@ -73,7 +73,7 @@ pass the CI public key (never its private key) explicitly:
 
 ```sh
 cd server
-CGO_ENABLED=0 go build -trimpath \
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath \
   -o /tmp/speakup-staging-broker ./cmd/staging-broker
 cd ..
 contract_revision="$(git rev-parse HEAD)"
@@ -94,8 +94,9 @@ broker is `/usr/local/libexec/speakup-staging-broker`; its state is
 `/var/lib/speakup/staging-broker`, and the shared lock directory is
 `/run/lock/xe3-speakup-staging`.
 
-The CI account has a locked password, a root-owned non-writable home, no
-supplementary groups, and `/bin/bash` only because OpenSSH evaluates
+The CI account receives a random password that is never retained, has a
+root-owned non-writable home, no supplementary groups, and `/bin/bash` only
+because OpenSSH evaluates
 `ForceCommand` through the account shell. The `Match User` policy and the
 authorized key's `restrict` option both disable passwords, keyboard-interactive
 authentication, PTY, agent, TCP/stream-local/X11 forwarding, tunnels, and user
@@ -113,6 +114,10 @@ group, and uses only `unix:///run/user/<runtime-uid>/docker.sock`. Its user
 service pins `HOME=/var/lib/speakup/staging-runtime`, the rootless socket, and
 the Docker data root. Neither identity may read or write a rootful Docker
 socket.
+
+The bootstrap rejects a non-Linux-amd64 broker and refuses to mutate the host
+unless the shared `/tmp` directory is root-owned mode `1777`. It never repairs
+that shared host path automatically.
 
 The bootstrap does not create `staging-runtime.env`, the referenced Server
 environment, a GHCR credential, an SSH private key, or any provider Secret.

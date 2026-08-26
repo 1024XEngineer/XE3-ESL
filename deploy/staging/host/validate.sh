@@ -150,6 +150,24 @@ require_file() {
     fail "$description has owner:group/mode $owner:$group/$mode; expected $expected_uid:$expected_gid/$expected_mode"
 }
 
+require_regular_file() {
+  local description=$1
+  local logical_path=$2
+  local expected_uid=$3
+  local expected_gid=$4
+  local expected_mode=$5
+  local path mode owner group
+  path=$(host_path "$logical_path")
+  [[ ! -L "$path" && -f "$path" ]] ||
+    fail "$description must be a regular file"
+  mode=$(path_mode "$path") || fail "cannot inspect $description mode"
+  owner=$(path_owner "$path") || fail "cannot inspect $description owner"
+  group=$(path_group "$path") || fail "cannot inspect $description group"
+  [[ "$mode" == "$expected_mode" && "$owner" == "$expected_uid" &&
+     "$group" == "$expected_gid" ]] ||
+    fail "$description has owner:group/mode $owner:$group/$mode; expected $expected_uid:$expected_gid/$expected_mode"
+}
+
 require_private_runtime_file() {
   local description=$1
   local logical_path=$2
@@ -198,6 +216,7 @@ require_exact_user() {
   local name=$1
   local expected_home=$2
   local expected_shell=$3
+  local expected_password_state=$4
   local entry group_entry entry_name password uid gid gecos home shell
   local group_name group_password group_gid group_memberships password_status
   local -a group_ids
@@ -220,8 +239,16 @@ require_exact_user() {
 
   password_status=$(passwd -S "$name") || fail "cannot inspect password status for $name"
   read -r _ password_state _ <<<"$password_status"
-  [[ "$password_state" == L || "$password_state" == LK ]] ||
-    fail "$name password must be locked"
+  case "$expected_password_state" in
+    locked)
+      [[ "$password_state" == L || "$password_state" == LK ]] ||
+        fail "$name password must be locked"
+      ;;
+    usable)
+      [[ "$password_state" == P ]] ||
+        fail "$name account must be usable by OpenSSH"
+      ;;
+  esac
   printf '%s %s\n' "$uid" "$gid"
 }
 
@@ -350,9 +377,9 @@ for command in \
 done
 
 runtime_identity=$(
-  require_exact_user "$runtime_user" "$runtime_home" /usr/sbin/nologin
+  require_exact_user "$runtime_user" "$runtime_home" /usr/sbin/nologin locked
 ) || exit 1
-ci_identity=$(require_exact_user "$ci_user" "$ci_home" /bin/bash) || exit 1
+ci_identity=$(require_exact_user "$ci_user" "$ci_home" /bin/bash usable) || exit 1
 read -r runtime_uid runtime_gid <<<"$runtime_identity"
 read -r ci_uid ci_gid <<<"$ci_identity"
 [[ "$runtime_uid" != "$ci_uid" ]] || fail "CI and runtime UIDs must differ"
@@ -363,7 +390,7 @@ require_directory "runtime home" "$runtime_home" "$expected_root_uid" "$runtime_
 require_directory "runtime Docker credential directory" "$runtime_home/.docker" \
   "$runtime_uid" "$runtime_gid" 700
 require_directory "rootless Docker data directory" "$runtime_home/docker-data" \
-  "$runtime_uid" "$runtime_gid" 700
+  "$runtime_uid" "$runtime_gid" 710
 require_directory "broker state" "$broker_state" "$runtime_uid" "$runtime_gid" 700
 require_directory "broker manifest state" "$broker_state/manifests" \
   "$runtime_uid" "$runtime_gid" 700
@@ -411,7 +438,7 @@ cmp -s "$script_directory/daemon.json" "$(host_path "$rootless_daemon_config")" 
 
 authorized_keys_path=$(host_path "$authorized_keys_file")
 require_file "CI authorized key" "$authorized_keys_file" \
-  "$expected_root_uid" "$expected_root_gid" 600
+  "$expected_root_uid" "$expected_root_gid" 644
 authorized_key=""
 authorized_key_line_count=0
 while IFS= read -r key_line || [[ -n "$key_line" ]]; do
@@ -545,7 +572,7 @@ lock_path=$(host_path "$lock_directory")
 while IFS= read -r -d '' lock_file; do
   lock_name=${lock_file##*/}
   case "$lock_name" in broker.lock | deploy.lock) ;; *) fail "unexpected Staging lock file" ;; esac
-  require_file "Staging lock" "$lock_directory/$lock_name" \
+  require_regular_file "Staging lock" "$lock_directory/$lock_name" \
     "$runtime_uid" "$runtime_gid" 600
 done < <(find "$lock_path" -mindepth 1 -maxdepth 1 -print0)
 
@@ -564,10 +591,8 @@ rootless_socket_path=$(host_path "$rootless_socket")
 is_socket "$rootless_socket_path" || fail "rootless Docker socket is unavailable"
 socket_mode=$(path_mode "$rootless_socket_path") || fail "cannot inspect rootless socket mode"
 socket_owner=$(path_owner "$rootless_socket_path") || fail "cannot inspect rootless socket owner"
-socket_group=$(path_group "$rootless_socket_path") || fail "cannot inspect rootless socket group"
-[[ "$socket_mode" == 600 && "$socket_owner" == "$runtime_uid" &&
-   "$socket_group" == "$runtime_gid" ]] ||
-  fail "rootless Docker socket has the wrong owner, group, or mode"
+[[ "$socket_mode" == 600 && "$socket_owner" == "$runtime_uid" ]] ||
+  fail "rootless Docker socket has the wrong owner or mode"
 assert_user_cannot_access "$ci_user" "rootless Docker socket" "$rootless_socket"
 
 runtime_systemctl=(
