@@ -2,11 +2,18 @@
 
 <br /><br /><br /><br />
 
-<img
-  src="portal/public/assets/brand/speakup-logo-orange.png"
-  alt="SpeakUp 狐狸 Logo"
-  width="440"
-/>
+<p>
+  <img
+    src="portal/public/assets/brand/speakup-mark.svg"
+    alt="SpeakUp 品牌标识"
+    width="100"
+  />
+  <img
+    src="portal/public/assets/brand/speak-up-wordmark-black.png"
+    alt="SpeakUp"
+    width="300"
+  />
+</p>
 
 **面向真实表达场景的 AI 英语口语陪练**
 
