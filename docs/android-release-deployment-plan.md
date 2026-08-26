@@ -121,9 +121,9 @@ GitHub Release 已发布；发布 GitHub Release 也不表示 Production 已完�
 
 - `dev` 是日常集成分支，功能 PR 合入 `dev`。
 - `main` 是发布分支，只通过 `dev -> main` 的 Release PR 接收候选版本。
-- Release PR 合并后，从官方仓库 `main` 的精确 commit 手动触发内部 Candidate
-  构建，不提前创建 `vX.Y.Z` Tag。不存在“合入 main 后再把全部代码额外推送
-  一次”。
+- Release PR 合并后，官方仓库 `main` 的 `push` 自动以精确 commit 触发内部
+  Candidate 构建，不提前创建 `vX.Y.Z` Tag。不存在“合入 main 后再把全部代码
+  额外推送一次”。
 - Stable Tag 只留给通过验收、准备进入正式发布流程的同一 commit 和制品。
 - `main` 上的 Release merge commit 不会自动回到 `dev`，因此 GitHub 可能显示
   `dev` 落后若干 merge commit。这是历史拓扑差异，不等于 `dev` 缺少代码。
@@ -142,9 +142,9 @@ GitHub Release 已发布；发布 GitHub Release 也不表示 Production 已完�
   -> PR Gate 与 Review
   -> 合入 dev
   -> Release PR: dev -> main
-  -> 从官方 main 精确 SHA 手动触发内部 Release Candidate
+  -> 官方 main `push` 自动以精确 SHA 触发内部 Release Candidate
   -> 全量测试并构建完整、可追溯制品
-  -> 后续独立流程部署同一 Candidate 到 Staging
+  -> 成功后由独立 Staging Workflow 自动部署同一 Candidate
   -> 自动冒烟 + 真人验收
   -> 批准正式发布并创建不可变 vX.Y.Z Stable Tag
   -> 基于同一制品创建 GitHub Release 草稿
@@ -196,12 +196,11 @@ Check 严格模式已暂缓，不在本阶段擅自重新启用。
 
 ### 7.2 Release Candidate
 
-Release Candidate Workflow 仅允许在官方仓库对 `refs/heads/main` 手动执行，并将
+Release Candidate Workflow 仅响应官方仓库 `refs/heads/main` 的 `push`，并将
 GitHub Actions 事件提供的精确 `github.sha` 作为 Candidate commit。Workflow 必须
 先验证：
 
-- 事件为 `workflow_dispatch`，仓库为 `1024XEngineer/XE3-ESL`，ref 为官方
-  `main`。
+- 事件为 `push`，仓库为 `1024XEngineer/XE3-ESL`，ref 为官方 `main`。
 - checkout HEAD 与完整小写 Candidate SHA 一致，且 commit 位于 `main` 的
   first-parent 历史。
 - Candidate 的 versionName 或 commit 尚未被 Stable Tag 使用。
@@ -272,10 +271,10 @@ Required reviewer；随后才能添加以下 Environment Secrets。后续正式 
 - `SPEAKUP_ANDROID_KEY_PASSWORD`
 - `SPEAKUP_ANDROID_CERT_SHA256`
 
-如果 `android-release-signing` 仍只允许 Tag pattern `v*.*.*`，从 `main` 手动触发
-的 Candidate 将无法进入签名 job 或取得 Environment Secrets。本 PR 不修改
-Environment 保护规则；实际运行前必须由管理员确认 `main` 已获准，不能通过移出
-Environment 或复制 Secrets 绕过该门禁。
+如果 `android-release-signing` 仍只允许 Tag pattern `v*.*.*`，由 `main` 的
+`push` 触发的 Candidate 将无法进入签名 job 或取得 Environment Secrets。本 PR
+不修改 Environment 保护规则；实际运行前必须由管理员确认 `main` 已获准，不能
+通过移出 Environment 或复制 Secrets 绕过该门禁。
 
 正式 Tag 还需要单独的 Tag ruleset 禁止更新和删除。Candidate Workflow 不创建
 Tag；保留的 Stable Tag 校验会继续检查运行时本地/远端集合、Tag 格式、commit、
@@ -284,8 +283,9 @@ Tag；保留的 Stable Tag 校验会继续检查运行时本地/远端集合、T
 
 ### 7.3 Staging 与 Production Deploy
 
-本节描述后续独立阶段；当前 Release Candidate Workflow 不调用 Staging 或
-Production 部署入口。
+Release Candidate Workflow 本身不调用 Staging 或 Production 部署入口。独立的
+Staging Workflow 仅在由官方 `main` 的 `push` 触发的 Candidate 成功后自动部署
+同一制品；Production 仍由后续独立流程和人工批准控制。
 
 Deploy Workflow 接收确定的 `version` 和 `environment`，读取 Release manifest
 后部署现有制品，不重新构建。

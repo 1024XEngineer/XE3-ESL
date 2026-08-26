@@ -1,7 +1,9 @@
 name: Release Candidate
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - main
 
 permissions:
   actions: read
@@ -46,10 +48,10 @@ jobs:
           CANDIDATE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          if [[ "$CANDIDATE_EVENT" != "workflow_dispatch" ||
+          if [[ "$CANDIDATE_EVENT" != "push" ||
                 "$CANDIDATE_REPOSITORY" != "1024XEngineer/XE3-ESL" ||
                 "$CANDIDATE_REF" != "refs/heads/main" ]]; then
-            echo "Release Candidate must be dispatched from official main." >&2
+            echo "Release Candidate requires a push to official main." >&2
             exit 1
           fi
           if [[ ! "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
