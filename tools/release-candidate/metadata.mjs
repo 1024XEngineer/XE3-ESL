@@ -11,6 +11,7 @@ const stableTagPattern = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const pubspecVersionPattern = /^version:\s*["']?([^+\s"']+)\+(\d+)["']?\s*$/gm;
 const migrationPattern = /^server\/migrations\/(\d{6})_[^/]+\.up\.sql$/;
 const tagRemotePattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const gitShaPattern = /^[0-9a-f]{40}$/;
 const officialUpstreamUrl = "https://github.com/1024XEngineer/XE3-ESL.git";
 
 export function parseStableTag(tag) {
@@ -182,12 +183,7 @@ function officialUpstreamMain(repoDir) {
   return commit;
 }
 
-export function collectReleaseMetadata({
-  repoDir,
-  tag,
-  mainRef,
-  tagRemote = "origin",
-}) {
+function releaseHistory(repoDir, mainRef, tagRemote) {
   if (
     typeof tagRemote !== "string" ||
     !tagRemotePattern.test(tagRemote) ||
@@ -199,22 +195,9 @@ export function collectReleaseMetadata({
   if (git(repoDir, ["rev-parse", "--is-shallow-repository"]) === "true") {
     throw new Error("Release validation requires the complete Git history");
   }
-  parseStableTag(tag);
-  const tagCommit = git(repoDir, [
-    "rev-parse",
-    "--verify",
-    `refs/tags/${tag}^{commit}`,
-  ]);
-  const headCommit = git(repoDir, ["rev-parse", "--verify", "HEAD^{commit}"]);
-  if (headCommit !== tagCommit) {
-    throw new Error(`HEAD ${headCommit} does not match release tag ${tag}`);
-  }
   const mainCommit = git(repoDir, ["rev-parse", "--verify", `${mainRef}^{commit}`]);
   if (tagRemote === "upstream" && mainCommit !== officialUpstreamMain(repoDir)) {
     throw new Error(`${mainRef} does not match live upstream main`);
-  }
-  if (!isAncestor(repoDir, tagCommit, mainCommit)) {
-    throw new Error(`Release tag ${tag} is not contained in ${mainRef}`);
   }
   const mainHistory = git(repoDir, [
     "rev-list",
@@ -223,58 +206,58 @@ export function collectReleaseMetadata({
     mainCommit,
   ]).split("\n");
   const firstParentCommits = new Set(mainHistory);
-  if (!firstParentCommits.has(tagCommit)) {
-    throw new Error(`Release tag ${tag} is not on the first-parent history of ${mainRef}`);
-  }
   const allStableTags = stableTagRefs(repoDir, tagRemote);
-
-  const pubspec = git(repoDir, ["show", `${tagCommit}:mobile/pubspec.yaml`]);
-  const current = parsePubspecVersion(pubspec);
-  if (`v${current.version}` !== tag) {
-    throw new Error(`Release tag ${tag} does not match versionName ${current.version}`);
+  const releasesOnMain = allStableTags.map((tag) => ({
+    tag,
+    commit: git(repoDir, [
+      "rev-parse",
+      "--verify",
+      `refs/tags/${tag}^{commit}`,
+    ]),
+    version: parseStableTag(tag),
+  }));
+  const offMainTag = releasesOnMain.find(
+    (release) => !isAncestor(repoDir, release.commit, mainCommit),
+  );
+  if (offMainTag) {
+    throw new Error(
+      `Previous release tag ${offMainTag.tag} is not contained in ${mainRef}`,
+    );
   }
-  validateVersionCode(current.versionCode, "Current release");
-
-  const releasesOnMain = allStableTags
-    .map((candidate) => ({
-      tag: candidate,
-      commit: git(repoDir, [
-        "rev-parse",
-        "--verify",
-        `refs/tags/${candidate}^{commit}`,
-      ]),
-      version: parseStableTag(candidate),
-    }))
-    .filter((candidate) => isAncestor(repoDir, candidate.commit, mainCommit));
-
   const sideHistoryTag = releasesOnMain.find(
-    (candidate) => !firstParentCommits.has(candidate.commit),
+    (release) => !firstParentCommits.has(release.commit),
   );
   if (sideHistoryTag) {
     throw new Error(
       `Previous release tag ${sideHistoryTag.tag} is not on the first-parent history of ${mainRef}`,
     );
   }
-  const historyOrder = new Map(
-    mainHistory.map((commit, index) => [commit, index]),
-  );
-  const releases = releasesOnMain.map((candidate) => {
-    let version = current;
-    if (candidate.tag !== tag) {
-      version = parsePubspecVersion(
-        git(repoDir, [
-          "show",
-          `refs/tags/${candidate.tag}^{commit}:mobile/pubspec.yaml`,
-        ]),
-      );
-    }
-    if (`v${version.version}` !== candidate.tag) {
+  return {
+    allStableTags,
+    firstParentCommits,
+    historyOrder: new Map(mainHistory.map((commit, index) => [commit, index])),
+    mainCommit,
+    releasesOnMain,
+  };
+}
+
+function validateReleaseSequence(repoDir, releasesOnMain, historyOrder, current) {
+  const releases = releasesOnMain.map((release) => {
+    const version = release.tag === current.tag && release.commit === current.commit
+      ? current.version
+      : parsePubspecVersion(
+          git(repoDir, [
+            "show",
+            `refs/tags/${release.tag}^{commit}:mobile/pubspec.yaml`,
+          ]),
+        );
+    if (`v${version.version}` !== release.tag) {
       throw new Error(
-        `Previous release tag ${candidate.tag} does not match versionName ${version.version}`,
+        `Previous release tag ${release.tag} does not match versionName ${version.version}`,
       );
     }
-    validateVersionCode(version.versionCode, candidate.tag);
-    return { ...candidate, versionCode: version.versionCode };
+    validateVersionCode(version.versionCode, release.tag);
+    return { ...release, versionCode: version.versionCode };
   }).sort(
     (left, right) => historyOrder.get(left.commit) - historyOrder.get(right.commit),
   );
@@ -294,43 +277,143 @@ export function collectReleaseMetadata({
       );
     }
   }
+}
 
+function metadataForCommit(repoDir, commit, current, extra = {}) {
   const migrationFiles = git(repoDir, [
     "ls-tree",
     "-r",
     "--name-only",
-    tagCommit,
+    commit,
     "--",
     "server/migrations",
   ]).split("\n");
-
   return {
-    tag,
+    ...extra,
     version: current.version,
     version_code: String(current.versionCode),
-    git_sha: tagCommit,
+    git_sha: commit,
     database_schema_version: String(databaseSchemaVersion(migrationFiles)),
   };
 }
 
+export function collectReleaseMetadata({
+  repoDir,
+  tag,
+  mainRef,
+  tagRemote = "origin",
+}) {
+  parseStableTag(tag);
+  const tagCommit = git(repoDir, [
+    "rev-parse",
+    "--verify",
+    `refs/tags/${tag}^{commit}`,
+  ]);
+  const headCommit = git(repoDir, ["rev-parse", "--verify", "HEAD^{commit}"]);
+  if (headCommit !== tagCommit) {
+    throw new Error(`HEAD ${headCommit} does not match release tag ${tag}`);
+  }
+  const history = releaseHistory(repoDir, mainRef, tagRemote);
+  const { mainCommit } = history;
+  if (!isAncestor(repoDir, tagCommit, mainCommit)) {
+    throw new Error(`Release tag ${tag} is not contained in ${mainRef}`);
+  }
+  if (!history.firstParentCommits.has(tagCommit)) {
+    throw new Error(`Release tag ${tag} is not on the first-parent history of ${mainRef}`);
+  }
+
+  const pubspec = git(repoDir, ["show", `${tagCommit}:mobile/pubspec.yaml`]);
+  const current = parsePubspecVersion(pubspec);
+  if (`v${current.version}` !== tag) {
+    throw new Error(`Release tag ${tag} does not match versionName ${current.version}`);
+  }
+  validateVersionCode(current.versionCode, "Current release");
+  validateReleaseSequence(repoDir, history.releasesOnMain, history.historyOrder, {
+    tag,
+    commit: tagCommit,
+    version: current,
+  });
+  return metadataForCommit(repoDir, tagCommit, current, { tag });
+}
+
+export function collectCandidateMetadata({
+  repoDir,
+  candidateSha,
+  mainRef,
+  tagRemote = "origin",
+}) {
+  if (!gitShaPattern.test(candidateSha)) {
+    throw new Error("candidateSha must be a full lowercase Git commit SHA");
+  }
+  const headCommit = git(repoDir, ["rev-parse", "--verify", "HEAD^{commit}"]);
+  if (headCommit !== candidateSha) {
+    throw new Error(`HEAD ${headCommit} does not match Candidate ${candidateSha}`);
+  }
+  const history = releaseHistory(repoDir, mainRef, tagRemote);
+  if (!isAncestor(repoDir, candidateSha, history.mainCommit)) {
+    throw new Error(`Candidate ${candidateSha} is not contained in ${mainRef}`);
+  }
+  if (!history.firstParentCommits.has(candidateSha)) {
+    throw new Error(
+      `Candidate ${candidateSha} is not on the first-parent history of ${mainRef}`,
+    );
+  }
+  const current = parsePubspecVersion(
+    git(repoDir, ["show", `${candidateSha}:mobile/pubspec.yaml`]),
+  );
+  const expectedTag = `v${current.version}`;
+  const parsedVersion = parseStableTag(expectedTag);
+  validateVersionCode(current.versionCode, "Candidate");
+  if (history.allStableTags.includes(expectedTag)) {
+    throw new Error(`Candidate stable Tag already exists: ${expectedTag}`);
+  }
+  const tagOnCandidate = history.releasesOnMain.find(
+    (release) => release.commit === candidateSha,
+  );
+  if (tagOnCandidate) {
+    throw new Error(
+      `Candidate commit is already used by stable release Tag ${tagOnCandidate.tag}`,
+    );
+  }
+  validateReleaseSequence(
+    repoDir,
+    [
+      ...history.releasesOnMain,
+      { tag: expectedTag, commit: candidateSha, version: parsedVersion },
+    ],
+    history.historyOrder,
+    { tag: expectedTag, commit: candidateSha, version: current },
+  );
+  return metadataForCommit(repoDir, candidateSha, current);
+}
+
 function main() {
   const usage =
-    "Usage: metadata.mjs --tag <vX.Y.Z> --main-ref <ref> " +
+    "Usage: metadata.mjs (--tag <vX.Y.Z> | --candidate-sha <sha>) " +
+    "--main-ref <ref> " +
     "[--repo <path>] [--tag-remote <name>]";
   const arguments_ = readArguments(
     process.argv.slice(2),
-    ["tag", "main-ref", "repo", "tag-remote"],
+    ["tag", "candidate-sha", "main-ref", "repo", "tag-remote"],
     usage,
   );
-  if (!arguments_.tag || !arguments_["main-ref"]) {
-    throw new Error("Both --tag and --main-ref are required");
+  if (!arguments_["main-ref"]) {
+    throw new Error("--main-ref is required");
   }
-  const metadata = collectReleaseMetadata({
+  if (Boolean(arguments_.tag) === Boolean(arguments_["candidate-sha"])) {
+    throw new Error("Exactly one of --tag or --candidate-sha is required");
+  }
+  const common = {
     repoDir: path.resolve(arguments_.repo ?? "."),
-    tag: arguments_.tag,
     mainRef: arguments_["main-ref"],
     tagRemote: arguments_["tag-remote"] ?? "origin",
-  });
+  };
+  const metadata = arguments_.tag
+    ? collectReleaseMetadata({ ...common, tag: arguments_.tag })
+    : collectCandidateMetadata({
+        ...common,
+        candidateSha: arguments_["candidate-sha"],
+      });
   const output = Object.entries(metadata)
     .map(([key, value]) => `${key}=${value}`)
     .join("\n");
