@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the SpeakUp China experiment PostgreSQL backup daily
+
+[Timer]
+OnCalendar=*-*-* 18:30:00 UTC
+RandomizedDelaySec=15m
+Persistent=true
+Unit=xe3-speakup-cn-experiment-postgres-backup.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,23 @@
+[Unit]
+Description=Create and verify a SpeakUp China experiment PostgreSQL logical backup
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+TimeoutStartSec=1h
+StateDirectory=speakup-cn-experiment/postgres-backups
+StateDirectoryMode=0700
+UMask=0077
+ExecStart=/usr/bin/flock --wait 900 /run/lock/xe3-speakup-cn-experiment-postgres-backup.lock /usr/bin/env EXPERIMENT_POSTGRES_BACKUP_ROOT=/var/lib/speakup-cn-experiment/postgres-backups /usr/local/sbin/xe3-speakup-cn-experiment-postgres-backup backup
+PrivateTmp=true
+PrivateDevices=true
+PrivateNetwork=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/run/lock
+NoNewPrivileges=true
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=
+LockPersonality=true
+MemoryDenyWriteExecute=true

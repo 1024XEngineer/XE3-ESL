@@ -7,6 +7,8 @@ trap 'rm -rf "$temporary_directory"' EXIT
 
 bash -n "$directory/smoke-current-providers.sh"
 bash -n "$directory/observability/export-host-metrics.sh"
+bash -n "$directory/backup/xe3-speakup-cn-experiment-postgres-backup"
+bash -n "$directory/backup/test.sh"
 
 if [[ "$(grep -Ec '^[[:space:]]+ports:$' "$directory/compose.yaml")" -ne 1 ]] ||
   ! grep -Fqx '      - "127.0.0.1:28083:8080"' "$directory/compose.yaml"; then
@@ -102,5 +104,7 @@ if grep -R --fixed-strings '/var/run/docker.sock' \
   printf 'observability stack must not mount the Docker socket\n' >&2
   exit 1
 fi
+
+"$directory/backup/test.sh"
 
 printf 'China backend experiment contract tests passed\n'

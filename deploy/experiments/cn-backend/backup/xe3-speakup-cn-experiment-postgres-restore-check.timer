@@ -1,0 +1,11 @@
+[Unit]
+Description=Restore-check the SpeakUp China experiment PostgreSQL backup weekly
+
+[Timer]
+OnCalendar=Sun *-*-* 19:30:00 UTC
+RandomizedDelaySec=30m
+Persistent=true
+Unit=xe3-speakup-cn-experiment-postgres-restore-check.service
+
+[Install]
+WantedBy=timers.target

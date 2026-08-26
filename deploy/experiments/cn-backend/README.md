@@ -143,6 +143,29 @@ creates accounts. This private stack cannot detect a complete host outage and
 has no notification delivery path; those remain formal HTTPS and Alertmanager
 cutover prerequisites.
 
+## Scheduled PostgreSQL backups
+
+Install and enable the experiment-only daily backup and weekly isolated
+restore check after PostgreSQL is healthy:
+
+```sh
+install -m 0755 backup/xe3-speakup-cn-experiment-postgres-backup \
+  /usr/local/sbin/xe3-speakup-cn-experiment-postgres-backup
+install -m 0644 backup/*.service backup/*.timer /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now \
+  xe3-speakup-cn-experiment-postgres-backup.timer \
+  xe3-speakup-cn-experiment-postgres-restore-check.timer
+systemctl start xe3-speakup-cn-experiment-postgres-backup.service
+systemctl start xe3-speakup-cn-experiment-postgres-restore-check.service
+systemctl list-timers 'xe3-speakup-cn-experiment-postgres-*'
+```
+
+Backups remain under
+`/var/lib/speakup-cn-experiment/postgres-backups`. To uninstall the schedule,
+disable both timers and remove only the installed units and command; do not
+remove that backup directory or the experiment PostgreSQL volume.
+
 ## Stop without deleting experiment data
 
 ```sh
