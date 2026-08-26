@@ -71,7 +71,7 @@ void main() {
       expect(platformViewRect.left, navigationRect.left);
       expect(platformViewRect.right, navigationRect.right);
       expect(platformViewRect.top - navigationRect.top, 12);
-      expect(platformViewRect.bottom - navigationRect.bottom, 12);
+      expect(platformViewRect.bottom, navigationRect.bottom);
       expect(
         PlatformNavigationBar.heightFor(
           tester.element(find.byKey(const Key('primary-navigation'))),

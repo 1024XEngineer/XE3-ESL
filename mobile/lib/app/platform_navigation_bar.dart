@@ -50,8 +50,8 @@ class PlatformNavigationBar extends StatelessWidget {
       return SizedBox(
         key: const Key('primary-navigation'),
         height: contentHeight + MediaQuery.viewPaddingOf(context).bottom,
-        child: Transform.translate(
-          offset: const Offset(0, iosVerticalOffset),
+        child: Padding(
+          padding: const EdgeInsets.only(top: iosVerticalOffset),
           child: _NativeIosTabBar(
             destinations: destinations,
             selectedIndex: selectedIndex,
