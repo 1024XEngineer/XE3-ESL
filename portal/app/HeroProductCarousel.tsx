@@ -237,6 +237,7 @@ export default function HeroProductCarousel() {
               const isAdjacent = Math.abs(position) === 1;
               const enteringDirection =
                 index === motion.enteringIndex ? motion.direction : undefined;
+              const movingDirection = isActive ? motion.direction : undefined;
 
               return (
                 <figure
@@ -244,6 +245,7 @@ export default function HeroProductCarousel() {
                   data-active={isActive}
                   data-adjacent={isAdjacent}
                   data-entering={enteringDirection}
+                  data-moving={movingDirection}
                   data-transition-id={
                     enteringDirection ? motion.transitionId : undefined
                   }
