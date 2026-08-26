@@ -64,8 +64,8 @@ help:
 		'  make check-observability  Validate monitoring, alert, and log rotation contracts' \
 		'  make check-production-deploy  Validate the immutable Production contract' \
 		'  make check-production-nginx  Run nginx -t against the Production template' \
-		'  make check-staging-deploy  Validate Staging runtime, schema, lock, and receipt contracts' \
-		'  make check-staging-nginx  Run nginx -t against the rendered Staging template' \
+		'  make check-staging-deploy  Validate Staging runtime-env, schema, lock, and receipt contracts' \
+		'  make check-staging-nginx  Validate the Staging edge-env and rendered Nginx contract' \
 		'  make dev-android    Start the backend and run the App on an Android device' \
 		'  make dev-ios-simulator  Start the backend on an iOS Simulator' \
 		'  make build-android-release-staging  Build the signed staging arm64 APK' \
