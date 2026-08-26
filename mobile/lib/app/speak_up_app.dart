@@ -580,7 +580,7 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
       avatarSurfaceVisible: avatar?.surfaceVisible ?? true,
       avatarStatusLabel: avatar?.statusLabel,
       onBeforeUserTurn: avatar?.interruptForUserTurn,
-      onReplayQuestionWithAvatar: avatar?.onReplayQuestion,
+      onPlayQuestionWithAvatar: avatar?.onPlayQuestion,
       avatarReplayLoading: avatar?.replayLoading ?? false,
       avatarReplayPlaying: avatar?.replayPlaying ?? false,
     );

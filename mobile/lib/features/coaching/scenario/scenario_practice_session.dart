@@ -15,12 +15,23 @@ typedef AvatarControllerFactory = AvatarController Function();
 typedef PracticeAvatarSessionBuilder =
     Widget Function(BuildContext context, PracticeAvatarSessionView avatar);
 
+typedef PracticeQuestionPlayback = Future<bool> Function();
+
+final class _QuestionPlaybackRequest {
+  _QuestionPlaybackRequest(this.questionId);
+
+  final String questionId;
+  final Completer<bool> completer = Completer<bool>();
+  bool started = false;
+}
+
 final class PracticeAvatarSessionView {
   const PracticeAvatarSessionView({
     required this.surfaceBuilder,
     required this.surfaceVisible,
     required this.statusLabel,
     required this.interruptForUserTurn,
+    required this.onPlayQuestion,
     required this.onReplayQuestion,
     required this.replayLoading,
     required this.replayPlaying,
@@ -30,6 +41,7 @@ final class PracticeAvatarSessionView {
   final bool surfaceVisible;
   final String? statusLabel;
   final Future<void> Function() interruptForUserTurn;
+  final PracticeQuestionPlayback? onPlayQuestion;
   final Future<void> Function()? onReplayQuestion;
   final bool replayLoading;
   final bool replayPlaying;
@@ -91,6 +103,7 @@ class ScenarioPracticeSession extends StatelessWidget {
         avatarStatusLabel: avatar.statusLabel,
         onBeforeStartRecording: avatar.interruptForUserTurn,
         onBeforeSubmitText: avatar.interruptForUserTurn,
+        onPlayQuestion: avatar.onPlayQuestion,
         onReplayQuestion: avatar.onReplayQuestion,
         onPracticeCompleted: onPracticeCompleted,
         onOpenReport: onOpenReport,
@@ -113,7 +126,7 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
   Timer? _readinessTimer;
   Timer? _reconnectTimer;
   String? _connectionAttemptedSessionId;
-  String? _autoHandledQuestionId;
+  _QuestionPlaybackRequest? _questionPlaybackRequest;
   String? _observedQuestionId;
   bool _readinessExpired = false;
   bool _connectionInFlight = false;
@@ -162,9 +175,9 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
       return;
     }
     oldWidget.practiceController.removeListener(_handlePracticeState);
+    _cancelQuestionPlaybackRequest();
     widget.practiceController.addListener(_handlePracticeState);
     _observedQuestionId = widget.practiceController.questionId;
-    _autoHandledQuestionId = null;
     _generation++;
     _scheduleSync();
   }
@@ -175,8 +188,7 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
     _generation++;
     _cancelConnectionTimers();
     if (!_foreground) {
-      // Never replay an interrupted question just because the App resumes.
-      _autoHandledQuestionId = widget.practiceController.questionId;
+      _cancelQuestionPlaybackRequest();
     }
     _queueLifecycleReconciliation(replaceController: !_foreground);
   }
@@ -262,7 +274,7 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
     final questionId = widget.practiceController.questionId;
     if (questionId != _observedQuestionId) {
       _observedQuestionId = questionId;
-      _autoHandledQuestionId = null;
+      _cancelQuestionPlaybackRequest();
       _generation++;
       if (_hasLiveAvatarController) {
         unawaited(_avatarController.interrupt());
@@ -360,10 +372,13 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
     if (_disposed || !_foreground || !_hasLiveAvatarController) {
       return;
     }
+    final request = _questionPlaybackRequest;
     final question = widget.practiceController.currentQuestion;
-    if (question == null ||
+    if (request == null ||
+        request.started ||
+        question == null ||
+        question.id != request.questionId ||
         _speechInFlight ||
-        question.id == _autoHandledQuestionId ||
         !_canSpeakNow(widget.practiceController)) {
       return;
     }
@@ -382,12 +397,21 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
     if (!readyForQuestion) {
       return;
     }
-    _autoHandledQuestionId = question.id;
-    if (widget.practiceController.supportsRealtimeQuestionSpeech) {
-      await _speakRealtimeQuestion(question);
-      return;
+    request.started = true;
+    var completed = false;
+    try {
+      completed = widget.practiceController.supportsRealtimeQuestionSpeech
+          ? await _speakRealtimeQuestion(question)
+          : await _speakQuestion(question);
+    } on Object {
+      completed = false;
     }
-    await _speakQuestion(question);
+    if (identical(_questionPlaybackRequest, request)) {
+      _questionPlaybackRequest = null;
+      if (!request.completer.isCompleted) {
+        request.completer.complete(completed);
+      }
+    }
   }
 
   Future<void> _connect(String sessionId) async {
@@ -571,22 +595,22 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
     });
   }
 
-  Future<void> _speakQuestion(
+  Future<bool> _speakQuestion(
     PracticeQuestion question, {
     bool replay = false,
   }) async {
     if (!_hasLiveAvatarController) {
-      return;
+      return false;
     }
     final avatarController = _avatarController;
     final mediaClient = widget.practiceController.mediaClient;
     final speechPath = question.speechPath;
     if (_speechInFlight || mediaClient == null || speechPath == null) {
-      return;
+      return false;
     }
     final sessionId = widget.practiceController.practiceSessionId;
     if (sessionId == null || question.sessionId != sessionId) {
-      return;
+      return false;
     }
     final generation = ++_generation;
     _speechInFlight = true;
@@ -608,16 +632,24 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
         speechPath: speechPath,
         avatarController: avatarController,
       )) {
-        return;
+        return false;
       }
       _replayLoading = false;
       if (mounted) {
         setState(() {});
       }
       await avatarController.speakWav(bytes);
+      return _speechFenceMatches(
+        generation: generation,
+        sessionId: sessionId,
+        questionId: question.id,
+        speechPath: speechPath,
+        avatarController: avatarController,
+      );
     } catch (_) {
       // The scenario remains usable through text/recording when media or the
       // provider is unavailable. A replay tap can retry the same question.
+      return false;
     } finally {
       if (bytes != null) {
         try {
@@ -635,22 +667,23 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
     }
   }
 
-  Future<void> _speakRealtimeQuestion(
+  Future<bool> _speakRealtimeQuestion(
     PracticeQuestion question, {
     bool replay = false,
   }) async {
     if (_speechInFlight || !_hasLiveAvatarController) {
-      return;
+      return false;
     }
     final sessionId = widget.practiceController.practiceSessionId;
     if (sessionId == null || question.sessionId != sessionId) {
-      return;
+      return false;
     }
     final avatarController = _avatarController;
     final nativeOutput = widget.practiceController.questionSpeechPlayer;
     if (nativeOutput == null) {
-      return;
+      return false;
     }
+    final generation = ++_generation;
     _speechInFlight = true;
     if (replay) {
       _replayLoading = true;
@@ -666,6 +699,13 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
           _readinessExpired,
         ),
       );
+      return !_disposed &&
+          _foreground &&
+          generation == _generation &&
+          widget.practiceController.practiceSessionId == sessionId &&
+          widget.practiceController.currentQuestion?.id == question.id;
+    } on Object {
+      return false;
     } finally {
       _speechInFlight = false;
       _replayLoading = false;
@@ -673,6 +713,33 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
         setState(() {});
       }
       _scheduleSync();
+    }
+  }
+
+  Future<bool> _requestCurrentQuestionPlayback() {
+    if (_disposed || !_foreground) {
+      return Future<bool>.value(false);
+    }
+    final question = widget.practiceController.currentQuestion;
+    if (question == null) {
+      return Future<bool>.value(false);
+    }
+    final existing = _questionPlaybackRequest;
+    if (existing?.questionId == question.id) {
+      return existing!.completer.future;
+    }
+    _cancelQuestionPlaybackRequest();
+    final request = _QuestionPlaybackRequest(question.id);
+    _questionPlaybackRequest = request;
+    _scheduleSync();
+    return request.completer.future;
+  }
+
+  void _cancelQuestionPlaybackRequest() {
+    final request = _questionPlaybackRequest;
+    _questionPlaybackRequest = null;
+    if (request != null && !request.completer.isCompleted) {
+      request.completer.complete(false);
     }
   }
 
@@ -704,21 +771,23 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
       await _interruptForUserTurn();
       return;
     }
-    if (widget.practiceController.supportsRealtimeQuestionSpeech) {
-      final question = widget.practiceController.currentQuestion;
-      if (question != null) {
-        await _speakRealtimeQuestion(question, replay: true);
-      }
-      return;
+    _replayLoading = true;
+    if (mounted) {
+      setState(() {});
     }
-    final question = widget.practiceController.currentQuestion;
-    if (question != null) {
-      await _speakQuestion(question, replay: true);
+    try {
+      await _requestCurrentQuestionPlayback();
+    } finally {
+      _replayLoading = false;
+      if (mounted) {
+        setState(() {});
+      }
     }
   }
 
   Future<void> _interruptForUserTurn() async {
     _generation++;
+    _cancelQuestionPlaybackRequest();
     final operations = <Future<void>>[
       _bestEffort(
         () => widget.practiceController.stopPracticeAudio(notify: false),
@@ -790,6 +859,9 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
             _hasLiveAvatarController && avatarController.state.canUseAvatar,
         statusLabel: _avatarStatusLabel,
         interruptForUserTurn: _interruptForUserTurn,
+        onPlayQuestion: !widget.practiceController.canPlayQuestionAudio
+            ? null
+            : _requestCurrentQuestionPlayback,
         onReplayQuestion: !widget.practiceController.canPlayQuestionAudio
             ? null
             : _replayQuestion,
@@ -806,6 +878,7 @@ class _PracticeAvatarSessionState extends State<PracticeAvatarSession>
   void dispose() {
     _disposed = true;
     _generation++;
+    _cancelQuestionPlaybackRequest();
     _connectionOperationId++;
     _cancelConnectionTimers();
     WidgetsBinding.instance.removeObserver(this);
