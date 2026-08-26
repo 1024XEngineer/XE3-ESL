@@ -446,6 +446,9 @@ jobs:
       - name: Validate Production deployment contract
         run: make check-production-deploy
 
+      - name: Validate China backend experiment contract
+        run: make check-cn-backend-experiment
+
       - name: Validate Production PostgreSQL systemd units
         run: |
           sudo install -D -m 0755 \

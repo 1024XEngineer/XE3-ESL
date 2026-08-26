@@ -9,11 +9,19 @@ directory, runtime file, and Server environment file. It must not reuse a
 Staging or Production database volume. The Server image digest must come from
 the same successful Release Candidate manifest used by the comparison APK.
 
-The public mapping is an external provider responsibility. This stack binds
-the container API to private instance port `18083`; it never publishes
-PostgreSQL or metrics. A public high-port mapping is suitable only for the
-short internal experiment and must not be treated as the final Production
-HTTPS endpoint.
+This stack binds the container API only to host loopback port `28083`; it never
+publishes PostgreSQL or metrics. Do not point the APK at a public plaintext
+mapping. Until a trusted TLS edge exists, connect a debug APK through USB and
+an encrypted SSH local forward:
+
+```sh
+ssh -N -L 18083:127.0.0.1:28083 -p "$CN_EXPERIMENT_SSH_PORT" \
+  "$CN_EXPERIMENT_SSH_TARGET"
+adb reverse tcp:18083 tcp:18083
+```
+
+The debug APK then uses `http://127.0.0.1:18083`; plaintext exists only across
+the local USB forwarding boundary and the Internet leg is protected by SSH.
 
 ## Host files
 
@@ -24,6 +32,17 @@ HTTPS endpoint.
 Both environment files must be owned by root with mode `0600`. The Server
 environment must not define `DATABASE_URL`, `SERVER_HOST`, or `SERVER_PORT`;
 Compose owns those values.
+
+Run `./validate-runtime.sh /etc/speakup-cn-experiment/runtime.env` before every
+Compose operation. The validator requires lowercase PostgreSQL identifiers and
+a 24-to-128-character URL-safe password because Compose inserts these values
+directly into a PostgreSQL URL.
+
+Generate a unique experiment password rather than copying a placeholder:
+
+```sh
+openssl rand -hex 24
+```
 
 Both images use `pull_policy: never`. Load the exact Server and PostgreSQL
 digests recorded by the selected Release Candidate before starting the stack.
@@ -36,6 +55,8 @@ unreviewed registry mirror from changing the image.
 ## Start and verify
 
 ```sh
+./validate-runtime.sh /etc/speakup-cn-experiment/runtime.env
+
 docker compose \
   --env-file /etc/speakup-cn-experiment/runtime.env \
   --file /opt/speakup-cn-experiment/compose.yaml \
@@ -51,13 +72,15 @@ docker compose \
   --file /opt/speakup-cn-experiment/compose.yaml \
   up --detach --wait postgres server
 
-curl --fail http://10.222.1.17:18083/health
-curl --fail http://10.222.1.17:18083/readyz
+curl --fail http://127.0.0.1:28083/health
+curl --fail http://127.0.0.1:28083/readyz
 ```
 
 ## Stop without deleting experiment data
 
 ```sh
+./validate-runtime.sh /etc/speakup-cn-experiment/runtime.env
+
 docker compose \
   --env-file /etc/speakup-cn-experiment/runtime.env \
   --file /opt/speakup-cn-experiment/compose.yaml \
