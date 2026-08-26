@@ -252,8 +252,8 @@ Staging 成功后进入 Environment 人工审批，批准后才取得生产凭�
 Android 正式签名采用以下已确认边界：
 
 - GitHub Environment 固定为 `android-release-signing`。
-- Required reviewer 为 `Lq0412`；当前单人发布阶段允许本人审核，未来增加独立
-  发布负责人后再启用禁止自审。
+- 不设置 Required reviewer，避免在 Candidate 构建阶段提前暂停；唯一人工发布
+  审批保留在后续 `production` Environment。
 - 正式签名证书 Owner 为 `Lq0412`。
 - 证书与密码均保存两份：团队密码管理器一份、离线加密备份一份，不能只保存在
   GitHub Secret。
@@ -261,9 +261,8 @@ Android 正式签名采用以下已确认边界：
   Runner；构建结束后删除，不进入 Artifact、日志或仓库。
 
 首次运行前，管理员必须先创建该 Environment，将 Deployment branches and tags
-设为 Selected branches and tags，并至少允许 Branch pattern `main`，同时配置
-Required reviewer；随后才能添加以下 Environment Secrets。后续正式 Tag 流程仍可
-保留 Tag pattern `v*.*.*`：
+设为 Selected branches and tags，并且只允许 Branch pattern `main`；随后才能添加
+以下 Environment Secrets。Candidate 的正式签名不需要 Tag pattern：
 
 - `SPEAKUP_ANDROID_KEYSTORE_BASE64`
 - `SPEAKUP_ANDROID_KEY_ALIAS`
@@ -271,10 +270,9 @@ Required reviewer；随后才能添加以下 Environment Secrets。后续正式 
 - `SPEAKUP_ANDROID_KEY_PASSWORD`
 - `SPEAKUP_ANDROID_CERT_SHA256`
 
-如果 `android-release-signing` 仍只允许 Tag pattern `v*.*.*`，由 `main` 的
-`push` 触发的 Candidate 将无法进入签名 job 或取得 Environment Secrets。本 PR
-不修改 Environment 保护规则；实际运行前必须由管理员确认 `main` 已获准，不能
-通过移出 Environment 或复制 Secrets 绕过该门禁。
+如果 `android-release-signing` 没有允许 `main`，由 `main` 的 `push` 触发的
+Candidate 将无法进入签名 job 或取得 Environment Secrets。不能通过移出
+Environment 或复制 Secrets 绕过该边界。
 
 正式 Tag 还需要单独的 Tag ruleset 禁止更新和删除。Candidate Workflow 不创建
 Tag；保留的 Stable Tag 校验会继续检查运行时本地/远端集合、Tag 格式、commit、
