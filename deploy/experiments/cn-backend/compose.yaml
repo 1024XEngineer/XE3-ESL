@@ -1,0 +1,97 @@
+name: xe3-speakup-cn-experiment
+
+x-speakup-logging: &speakup-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:18-bookworm
+    # Docker Hub is not reliably reachable from the experiment host. Load this
+    # exact digest through the audited offline path before starting the stack.
+    pull_policy: never
+    restart: unless-stopped
+    logging: *speakup-logging
+    environment:
+      POSTGRES_DB: ${EXPERIMENT_POSTGRES_DB:?EXPERIMENT_POSTGRES_DB is required}
+      POSTGRES_USER: ${EXPERIMENT_POSTGRES_USER:?EXPERIMENT_POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${EXPERIMENT_POSTGRES_PASSWORD:?EXPERIMENT_POSTGRES_PASSWORD is required}
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    networks:
+      - database
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'pg_isready --username="$${POSTGRES_USER}" --dbname="$${POSTGRES_DB}"',
+        ]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 5s
+
+  migrate:
+    image: ghcr.io/1024xengineer/xe3-esl-server@${SERVER_IMAGE_DIGEST:?SERVER_IMAGE_DIGEST is required}
+    pull_policy: never
+    profiles:
+      - migration
+    restart: "no"
+    logging: *speakup-logging
+    command:
+      - /usr/local/bin/speakup-migrate
+      - up
+    environment:
+      DATABASE_URL: postgres://${EXPERIMENT_POSTGRES_USER:?EXPERIMENT_POSTGRES_USER is required}:${EXPERIMENT_POSTGRES_PASSWORD:?EXPERIMENT_POSTGRES_PASSWORD is required}@postgres:5432/${EXPERIMENT_POSTGRES_DB:?EXPERIMENT_POSTGRES_DB is required}?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - database
+
+  server:
+    image: ghcr.io/1024xengineer/xe3-esl-server@${SERVER_IMAGE_DIGEST:?SERVER_IMAGE_DIGEST is required}
+    pull_policy: never
+    restart: unless-stopped
+    init: true
+    logging: *speakup-logging
+    env_file:
+      - ${EXPERIMENT_SERVER_ENV_FILE:?EXPERIMENT_SERVER_ENV_FILE is required}
+    environment:
+      DATABASE_URL: postgres://${EXPERIMENT_POSTGRES_USER:?EXPERIMENT_POSTGRES_USER is required}:${EXPERIMENT_POSTGRES_PASSWORD:?EXPERIMENT_POSTGRES_PASSWORD is required}@postgres:5432/${EXPERIMENT_POSTGRES_DB:?EXPERIMENT_POSTGRES_DB is required}?sslmode=disable
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: "8080"
+      METRICS_HOST: 127.0.0.1
+    ports:
+      - "${EXPERIMENT_BIND_ADDRESS:?EXPERIMENT_BIND_ADDRESS is required}:18083:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - server_egress
+      - database
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "-T",
+          "2",
+          "--spider",
+          "http://127.0.0.1:8080/readyz",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+
+networks:
+  server_egress:
+  database:
+    internal: true
+
+volumes:
+  postgres_data:
