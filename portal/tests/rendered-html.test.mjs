@@ -36,7 +36,18 @@ test("renders the standalone SpeakUp portal", async () => {
     html,
     /<section class="release-memory" id="memory"[^>]*><div><h2 id="memory-title">/,
   );
-  assert.match(html, /portal-interview-practice\.png/);
+  assert.match(html, /aria-roledescription="轮播图"/);
+  assert.match(html, /interview-entry\.webp/);
+  assert.match(html, /interview-chat\.webp/);
+  assert.match(html, /ielts-review\.webp/);
+  assert.match(html, /practice-progress\.webp/);
+  assert.match(html, /aria-label="上一张产品截图"/);
+  assert.match(html, /aria-label="下一张产品截图"/);
+  assert.match(html, /aria-label="暂停自动播放"/);
+  assert.match(html, /场景化专项练习/);
+  assert.match(html, /多维能力评分/);
+  assert.match(html, /看见长期进步/);
+  assert.doesNotMatch(html, /portal-interview-practice\.png/);
   assert.match(html, /speak-up-wordmark-black\.png/);
   assert.match(html, /speakup-mark\.svg/);
   assert.doesNotMatch(html, /speakup-mascot-blue/);

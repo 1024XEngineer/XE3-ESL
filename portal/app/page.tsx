@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import BrandMark from "./BrandMark";
 import BrandWordmark from "./BrandWordmark";
+import HeroProductCarousel from "./HeroProductCarousel";
 import { HomeAndroidDownloadAction } from "./HomeAndroidRelease";
 
 export const metadata: Metadata = {
@@ -59,19 +60,7 @@ export default function Home() {
           <HomeAndroidDownloadAction />
         </div>
 
-        <figure className="release-product">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="/assets/portal-shots/portal-interview-practice.png"
-            alt="SpeakUp 根据后端开发面试目标准备项目经历深挖练习"
-            width="884"
-            height="1832"
-          />
-          <figcaption>
-            <strong>真实产品界面 · 英文面试</strong>
-            <span>围绕真实任务练习、反馈和复盘。</span>
-          </figcaption>
-        </figure>
+        <HeroProductCarousel />
       </header>
 
       <section className="release-method" id="method" aria-labelledby="method-title">
