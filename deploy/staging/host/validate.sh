@@ -18,6 +18,7 @@ readonly sudoers_file="/etc/sudoers.d/speakup-staging-ci"
 readonly tmpfiles_file="/etc/tmpfiles.d/xe3-speakup-staging.conf"
 readonly rootless_unit_name="speakup-staging-rootless-docker.service"
 readonly rootless_unit="$runtime_home/.config/systemd/user/$rootless_unit_name"
+readonly rootless_wants_link="$runtime_home/.config/systemd/user/default.target.wants/$rootless_unit_name"
 readonly rootless_daemon_config="$runtime_home/.config/docker/daemon.json"
 readonly registry_config="$runtime_home/.docker/config.json"
 readonly trusted_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -394,6 +395,15 @@ require_file "rootless Docker unit" "$rootless_unit" \
   "$expected_root_uid" "$runtime_gid" 440
 cmp -s "$script_directory/rootless-docker.service" "$(host_path "$rootless_unit")" ||
   fail "installed rootless Docker unit differs from the contract"
+rootless_wants_path=$(host_path "$rootless_wants_link")
+[[ -L "$rootless_wants_path" ]] ||
+  fail "rootless Docker enablement link is missing"
+[[ "$(readlink "$rootless_wants_path")" == "../$rootless_unit_name" ]] ||
+  fail "rootless Docker enablement link has an unexpected target"
+rootless_wants_owner=$(path_owner "$rootless_wants_path") ||
+  fail "cannot inspect rootless Docker enablement link owner"
+[[ "$rootless_wants_owner" == "$expected_root_uid" ]] ||
+  fail "rootless Docker enablement link must be root-owned"
 require_file "rootless Docker daemon config" "$rootless_daemon_config" \
   "$expected_root_uid" "$runtime_gid" 440
 cmp -s "$script_directory/daemon.json" "$(host_path "$rootless_daemon_config")" ||

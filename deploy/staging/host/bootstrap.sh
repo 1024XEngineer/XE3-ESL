@@ -17,6 +17,8 @@ readonly sudoers_file="/etc/sudoers.d/speakup-staging-ci"
 readonly tmpfiles_file="/etc/tmpfiles.d/xe3-speakup-staging.conf"
 readonly rootless_unit_name="speakup-staging-rootless-docker.service"
 readonly rootless_unit="$runtime_home/.config/systemd/user/$rootless_unit_name"
+readonly rootless_wants_directory="$runtime_home/.config/systemd/user/default.target.wants"
+readonly rootless_wants_link="$rootless_wants_directory/$rootless_unit_name"
 readonly rootless_daemon_config="$runtime_home/.config/docker/daemon.json"
 readonly trusted_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 readonly script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -431,6 +433,7 @@ install_directory "$runtime_home/.config" root "$runtime_user" 750
 install_directory "$runtime_home/.config/docker" root "$runtime_user" 750
 install_directory "$runtime_home/.config/systemd" root "$runtime_user" 750
 install_directory "$runtime_home/.config/systemd/user" root "$runtime_user" 750
+install_directory "$rootless_wants_directory" root "$runtime_user" 750
 install_directory "$runtime_home/.docker" "$runtime_user" "$runtime_user" 700
 install_directory "$runtime_home/docker-data" "$runtime_user" "$runtime_user" 700
 install_directory /var/lib/speakup/staging-broker "$runtime_user" "$runtime_user" 700
@@ -448,8 +451,17 @@ install_directory "$control_root/releases" root root 755
 
 install_file "$script_directory/rootless-docker.service" \
   "$rootless_unit" root "$runtime_user" 440
+rootless_wants_path=$(host_path "$rootless_wants_link")
+if [[ -e "$rootless_wants_path" && ! -L "$rootless_wants_path" ]]; then
+  fail "rootless Docker enablement path must be a symbolic link"
+fi
+ln -sfn "../$rootless_unit_name" "$rootless_wants_path"
+if (( ! test_mode )); then
+  chown -h root:root "$rootless_wants_path"
+fi
 install_file "$script_directory/daemon.json" \
   "$rootless_daemon_config" root "$runtime_user" 440
+install_directory "$rootless_wants_directory" root "$runtime_user" 550
 install_directory "$runtime_home/.config/docker" root "$runtime_user" 550
 install_directory "$runtime_home/.config/systemd/user" root "$runtime_user" 550
 install_directory "$runtime_home/.config/systemd" root "$runtime_user" 550
@@ -510,7 +522,7 @@ if [[ -e "$current_path" && ! -L "$current_path" ]]; then
 fi
 current_link_temporary=$(mktemp "$(host_path "$control_root")/.current.XXXXXX")
 ln -sfn "releases/$contract_revision" "$current_link_temporary"
-mv -f -- "$current_link_temporary" "$current_path"
+mv -Tf -- "$current_link_temporary" "$current_path"
 current_link_temporary=""
 
 systemd-tmpfiles --create "$(host_path "$tmpfiles_file")"
@@ -534,7 +546,8 @@ runtime_systemctl=(
   systemctl --user
 )
 "${runtime_systemctl[@]}" daemon-reload
-"${runtime_systemctl[@]}" enable "$rootless_unit_name"
+"${runtime_systemctl[@]}" is-enabled --quiet "$rootless_unit_name" ||
+  fail "rootless Docker user service is not enabled by the fixed host link"
 "${runtime_systemctl[@]}" restart "$rootless_unit_name"
 
 rootless_socket=$(host_path "/run/user/$runtime_uid/docker.sock")
