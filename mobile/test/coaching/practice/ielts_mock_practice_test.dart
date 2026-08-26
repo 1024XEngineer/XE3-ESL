@@ -305,6 +305,66 @@ void main() {
     },
   );
 
+  testWidgets('Part 2 gates avatar and native fallback speech behind Start', (
+    tester,
+  ) async {
+    final now = DateTime.utc(2026, 8, 3, 5);
+    final speaker = _ControlledExaminerSpeaker();
+    final cueCardPlayback = Completer<bool>();
+    var questionPlaybackCalls = 0;
+    final practice = _IeltsPracticeClient(initialCompleted: 8);
+    final controller = PracticeController(
+      client: practice,
+      recorder: _Recorder(),
+    );
+    final store = _MemoryProgressStore();
+    addTearDown(controller.dispose);
+    await _activatePractice(controller, practice, _ieltsScene);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: store,
+          examinerSpeaker: speaker,
+          onPlayQuestionWithAvatar: () {
+            questionPlaybackCalls++;
+            return cueCardPlayback.future;
+          },
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.text('进入 Part 2'));
+    await tester.pump();
+    speaker.completeCurrent();
+    await tester.pump();
+
+    expect(store.value?.phase, IeltsMockPhase.part2Intro);
+    expect(questionPlaybackCalls, 0);
+    expect(store.value?.preparationDeadline, isNull);
+
+    await tester.tap(find.byKey(const Key('ielts-mock-part-2-start')));
+    await tester.pump();
+
+    expect(store.value?.phase, IeltsMockPhase.part2CueCard);
+    expect(questionPlaybackCalls, 1);
+    expect(store.value?.preparationDeadline, isNull);
+
+    cueCardPlayback.complete(true);
+    await tester.pump();
+    await tester.pump();
+
+    expect(store.value?.phase, IeltsMockPhase.part2Preparation);
+    expect(
+      store.value?.preparationDeadline,
+      now.add(const Duration(minutes: 1)),
+    );
+    expect(questionPlaybackCalls, 1);
+  });
+
   testWidgets(
     'Part 2 section hides the Cue Card after formal recording starts',
     (tester) async {

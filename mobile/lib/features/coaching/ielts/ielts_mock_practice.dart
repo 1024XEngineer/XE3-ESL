@@ -82,7 +82,7 @@ class IeltsSpeakingMockPage extends StatefulWidget {
     this.avatarSurfaceVisible = true,
     this.avatarStatusLabel,
     this.onBeforeUserTurn,
-    this.onReplayQuestionWithAvatar,
+    this.onPlayQuestionWithAvatar,
     this.avatarReplayLoading = false,
     this.avatarReplayPlaying = false,
     this.now = DateTime.now,
@@ -101,7 +101,7 @@ class IeltsSpeakingMockPage extends StatefulWidget {
   final bool avatarSurfaceVisible;
   final String? avatarStatusLabel;
   final Future<void> Function()? onBeforeUserTurn;
-  final Future<void> Function()? onReplayQuestionWithAvatar;
+  final Future<bool> Function()? onPlayQuestionWithAvatar;
   final bool avatarReplayLoading;
   final bool avatarReplayPlaying;
   final DateTime Function() now;
@@ -676,10 +676,6 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     }
     _autoNarratedQuestionId = questionId;
     _autoNarratedQuestionText = questionText;
-    if (widget.controller.currentQuestion?.speechPath != null &&
-        widget.onReplayQuestionWithAvatar != null) {
-      return;
-    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || _progress?.phase != phase) {
         return;
@@ -688,14 +684,11 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     });
   }
 
-  Future<void> _playQuestionNarration(String questionId, String text) async {
+  Future<bool> _playQuestionNarration(String questionId, String text) async {
     final currentQuestion = widget.controller.currentQuestion;
-    final replayWithAvatar = widget.onReplayQuestionWithAvatar;
-    if (currentQuestion?.id == questionId &&
-        currentQuestion?.speechPath != null &&
-        replayWithAvatar != null) {
-      await replayWithAvatar();
-      return;
+    final playWithAvatar = widget.onPlayQuestionWithAvatar;
+    if (currentQuestion?.id == questionId && playWithAvatar != null) {
+      return playWithAvatar();
     }
     if (_progress?.phase == IeltsMockPhase.part1 &&
         currentQuestion?.id == questionId &&
@@ -705,16 +698,16 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       _playingQuestionId = null;
       _questionNarrationErrorId = null;
       await widget.controller.toggleQuestionAudio();
-      return;
+      return true;
     }
     if (_playingQuestionId == questionId) {
       await _stopQuestionNarration();
-      return;
+      return false;
     }
     final generation = ++_questionNarrationGeneration;
     await _stopExaminerSpeakerSafely();
     if (!mounted || generation != _questionNarrationGeneration) {
-      return;
+      return false;
     }
     setState(() {
       _playingQuestionId = questionId;
@@ -727,10 +720,12 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       } else {
         await speaker.speak(text);
       }
+      return true;
     } catch (_) {
       if (mounted && generation == _questionNarrationGeneration) {
         setState(() => _questionNarrationErrorId = questionId);
       }
+      return false;
     } finally {
       if (mounted && generation == _questionNarrationGeneration) {
         setState(() => _playingQuestionId = null);
@@ -1031,7 +1026,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     if (progress == null || !_introNarrated || _narrationBusy) {
       return;
     }
-    await _examinerSpeaker.stop();
+    await _stopQuestionNarration();
     await _setProgress(
       progress.copyWith(
         phase: IeltsMockPhase.part2CueCard,
@@ -1076,6 +1071,10 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       _narrationError = null;
     });
     try {
+      await _stopQuestionNarration();
+      if (!mounted || _progress?.phase != IeltsMockPhase.part2Intro) {
+        return;
+      }
       await _examinerSpeaker.speak(_part2IntroNarration);
       if (!mounted || _progress?.phase != IeltsMockPhase.part2Intro) {
         return;
@@ -1102,8 +1101,15 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     });
     var completed = false;
     try {
-      await _examinerSpeaker.speak(_currentQuestionText());
-      completed = mounted && _progress?.phase == IeltsMockPhase.part2CueCard;
+      final question = widget.controller.currentQuestion;
+      if (question == null) {
+        throw StateError('IELTS Part 2 Cue Card is unavailable.');
+      }
+      completed =
+          await _playQuestionNarration(question.id, question.text) &&
+          mounted &&
+          _progress?.phase == IeltsMockPhase.part2CueCard &&
+          widget.controller.currentQuestion?.id == question.id;
     } catch (_) {
       if (mounted && _progress?.phase == IeltsMockPhase.part2CueCard) {
         setState(() => _narrationError = 'Cue Card 播放失败，请重试。');
