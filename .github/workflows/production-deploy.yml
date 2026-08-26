@@ -535,6 +535,14 @@ jobs:
           curl --fail --silent --show-error --max-time 20 \
             https://api.speak-up.top/health >/dev/null
 
+      - name: Upload the Production deployment receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: production-deployment-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.deploy.outputs.response }}
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Prepare the complete GitHub Release draft
         id: release
         env:
@@ -765,14 +773,6 @@ jobs:
           jq -e --arg sha "$CANDIDATE_SHA" \
             '.ref == ("refs/tags/" + env.TAG) and .object.type == "commit" and .object.sha == $sha' \
             <<<"$tag_ref" >/dev/null
-
-      - name: Upload the Production deployment receipt
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: production-deployment-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ steps.deploy.outputs.response }}
-          if-no-files-found: error
-          retention-days: 90
 
       - name: Record the Production deployment
         env:
