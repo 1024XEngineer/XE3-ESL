@@ -41,6 +41,12 @@ test("renders the standalone SpeakUp portal", async () => {
   assert.match(html, /interview-chat\.webp/);
   assert.match(html, /ielts-review\.webp/);
   assert.match(html, /practice-progress\.webp/);
+  assert.equal(
+    html.match(/class="hero-product-carousel__slide"/g)?.length,
+    8,
+  );
+  assert.match(html, /data-source-index="0"/);
+  assert.match(html, /data-source-index="3"/);
   assert.doesNotMatch(html, /aria-label="上一张产品截图"/);
   assert.doesNotMatch(html, /aria-label="下一张产品截图"/);
   assert.match(

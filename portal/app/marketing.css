@@ -189,13 +189,14 @@
 }
 
 .release-home .hero-product-carousel {
-  --carousel-step: 68%;
-  --carousel-far-step: 136%;
+  --carousel-overhang: clamp(160px, 17vw, 220px);
+  --carousel-step: 88%;
+  --carousel-far-step: 176%;
   position: relative;
-  width: 100%;
+  width: calc(100% + var(--carousel-overhang));
   height: min(680px, calc(100svh - 176px));
   min-height: 560px;
-  margin: 0;
+  margin: 0 0 0 calc(0px - var(--carousel-overhang));
   padding: 0;
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto auto;
@@ -221,7 +222,7 @@
   z-index: 4;
   top: 0;
   bottom: 0;
-  width: 7%;
+  width: 5%;
   pointer-events: none;
 }
 
@@ -246,7 +247,7 @@
   top: 0;
   bottom: 0;
   left: 50%;
-  width: 76%;
+  width: 52%;
   height: 100%;
   margin: 0;
   padding: 0;
@@ -265,7 +266,6 @@
 .release-home .hero-product-carousel__slide[data-position="-2"] {
   transform: translate3d(calc(-50% - var(--carousel-far-step)), 0, 0)
     scale(0.92);
-  transition: none;
 }
 
 .release-home .hero-product-carousel__slide[data-position="-1"] {
@@ -280,6 +280,7 @@
 .release-home .hero-product-carousel__slide[data-position="1"] {
   transform: translate3d(calc(-50% + var(--carousel-step)), 0, 0)
     scale(0.92);
+  transition: none;
 }
 
 .release-home .hero-product-carousel__slide[data-position="2"] {
@@ -288,9 +289,14 @@
   transition: none;
 }
 
+.release-home .hero-product-carousel[data-snap="true"]
+  .hero-product-carousel__slide {
+  transition: none !important;
+}
+
 .release-home .hero-product-carousel__slide[data-adjacent="true"] {
   z-index: 1;
-  opacity: 0.56;
+  opacity: 0.5;
 }
 
 .release-home .hero-product-carousel__slide[data-active="true"] {
@@ -904,8 +910,15 @@
   }
 
   .release-home .hero-product-carousel {
+    --carousel-overhang: 80px;
+    --carousel-step: 84%;
+    --carousel-far-step: 168%;
     height: 580px;
     min-height: 0;
+  }
+
+  .release-home .hero-product-carousel__slide {
+    width: 72%;
   }
 
   .release-home .release-memory,
@@ -976,8 +989,9 @@
   }
 
   .release-home .hero-product-carousel {
-    --carousel-step: 72%;
-    --carousel-far-step: 144%;
+    --carousel-overhang: 0px;
+    --carousel-step: 92%;
+    --carousel-far-step: 184%;
     height: 640px;
     padding: 0;
   }
