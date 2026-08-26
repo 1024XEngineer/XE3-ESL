@@ -4,6 +4,10 @@ This Compose stack runs only the SpeakUp Server and an isolated PostgreSQL
 database. It exists to compare a China-hosted backend with the current
 Singapore Staging backend before any Production traffic or data is moved.
 
+Formal migration evidence and approval are tracked with
+[`cutover-checklist-v1.md`](./cutover-checklist-v1.md). An incomplete checklist
+means this stack must remain isolated from Production traffic.
+
 The stack deliberately uses its own Compose project, volume, port, deployment
 directory, runtime file, and Server environment file. It must not reuse a
 Staging or Production database volume. The Server image digest must come from
@@ -75,6 +79,21 @@ docker compose \
 curl --fail http://127.0.0.1:28083/health
 curl --fail http://127.0.0.1:28083/readyz
 ```
+
+## Current-provider smoke
+
+Run the smoke only on the experiment host after readiness succeeds:
+
+```sh
+./smoke-current-providers.sh
+```
+
+It creates an isolated test account, verifies registration, login, current
+user lookup, the IELTS question bank, one real answer-generation request, one
+real TTS request, and logout. It never prints credentials or response bodies.
+The account remains only in the isolated experiment database so repeated runs
+are auditable. ASR, WebSocket voice streaming, and report generation still
+require the comparison APK and a real-device session.
 
 ## Stop without deleting experiment data
 

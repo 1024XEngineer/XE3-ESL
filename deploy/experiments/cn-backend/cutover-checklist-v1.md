@@ -1,0 +1,153 @@
+# China backend cutover checklist v1
+
+This is a fail-closed template. A blank item means the China backend is not
+approved to receive Production traffic. Never put credentials or raw
+environment files in this document or in Git.
+
+```text
+plan_version: 1
+release_version:
+git_sha:
+server_image_digest:
+database_schema_version:
+generated_at_utc:
+change_owner:
+approver:
+private_receipt_root:
+```
+
+Private evidence belongs under
+`/var/lib/speakup-cn-experiment/receipts/<version>/<timestamp>/` with directory
+mode `0700` and file mode `0600`. This checklist records only receipt names and
+SHA-256 values.
+
+## 1. Release and resource boundary
+
+- [ ] The current Singapore release completed through immutable Tag, GitHub
+  Release, public APK, and changelog verification before this cutover started.
+- [ ] Candidate `release_version`, Git SHA, Server digest, PostgreSQL digest,
+  and schema version match the reviewed Release Candidate manifest.
+- [ ] China Qianwen, OSS, and XFYun resources are Production-owned and use
+  China endpoints. Enabled avatar or OCR providers were classified explicitly.
+- [ ] The active China `server.env` contains no Singapore endpoint mixed with a
+  China credential, and its SHA-256 is recorded without exposing values.
+- [ ] The known-good Singapore `server.env` SHA-256 and Server image digest are
+  recorded as rollback inputs.
+
+Required provider groups change together:
+
+- Qianwen: `QIANWEN_BASE_URL`, `QIANWEN_ASR_BASE_URL`,
+  `QIANWEN_TTS_BASE_URL`, `DASHSCOPE_API_KEY`;
+- OSS: `OSS_REGION`, `OSS_ENDPOINT`, `OSS_BUCKET`, and its credential provider;
+- XFYun ISE: endpoint, APPID, API key, and API secret;
+- explicitly enabled regional avatar and OCR endpoints.
+
+## 2. HTTPS, WSS, and App entry
+
+- [ ] A trusted HTTPS edge terminates a valid certificate and proxies HTTP plus
+  WebSocket upgrades to the loopback-only Server API.
+- [ ] `/health` and `/readyz` pass through the intended public edge without
+  exposing `/metrics`, PostgreSQL, or a container port.
+- [ ] DNS TTL and the old `api.speak-up.top` origin are recorded before change.
+- [ ] External probes confirm the China edge from at least two networks.
+
+The Android Production flavor is compiled for `https://api.speak-up.top` and
+rejects non-loopback HTTP/WS. Keeping that hostname allows an origin/DNS switch
+without a new APK. Changing the API hostname requires a separately reviewed,
+signed, higher-version APK. A public IP and plaintext high port are never a
+Production entry.
+
+## 3. Data and OSS migration
+
+- [ ] A maintenance window and an explicit write-stop point are approved;
+  there is no dual-write or replication contract today.
+- [ ] Singapore PostgreSQL produced a final consistency backup with backup ID,
+  metadata, size, and SHA-256.
+- [ ] The final backup passed an isolated restore check before transfer.
+- [ ] The encrypted transfer completed and the China restore passed schema,
+  row-count, ownership, and application-readiness checks.
+- [ ] Singapore OSS objects were copied to the China bucket and an inventory
+  compared object keys, sizes, and checksums or ETags where their semantics are
+  equivalent.
+- [ ] The Singapore database and bucket remain intact and read-only throughout
+  the rollback window.
+
+Record `backup.json` and its SHA-256. Do not treat “the dump file exists” as a
+restore test.
+
+## 4. Acceptance matrix
+
+- [ ] Five or more comparable runs cover login, authenticated HTTP, WebSocket,
+  text response, voice upload, ASR, LLM, TTS, XFYun ISE, OSS upload and signed
+  download, and Part 1/2/3/full report generation.
+- [ ] Each scenario records attempts, successes, failure categories, P50, P95,
+  and maximum duration for Singapore and China under the same client method.
+- [ ] Android real-device testing used the reviewed APK; the SSH-tunnel debug
+  APK was used only before the trusted HTTPS edge existed.
+- [ ] `uat.json` names the release, endpoint, device build, provider region,
+  and receipt SHA-256 without including user content or tokens.
+
+## 5. Monitoring, alerting, and backups
+
+- [ ] Local metrics are collected without public exposure; external probes
+  monitor the public API independently of the China host.
+- [ ] Dashboards cover HTTP success/5xx/P95, report success and duration,
+  Qianwen/ASR/TTS/ISE/OSS calls and errors, container health, CPU, memory, disk,
+  inode, PostgreSQL readiness, and certificate expiry.
+- [ ] An alert drill reached the intended recipient and its evidence is
+  recorded.
+- [ ] Daily PostgreSQL backup, pre-cutover backup, retention, off-host copy,
+  freshness check, and scheduled isolated restore are active.
+- [ ] Docker and edge logs rotate within a measured disk budget.
+
+## 6. GitHub and host control plane
+
+- [ ] A dedicated protected GitHub Environment holds only China deployment
+  credentials and requires the chosen human approval policy.
+- [ ] The Environment permits only reviewed official `main` artifacts and pins
+  SSH known-host identity.
+- [ ] A non-root deployment user can invoke only the reviewed deployment entry;
+  routine deployment does not use root password authentication.
+- [ ] Deployment is locked to one operation and writes a content-addressed
+  receipt. Re-running the same receipt is idempotent.
+
+These controls are not required to finish the current Singapore release, but
+they are required before repeatable China Production deployment.
+
+## 7. Cutover
+
+- [ ] `preflight.json`, `backup.json`, and `uat.json` all exist and their hashes
+  match this plan.
+- [ ] Writes are stopped at the recorded timestamp and the final database/OSS
+  delta is zero.
+- [ ] China Server starts from the pinned digest and candidate `server.env`;
+  migrations and readiness succeed before traffic changes.
+- [ ] The HTTPS origin or DNS changes to China and external health, login,
+  WebSocket, voice, report, and download checks pass.
+- [ ] Writes are re-enabled only after those checks pass.
+- [ ] `cutover.json` records the approver, timestamps, old/new origin, digests,
+  backup ID, checks, and final result.
+
+## 8. Rollback
+
+Rollback trigger examples must be assigned measured thresholds before cutover:
+health/readiness failure, elevated 5xx or P95, provider failure, report failure,
+or data-integrity mismatch.
+
+- [ ] Stop new writes and preserve China logs, receipts, and the current
+  database before changing traffic.
+- [ ] If China accepted **no writes**, restore the recorded Singapore origin and
+  verify the preserved Singapore database and provider configuration.
+- [ ] If China accepted **any writes**, do not point traffic at the stale
+  Singapore database. First back up China, restore or reconcile that state into
+  the selected rollback database, verify it in isolation, and only then switch
+  traffic.
+- [ ] Restore the previous Server digest, environment hash, edge origin, and
+  DNS value as one reviewed rollback operation.
+- [ ] Re-run external health, login, WebSocket, voice, report, and object access
+  checks before reopening writes.
+- [ ] `rollback.json` records trigger, data boundary, target backup/digest,
+  approver, checks, and result; its SHA-256 is attached to the incident record.
+
+Until both the no-write and post-write rollback paths have been rehearsed, the
+China stack remains an experiment and must not take Production traffic.

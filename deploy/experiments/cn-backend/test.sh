@@ -5,6 +5,8 @@ directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 temporary_directory="$(mktemp -d)"
 trap 'rm -rf "$temporary_directory"' EXIT
 
+bash -n "$directory/smoke-current-providers.sh"
+
 if [[ "$(grep -Ec '^[[:space:]]+ports:$' "$directory/compose.yaml")" -ne 1 ]] ||
   ! grep -Fqx '      - "127.0.0.1:28083:8080"' "$directory/compose.yaml"; then
   printf 'Server API must have exactly one loopback-only host port mapping\n' >&2
