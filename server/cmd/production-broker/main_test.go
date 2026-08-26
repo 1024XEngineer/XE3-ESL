@@ -14,11 +14,26 @@ import (
 )
 
 type recordingRunner struct {
-	calls [][]string
+	calls           [][]string
+	releaseMetadata []byte
 }
 
 func (runner *recordingRunner) run(_ context.Context, _ string, arguments []string, _ []string) error {
 	runner.calls = append(runner.calls, append([]string(nil), arguments...))
+	if len(arguments) == 0 {
+		return nil
+	}
+	switch arguments[0] {
+	case "verify":
+		return nil
+	case "activate":
+		root := argumentValue(arguments, "--root")
+		metadataPath := filepath.Join(root, "downloads", "android", "release.json")
+		if err := os.MkdirAll(filepath.Dir(metadataPath), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(metadataPath, runner.releaseMetadata, 0o644)
+	}
 	manifestPath := argumentValue(arguments, "--manifest")
 	currentPath := argumentValue(arguments, "--current-receipt")
 	receiptPath := argumentValue(arguments, "--receipt")
@@ -53,7 +68,9 @@ func newTestConfig(t *testing.T, runner *recordingRunner) Config {
 	return Config{
 		Repository:     officialRepository,
 		ManagePath:     filepath.Join(root, "fixed", "manage.sh"),
+		AndroidPath:    filepath.Join(root, "fixed", "android-manage.sh"),
 		Environment:    filepath.Join(root, "fixed", "production.env"),
+		PublicRoot:     filepath.Join(root, "public"),
 		StateDir:       filepath.Join(root, "state"),
 		LockFile:       filepath.Join(lockDir, "broker.lock"),
 		PATH:           productionPATH,
@@ -158,8 +175,14 @@ func stagingResponseJSON(manifest releaseManifest, candidateRunID, stagingRunID 
 	return contents
 }
 
-func deploymentPayload(t *testing.T, currentSHA string, mutateStaging bool) []byte {
+func deploymentPayload(t *testing.T, currentSHA string, mutateStaging bool, attempts ...int64) []byte {
 	t.Helper()
+	attempt := int64(1)
+	if len(attempts) == 1 {
+		attempt = attempts[0]
+	} else if len(attempts) > 1 {
+		t.Fatal("deploymentPayload accepts at most one attempt")
+	}
 	manifestContents := manifestJSON("0.1.8", 9, 124)
 	manifest, err := parseReleaseManifest(manifestContents, 124)
 	if err != nil {
@@ -194,7 +217,7 @@ func deploymentPayload(t *testing.T, currentSHA string, mutateStaging bool) []by
 	bundleManifest, _ := json.Marshal(map[string]any{"bundle_version": 1, "version": manifest.Version, "published_at": published, "release_manifest_sha256": manifest.SHA256, "files": entries})
 	requestContents, _ := json.Marshal(map[string]any{
 		"protocol_version": 1, "action": "deploy", "repository": officialRepository, "candidate_run_id": 124,
-		"staging_run_id": 700, "staging_run_attempt": 1, "deployment_run_id": 800, "deployment_run_attempt": 1,
+		"staging_run_id": 700, "staging_run_attempt": 1, "deployment_run_id": 800, "deployment_run_attempt": attempt,
 		"expected_current_receipt_sha256": currentSHA, "manifest_sha256": manifest.SHA256,
 		"staging_receipt_sha256": sha256Bytes(stagingContents), "bundle_manifest_sha256": sha256Bytes(bundleManifest),
 	})
@@ -233,6 +256,35 @@ func tarPayload(t *testing.T, files map[string][]byte) []byte {
 
 func inspectPayload(t *testing.T) []byte {
 	return tarPayload(t, map[string][]byte{"request.json": []byte(`{"protocol_version":1,"action":"inspect"}`)})
+}
+
+func releasePayload(t *testing.T, deployed response, attempt int64) []byte {
+	t.Helper()
+	requestContents, err := json.Marshal(map[string]any{
+		"protocol_version": 1, "action": "release", "repository": officialRepository,
+		"deployment_run_id": 800, "deployment_run_attempt": attempt,
+		"expected_current_receipt_sha256": deployed.CurrentReceiptSHA256,
+		"manifest_sha256":                 deployed.Receipt.ManifestSHA256,
+		"bundle_manifest_sha256":          *deployed.Receipt.AndroidBundleManifestSHA256,
+		"version":                         deployed.Receipt.Version,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tarPayload(t, map[string][]byte{"request.json": requestContents})
+}
+
+func releaseMetadata(receipt auditReceipt) []byte {
+	value := map[string]any{
+		"metadata_version": 1, "version": receipt.Version, "version_code": receipt.VersionCode,
+		"published_at": "2026-08-26T09:05:00Z", "file_name": receipt.ProductionAPKFile,
+		"download_path": "/downloads/android/v" + receipt.Version + "/" + receipt.ProductionAPKFile,
+		"size_bytes":    int64(len("signed-production-apk\n")), "minimum_android_api": 24,
+		"abis": []string{"arm64-v8a"}, "apk_sha256": receipt.ProductionAPKSHA256,
+		"apk_certificate_sha256": receipt.APKCertificateSHA256,
+	}
+	contents, _ := json.Marshal(value)
+	return contents
 }
 
 func TestInspectAndDeploySameCandidateEvidence(t *testing.T) {
@@ -279,6 +331,65 @@ func TestRejectsMismatchedStagingReceiptBeforeManage(t *testing.T) {
 	}
 	if len(runner.calls) != 0 {
 		t.Fatal("manage ran for mismatched Staging evidence")
+	}
+}
+
+func TestRetryReturnsExistingDeploymentWithoutRedeploying(t *testing.T) {
+	runner := &recordingRunner{}
+	config := newTestConfig(t, runner)
+	initializeTestState(t, config)
+	initial, _ := execute(context.Background(), bytes.NewReader(inspectPayload(t)), config)
+	deployed, err := execute(context.Background(), bytes.NewReader(deploymentPayload(t, initial.CurrentReceiptSHA256, false)), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retried, err := execute(context.Background(), bytes.NewReader(deploymentPayload(t, deployed.CurrentReceiptSHA256, false, 2)), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retried.CurrentReceiptSHA256 != deployed.CurrentReceiptSHA256 || len(runner.calls) != 2 || runner.calls[1][0] != "verify" {
+		t.Fatalf("retry response = %#v, calls = %#v", retried, runner.calls)
+	}
+}
+
+func TestReleaseActivatesOnlyTheDeployedAPK(t *testing.T) {
+	runner := &recordingRunner{}
+	config := newTestConfig(t, runner)
+	initializeTestState(t, config)
+	initial, _ := execute(context.Background(), bytes.NewReader(inspectPayload(t)), config)
+	deployed, err := execute(context.Background(), bytes.NewReader(deploymentPayload(t, initial.CurrentReceiptSHA256, false)), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.releaseMetadata = releaseMetadata(deployed.Receipt)
+	released, err := execute(context.Background(), bytes.NewReader(releasePayload(t, deployed, 1)), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if released.Action != "release" || released.CurrentReceiptSHA256 != deployed.CurrentReceiptSHA256 || len(runner.calls) != 2 || runner.calls[1][0] != "activate" {
+		t.Fatalf("release response = %#v, calls = %#v", released, runner.calls)
+	}
+
+	if _, err := execute(context.Background(), bytes.NewReader(releasePayload(t, deployed, 2)), config); err != nil {
+		t.Fatalf("idempotent release failed: %v", err)
+	}
+	if len(runner.calls) != 3 || runner.calls[2][0] != "activate" {
+		t.Fatalf("release retry calls = %#v", runner.calls)
+	}
+}
+
+func TestReleaseRejectsMismatchedPublicMetadata(t *testing.T) {
+	runner := &recordingRunner{releaseMetadata: []byte(`{"metadata_version":1}`)}
+	config := newTestConfig(t, runner)
+	initializeTestState(t, config)
+	initial, _ := execute(context.Background(), bytes.NewReader(inspectPayload(t)), config)
+	deployed, err := execute(context.Background(), bytes.NewReader(deploymentPayload(t, initial.CurrentReceiptSHA256, false)), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = execute(context.Background(), bytes.NewReader(releasePayload(t, deployed, 1)), config)
+	if err == nil || errorCode(err) != "operation_failed" {
+		t.Fatalf("error = %v", err)
 	}
 }
 

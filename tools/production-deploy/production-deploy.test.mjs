@@ -53,10 +53,12 @@ test("Production mutation waits for Environment approval and uses only the broke
   assert.match(workflow, /tar --format=ustar --no-recursion/);
   assert.match(workflow, /action:\s*"inspect"/);
   assert.match(workflow, /action:\s*"deploy"/);
+  assert.match(workflow, /action:\s*"release"/);
   assert.match(workflow, /expected_current_receipt_sha256/);
   assert.match(workflow, /production_engine_previous_receipt_sha256/);
   assert.doesNotMatch(workflow, /deploy\/production\/manage\.sh/);
-  assert.doesNotMatch(workflow, /contents:\s*write|packages:\s*write/);
+  assert.match(workflow, /permissions:\n\s+actions: read\n\s+contents: write/);
+  assert.doesNotMatch(workflow, /packages:\s*write/);
 });
 
 test("Production deploy preserves auditable evidence and performs public smoke", () => {
@@ -68,6 +70,23 @@ test("Production deploy preserves auditable evidence and performs public smoke",
   );
   assert.match(workflow, /retention-days: 90/);
   assert.match(workflow, /Remove the Production SSH identity/);
+});
+
+test("Production finalization is ordered, complete, immutable, and retryable", () => {
+  assert.match(workflow, /tools\/release-finalize\/notes\.mjs/);
+  assert.match(workflow, /--published-at "\$PUBLISHED_AT"/);
+  assert.match(workflow, /Prepare the complete GitHub Release draft/);
+  assert.match(workflow, /gh release upload "\$tag"/);
+  assert.match(workflow, /Activate the approved APK through the restricted broker/);
+  assert.match(workflow, /Verify the public APK and changelog contract/);
+  assert.match(workflow, /Publish and verify the immutable GitHub Release/);
+  assert.match(workflow, /\.immutable == true/);
+  assert.match(workflow, /\.receipt\.deployment_run_attempt[\s\S]*<= \$deployment_run_attempt/);
+
+  const draft = workflow.indexOf("Prepare the complete GitHub Release draft");
+  const activate = workflow.indexOf("Activate the approved APK");
+  const publish = workflow.indexOf("Publish and verify the immutable GitHub Release");
+  assert.ok(draft > 0 && draft < activate && activate < publish);
 });
 
 test("Every external action is pinned to a full commit", () => {

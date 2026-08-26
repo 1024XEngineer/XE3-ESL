@@ -199,6 +199,9 @@ jobs:
   deploy:
     name: Approve and deploy the immutable Candidate
     needs: authorize
+    permissions:
+      actions: read
+      contents: write
     environment:
       name: production
       url: https://speak-up.top
@@ -318,21 +321,40 @@ jobs:
           printf 'production_apk=%s\n' "$ANDROID_DIRECTORY/$production_apk" >> "$GITHUB_OUTPUT"
           printf 'staging_receipt=%s\n' "$staging_receipt" >> "$GITHUB_OUTPUT"
 
+      - name: Validate and render the official release notes
+        id: notes
+        env:
+          VERSION: ${{ needs.authorize.outputs.version }}
+        run: |
+          set -euo pipefail
+          notes="portal/public/release-notes/android/v$VERSION.zh-CN.json"
+          index="portal/public/release-notes/android/index.zh-CN.json"
+          body="$RUNNER_TEMP/release-notes.md"
+          published_at="$(node tools/release-finalize/notes.mjs \
+            --version "$VERSION" \
+            --notes "$notes" \
+            --index "$index" \
+            --output "$body")"
+          [[ "$published_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
+          printf 'body=%s\n' "$body" >> "$GITHUB_OUTPUT"
+          printf 'file=%s\n' "$notes" >> "$GITHUB_OUTPUT"
+          printf 'published_at=%s\n' "$published_at" >> "$GITHUB_OUTPUT"
+
       - name: Build the immutable Android download payload
         id: bundle
         env:
           MANIFEST_FILE: ${{ steps.artifacts.outputs.manifest }}
           PRODUCTION_APK: ${{ steps.artifacts.outputs.production_apk }}
+          PUBLISHED_AT: ${{ steps.notes.outputs.published_at }}
           STAGING_RECEIPT: ${{ steps.artifacts.outputs.staging_receipt }}
         run: |
           set -euo pipefail
           payload="$RUNNER_TEMP/production-payload"
           install -d -m 700 "$payload"
-          published_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
           node tools/android-download/bundle.mjs \
             --manifest "$MANIFEST_FILE" \
             --production-apk "$PRODUCTION_APK" \
-            --published-at "$published_at" \
+            --published-at "$PUBLISHED_AT" \
             --output "$payload/bundle"
           install -m 600 "$MANIFEST_FILE" "$payload/release-manifest.json"
           install -m 600 \
@@ -485,9 +507,14 @@ jobs:
               .receipt.staging_run_attempt == $staging_run_attempt and
               .receipt.staging_receipt_sha256 == $staging_receipt_sha256 and
               .receipt.deployment_run_id == $deployment_run_id and
-              .receipt.deployment_run_attempt == $deployment_run_attempt and
-              .receipt.previous_receipt_sha256 == $expected_current and
-              .receipt.production_engine_previous_receipt_sha256 == $expected_engine and
+              (.receipt.deployment_run_attempt | type == "number" and . >= 1 and
+                . <= $deployment_run_attempt and . == floor) and
+              ((.current_receipt_sha256 == $expected_current and
+                  .receipt.production_engine_receipt_sha256 == $expected_engine) or
+                (.current_receipt_sha256 != $expected_current and
+                  .receipt.deployment_run_attempt == $deployment_run_attempt and
+                  .receipt.previous_receipt_sha256 == $expected_current and
+                  .receipt.production_engine_previous_receipt_sha256 == $expected_engine)) and
               (.receipt.production_engine_receipt_sha256 | test("^[0-9a-f]{64}$")) and
               (.receipt.portal_container_id | test("^[0-9a-f]{12,64}$")) and
               (.receipt.server_container_id | test("^[0-9a-f]{12,64}$")) and
@@ -516,10 +543,242 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+      - name: Prepare the complete GitHub Release draft
+        id: release
+        env:
+          CANDIDATE_SHA: ${{ needs.authorize.outputs.candidate_sha }}
+          DEPLOY_RESPONSE: ${{ steps.deploy.outputs.response }}
+          GH_TOKEN: ${{ github.token }}
+          MANIFEST_FILE: ${{ steps.artifacts.outputs.manifest }}
+          NOTES_BODY: ${{ steps.notes.outputs.body }}
+          NOTES_FILE: ${{ steps.notes.outputs.file }}
+          PAYLOAD_DIRECTORY: ${{ steps.bundle.outputs.directory }}
+          PRODUCTION_APK: ${{ steps.artifacts.outputs.production_apk }}
+          VERSION: ${{ needs.authorize.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          title="SpeakUp Android v$VERSION"
+          assets="$RUNNER_TEMP/release-assets"
+          install -d -m 700 "$assets"
+          apk="speakup-v$VERSION-production-arm64.apk"
+          install -m 600 "$PRODUCTION_APK" "$assets/$apk"
+          install -m 600 \
+            "$PAYLOAD_DIRECTORY/bundle/downloads/android/v$VERSION/$apk.sha256" \
+            "$assets/$apk.sha256"
+          install -m 600 "$MANIFEST_FILE" "$assets/release-manifest.json"
+          install -m 600 "$DEPLOY_RESPONSE" "$assets/production-deployment-receipt.json"
+          install -m 600 "$NOTES_FILE" "$assets/release-notes.zh-CN.json"
+          install -m 600 \
+            "$PAYLOAD_DIRECTORY/bundle/downloads/android/v$VERSION/release.json" \
+            "$assets/android-release.json"
+
+          releases="$(gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/releases?per_page=100")"
+          matches="$(jq -c --arg tag "$tag" '[.[][] | select(.tag_name == $tag)]' <<<"$releases")"
+          [[ "$(jq 'length' <<<"$matches")" -le 1 ]]
+          if [[ "$(jq 'length' <<<"$matches")" == 0 ]]; then
+            if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" >/dev/null 2>&1; then
+              echo "Stable tag already exists without the expected Release." >&2
+              exit 1
+            fi
+            body="$(<"$NOTES_BODY")"
+            release="$(jq -cn \
+              --arg tag "$tag" \
+              --arg target "$CANDIDATE_SHA" \
+              --arg name "$title" \
+              --arg body "$body" \
+              '{tag_name:$tag,target_commitish:$target,name:$name,body:$body,draft:true,prerelease:false,make_latest:"false"}' | \
+              gh api --method POST "repos/$GITHUB_REPOSITORY/releases" --input -)"
+          else
+            release="$(jq -c '.[0]' <<<"$matches")"
+          fi
+
+          body="$(<"$NOTES_BODY")"
+          jq -e \
+            --arg tag "$tag" \
+            --arg target "$CANDIDATE_SHA" \
+            --arg name "$title" \
+            --arg body "$body" '
+              .tag_name == $tag and .target_commitish == $target and
+              .name == $name and .body == $body and .prerelease == false and
+              ((.draft == true and .immutable == false) or
+                (.draft == false and .immutable == true)) and
+              (.id | type == "number" and . >= 1)
+            ' <<<"$release" >/dev/null
+          release_id="$(jq -er '.id' <<<"$release")"
+          already_published="$(jq -er '(.draft | not)' <<<"$release")"
+
+          expected_assets="$(printf '%s\n' \
+            android-release.json \
+            "$apk" \
+            "$apk.sha256" \
+            production-deployment-receipt.json \
+            release-manifest.json \
+            release-notes.zh-CN.json | sort)"
+          if [[ "$already_published" == false ]]; then
+            while read -r asset_id; do
+              [[ -z "$asset_id" ]] || gh api --method DELETE \
+                "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
+            done < <(gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" \
+              --jq '.[].id')
+            gh release upload "$tag" \
+              "$assets/android-release.json" \
+              "$assets/$apk" \
+              "$assets/$apk.sha256" \
+              "$assets/production-deployment-receipt.json" \
+              "$assets/release-manifest.json" \
+              "$assets/release-notes.zh-CN.json"
+          fi
+          actual_assets="$(gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" \
+            --jq '.[].name' | sort)"
+          [[ "$actual_assets" == "$expected_assets" ]]
+          asset_metadata="$RUNNER_TEMP/release-asset-metadata.json"
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" \
+            > "$asset_metadata"
+          for file in "$assets"/*; do
+            name="$(basename "$file")"
+            size="$(stat -c '%s' "$file")"
+            digest="sha256:$(sha256sum "$file" | cut -d ' ' -f 1)"
+            jq -e \
+              --arg name "$name" \
+              --arg digest "$digest" \
+              --argjson size "$size" '
+                [.[][] | select(.name == $name and .size == $size and .digest == $digest)] |
+                length == 1
+              ' "$asset_metadata" >/dev/null
+          done
+          printf 'already_published=%s\n' "$already_published" >> "$GITHUB_OUTPUT"
+          printf 'assets=%s\n' "$assets" >> "$GITHUB_OUTPUT"
+          printf 'id=%s\n' "$release_id" >> "$GITHUB_OUTPUT"
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Activate the approved APK through the restricted broker
+        env:
+          BUNDLE_MANIFEST_SHA256: ${{ steps.bundle.outputs.manifest_sha256 }}
+          DEPLOY_HOST: ${{ vars.PRODUCTION_DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ vars.PRODUCTION_DEPLOY_PORT }}
+          DEPLOY_RESPONSE: ${{ steps.deploy.outputs.response }}
+          DEPLOY_USER: ${{ vars.PRODUCTION_DEPLOY_USER }}
+          MANIFEST_SHA256: ${{ steps.artifacts.outputs.manifest_sha256 }}
+          VERSION: ${{ needs.authorize.outputs.version }}
+        run: |
+          set -euo pipefail
+          ssh_options=(
+            -i "$RUNNER_TEMP/production-ssh/id_ed25519"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=$RUNNER_TEMP/production-ssh/known_hosts"
+            -o ConnectTimeout=15
+            -p "$DEPLOY_PORT"
+          )
+          request_directory="$RUNNER_TEMP/production-release"
+          response="$RUNNER_TEMP/production-release-response.json"
+          install -d -m 700 "$request_directory"
+          current_receipt="$(jq -er '.current_receipt_sha256' "$DEPLOY_RESPONSE")"
+          jq -cn \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --argjson deployment_run_id "$GITHUB_RUN_ID" \
+            --argjson deployment_run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg expected_current_receipt_sha256 "$current_receipt" \
+            --arg manifest_sha256 "$MANIFEST_SHA256" \
+            --arg bundle_manifest_sha256 "$BUNDLE_MANIFEST_SHA256" \
+            --arg version "$VERSION" \
+            '{
+              protocol_version: 1,
+              action: "release",
+              repository: $repository,
+              deployment_run_id: $deployment_run_id,
+              deployment_run_attempt: $deployment_run_attempt,
+              expected_current_receipt_sha256: $expected_current_receipt_sha256,
+              manifest_sha256: $manifest_sha256,
+              bundle_manifest_sha256: $bundle_manifest_sha256,
+              version: $version
+            }' > "$request_directory/request.json"
+          tar --format=ustar --no-recursion -C "$request_directory" \
+            -cf - request.json | \
+            ssh "${ssh_options[@]}" "$DEPLOY_USER@$DEPLOY_HOST" > "$response"
+          jq -e \
+            --arg current_receipt "$current_receipt" \
+            --arg manifest_sha256 "$MANIFEST_SHA256" \
+            --arg version "$VERSION" '
+              type == "object" and
+              keys == ["action", "current_receipt_sha256", "ok", "protocol_version", "receipt"] and
+              .protocol_version == 1 and .ok == true and .action == "release" and
+              .current_receipt_sha256 == $current_receipt and
+              .receipt.operation == "deploy" and
+              .receipt.manifest_sha256 == $manifest_sha256 and
+              .receipt.version == $version
+            ' "$response" >/dev/null
+
+      - name: Verify the public APK and changelog contract
+        env:
+          NOTES_FILE: ${{ steps.notes.outputs.file }}
+          PAYLOAD_DIRECTORY: ${{ steps.bundle.outputs.directory }}
+          VERSION: ${{ needs.authorize.outputs.version }}
+        run: |
+          set -euo pipefail
+          apk="speakup-v$VERSION-production-arm64.apk"
+          expected="$PAYLOAD_DIRECTORY/bundle/downloads/android/v$VERSION/release.json"
+          actual="$RUNNER_TEMP/public-android-release.json"
+          downloaded="$RUNNER_TEMP/$apk"
+          curl --fail --silent --show-error --max-time 20 \
+            https://speak-up.top/downloads/android/release.json -o "$actual"
+          cmp --silent "$expected" "$actual"
+          curl --fail --silent --show-error --location --max-time 120 \
+            "https://speak-up.top/downloads/android/v$VERSION/$apk" -o "$downloaded"
+          [[ "$(sha256sum "$downloaded" | cut -d ' ' -f 1)" == \
+            "$(jq -er '.apk_sha256' "$actual")" ]]
+          curl --fail --silent --show-error --max-time 20 \
+            "https://speak-up.top/release-notes/android/v$VERSION.zh-CN.json" \
+            -o "$RUNNER_TEMP/public-release-notes.json"
+          cmp --silent "$NOTES_FILE" "$RUNNER_TEMP/public-release-notes.json"
+          curl --fail --silent --show-error --max-time 20 \
+            https://speak-up.top/changelog >/dev/null
+
+      - name: Publish and verify the immutable GitHub Release
+        env:
+          ALREADY_PUBLISHED: ${{ steps.release.outputs.already_published }}
+          CANDIDATE_SHA: ${{ needs.authorize.outputs.candidate_sha }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.release.outputs.id }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ "$ALREADY_PUBLISHED" == false ]]; then
+            jq -cn '{draft:false,make_latest:"true"}' | \
+              gh api --method PATCH \
+                "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --input - >/dev/null
+          fi
+          for attempt in {1..10}; do
+            release="$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID")"
+            if jq -e '.draft == false and .immutable == true' <<<"$release" >/dev/null; then
+              break
+            fi
+            if [[ "$attempt" == 10 ]]; then
+              echo "GitHub Release did not become immutable." >&2
+              exit 1
+            fi
+            sleep 3
+          done
+          jq -e --arg tag "$TAG" '
+            .tag_name == $tag and .draft == false and .prerelease == false and
+            .immutable == true
+          ' <<<"$release" >/dev/null
+          tag_ref="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG")"
+          jq -e --arg sha "$CANDIDATE_SHA" \
+            '.ref == ("refs/tags/" + env.TAG) and .object.type == "commit" and .object.sha == $sha' \
+            <<<"$tag_ref" >/dev/null
+
       - name: Record the Production deployment
         env:
           CANDIDATE_SHA: ${{ needs.authorize.outputs.candidate_sha }}
           RECEIPT_SHA256: ${{ steps.deploy.outputs.receipt_sha256 }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
           VERSION: ${{ needs.authorize.outputs.version }}
         run: |
           {
@@ -529,6 +788,8 @@ jobs:
             printf -- '- Receipt: `%s`\n' "$RECEIPT_SHA256"
             printf -- '- Portal: https://speak-up.top\n'
             printf -- '- API: https://api.speak-up.top/health\n'
+            printf -- '- Release: https://github.com/%s/releases/tag/%s\n' \
+              "$GITHUB_REPOSITORY" "$RELEASE_TAG"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Remove the Production SSH identity

@@ -592,8 +592,11 @@ does not rebuild an image or APK. The deploy job then enters the GitHub
 `production` Environment; its Secrets are unavailable until a required
 reviewer approves the deployment.
 
-Configure that Environment with a required reviewer, disallow self-approval,
-and allow only `main`. Add these Environment values:
+Configure that Environment with a required reviewer and allow only `main`.
+The current single-operator setup permits the named reviewer to approve their
+own initiated deployment, but an explicit approval is still mandatory; enable
+GitHub's prevent-self-review option when a second release owner is available.
+Add these Environment values:
 
 | Kind | Name | Value |
 | --- | --- | --- |
@@ -650,10 +653,30 @@ Each approved run streams only `request.json`, the Candidate manifest, the
 Staging receipt, and the versioned Android download bundle. The broker checks
 their hashes and cross-links before `manage.sh` performs its existing backup
 gates and digest-only deployment. Success stores content-addressed engine and
-audit receipts, atomically advances the current pointer, verifies the public
-Portal and API, and uploads the broker response as a 90-day Actions artifact.
-It publishes the versioned APK files but deliberately does not activate the
-public APK pointer and does not create a stable Tag or GitHub Release.
+audit receipts, atomically advances the current pointer, and verifies the
+public Portal and API. The workflow then creates or reuses a GitHub Release
+draft for the exact Candidate SHA and uploads the signed APK, checksum, release
+manifest, Production receipt, public metadata, and Chinese release notes. Only
+after all draft assets match does the broker atomically activate the public APK
+pointer. The workflow verifies the public metadata, APK digest, release notes,
+and changelog before publishing the `vX.Y.Z` Release. Repository immutable
+releases and Tag rulesets then prevent the published Release or stable Tag from
+being changed.
+
+If a later step fails after deployment, rerun the **same** Production workflow
+run. A higher run attempt with the same Candidate, Staging receipt, manifest,
+bundle, and deployment run ID performs `manage.sh verify` and reuses the prior
+immutable receipt; it does not repeat backups, migrations, or container
+restarts. A different workflow run or Candidate cannot claim that deployment.
+Draft asset preparation and APK activation are idempotent. A fully published
+immutable Release is verified, never rewritten.
+
+The deploy job needs job-scoped `actions: read` and `contents: write`. Those
+permissions and all Production Secrets remain behind the `production`
+Environment approval. Enable repository immutable releases before the first
+real run. Protect `v*.*.*` tags from update and deletion. The Production job's
+Environment-gated `contents: write` permission creates the new stable tag when
+the Release is published; it cannot move or delete a published tag.
 
 If `manage.sh` fails, the broker leaves the previous current pointer unchanged
 and retains `pending.json` plus any engine receipt as recovery evidence. Later
@@ -689,6 +712,8 @@ the four pull policies, and fail-closed behavior without contacting Production.
 - [Linux `flock`](https://man7.org/linux/man-pages/man1/flock.1.html)
 - [GitHub workflow API](https://docs.github.com/en/rest/actions/workflows#get-a-workflow)
 - [GitHub workflow run API](https://docs.github.com/en/rest/actions/workflow-runs#get-a-workflow-run)
+- [GitHub deployment environments](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments)
+- [GitHub immutable releases](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/establish-provenance-and-integrity/prevent-release-changes)
 - [Nginx command-line parameters](https://nginx.org/en/docs/switches.html)
 - [Nginx proxy module](https://nginx.org/en/docs/http/ngx_http_proxy_module.html)
 - [PostgreSQL SQL dump backup](https://www.postgresql.org/docs/18/backup-dump.html)
