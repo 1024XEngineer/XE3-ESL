@@ -582,6 +582,85 @@ separate reviewed disaster-recovery runbook, an explicit outage, a named backup
 ID, and operator approval. Image rollback must never silently restore this
 database.
 
+## Approved Production deployment
+
+`Production Deploy` starts only after the official repository's
+`Deploy Staging Candidate` run succeeds. The authorization job verifies the
+official `main` commit, successful Release Candidate run, immutable Candidate
+manifest and Android artifact, and the exact Staging deployment receipt. It
+does not rebuild an image or APK. The deploy job then enters the GitHub
+`production` Environment; its Secrets are unavailable until a required
+reviewer approves the deployment.
+
+Configure that Environment with a required reviewer, disallow self-approval,
+and allow only `main`. Add these Environment values:
+
+| Kind | Name | Value |
+| --- | --- | --- |
+| Variable | `PRODUCTION_DEPLOY_HOST` | Production SSH host or IP |
+| Variable | `PRODUCTION_DEPLOY_PORT` | Production SSH port, normally `22` |
+| Variable | `PRODUCTION_DEPLOY_USER` | Exactly `speakup-production-ci` |
+| Secret | `PRODUCTION_DEPLOY_KNOWN_HOSTS` | Verified ED25519 host-key line |
+| Secret | `PRODUCTION_DEPLOY_SSH_PRIVATE_KEY` | Private half of the dedicated CI key |
+
+The private key is used only after Environment approval. The matching public
+key is installed with `restrict`, an sshd `ForceCommand`, and an exact sudoers
+rule. It cannot request a shell, command, TTY, tunnel, `scp`, or `sftp`. The
+root broker accepts only a bounded tar protocol on standard input and invokes
+the fixed Production `manage.sh deploy` argument contract. Request fields
+cannot override the environment file, control checkout, state directory,
+receipt location, Docker access, backup programs, Nginx path, or public root.
+
+Build and install the reviewed host contract once from the commit being
+deployed. The bootstrap does not create a key or copy a private key:
+
+```sh
+cd server
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath \
+  -o /tmp/speakup-production-broker ./cmd/production-broker
+cd ..
+sudo ./deploy/production/host/bootstrap.sh \
+  --broker-binary /tmp/speakup-production-broker \
+  --contract-directory "$PWD" \
+  --contract-revision "$(git rev-parse HEAD)" \
+  --ssh-public-key-file /root/speakup-production-ci.pub
+```
+
+Before the first automated deployment, establish the current live release as
+the broker baseline. Use its already-audited `release-manifest.json` and current
+immutable Production receipt. If that receipt does not yet exist, create it
+once with `manage.sh baseline`; `baseline` verifies the live containers, Nginx,
+backup configuration, volumes, schema, and digest identity without redeploying
+them:
+
+```sh
+sudo install -d -o root -g root -m 0700 /var/lib/speakup/production-bootstrap
+sudo /opt/xe3-speakup-production-control/current/deploy/production/manage.sh \
+  baseline \
+  --manifest /var/lib/speakup/production-bootstrap/release-manifest.json \
+  --env-file /etc/speakup/production.env \
+  --receipt /var/lib/speakup/production-bootstrap/baseline-receipt.json
+sudo /usr/local/libexec/speakup-production-broker initialize \
+  --manifest /var/lib/speakup/production-bootstrap/release-manifest.json \
+  --receipt /var/lib/speakup/production-bootstrap/baseline-receipt.json
+sudo ./deploy/production/host/validate.sh
+```
+
+Each approved run streams only `request.json`, the Candidate manifest, the
+Staging receipt, and the versioned Android download bundle. The broker checks
+their hashes and cross-links before `manage.sh` performs its existing backup
+gates and digest-only deployment. Success stores content-addressed engine and
+audit receipts, atomically advances the current pointer, verifies the public
+Portal and API, and uploads the broker response as a 90-day Actions artifact.
+It publishes the versioned APK files but deliberately does not activate the
+public APK pointer and does not create a stable Tag or GitHub Release.
+
+If `manage.sh` fails, the broker leaves the previous current pointer unchanged
+and retains `pending.json` plus any engine receipt as recovery evidence. Later
+deployments fail with `recovery_required`; inspect the live state and evidence,
+then use the existing reviewed rollback procedure. Do not delete pending state
+merely to make CI green.
+
 ## Reproducible checks
 
 ```sh
@@ -589,6 +668,8 @@ make check-production-backup
 make check-production-rehearsal
 make check-android-download
 make check-production-deploy
+./deploy/production/test-host-access.sh
+cd server && go test -count=1 ./cmd/production-broker
 make check-production-nginx
 make check-offline-release
 ```

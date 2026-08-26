@@ -91,7 +91,7 @@ jobs:
                   set_all_checks
                   android_release=true
                   ;;
-                .github/workflows/production-probe.yml)
+                .github/workflows/production-probe.yml|.github/workflows/production-deploy.yml|tools/production-deploy/*)
                   deploy=true
                   ;;
                 .github/workflows/database.yml|.github/workflows/coverage-comment.yml|tools/release-candidate/*)
