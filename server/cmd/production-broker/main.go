@@ -27,7 +27,9 @@ const (
 	protocolVersion      = 1
 	officialRepository   = "1024XEngineer/XE3-ESL"
 	productionManagePath = "/opt/xe3-speakup-production-control/current/deploy/production/manage.sh"
+	androidManagePath    = "/opt/xe3-speakup-production-control/current/deploy/android-download/manage.sh"
 	productionEnvFile    = "/etc/speakup/production.env"
+	productionPublicRoot = "/var/www/speakup-production-public"
 	productionStateDir   = "/var/lib/speakup/production-broker"
 	productionLockFile   = "/run/lock/xe3-speakup-production-broker/broker.lock"
 	productionPATH       = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -53,7 +55,9 @@ type commandRunner func(context.Context, string, []string, []string) error
 type Config struct {
 	Repository     string
 	ManagePath     string
+	AndroidPath    string
 	Environment    string
+	PublicRoot     string
 	StateDir       string
 	LockFile       string
 	PATH           string
@@ -89,6 +93,7 @@ type request struct {
 	ManifestSHA256               string
 	StagingReceiptSHA256         string
 	BundleManifestSHA256         string
+	Version                      string
 }
 
 type releaseManifest struct {
@@ -215,7 +220,9 @@ func productionConfig() (Config, error) {
 	return Config{
 		Repository:     officialRepository,
 		ManagePath:     productionManagePath,
+		AndroidPath:    androidManagePath,
 		Environment:    productionEnvFile,
+		PublicRoot:     productionPublicRoot,
 		StateDir:       productionStateDir,
 		LockFile:       productionLockFile,
 		PATH:           productionPATH,
@@ -285,10 +292,17 @@ func execute(ctx context.Context, input io.Reader, config Config) (response, err
 		}
 		return response{ProtocolVersion: protocolVersion, OK: true, Action: "inspect", CurrentReceiptSHA256: currentSHA, Receipt: *current}, nil
 	}
-	if req.Action != "deploy" || req.Repository != config.Repository {
+	if req.Repository != config.Repository {
 		return response{}, failure("invalid_request")
 	}
-	return deploy(ctx, store, config, payload, req, *current, currentSHA)
+	switch req.Action {
+	case "deploy":
+		return deploy(ctx, store, config, payload, req, *current, currentSHA)
+	case "release":
+		return release(ctx, store, config, payload, req, *current, currentSHA)
+	default:
+		return response{}, failure("invalid_request")
+	}
 }
 
 func deploy(ctx context.Context, store *stateStore, config Config, payload extractedPayload, req request, current auditReceipt, currentSHA string) (response, error) {
@@ -326,6 +340,16 @@ func deploy(ctx context.Context, store *stateStore, config Config, payload extra
 	currentEnginePath, currentEngine, err := store.loadEngine(current.ProductionEngineReceiptSHA256)
 	if err != nil || !engineMatchesAudit(currentEngine, current) {
 		return response{}, failure("state_invalid")
+	}
+	if deploymentAlreadySucceeded(current, manifest, req) {
+		verifyContext, cancel := context.WithTimeout(ctx, config.RequestTimeout)
+		defer cancel()
+		arguments := []string{"verify", "--manifest", manifestPath, "--env-file", config.Environment}
+		environment := []string{"HOME=/root", "PATH=" + config.PATH}
+		if err := config.RunCommand(verifyContext, config.ManagePath, arguments, environment); err != nil {
+			return response{}, failure("operation_failed")
+		}
+		return response{ProtocolVersion: protocolVersion, OK: true, Action: "deploy", CurrentReceiptSHA256: currentSHA, Receipt: current}, nil
 	}
 	if req.CandidateRunID == valueOrZero(current.CandidateRunID) || manifest.VersionCode <= current.VersionCode {
 		return response{}, failure("release_not_newer")
@@ -393,6 +417,86 @@ func deploy(ctx context.Context, store *stateStore, config Config, payload extra
 		return response{}, failure("state_invalid")
 	}
 	return response{ProtocolVersion: protocolVersion, OK: true, Action: "deploy", CurrentReceiptSHA256: newSHA, Receipt: newReceipt}, nil
+}
+
+func deploymentAlreadySucceeded(current auditReceipt, manifest releaseManifest, req request) bool {
+	return current.Operation == "deploy" &&
+		current.CandidateRunID != nil && *current.CandidateRunID == req.CandidateRunID &&
+		current.StagingRunID != nil && *current.StagingRunID == req.StagingRunID &&
+		current.StagingRunAttempt != nil && *current.StagingRunAttempt == req.StagingRunAttempt &&
+		current.StagingReceiptSHA256 != nil && *current.StagingReceiptSHA256 == req.StagingReceiptSHA256 &&
+		current.DeploymentRunID != nil && *current.DeploymentRunID == req.DeploymentRunID &&
+		current.DeploymentRunAttempt != nil && *current.DeploymentRunAttempt <= req.DeploymentRunAttempt &&
+		current.ManifestSHA256 == manifest.SHA256 && current.Version == manifest.Version &&
+		current.VersionCode == manifest.VersionCode && current.GitSHA == manifest.GitSHA &&
+		current.DatabaseSchemaVersion == manifest.DatabaseSchemaVersion &&
+		current.PortalImageDigest == manifest.PortalImageDigest &&
+		current.ServerImageDigest == manifest.ServerImageDigest &&
+		current.ProductionAPKFile == manifest.ProductionAPKFile &&
+		current.ProductionAPKSHA256 == manifest.ProductionAPKSHA256 &&
+		current.APKCertificateSHA256 == manifest.APKCertificateSHA256 &&
+		current.AndroidBundleManifestSHA256 != nil &&
+		*current.AndroidBundleManifestSHA256 == req.BundleManifestSHA256
+}
+
+func release(ctx context.Context, store *stateStore, config Config, payload extractedPayload, req request, current auditReceipt, currentSHA string) (response, error) {
+	if len(payload.files) != 1 || payload.files["request.json"] == "" ||
+		req.ExpectedCurrentReceiptSHA256 == nil || *req.ExpectedCurrentReceiptSHA256 != currentSHA {
+		return response{}, failure("state_conflict")
+	}
+	if err := store.requireNoPending(); err != nil {
+		return response{}, err
+	}
+	if current.Operation != "deploy" || current.DeploymentRunID == nil ||
+		*current.DeploymentRunID != req.DeploymentRunID || current.DeploymentRunAttempt == nil ||
+		*current.DeploymentRunAttempt > req.DeploymentRunAttempt ||
+		current.ManifestSHA256 != req.ManifestSHA256 || current.Version != req.Version ||
+		current.AndroidBundleManifestSHA256 == nil ||
+		*current.AndroidBundleManifestSHA256 != req.BundleManifestSHA256 {
+		return response{}, failure("invalid_request")
+	}
+	releaseContext, cancel := context.WithTimeout(ctx, config.RequestTimeout)
+	defer cancel()
+	arguments := []string{"activate", "--root", config.PublicRoot, "--version", current.Version}
+	environment := []string{"HOME=/root", "PATH=" + config.PATH}
+	if err := config.RunCommand(releaseContext, config.AndroidPath, arguments, environment); err != nil {
+		return response{}, failure("operation_failed")
+	}
+	metadataPath := filepath.Join(config.PublicRoot, "downloads", "android", "release.json")
+	metadataContents, err := readSecureFile(metadataPath, 0o644, metadataLimit, config.OwnerUID)
+	if err != nil || !publicReleaseMatchesAudit(metadataContents, current) {
+		return response{}, failure("operation_failed")
+	}
+	return response{ProtocolVersion: protocolVersion, OK: true, Action: "release", CurrentReceiptSHA256: currentSHA, Receipt: current}, nil
+}
+
+func publicReleaseMatchesAudit(contents []byte, current auditReceipt) bool {
+	value, err := decodeStrictJSON(contents)
+	if err != nil {
+		return false
+	}
+	object, ok := value.(map[string]any)
+	if !ok || !hasExactKeys(object,
+		"metadata_version", "version", "version_code", "published_at", "file_name",
+		"download_path", "size_bytes", "minimum_android_api", "abis", "apk_sha256",
+		"apk_certificate_sha256") {
+		return false
+	}
+	version, versionOK := object["version"].(string)
+	versionCode, codeOK := positiveSafeInteger(object["version_code"])
+	fileName, fileOK := object["file_name"].(string)
+	downloadPath, pathOK := object["download_path"].(string)
+	_, sizeOK := positiveSafeInteger(object["size_bytes"])
+	apkSHA, apkOK := object["apk_sha256"].(string)
+	certificate, certificateOK := object["apk_certificate_sha256"].(string)
+	abis, abisOK := object["abis"].([]any)
+	return object["metadata_version"] == json.Number("1") && versionOK && version == current.Version &&
+		codeOK && versionCode == current.VersionCode && validTimestampValue(object["published_at"]) &&
+		fileOK && fileName == current.ProductionAPKFile && pathOK &&
+		downloadPath == "/downloads/android/v"+current.Version+"/"+current.ProductionAPKFile &&
+		sizeOK && object["minimum_android_api"] == json.Number("24") &&
+		abisOK && len(abis) == 1 && abis[0] == "arm64-v8a" && apkOK &&
+		apkSHA == current.ProductionAPKSHA256 && certificateOK && certificate == current.APKCertificateSHA256
 }
 
 func deploymentAudit(config Config, req request, manifest releaseManifest, engine engineReceipt, previous string, engineSHA string) auditReceipt {
@@ -487,10 +591,10 @@ func runCommand(ctx context.Context, name string, arguments []string, environmen
 }
 
 func validateConfig(config Config) error {
-	if config.Repository != officialRepository || config.ManagePath == "" || config.Environment == "" || config.StateDir == "" || config.LockFile == "" || config.PATH == "" || config.Now == nil || config.RunCommand == nil || config.RequestTimeout <= 0 || config.DeployTimeout <= 0 {
+	if config.Repository != officialRepository || config.ManagePath == "" || config.AndroidPath == "" || config.Environment == "" || config.PublicRoot == "" || config.StateDir == "" || config.LockFile == "" || config.PATH == "" || config.Now == nil || config.RunCommand == nil || config.RequestTimeout <= 0 || config.DeployTimeout <= 0 {
 		return failure("invalid_configuration")
 	}
-	for _, value := range []string{config.ManagePath, config.Environment, config.StateDir, config.LockFile} {
+	for _, value := range []string{config.ManagePath, config.AndroidPath, config.Environment, config.PublicRoot, config.StateDir, config.LockFile} {
 		if !safeAbsolutePath(value) {
 			return failure("invalid_configuration")
 		}
@@ -629,6 +733,41 @@ func parseRequest(contents []byte) (request, error) {
 		if !hasExactKeys(object, "protocol_version", "action") {
 			return request{}, failure("invalid_request")
 		}
+		return parsed, nil
+	}
+	if action == "release" {
+		if !hasExactKeys(object,
+			"protocol_version", "action", "repository", "deployment_run_id",
+			"deployment_run_attempt", "expected_current_receipt_sha256",
+			"manifest_sha256", "bundle_manifest_sha256", "version") {
+			return request{}, failure("invalid_request")
+		}
+		parsed.Repository, ok = object["repository"].(string)
+		if !ok || parsed.Repository != officialRepository {
+			return request{}, failure("invalid_request")
+		}
+		parsed.DeploymentRunID, ok = positiveSafeInteger(object["deployment_run_id"])
+		if !ok {
+			return request{}, failure("invalid_request")
+		}
+		parsed.DeploymentRunAttempt, ok = positiveSafeInteger(object["deployment_run_attempt"])
+		if !ok {
+			return request{}, failure("invalid_request")
+		}
+		expected, expectedOK := object["expected_current_receipt_sha256"].(string)
+		manifestSHA, manifestOK := object["manifest_sha256"].(string)
+		bundleSHA, bundleOK := object["bundle_manifest_sha256"].(string)
+		version, versionOK := object["version"].(string)
+		if !expectedOK || !validNonzeroSHA256(expected) ||
+			!manifestOK || !validNonzeroSHA256(manifestSHA) ||
+			!bundleOK || !validNonzeroSHA256(bundleSHA) ||
+			!versionOK || !versionPattern.MatchString(version) {
+			return request{}, failure("invalid_request")
+		}
+		parsed.ExpectedCurrentReceiptSHA256 = &expected
+		parsed.ManifestSHA256 = manifestSHA
+		parsed.BundleManifestSHA256 = bundleSHA
+		parsed.Version = version
 		return parsed, nil
 	}
 	if action != "deploy" || !hasExactKeys(object,
