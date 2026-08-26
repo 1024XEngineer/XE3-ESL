@@ -13,6 +13,7 @@ import 'package:speakup/features/coaching/practice/practice_client.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
+import 'package:speakup/features/coaching/scenario/scenario_practice.dart';
 import 'package:speakup/features/coaching/evaluation/agent_conversation_feedback_presenter.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_client.dart';
@@ -81,6 +82,51 @@ void main() {
   );
 
   testWidgets(
+    'Scenario practice reuses correction and polish from the shared feedback UI',
+    (tester) async {
+      final feedback = _practiceFeedback();
+      final client = _Client(feedback);
+      final feedbackController = SpeechFeedbackController(
+        client: client,
+        pollInterval: Duration.zero,
+        maximumPollAttempts: 1,
+      );
+      final snapshot = _practiceSnapshot(feedback.statusUrl);
+      final practiceController = PracticeController(
+        client: _PracticeClient(snapshot),
+      );
+      addTearDown(feedbackController.dispose);
+      addTearDown(practiceController.dispose);
+      await _restorePractice(practiceController, snapshot);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ScenarioPracticePage(
+            practiceController: practiceController,
+            speechFeedbackController: feedbackController,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(client.calls, 1);
+      expect(find.text('优化'), findsNothing);
+      expect(find.byKey(const Key('inline-language-optimize')), findsOneWidget);
+      expect(find.text('I managed'), findsNothing);
+      expect(find.text('I handled the release successfully.'), findsNothing);
+
+      await tester.tap(find.byKey(const Key('inline-language-optimize')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('inline-language-correction-diff')),
+        findsOneWidget,
+      );
+      expect(find.text('I handled the release successfully.'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'Practice SAME_QUESTION reuses recorder and never advances progress',
     (tester) async {
       final feedback = _practiceFeedback();
@@ -108,7 +154,8 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(client.calls, 1);
-      expect(find.text('优化'), findsOneWidget);
+      expect(find.text('优化'), findsNothing);
+      expect(find.byKey(const Key('inline-language-optimize')), findsOneWidget);
       expect(find.text('I managed'), findsNothing);
 
       await tester.tap(find.byKey(const Key('inline-language-optimize')));
@@ -469,6 +516,22 @@ SpeechFeedback _practiceFeedback({bool insufficient = false}) {
               explanation: 'Use the past tense for the completed release.',
               suggestedText: 'I managed',
               repracticeMode: SpeechFeedbackRepracticeMode.sameQuestion,
+              createdAt: DateTime.utc(2026, 7, 30, 10, 1, 1),
+            ),
+            SpeechFeedbackItem(
+              feedbackItemId: 'item_practice_002',
+              evaluationId: '10000000-0000-4000-8000-000000000020',
+              position: 2,
+              kind: SpeechFeedbackItemKind.recommendedExpression,
+              anchor: const SpeechFeedbackAnchor(
+                evidenceRefId: 'practice_turn_001',
+                startUtf8Byte: 0,
+                endUtf8Byte: 8,
+                originalExcerpt: 'I manage',
+              ),
+              explanation: 'Use a more natural completed-action expression.',
+              suggestedText: 'I handled the release successfully.',
+              repracticeMode: SpeechFeedbackRepracticeMode.none,
               createdAt: DateTime.utc(2026, 7, 30, 10, 1, 1),
             ),
           ],

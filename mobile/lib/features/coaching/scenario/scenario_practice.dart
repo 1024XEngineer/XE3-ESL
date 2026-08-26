@@ -814,6 +814,7 @@ class _ConversationPanel extends StatelessWidget {
                           children: [
                             PracticeMessageBubble(
                               message: message,
+                              practiceController: controller,
                               feedbackProjection: projection,
                               messageTextVisible: true,
                               onTranslate: assistant

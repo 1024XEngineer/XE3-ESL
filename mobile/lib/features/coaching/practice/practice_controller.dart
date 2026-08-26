@@ -2431,6 +2431,7 @@ final class PracticeController extends ChangeNotifier
             id: exchange.turn.id,
             role: PracticeMessageRole.user,
             text: exchange.turn.answerText,
+            audioAssetId: exchange.turn.audioAssetId,
             speechFeedbackStatusUrl: exchange.turn.speechFeedbackStatusUrl,
           ),
         ],

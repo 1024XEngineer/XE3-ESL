@@ -277,6 +277,7 @@ func practicePlanFixture() PlanProjection {
 			CoverageCheckpointTurn:   4,
 			MaxFollowUpsPerQuestion:  1,
 			EarlyCompletionRule:      EarlyCompletionCoverageSatisfiedAfterCheckpoint,
+			SpeechFeedbackAllowed:    true,
 		},
 		PracticeObjectives: []PracticeObjective{{
 			ID: "clarity", Description: "clarity",

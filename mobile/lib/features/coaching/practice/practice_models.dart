@@ -11,12 +11,14 @@ final class PracticeMessage {
     required this.id,
     required this.role,
     required this.text,
+    this.audioAssetId,
     this.speechFeedbackStatusUrl,
   });
 
   final String id;
   final PracticeMessageRole role;
   final String text;
+  final String? audioAssetId;
   final String? speechFeedbackStatusUrl;
 }
 

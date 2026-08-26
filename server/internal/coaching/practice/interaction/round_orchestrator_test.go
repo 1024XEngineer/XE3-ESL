@@ -40,6 +40,38 @@ func TestRoundConfirmReturnsAtomicPracticeTurn(t *testing.T) {
 	}
 }
 
+func TestTextAnswerReturnsTurnFeedbackWithoutSessionRestore(t *testing.T) {
+	candidate := roundCandidate()
+	turn := roundTurn(candidate)
+	rounds := &roundVoice{candidate: candidate, turn: turn}
+	orchestrator, err := NewRoundOrchestrator(
+		rounds,
+		roundPractice{},
+		roundFeedback{},
+	)
+	if err != nil {
+		t.Fatalf("NewRoundOrchestrator: %v", err)
+	}
+
+	got, err := orchestrator.SubmitText(
+		context.Background(),
+		roundActor(),
+		SubmitTextAnswerCommand{
+			SessionID:      turn.SessionID,
+			QuestionID:     turn.QuestionID,
+			AnswerText:     candidate.Transcript,
+			IdempotencyKey: "text-1",
+		},
+	)
+	if err != nil {
+		t.Fatalf("SubmitText: %v", err)
+	}
+	if got.ID != turn.ID ||
+		got.SpeechFeedbackStatusURL != "/v1/feedback/turn-1" {
+		t.Fatalf("Turn = %#v", got)
+	}
+}
+
 func TestRoundRejectsTurnWithoutAtomicProgress(t *testing.T) {
 	candidate := roundCandidate()
 	turn := roundTurn(candidate)
@@ -140,16 +172,12 @@ func (roundPractice) ResolveActorParticipant(
 
 type roundFeedback struct{}
 
-func (roundFeedback) EnsureTurn(
+func (roundFeedback) StatusURLForTurn(
 	_ context.Context,
 	_ requestcontext.Actor,
-	_ string,
 	turnID string,
-) (TurnFeedbackReference, error) {
-	return TurnFeedbackReference{
-		StatusURL:  "/v1/feedback/" + turnID,
-		Applicable: true,
-	}, nil
+) (string, bool, error) {
+	return "/v1/feedback/" + turnID, true, nil
 }
 
 func roundActor() requestcontext.Actor {

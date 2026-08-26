@@ -116,6 +116,7 @@ class _ExamConversation extends StatelessWidget {
               padding: const EdgeInsets.only(bottom: 12),
               child: PracticeMessageBubble(
                 message: message,
+                practiceController: controller,
                 feedbackProjection: projection,
                 onTranslate: assistant ? onTranslateQuestion : null,
                 actions: assistant

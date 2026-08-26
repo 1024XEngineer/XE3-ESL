@@ -49,6 +49,7 @@ func TestResolveSessionPolicyUsesExactReference(t *testing.T) {
 				policy.RetryAllowed != test.retry ||
 				policy.QuestionTranslationAllowed != test.readAids ||
 				policy.QuestionTipsAllowed != test.readAids ||
+				!policy.SpeechFeedbackAllowed ||
 				policy.MaxFollowUpsPerQuestion != test.followUps ||
 				!ValidSessionPolicy(
 					test.reference,
@@ -92,6 +93,55 @@ func TestValidSessionPolicyRejectsPolicyValueThatContradictsReference(
 		policy,
 	) {
 		t.Fatal("daily policy accepted contradictory retry value")
+	}
+}
+
+func TestEverySessionPolicyAllowsSpeechFeedback(t *testing.T) {
+	t.Parallel()
+	registrations := []struct {
+		reference string
+		mode      PracticeMode
+	}{
+		{GenericPracticeSessionPolicy, PracticeModeFullSimulation},
+		{DailyPracticeSessionPolicy, PracticeModeFullSimulation},
+		{WorkplacePracticeSessionPolicy, PracticeModeFullSimulation},
+		{InterviewPracticeSessionPolicy, PracticeModeFullSimulation},
+		{InterviewUserControlledSessionPolicy, PracticeModeFullSimulation},
+		{ExamPracticeSessionPolicy, PracticeModeFullSimulation},
+		{DailyHotelCheckinIssueSessionPolicy, PracticeModeFullSimulation},
+		{WorkplaceProgressRiskUpdateSessionPolicy, PracticeModeFullSimulation},
+		{InterviewProjectDeepDiveSessionPolicy, PracticeModeFullSimulation},
+		{
+			InterviewProjectDeepDiveUserControlledSessionPolicy,
+			PracticeModeFullSimulation,
+		},
+		{IELTSSpeakingPart1SessionPolicy, PracticeModePart1},
+		{IELTSSpeakingPart2SessionPolicy, PracticeModePart2},
+		{IELTSSpeakingPart3SessionPolicy, PracticeModePart3},
+		{IELTSSpeakingFullMockSessionPolicy, PracticeModeFullMock},
+	}
+	prompt := ScenePrompt{
+		TurnBlueprints: []string{"one", "two", "three", "four"},
+	}
+	for _, registration := range registrations {
+		registration := registration
+		t.Run(registration.reference, func(t *testing.T) {
+			policy, err := ResolveSessionPolicy(
+				registration.reference,
+				prompt,
+				PracticeOption{
+					Mode:                     registration.mode,
+					SuggestedDurationSeconds: 600,
+				},
+				0,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !policy.SpeechFeedbackAllowed {
+				t.Fatalf("speech feedback disabled: %#v", policy)
+			}
+		})
 	}
 }
 

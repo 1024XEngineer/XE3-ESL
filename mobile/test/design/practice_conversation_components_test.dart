@@ -41,6 +41,34 @@ void main() {
     expect(find.text('I already have a plan.'), findsOneWidget);
   });
 
+  testWidgets('icon-only feedback hides ready and loading labels', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: Column(
+            children: [
+              InlineLanguageFeedback(
+                polish: InlineLanguageSuggestion(text: 'A better answer.'),
+                optimizeIconOnly: true,
+              ),
+              InlineLanguageFeedback(
+                feedbackLoading: true,
+                optimizeIconOnly: true,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('优化'), findsNothing);
+    expect(find.text('优化中'), findsNothing);
+    expect(find.byKey(const Key('inline-language-optimize')), findsOneWidget);
+    expect(find.byKey(const Key('inline-language-optimizing')), findsOneWidget);
+  });
+
   testWidgets('shared recording composer shows the live transcript', (
     tester,
   ) async {

@@ -185,6 +185,7 @@ func resolveSessionPolicyRegistration(
 		maxEffectiveTurns:       6,
 		coverageCheckpointTurn:  4,
 		maxFollowUpsPerQuestion: 1,
+		speechFeedbackAllowed:   true,
 	}
 	switch reference {
 	case GenericPracticeSessionPolicy,
