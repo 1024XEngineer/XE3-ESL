@@ -68,6 +68,12 @@ docker compose \
 jq --exit-status '
   .networks.monitor.internal == true and
   (.networks.monitor_ui | has("internal") | not) and
+  .services.postgres.mem_limit == "2147483648" and
+  .services.postgres.cpus == 1 and
+  .services.postgres.pids_limit == 128 and
+  .services.server.mem_limit == "3221225472" and
+  .services.server.cpus == 2 and
+  .services.server.pids_limit == 256 and
   .services.server.environment.METRICS_HOST == "0.0.0.0" and
   (.services.server.ports | length) == 1 and
   .services.server.ports[0].host_ip == "127.0.0.1" and

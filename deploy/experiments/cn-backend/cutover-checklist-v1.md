@@ -25,6 +25,8 @@ SHA-256 values.
 
 - [ ] The current Singapore release completed through immutable Tag, GitHub
   Release, public APK, and changelog verification before this cutover started.
+- [ ] China-provider preparation did not change or block the current Singapore
+  release path; this checklist governs only the later China cutover.
 - [ ] Candidate `release_version`, Git SHA, Server digest, PostgreSQL digest,
   and schema version match the reviewed Release Candidate manifest.
 - [ ] China Qianwen, OSS, and XFYun resources are Production-owned and use
@@ -36,11 +38,46 @@ SHA-256 values.
 
 Required provider groups change together:
 
-- Qianwen: `QIANWEN_BASE_URL`, `QIANWEN_ASR_BASE_URL`,
-  `QIANWEN_TTS_BASE_URL`, `DASHSCOPE_API_KEY`;
-- OSS: `OSS_REGION`, `OSS_ENDPOINT`, `OSS_BUCKET`, and its credential provider;
-- XFYun ISE: endpoint, APPID, API key, and API secret;
-- explicitly enabled regional avatar and OCR endpoints.
+- Qianwen text generation: `TEXT_GENERATION_PROVIDER`,
+  `DASHSCOPE_API_KEY`, `QIANWEN_BASE_URL`, `QIANWEN_MODEL`,
+  `QIANWEN_EVALUATION_MODEL`, `QIANWEN_SPEECH_FEEDBACK_MODEL`,
+  `QIANWEN_TIMEOUT`, and `QIANWEN_MAX_OUTPUT_TOKENS`;
+- Qianwen ASR: `SPEECH_RECOGNITION_PROVIDER`, `QIANWEN_ASR_BASE_URL`,
+  `QIANWEN_ASR_MODEL`, `QIANWEN_ASR_TIMEOUT`,
+  `QIANWEN_ASR_RECORDED_MODEL`, and `QIANWEN_ASR_RECORDED_TIMEOUT`;
+- Qianwen TTS: `SPEECH_SYNTHESIS_PROVIDER`, `QIANWEN_TTS_BASE_URL`,
+  `QIANWEN_TTS_MODEL`, `QIANWEN_TTS_VOICE`, `QIANWEN_TTS_LANGUAGE`,
+  `QIANWEN_TTS_TIMEOUT`, and `QIANWEN_TTS_TEMP_DIRECTORY`;
+- Aliyun OSS: `OSS_ENABLED`, `OBJECT_STORAGE_PROVIDER`, `OSS_REGION`,
+  `OSS_ENDPOINT`, `OSS_BUCKET`, `OSS_AUDIO_PREFIX`, `OSS_IMAGE_PREFIX`,
+  `OSS_RESUME_PREFIX`, `OSS_SIGNED_URL_TTL`, and
+  `OSS_CREDENTIALS_PROVIDER`;
+- OSS environment credentials: `OSS_ACCESS_KEY_ID`,
+  `OSS_ACCESS_KEY_SECRET`, and optional `OSS_SESSION_TOKEN`, with
+  `OSS_RAM_ROLE_NAME` empty; or a verified Alibaba ECS role source with the
+  environment credentials absent and `OSS_RAM_ROLE_NAME` recorded;
+- XFYun ISE: `XFYUN_ISE_ENDPOINT`, `XFYUN_ISE_TIMEOUT`, `APPID`, `APIKey`, and
+  `APISecret` from one domestic application and service entitlement.
+
+- [ ] The private provider matrix records, for every field above, the Singapore
+  baseline, China candidate, resource region and owner, secret classification,
+  validation receipt, and rollback value or environment hash.
+- [ ] `TEXT_GENERATION_PROVIDER`, `SPEECH_RECOGNITION_PROVIDER`, and
+  `SPEECH_SYNTHESIS_PROVIDER` are all `qianwen`; `OSS_ENABLED=1` and
+  `OBJECT_STORAGE_PROVIDER=aliyun_oss`.
+- [ ] `AGENT_CONTEXT_MAX_CHARACTERS`, `AGENT_RUN_LOOP_TIMEOUT`, all `VOICE_*`
+  limits, and other non-regional runtime values either match the tested
+  Singapore baseline or have a separately reviewed reason to change.
+- [ ] Avatar fields (`SPATIUS_ENABLED`, `SPATIUS_REGION`,
+  `SPATIUS_CONSOLE_BASE_URL`, `SPATIUS_APP_ID`, `SPATIUS_AVATAR_ID`,
+  `SPATIUS_API_KEY`, `SPATIUS_TOKEN_TTL`, `SPATIUS_TIMEOUT`) and OCR fields
+  (`RESUME_OCR_ENABLED`, `PADDLEOCR_ACCESS_TOKEN`, `PADDLEOCR_BASE_URL`,
+  `RESUME_OCR_TIMEOUT`) are each classified as `china`, `unchanged`, or
+  `disabled`; enabled unchanged services passed China-host latency checks.
+- [ ] No partial candidate file is accepted: a missing selector, model,
+  timeout, endpoint, resource identifier, or required credential rejects the
+  candidate from approval and keeps the China stack isolated from Production
+  traffic; successful Server startup alone does not complete this matrix.
 
 ## 2. HTTPS, WSS, and App entry
 

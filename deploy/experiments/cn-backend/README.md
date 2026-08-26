@@ -159,15 +159,63 @@ destroyed after its results have been recorded.
 
 ## Regional provider switch
 
-Keep a mode-`0600` copy of the working Singapore baseline before changing the
-active `server.env`. A complete China candidate changes these groups together:
+This work starts only after the current Singapore release has completed its
+existing Release Candidate, Staging approval, Production, Tag, APK, and
+changelog path. Missing China-provider values do not block that Singapore
+release. Conversely, a file containing only some China values is not a
+deployable candidate and must not receive Production traffic.
 
-- `QIANWEN_BASE_URL`, `QIANWEN_ASR_BASE_URL`, `QIANWEN_TTS_BASE_URL`, and
-  `DASHSCOPE_API_KEY`;
-- `OSS_REGION`, `OSS_ENDPOINT`, `OSS_BUCKET`, and the selected OSS credential
-  provider values;
-- `XFYUN_ISE_ENDPOINT`, `APPID`, `APIKey`, and `APISecret`;
-- any explicitly regional avatar or OCR endpoint that remains enabled.
+Keep a mode-`0600` copy of the working Singapore baseline before changing the
+active `server.env`. Record the Singapore and China values, resource region,
+credential owner, and environment-file SHA-256 in private evidence. A complete
+China candidate changes and validates these groups together:
+
+- Qianwen text generation:
+  - `TEXT_GENERATION_PROVIDER=qianwen` and `DASHSCOPE_API_KEY`;
+  - `QIANWEN_BASE_URL`, `QIANWEN_MODEL`, `QIANWEN_EVALUATION_MODEL`,
+    `QIANWEN_SPEECH_FEEDBACK_MODEL`, `QIANWEN_TIMEOUT`, and
+    `QIANWEN_MAX_OUTPUT_TOKENS`.
+- Qianwen speech recognition:
+  - `SPEECH_RECOGNITION_PROVIDER=qianwen`;
+  - `QIANWEN_ASR_BASE_URL`, `QIANWEN_ASR_MODEL`, `QIANWEN_ASR_TIMEOUT`,
+    `QIANWEN_ASR_RECORDED_MODEL`, and `QIANWEN_ASR_RECORDED_TIMEOUT`.
+    The current Server requires `fun-asr-realtime` with a timeout of at least
+    `150s`, and `fun-asr-flash-2026-06-15` for recorded audio.
+- Qianwen speech synthesis:
+  - `SPEECH_SYNTHESIS_PROVIDER=qianwen`;
+  - `QIANWEN_TTS_BASE_URL`, `QIANWEN_TTS_MODEL`, `QIANWEN_TTS_VOICE`,
+    `QIANWEN_TTS_LANGUAGE`, `QIANWEN_TTS_TIMEOUT`, and
+    `QIANWEN_TTS_TEMP_DIRECTORY`.
+- Aliyun OSS:
+  - `OSS_ENABLED=1`, `OBJECT_STORAGE_PROVIDER=aliyun_oss`, `OSS_REGION`,
+    `OSS_ENDPOINT`, `OSS_BUCKET`, `OSS_AUDIO_PREFIX`, `OSS_IMAGE_PREFIX`,
+    `OSS_RESUME_PREFIX`, and `OSS_SIGNED_URL_TTL`; the current namespaces are
+    `audio/v1`, `image/v1`, and `resume/v1`, and signed URLs may live for at
+    most two minutes;
+  - `OSS_CREDENTIALS_PROVIDER=environment` requires
+    `OSS_ACCESS_KEY_ID`, `OSS_ACCESS_KEY_SECRET`, and an optional
+    `OSS_SESSION_TOKEN`, with `OSS_RAM_ROLE_NAME` empty;
+  - `OSS_CREDENTIALS_PROVIDER=ecs_role` requires a verified Alibaba ECS role
+    credential source and may set `OSS_RAM_ROLE_NAME`; do not select it merely
+    because the bucket is in Alibaba Cloud.
+- XFYun ISE: `XFYUN_ISE_ENDPOINT`, `XFYUN_ISE_TIMEOUT`, `APPID`, `APIKey`, and
+  `APISecret` from the same domestic application and service entitlement.
+
+Copy non-regional limits such as `AGENT_CONTEXT_MAX_CHARACTERS`,
+`AGENT_RUN_LOOP_TIMEOUT`, and the `VOICE_*` budgets unchanged from the tested
+baseline unless a separately reviewed change requires otherwise. Classify each
+optional regional integration explicitly as `china`, `unchanged`, or
+`disabled`:
+
+- avatar: `SPATIUS_ENABLED`, `SPATIUS_REGION`,
+  `SPATIUS_CONSOLE_BASE_URL`, `SPATIUS_APP_ID`, `SPATIUS_AVATAR_ID`,
+  `SPATIUS_API_KEY`, `SPATIUS_TOKEN_TTL`, and `SPATIUS_TIMEOUT`;
+- resume OCR: `RESUME_OCR_ENABLED`, `PADDLEOCR_ACCESS_TOKEN`,
+  `PADDLEOCR_BASE_URL`, and `RESUME_OCR_TIMEOUT`.
+
+An integration classified as `unchanged` still requires a latency and success
+check from the China host. An integration classified as `disabled` must be
+disabled explicitly in the candidate rather than omitted accidentally.
 
 Do not mix a China credential with a Singapore endpoint or reuse the Production
 database. After replacing the active environment file, recreate only the
