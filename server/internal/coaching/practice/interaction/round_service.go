@@ -59,13 +59,28 @@ const (
 	TranscriptionReserved   TranscriptionReservationStatus = "reserved"
 	TranscriptionProcessing TranscriptionReservationStatus = "processing"
 	TranscriptionCompleted  TranscriptionReservationStatus = "completed"
+	TranscriptionConfirmed  TranscriptionReservationStatus = "confirmed"
+	TranscriptionFailed     TranscriptionReservationStatus = "failed"
 )
 
 type TranscriptionReservation struct {
+	ID                      string
+	LeaseToken              string
+	Status                  TranscriptionReservationStatus
+	SessionID               string
+	QuestionID              string
+	RespondentParticipantID string
+	IdempotencyKey          string
+	InputFingerprint        string
+	AudioAssetID            string
+	Candidate               TranscriptionCandidate
+}
+
+type DeferredTranscriptionSubmission struct {
 	ID         string
-	LeaseToken string
+	SessionID  string
+	QuestionID string
 	Status     TranscriptionReservationStatus
-	Candidate  TranscriptionCandidate
 }
 
 type ReserveTranscriptionCommand struct {
@@ -153,6 +168,20 @@ type RoundStore interface {
 	) (practice.Turn, error)
 }
 
+type DeferredRoundStore interface {
+	GetTranscriptionReservation(
+		context.Context,
+		requestcontext.Actor,
+		string,
+	) (TranscriptionReservation, error)
+	AttachTranscriptionRecording(
+		context.Context,
+		requestcontext.Actor,
+		string,
+		string,
+	) error
+}
+
 type VoiceRecordingConfirmationStore interface {
 	ReserveRecordingConfirmation(
 		context.Context,
@@ -183,6 +212,7 @@ type RoundService struct {
 	recordedRecognizer SpeechRecognizer
 	synthesizer        SpeechSynthesizer
 	recordings         RecordingUploader
+	recordingSources   RecordingSourceLoader
 	recordingConfirms  VoiceRecordingConfirmationStore
 	now                func() time.Time
 }
@@ -223,6 +253,10 @@ func NewRoundServiceWithRecordings(
 			"practice interaction: recording upload and confirmation are both required",
 		)
 	}
+	var recordingSources RecordingSourceLoader
+	if recordings != nil {
+		recordingSources, _ = recordings.(RecordingSourceLoader)
+	}
 	return &RoundService{
 		store:              store,
 		vault:              vault,
@@ -230,6 +264,7 @@ func NewRoundServiceWithRecordings(
 		recordedRecognizer: recordedRecognizer,
 		synthesizer:        synthesizer,
 		recordings:         recordings,
+		recordingSources:   recordingSources,
 		recordingConfirms:  recordingConfirms,
 		now:                time.Now,
 	}, nil
@@ -242,6 +277,177 @@ type TranscribeVoiceCommand struct {
 	IdempotencyKey string
 	ContentType    string
 	Audio          io.Reader
+}
+
+// StageTranscription durably stores one recording and reserves its immutable
+// Practice turn without waiting for ASR. The returned lease is internal worker
+// authority and must never be projected to an HTTP client.
+func (service *RoundService) StageTranscription(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	respondentParticipantID string,
+	command TranscribeVoiceCommand,
+) (reservation TranscriptionReservation, returnErr error) {
+	deferredStore, ok := service.store.(DeferredRoundStore)
+	if !ok || service.recordings == nil || service.recordingSources == nil ||
+		validateVoiceContext(ctx, actor) != nil ||
+		strings.TrimSpace(respondentParticipantID) == "" ||
+		strings.TrimSpace(command.SessionID) == "" ||
+		strings.TrimSpace(command.QuestionID) == "" ||
+		strings.TrimSpace(command.IdempotencyKey) == "" || command.Audio == nil {
+		return TranscriptionReservation{}, ErrVoiceRoundInvalid
+	}
+	question, err := service.store.GetQuestion(
+		ctx, actor, command.SessionID, command.QuestionID,
+	)
+	if err != nil {
+		return TranscriptionReservation{}, err
+	}
+	if !validQuestion(
+		question, command.SessionID, command.QuestionID, respondentParticipantID,
+	) {
+		return TranscriptionReservation{}, ErrVoiceRoundNotFound
+	}
+	metadata, err := service.vault.Capture(
+		ctx, actor, command.ContentType, command.Audio,
+	)
+	if err != nil {
+		return TranscriptionReservation{}, ErrVoiceRoundInvalid
+	}
+	defer func() {
+		if cleanupErr := service.vault.Delete(actor, metadata.ID); cleanupErr != nil {
+			reservation = TranscriptionReservation{}
+			returnErr = errors.Join(returnErr, cleanupErr)
+		}
+	}()
+	source, err := service.vault.Source(actor, metadata.ID)
+	if err != nil {
+		return TranscriptionReservation{}, ErrVoiceRoundInvalid
+	}
+	fingerprint, err := voiceInputFingerprint(
+		source, command.SessionID, command.QuestionID,
+	)
+	if err != nil {
+		return TranscriptionReservation{}, err
+	}
+	reservation, err = service.store.ReserveTranscription(
+		ctx,
+		actor,
+		ReserveTranscriptionCommand{
+			TurnID: command.TurnID, SessionID: command.SessionID,
+			QuestionID:              command.QuestionID,
+			RespondentParticipantID: respondentParticipantID,
+			IdempotencyKey:          command.IdempotencyKey,
+			InputFingerprint:        fingerprint,
+		},
+	)
+	if err != nil {
+		return TranscriptionReservation{}, err
+	}
+	if reservation.Status == TranscriptionCompleted ||
+		reservation.Status == TranscriptionConfirmed {
+		return reservation, nil
+	}
+	assetID, err := service.stageRecording(
+		ctx, actor, reservation.ID, source,
+	)
+	if err != nil {
+		return TranscriptionReservation{}, err
+	}
+	if err := deferredStore.AttachTranscriptionRecording(
+		ctx, actor, reservation.ID, assetID,
+	); err != nil {
+		return TranscriptionReservation{}, err
+	}
+	reservation.AudioAssetID = assetID
+	return reservation, nil
+}
+
+func (service *RoundService) ProcessDeferredTranscription(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	reservation TranscriptionReservation,
+) (TranscriptionCandidate, error) {
+	deferredStore, ok := service.store.(DeferredRoundStore)
+	if !ok || service.recordingSources == nil || validateVoiceContext(ctx, actor) != nil ||
+		strings.TrimSpace(reservation.ID) == "" {
+		return TranscriptionCandidate{}, ErrVoiceRoundInvalid
+	}
+	if reservation.Status == TranscriptionCompleted ||
+		reservation.Status == TranscriptionConfirmed {
+		return reservation.Candidate, nil
+	}
+	if reservation.LeaseToken == "" {
+		stored, err := deferredStore.GetTranscriptionReservation(
+			ctx, actor, reservation.ID,
+		)
+		if err != nil {
+			return TranscriptionCandidate{}, err
+		}
+		reservation, err = service.store.ReserveTranscription(
+			ctx,
+			actor,
+			ReserveTranscriptionCommand{
+				SessionID: stored.SessionID, QuestionID: stored.QuestionID,
+				RespondentParticipantID: stored.RespondentParticipantID,
+				IdempotencyKey:          stored.IdempotencyKey,
+				InputFingerprint:        stored.InputFingerprint,
+			},
+		)
+		if err != nil {
+			return TranscriptionCandidate{}, err
+		}
+		if reservation.Status == TranscriptionCompleted ||
+			reservation.Status == TranscriptionConfirmed {
+			return reservation.Candidate, nil
+		}
+		if reservation.Status != TranscriptionReserved {
+			return TranscriptionCandidate{}, ErrVoiceRoundProcessing
+		}
+		reservation.AudioAssetID = stored.AudioAssetID
+	}
+	if reservation.Status != TranscriptionReserved ||
+		strings.TrimSpace(reservation.LeaseToken) == "" ||
+		strings.TrimSpace(reservation.AudioAssetID) == "" {
+		return TranscriptionCandidate{}, ErrVoiceRoundConflict
+	}
+	source, err := service.recordingSources.Load(
+		ctx, actor, reservation.AudioAssetID,
+	)
+	if err != nil {
+		return TranscriptionCandidate{}, err
+	}
+	defer source.Close()
+	startedAt := service.now()
+	result, err := service.recordedRecognizer.Transcribe(
+		ctx, TranscriptionRequest{Audio: source},
+	)
+	if err != nil {
+		if saveErr := service.failTranscription(
+			ctx, actor, reservation, err, startedAt,
+		); saveErr != nil {
+			return TranscriptionCandidate{}, saveErr
+		}
+		return TranscriptionCandidate{}, err
+	}
+	return service.completeTranscription(
+		ctx, actor, reservation, result, startedAt,
+		reservation.SessionID, reservation.QuestionID,
+		reservation.RespondentParticipantID,
+	)
+}
+
+func (service *RoundService) GetDeferredTranscription(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	reservationID string,
+) (TranscriptionReservation, error) {
+	deferredStore, ok := service.store.(DeferredRoundStore)
+	if !ok || validateVoiceContext(ctx, actor) != nil ||
+		strings.TrimSpace(reservationID) == "" {
+		return TranscriptionReservation{}, ErrVoiceRoundInvalid
+	}
+	return deferredStore.GetTranscriptionReservation(ctx, actor, reservationID)
 }
 
 type SubmitTextAnswerCommand struct {
@@ -306,7 +512,7 @@ func (service *RoundService) SubmitTextAnswer(
 		return TranscriptionCandidate{}, err
 	}
 	switch reservation.Status {
-	case TranscriptionCompleted:
+	case TranscriptionCompleted, TranscriptionConfirmed:
 		if !validTranscriptionCandidate(
 			reservation.Candidate,
 			command.SessionID,
@@ -456,7 +662,7 @@ func (service *RoundService) transcribe(
 		return TranscriptionCandidate{}, err
 	}
 	switch reservation.Status {
-	case TranscriptionCompleted:
+	case TranscriptionCompleted, TranscriptionConfirmed:
 		if !validTranscriptionCandidate(
 			reservation.Candidate,
 			command.SessionID,
@@ -489,7 +695,8 @@ func (service *RoundService) transcribe(
 			return TranscriptionCandidate{}, err
 		}
 	}
-	if reservation.Status == TranscriptionCompleted {
+	if reservation.Status == TranscriptionCompleted ||
+		reservation.Status == TranscriptionConfirmed {
 		return reservation.Candidate, nil
 	}
 

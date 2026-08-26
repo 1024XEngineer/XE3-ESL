@@ -32,6 +32,24 @@ enum PracticeRecordingState {
   completed,
 }
 
+enum DeferredTranscriptionStatus { processing, completed, failed }
+
+final class DeferredTranscription {
+  const DeferredTranscription({
+    required this.id,
+    required this.sessionId,
+    required this.questionId,
+    required this.status,
+    required this.statusUrl,
+  });
+
+  final String id;
+  final String sessionId;
+  final String questionId;
+  final DeferredTranscriptionStatus status;
+  final String statusUrl;
+}
+
 enum PracticeCompletionMode {
   turnLimited,
   userControlled;

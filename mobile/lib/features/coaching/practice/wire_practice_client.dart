@@ -29,6 +29,9 @@ final class PracticeWireEndpoints {
     this.transcribe =
         '/v1/practice-sessions/{practice_session_id}/questions/'
         '{question_id}/transcription-candidates',
+    this.deferredTranscription =
+        '/v1/practice-sessions/{practice_session_id}/questions/'
+        '{question_id}/deferred-transcriptions',
     this.transcribeRealtime =
         '/v1/practice-sessions/{practice_session_id}/questions/'
         '{question_id}/transcription-candidates/realtime',
@@ -53,6 +56,7 @@ final class PracticeWireEndpoints {
   final String activation;
   final String interactionState;
   final String transcribe;
+  final String deferredTranscription;
   final String transcribeRealtime;
   final String submitText;
   final String questionTip;
@@ -74,6 +78,11 @@ final class PracticeWireEndpoints {
   String transcribePath(String sessionId, String questionId) => transcribe
       .replaceAll('{practice_session_id}', _pathSegment(sessionId))
       .replaceAll('{question_id}', _pathSegment(questionId));
+
+  String deferredTranscriptionPath(String sessionId, String questionId) =>
+      deferredTranscription
+          .replaceAll('{practice_session_id}', _pathSegment(sessionId))
+          .replaceAll('{question_id}', _pathSegment(questionId));
 
   String transcribeRealtimePath(String sessionId, String questionId) =>
       transcribeRealtime
@@ -160,7 +169,8 @@ final class WirePracticeClient
         PracticeSpeechFeedbackRetryClient,
         PracticeQuestionTipClient,
         PracticeQuestionTranslationClient,
-        PracticeRealtimeTranscriptionClient {
+        PracticeRealtimeTranscriptionClient,
+        PracticeDeferredTranscriptionClient {
   // Covers the server's bounded upload, durable recording write, maximum
   // recorded-ASR timeout, and final response margin.
   static const defaultTranscriptionTimeout = Duration(seconds: 540);
@@ -312,6 +322,74 @@ final class WirePracticeClient
         response.body,
         expectedSessionId: request.sessionId,
         expectedQuestionId: request.questionId,
+      );
+    });
+  }
+
+  @override
+  Future<DeferredTranscription> stageDeferredTranscription({
+    required String sessionId,
+    required String questionId,
+    required String idempotencyKey,
+    required RecordedPracticeAudio audio,
+  }) {
+    return _run((generation) async {
+      _requireOpaqueId(sessionId);
+      _requireOpaqueId(questionId);
+      _requireClientId(idempotencyKey);
+      await _validateAudio(audio);
+      final response = await _send(
+        generation: generation,
+        timeout: _transcriptionTimeout,
+        method: 'POST',
+        path: _endpoints.deferredTranscriptionPath(sessionId, questionId),
+        extraHeaders: <String, String>{
+          'Idempotency-Key': idempotencyKey,
+          HttpHeaders.contentTypeHeader: 'audio/wav',
+        },
+        rawFilePath: audio.path,
+      );
+      _requireStatus(response, const {HttpStatus.accepted});
+      return _decodeDeferredTranscription(
+        response.body,
+        expectedSessionId: sessionId,
+        expectedQuestionId: questionId,
+      );
+    });
+  }
+
+  @override
+  Future<DeferredTranscription> getDeferredTranscription({
+    required String statusUrl,
+  }) {
+    return _run((generation) async {
+      final statusUri = _baseUri.resolve(statusUrl);
+      _trustedOrigin.validateResourceUri(statusUri);
+      final segments = statusUri.pathSegments;
+      if (statusUri.query.isNotEmpty ||
+          statusUri.fragment.isNotEmpty ||
+          segments.length != 5 ||
+          segments[0] != 'v1' ||
+          segments[1] != 'practice-sessions' ||
+          !_aggregateIdPattern.hasMatch(segments[2]) ||
+          segments[3] != 'deferred-transcriptions' ||
+          !_aggregateIdPattern.hasMatch(segments[4])) {
+        throw const PracticeClientException(
+          kind: PracticeClientFailureKind.invalidRequest,
+          errorCode: 'invalid_deferred_transcription_url',
+        );
+      }
+      final response = await _send(
+        generation: generation,
+        timeout: _jsonTimeout,
+        method: 'GET',
+        path: statusUri.path,
+      );
+      _requireStatus(response, const {HttpStatus.ok});
+      return _decodeDeferredTranscription(
+        response.body,
+        expectedSessionId: segments[2],
+        expectedTranscriptionId: segments[4],
       );
     });
   }
@@ -1198,6 +1276,48 @@ TranscriptionCandidate _decodeCandidate(
     throw _invalidResponse();
   }
   return candidate;
+}
+
+DeferredTranscription _decodeDeferredTranscription(
+  String body, {
+  String? expectedSessionId,
+  String? expectedQuestionId,
+  String? expectedTranscriptionId,
+}) {
+  final root = _exactObject(
+    jsonDecode(body),
+    required: const {
+      'transcription_id',
+      'practice_session_id',
+      'question_id',
+      'status',
+      'status_url',
+    },
+  );
+  final status = switch (_string(root, 'status')) {
+    'processing' => DeferredTranscriptionStatus.processing,
+    'completed' => DeferredTranscriptionStatus.completed,
+    'failed' => DeferredTranscriptionStatus.failed,
+    _ => throw _invalidResponse(),
+  };
+  final result = DeferredTranscription(
+    id: _string(root, 'transcription_id'),
+    sessionId: _string(root, 'practice_session_id'),
+    questionId: _string(root, 'question_id'),
+    status: status,
+    statusUrl: _string(root, 'status_url'),
+  );
+  final canonicalStatusUrl =
+      '/v1/practice-sessions/${result.sessionId}/deferred-transcriptions/'
+      '${result.id}';
+  if ((expectedSessionId != null && result.sessionId != expectedSessionId) ||
+      (expectedQuestionId != null && result.questionId != expectedQuestionId) ||
+      (expectedTranscriptionId != null &&
+          result.id != expectedTranscriptionId) ||
+      result.statusUrl != canonicalStatusUrl) {
+    throw _invalidResponse();
+  }
+  return result;
 }
 
 PracticeQuestionTip _decodeQuestionTip(

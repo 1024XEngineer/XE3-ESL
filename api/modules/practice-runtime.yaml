@@ -96,6 +96,57 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/Conflict
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/practice-sessions/{practice_session_id}/questions/{question_id}/deferred-transcriptions:
+    post:
+      tags: [Practice]
+      summary: Durably stage a WAV answer for background transcription
+      description: |
+        Persists the bounded recording and a recoverable transcription
+        reservation before returning. ASR and Turn confirmation continue in
+        the server lifecycle; callers poll the returned Actor-owned status URL.
+      operationId: createDeferredPracticeTranscription
+      parameters:
+        - $ref: '#/components/parameters/PracticeSessionId'
+        - $ref: '#/components/parameters/QuestionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          audio/wav:
+            schema: {type: string, format: binary}
+      responses:
+        '202':
+          description: Recording durably staged for background processing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeferredTranscription'
+        '400': {$ref: ../common/errors.yaml#/components/responses/BadRequest}
+        '401': {$ref: ../common/errors.yaml#/components/responses/Unauthorized}
+        '404': {$ref: ../common/errors.yaml#/components/responses/NotFound}
+        '409': {$ref: ../common/errors.yaml#/components/responses/Conflict}
+        default: {$ref: ../common/errors.yaml#/components/responses/DefaultError}
+  /v1/practice-sessions/{practice_session_id}/deferred-transcriptions/{transcription_id}:
+    get:
+      tags: [Practice]
+      summary: Read and recover one background transcription
+      operationId: getDeferredPracticeTranscription
+      parameters:
+        - $ref: '#/components/parameters/PracticeSessionId'
+        - name: transcription_id
+          in: path
+          required: true
+          schema: {$ref: '#/components/schemas/AggregateId'}
+      responses:
+        '200':
+          description: Current durable processing state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeferredTranscription'
+        '401': {$ref: ../common/errors.yaml#/components/responses/Unauthorized}
+        '404': {$ref: ../common/errors.yaml#/components/responses/NotFound}
+        default: {$ref: ../common/errors.yaml#/components/responses/DefaultError}
   /v1/retry-turns/{retry_turn_id}/transcription-candidates:
     post:
       tags:
@@ -1019,6 +1070,25 @@ components:
         created_at:
           type: string
           format: date-time
+    DeferredTranscription:
+      type: object
+      additionalProperties: false
+      required:
+        - transcription_id
+        - practice_session_id
+        - question_id
+        - status
+        - status_url
+      properties:
+        transcription_id: {$ref: '#/components/schemas/AggregateId'}
+        practice_session_id: {$ref: '#/components/schemas/AggregateId'}
+        question_id: {$ref: '#/components/schemas/AggregateId'}
+        status:
+          type: string
+          enum: [processing, completed, failed]
+        status_url:
+          type: string
+          pattern: '^/v1/practice-sessions/.+/deferred-transcriptions/.+$'
     RetryTranscriptionCandidate:
       type: object
       additionalProperties: false

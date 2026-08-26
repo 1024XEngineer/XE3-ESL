@@ -92,6 +92,8 @@ final class PracticeController extends ChangeNotifier
   String _liveTranscript = '';
   Future<_RealtimePracticeCandidateResult>? _realtimeCandidate;
   _PendingPracticeAudio? _pendingPracticeAudio;
+  DeferredTranscription? _deferredTranscription;
+  bool _deferredRecordingRequested = false;
   String? _activeConfirmationId;
   String? _activeTextAnswer;
   _SpeechFeedbackRetryContext? _speechFeedbackRetry;
@@ -157,6 +159,7 @@ final class PracticeController extends ChangeNotifier
   String? get questionId => _currentQuestion?.id;
   String? get candidateId => _candidate?.id;
   bool get hasPendingPracticeAudio => _pendingPracticeAudio != null;
+  DeferredTranscription? get deferredTranscription => _deferredTranscription;
   SceneDefinition? get scene => _activeScene;
 
   /// Resolves as soon as the active capture has released the shared recorder.
@@ -1171,6 +1174,7 @@ final class PracticeController extends ChangeNotifier
   Future<void> startRecording({
     Duration? limit,
     bool useRealtimeTranscription = true,
+    bool deferTranscription = false,
   }) {
     if (!hasActivePractice ||
         isBusy ||
@@ -1178,6 +1182,9 @@ final class PracticeController extends ChangeNotifier
         _currentQuestion == null ||
         _recordingState != PracticeRecordingState.idle) {
       return Future<void>.value();
+    }
+    if (deferTranscription && client is! PracticeDeferredTranscriptionClient) {
+      throw StateError('Deferred transcription is unavailable.');
     }
     final recordingLimit = limit ?? _recordingLimit;
     if (recordingLimit <= Duration.zero ||
@@ -1195,6 +1202,7 @@ final class PracticeController extends ChangeNotifier
     _activeConfirmationId = null;
     _activeTextAnswer = null;
     _errorMessage = null;
+    _deferredRecordingRequested = deferTranscription;
     _cancelRecordingLimit();
     _recordingState = PracticeRecordingState.starting;
     notifyListeners();
@@ -1266,7 +1274,11 @@ final class PracticeController extends ChangeNotifier
         if (_isOperationCurrent(fence) &&
             !_disposed &&
             _recordingState == PracticeRecordingState.recording) {
-          unawaited(stopRecording());
+          unawaited(
+            _deferredRecordingRequested
+                ? finishDeferredRecording()
+                : stopRecording(),
+          );
         }
       });
     } on PracticeRecordingException catch (error) {
@@ -1362,6 +1374,160 @@ final class PracticeController extends ChangeNotifier
     if (_recordingState == PracticeRecordingState.recording) {
       await stopRecording();
     }
+  }
+
+  /// Stops capture after durably staging the WAV. Recognition and confirmation
+  /// continue on the server and can be recovered by [refreshDeferredTranscription].
+  Future<DeferredTranscription?> finishDeferredRecording() async {
+    if (_recordingState == PracticeRecordingState.starting) {
+      await _recorderStartFuture;
+    }
+    if (_recordingState != PracticeRecordingState.recording) {
+      return _deferredTranscription;
+    }
+    final PracticeDeferredTranscriptionClient? deferredClient =
+        switch (client) {
+          final PracticeDeferredTranscriptionClient value => value,
+          _ => null,
+        };
+    final sessionId = _practiceSessionId;
+    final question = _currentQuestion;
+    if (deferredClient == null || sessionId == null || question == null) {
+      return null;
+    }
+    _cancelRecordingLimit();
+    final fence = _captureOperationFence(
+      practiceGeneration: _practiceGeneration,
+      practiceSessionId: sessionId,
+      questionId: question.id,
+    );
+    _recordingState = PracticeRecordingState.transcribing;
+    _errorMessage = null;
+    notifyListeners();
+    RecordedPracticeAudio? audio;
+    try {
+      final stopOperation = recorder.stop();
+      _recorderStopFuture = stopOperation;
+      audio = await stopOperation;
+      if (!_isOperationCurrent(fence)) {
+        return null;
+      }
+      final pending = _PendingPracticeAudio(
+        audio: audio,
+        sessionId: sessionId,
+        questionId: question.id,
+        clientTurnId: _newClientId('deferred-turn'),
+      );
+      _pendingPracticeAudio = pending;
+      audio = null;
+      return await _stagePendingDeferredTranscription(
+        deferredClient,
+        pending,
+        fence,
+      );
+    } catch (error) {
+      if (_isOperationCurrent(fence)) {
+        _recordingState = PracticeRecordingState.idle;
+        _errorMessage = _transcriptionFailureMessage(error);
+        notifyListeners();
+      }
+      return null;
+    } finally {
+      _recorderStopFuture = null;
+      _deferredRecordingRequested = false;
+      if (audio != null) await recorder.discard(audio);
+    }
+  }
+
+  Future<DeferredTranscription?> retryDeferredTranscription() async {
+    final PracticeDeferredTranscriptionClient? deferredClient =
+        switch (client) {
+          final PracticeDeferredTranscriptionClient value => value,
+          _ => null,
+        };
+    final pending = _pendingPracticeAudio;
+    if (deferredClient == null ||
+        pending == null ||
+        _recordingState != PracticeRecordingState.idle) {
+      return null;
+    }
+    final fence = _captureOperationFence(
+      practiceGeneration: _practiceGeneration,
+      practiceSessionId: pending.sessionId,
+      questionId: pending.questionId,
+    );
+    _recordingState = PracticeRecordingState.transcribing;
+    _errorMessage = null;
+    notifyListeners();
+    return _stagePendingDeferredTranscription(deferredClient, pending, fence);
+  }
+
+  Future<DeferredTranscription?> _stagePendingDeferredTranscription(
+    PracticeDeferredTranscriptionClient deferredClient,
+    _PendingPracticeAudio pending,
+    _PracticeOperationFence fence,
+  ) async {
+    try {
+      final submission = await deferredClient.stageDeferredTranscription(
+        sessionId: pending.sessionId,
+        questionId: pending.questionId,
+        idempotencyKey: pending.clientTurnId,
+        audio: pending.audio,
+      );
+      if (!_isOperationCurrent(fence) ||
+          !identical(_pendingPracticeAudio, pending)) {
+        return null;
+      }
+      _deferredTranscription = submission;
+      _pendingPracticeAudio = null;
+      _recordingState = PracticeRecordingState.idle;
+      _errorMessage = null;
+      await recorder.discard(pending.audio);
+      notifyListeners();
+      return submission;
+    } catch (error) {
+      if (_isOperationCurrent(fence) &&
+          identical(_pendingPracticeAudio, pending)) {
+        _recordingState = PracticeRecordingState.idle;
+        _errorMessage = _transcriptionFailureMessage(error);
+        notifyListeners();
+      }
+      return null;
+    }
+  }
+
+  Future<DeferredTranscription?> refreshDeferredTranscription({
+    String? statusUrl,
+  }) async {
+    final PracticeDeferredTranscriptionClient? deferredClient =
+        switch (client) {
+          final PracticeDeferredTranscriptionClient value => value,
+          _ => null,
+        };
+    final target = statusUrl ?? _deferredTranscription?.statusUrl;
+    final sessionId = _practiceSessionId;
+    if (deferredClient == null ||
+        target == null ||
+        sessionId == null ||
+        _disposed) {
+      return null;
+    }
+    final result = await deferredClient.getDeferredTranscription(
+      statusUrl: target,
+    );
+    if (_disposed || result.sessionId != sessionId) {
+      return null;
+    }
+    _deferredTranscription = result;
+    if (result.status == DeferredTranscriptionStatus.completed) {
+      final snapshot = await client.restorePractice(sessionId: sessionId);
+      if (!_disposed && _practiceSessionId == sessionId) {
+        _applyPracticeSnapshot(snapshot, preserveKnownRecordings: true);
+        _deferredTranscription = result;
+      }
+    }
+    notifyListeners();
+    return result;
   }
 
   Future<void> cancelRecording() async {
@@ -1727,6 +1893,7 @@ final class PracticeController extends ChangeNotifier
     }
     _practiceGeneration++;
     _pendingPracticeAudio = null;
+    _deferredRecordingRequested = false;
     _stopRecordingFuture = null;
     _candidate = null;
     _activeConfirmationId = null;
@@ -2201,6 +2368,8 @@ final class PracticeController extends ChangeNotifier
     _epoch++;
     _practiceGeneration++;
     _pendingPracticeAudio = null;
+    _deferredTranscription = null;
+    _deferredRecordingRequested = false;
     _practiceSessionId = null;
     _practiceExperience = null;
     _practiceSceneCategory = null;
@@ -2350,6 +2519,10 @@ final class PracticeController extends ChangeNotifier
     _realtimeCandidate = null;
     _activeConfirmationId = null;
     _activeTextAnswer = null;
+    _deferredRecordingRequested = false;
+    if (snapshot == null || snapshot.sessionId != previousSessionId) {
+      _deferredTranscription = null;
+    }
     _speechFeedbackRetry = null;
     _speechFeedbackRetryCandidate = null;
     _playingMediaKey = null;

@@ -137,6 +137,8 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   bool _part2DeadlineHandled = false;
   bool _part2RetryNeeded = false;
   bool _enteringPart3 = false;
+  bool _pollingDeferredTranscription = false;
+  DateTime? _lastDeferredTranscriptionPoll;
   String? _part2QuestionId;
   int _part2TranscriptionRetryAttempts = 0;
   bool _exitApproved = false;
@@ -445,6 +447,9 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
         IeltsMockPhase.part2CueCard ||
         IeltsMockPhase.part2Preparation => value.phase,
         IeltsMockPhase.part2Complete => IeltsMockPhase.part2Complete,
+        IeltsMockPhase.part3
+            when value.deferredTranscriptionStatusUrl != null =>
+          IeltsMockPhase.part3,
         IeltsMockPhase.part2Speaking ||
         IeltsMockPhase.part3 => IeltsMockPhase.part2Speaking,
         _ => IeltsMockPhase.part2Intro,
@@ -470,7 +475,8 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
         clearSpeakingDeadline: true,
       );
     }
-    if (value.phase == IeltsMockPhase.part3) {
+    if (value.phase == IeltsMockPhase.part3 &&
+        value.deferredTranscriptionStatusUrl == null) {
       return value.copyWith(
         phase: IeltsMockPhase.part2Speaking,
         clearPreparationDeadline: true,
@@ -485,6 +491,9 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
         IeltsMockPhase.part2CueCard ||
         IeltsMockPhase.part2Preparation ||
         IeltsMockPhase.part2Complete => value.phase,
+        IeltsMockPhase.part3
+            when value.deferredTranscriptionStatusUrl != null =>
+          IeltsMockPhase.part3,
         IeltsMockPhase.part2Speaking
             when _part2RetryNeeded ||
                 widget.controller.errorMessage != null ||
@@ -970,7 +979,8 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     final phase = _progress?.phase;
     final needsTicker =
         phase == IeltsMockPhase.part2Preparation ||
-        phase == IeltsMockPhase.part2Speaking;
+        phase == IeltsMockPhase.part2Speaking ||
+        (phase == IeltsMockPhase.part3 && !_part2TurnConfirmed);
     if (!needsTicker) {
       _ticker?.cancel();
       _ticker = null;
@@ -985,7 +995,45 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       }
       setState(() => _now = widget.now().toUtc());
       _handleExpiredTimer();
+      _pollDeferredTranscription();
     });
+    _pollDeferredTranscription();
+  }
+
+  Future<void> _pollDeferredTranscription() async {
+    final progress = _progress;
+    final statusUrl = progress?.deferredTranscriptionStatusUrl;
+    final now = widget.now().toUtc();
+    if (!mounted ||
+        progress?.phase != IeltsMockPhase.part3 ||
+        _part2TurnConfirmed ||
+        statusUrl == null ||
+        _pollingDeferredTranscription ||
+        (_lastDeferredTranscriptionPoll != null &&
+            now.difference(_lastDeferredTranscriptionPoll!) <
+                const Duration(seconds: 2))) {
+      return;
+    }
+    _pollingDeferredTranscription = true;
+    _lastDeferredTranscriptionPoll = now;
+    try {
+      final result = await widget.controller.refreshDeferredTranscription(
+        statusUrl: statusUrl,
+      );
+      if (!mounted) return;
+      if (result?.status == DeferredTranscriptionStatus.completed) {
+        final current = _progress;
+        if (current != null) {
+          await _setProgress(
+            current.copyWith(clearDeferredTranscriptionStatusUrl: true),
+          );
+        }
+      }
+    } catch (_) {
+      // Keep the durable status URL for the next poll or a later app launch.
+    } finally {
+      _pollingDeferredTranscription = false;
+    }
   }
 
   void _handleExpiredTimer() {
@@ -1166,6 +1214,8 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     await widget.controller.startRecording(
       limit: const Duration(seconds: 120),
       useRealtimeTranscription: false,
+      deferTranscription:
+          widget.controller.client is PracticeDeferredTranscriptionClient,
     );
     if (!mounted) {
       return;
@@ -1186,7 +1236,24 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     }
     _part2TranscriptionRetryTimer?.cancel();
     _part2TranscriptionRetryTimer = null;
-    await widget.controller.retryPracticeTranscription();
+    if (widget.controller.client is! PracticeDeferredTranscriptionClient) {
+      await widget.controller.retryPracticeTranscription();
+      return;
+    }
+    final deferred = await widget.controller.retryDeferredTranscription();
+    final progress = _progress;
+    if (deferred != null && progress != null) {
+      await _setProgress(
+        progress.copyWith(
+          phase: _mode == PracticeMode.fullMock
+              ? IeltsMockPhase.part3
+              : IeltsMockPhase.part2Complete,
+          deferredTranscriptionStatusUrl: deferred.statusUrl,
+          clearSpeakingStartedAt: true,
+          clearSpeakingDeadline: true,
+        ),
+      );
+    }
   }
 
   void _retryPart2Confirmation() {
@@ -1247,9 +1314,10 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     }
     _finishingPart2Recording = true;
     final progress = _progress;
+    var spoken = progress?.part2SpokenSeconds ?? 0;
     if (progress != null) {
       final speakingStartedAt = progress.speakingStartedAt;
-      final spoken = speakingStartedAt == null
+      spoken = speakingStartedAt == null
           ? progress.part2SpokenSeconds
           : widget
                 .now()
@@ -1257,23 +1325,47 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
                 .difference(speakingStartedAt)
                 .inSeconds
                 .clamp(0, 120);
-      await _setProgress(
-        progress.copyWith(
-          phase: IeltsMockPhase.part2Complete,
-          part2SpokenSeconds: spoken,
-          clearPreparationDeadline: true,
-          clearSpeakingStartedAt: true,
-          clearSpeakingDeadline: true,
-        ),
-      );
     }
     final state = widget.controller.recordingState;
     if (state == PracticeRecordingState.starting ||
         state == PracticeRecordingState.recording) {
-      await widget.controller.finishRecordingGesture();
-      if (widget.controller.hasPendingPracticeAudio) {
+      if (widget.controller.client is! PracticeDeferredTranscriptionClient) {
+        await _setProgress(
+          progress!.copyWith(
+            phase: IeltsMockPhase.part2Complete,
+            part2SpokenSeconds: spoken,
+            clearPreparationDeadline: true,
+            clearSpeakingStartedAt: true,
+            clearSpeakingDeadline: true,
+          ),
+        );
+        await widget.controller.finishRecordingGesture();
+        if (widget.controller.hasPendingPracticeAudio) {
+          _part2RetryNeeded = true;
+          _schedulePart2TranscriptionRetry();
+        }
+        if (mounted) {
+          setState(() => _finishingPart2Recording = false);
+        }
+        return;
+      }
+      final deferred = await widget.controller.finishDeferredRecording();
+      if (deferred != null && progress != null) {
+        await _setProgress(
+          progress.copyWith(
+            phase: _mode == PracticeMode.fullMock
+                ? IeltsMockPhase.part3
+                : IeltsMockPhase.part2Complete,
+            part2SpokenSeconds: spoken,
+            clearPreparationDeadline: true,
+            clearSpeakingStartedAt: true,
+            clearSpeakingDeadline: true,
+            deferredTranscriptionStatusUrl: deferred.statusUrl,
+          ),
+        );
+        unawaited(_pollDeferredTranscription());
+      } else if (widget.controller.hasPendingPracticeAudio) {
         _part2RetryNeeded = true;
-        _schedulePart2TranscriptionRetry();
       }
     } else if (state == PracticeRecordingState.awaitingConfirmation) {
       _confirmPendingTranscript();
@@ -1873,7 +1965,8 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   }
 
   bool _usesShortAnswerRecorder(IeltsMockPhase phase) =>
-      phase == IeltsMockPhase.part1 || phase == IeltsMockPhase.part3;
+      phase == IeltsMockPhase.part1 ||
+      (phase == IeltsMockPhase.part3 && _part2TurnConfirmed);
 
   Widget _buildRecorderDock() {
     return _RecorderDock(
@@ -2028,13 +2121,31 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
             : _retryPart2Transcription,
         onRerecord: _rerecordPart2,
       ),
-      IeltsMockPhase.part3 => _conversationPhase(
+      IeltsMockPhase.part3 => Column(
         key: const Key('ielts-mock-part-3'),
-        partLabel: 'Part 3 · Discussion',
-        completed: _part3CompletedTurns,
-        total: _part3Total,
-        sectionStart: _part3Start,
-        messages: _part3ConversationMessages,
+        children: [
+          if (!_part2TurnConfirmed)
+            Container(
+              key: const Key('ielts-part2-background-processing'),
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              color: const Color(0xFFE8F5F7),
+              child: const Text(
+                'Part 2 录音已保存，正在后台识别。完成后即可开始回答 Part 3。',
+                textAlign: TextAlign.center,
+              ),
+            ),
+          Expanded(
+            child: _conversationPhase(
+              key: const Key('ielts-mock-part-3-conversation'),
+              partLabel: 'Part 3 · Discussion',
+              completed: _part3CompletedTurns,
+              total: _part3Total,
+              sectionStart: _part3Start,
+              messages: _part3ConversationMessages,
+            ),
+          ),
+        ],
       ),
       IeltsMockPhase.complete =>
         _mode == PracticeMode.fullMock

@@ -367,6 +367,7 @@ func buildIdentityAgentComposition(
 		schedulers := voiceConfigurations[0].PracticeInteraction.Evaluation
 		voiceApplication, sameQuestionRetry, practiceRecordings, err =
 			buildPracticeInteractionApplication(
+				ctx,
 				database,
 				voiceConfigurations[0].PracticeInteraction,
 				schedulers.Completion,

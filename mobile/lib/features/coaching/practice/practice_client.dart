@@ -47,6 +47,19 @@ abstract interface class PracticeRealtimeTranscriptionClient {
   });
 }
 
+abstract interface class PracticeDeferredTranscriptionClient {
+  Future<DeferredTranscription> stageDeferredTranscription({
+    required String sessionId,
+    required String questionId,
+    required String idempotencyKey,
+    required RecordedPracticeAudio audio,
+  });
+
+  Future<DeferredTranscription> getDeferredTranscription({
+    required String statusUrl,
+  });
+}
+
 sealed class PracticeTranscriptionEvent {
   const PracticeTranscriptionEvent();
 }
@@ -124,7 +137,8 @@ final class FakePracticeClient
     implements
         PracticeClient,
         PracticeLifecycleClient,
-        PracticeCompletionClient {
+        PracticeCompletionClient,
+        PracticeDeferredTranscriptionClient {
   FakePracticeClient({
     this.delay = Duration.zero,
     this.practiceExperience = PracticeExperience.interview,
@@ -169,6 +183,7 @@ final class FakePracticeClient
   PracticeSessionSnapshot? _snapshot;
   final Map<String, TranscriptionCandidate> _candidates = {};
   final Map<String, PracticeTurnConfirmation> _confirmations = {};
+  final Map<String, DeferredTranscription> _deferredTranscriptions = {};
 
   @override
   Future<void> clearAccountState() async {
@@ -176,6 +191,7 @@ final class FakePracticeClient
     _snapshot = null;
     _candidates.clear();
     _confirmations.clear();
+    _deferredTranscriptions.clear();
   }
 
   @override
@@ -250,6 +266,70 @@ final class FakePracticeClient
         },
       ),
     );
+  }
+
+  @override
+  Future<DeferredTranscription> stageDeferredTranscription({
+    required String sessionId,
+    required String questionId,
+    required String idempotencyKey,
+    required RecordedPracticeAudio audio,
+  }) async {
+    await _wait(_generation);
+    final id = 'deferred-$idempotencyKey';
+    return _deferredTranscriptions.putIfAbsent(
+      id,
+      () => DeferredTranscription(
+        id: id,
+        sessionId: sessionId,
+        questionId: questionId,
+        status: DeferredTranscriptionStatus.processing,
+        statusUrl:
+            '/v1/practice-sessions/$sessionId/deferred-transcriptions/$id',
+      ),
+    );
+  }
+
+  @override
+  Future<DeferredTranscription> getDeferredTranscription({
+    required String statusUrl,
+  }) async {
+    await _wait(_generation);
+    final id = statusUrl.split('/').last;
+    final submission = _deferredTranscriptions[id];
+    if (submission == null) {
+      throw StateError('Unknown Fake deferred transcription.');
+    }
+    if (submission.status == DeferredTranscriptionStatus.processing) {
+      final candidate = await transcribe(
+        PracticeTranscriptionRequest(
+          sessionId: submission.sessionId,
+          questionId: submission.questionId,
+          clientTurnId: id,
+          audio: const RecordedPracticeAudio(
+            path: 'fake-deferred.wav',
+            contentType: 'audio/wav',
+            sizeBytes: 45,
+          ),
+        ),
+      );
+      await confirm(
+        sessionId: submission.sessionId,
+        questionId: submission.questionId,
+        candidateId: candidate.id,
+        idempotencyKey: 'confirm-$id',
+      );
+      final completed = DeferredTranscription(
+        id: submission.id,
+        sessionId: submission.sessionId,
+        questionId: submission.questionId,
+        status: DeferredTranscriptionStatus.completed,
+        statusUrl: submission.statusUrl,
+      );
+      _deferredTranscriptions[id] = completed;
+      return completed;
+    }
+    return submission;
   }
 
   @override

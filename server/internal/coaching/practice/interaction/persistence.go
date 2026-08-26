@@ -52,6 +52,7 @@ type StoredTranscriptionStatus string
 const (
 	StoredTranscriptionProcessing StoredTranscriptionStatus = "processing"
 	StoredTranscriptionCompleted  StoredTranscriptionStatus = "completed"
+	StoredTranscriptionConfirmed  StoredTranscriptionStatus = "confirmed"
 	StoredTranscriptionFailed     StoredTranscriptionStatus = "failed"
 )
 
@@ -70,6 +71,7 @@ type StoredTranscriptionReservation struct {
 	LeaseAcquired           bool
 	LeaseExpiresAt          time.Time
 	CandidateID             string
+	AudioAssetID            string
 	CurrentAttemptID        string
 	CreatedAt               time.Time
 	UpdatedAt               time.Time
@@ -154,6 +156,7 @@ type PersistenceStore interface {
 	SaveQuestion(context.Context, Actor, practice.Question) (practice.Question, error)
 	GetQuestion(context.Context, Actor, string) (practice.Question, error)
 	ReserveTranscription(context.Context, Actor, StoreReserveTranscriptionCommand) (StoredTranscriptionReservation, error)
+	AttachTranscriptionRecording(context.Context, Actor, string, string) error
 	CompleteTranscription(context.Context, JobContext, StoreCompleteTranscriptionCommand) (StoredTranscriptCandidate, error)
 	FailTranscription(context.Context, JobContext, ProcessingFailure) error
 	GetReservation(context.Context, Actor, string) (StoredTranscriptionReservation, error)

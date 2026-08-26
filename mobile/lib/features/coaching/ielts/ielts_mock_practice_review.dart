@@ -335,4 +335,5 @@ bool _sameProgress(IeltsMockProgress a, IeltsMockProgress b) =>
     a.speakingStartedAt == b.speakingStartedAt &&
     a.speakingDeadline == b.speakingDeadline &&
     a.part2SpokenSeconds == b.part2SpokenSeconds &&
-    a.notes == b.notes;
+    a.notes == b.notes &&
+    a.deferredTranscriptionStatusUrl == b.deferredTranscriptionStatusUrl;

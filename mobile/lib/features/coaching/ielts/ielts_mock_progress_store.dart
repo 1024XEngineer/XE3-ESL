@@ -25,6 +25,7 @@ final class IeltsMockProgress {
     this.speakingDeadline,
     this.part2SpokenSeconds = 0,
     this.notes = '',
+    this.deferredTranscriptionStatusUrl,
   });
 
   final String sessionId;
@@ -35,6 +36,7 @@ final class IeltsMockProgress {
   final DateTime? speakingDeadline;
   final int part2SpokenSeconds;
   final String notes;
+  final String? deferredTranscriptionStatusUrl;
 
   IeltsMockProgress copyWith({
     IeltsMockPhase? phase,
@@ -46,6 +48,8 @@ final class IeltsMockProgress {
     bool clearSpeakingDeadline = false,
     int? part2SpokenSeconds,
     String? notes,
+    String? deferredTranscriptionStatusUrl,
+    bool clearDeferredTranscriptionStatusUrl = false,
   }) {
     return IeltsMockProgress(
       sessionId: sessionId,
@@ -62,6 +66,10 @@ final class IeltsMockProgress {
           : speakingDeadline ?? this.speakingDeadline,
       part2SpokenSeconds: part2SpokenSeconds ?? this.part2SpokenSeconds,
       notes: notes ?? this.notes,
+      deferredTranscriptionStatusUrl: clearDeferredTranscriptionStatusUrl
+          ? null
+          : deferredTranscriptionStatusUrl ??
+                this.deferredTranscriptionStatusUrl,
     );
   }
 
@@ -77,6 +85,8 @@ final class IeltsMockProgress {
       'speaking_deadline': speakingDeadline!.toUtc().toIso8601String(),
     'part_2_spoken_seconds': part2SpokenSeconds,
     'notes': notes,
+    if (deferredTranscriptionStatusUrl != null)
+      'deferred_transcription_status_url': deferredTranscriptionStatusUrl,
   };
 
   static IeltsMockProgress? tryDecode(
@@ -91,6 +101,7 @@ final class IeltsMockProgress {
     final startedAt = _date(value['started_at']);
     final part2SpokenSeconds = value['part_2_spoken_seconds'];
     final notes = value['notes'];
+    final deferredStatusUrl = value['deferred_transcription_status_url'];
     IeltsMockPhase? phase;
     if (phaseName == 'part3Intro') {
       // Migrate checkpoints written before the redundant Part 3 ready page
@@ -114,6 +125,12 @@ final class IeltsMockProgress {
         notes.length > 4000) {
       return null;
     }
+    if (deferredStatusUrl != null &&
+        (deferredStatusUrl is! String ||
+            !deferredStatusUrl.startsWith('/v1/practice-sessions/') ||
+            deferredStatusUrl.length > 512)) {
+      return null;
+    }
     return IeltsMockProgress(
       sessionId: expectedSessionId,
       phase: phase,
@@ -123,6 +140,7 @@ final class IeltsMockProgress {
       speakingDeadline: _date(value['speaking_deadline']),
       part2SpokenSeconds: part2SpokenSeconds,
       notes: notes,
+      deferredTranscriptionStatusUrl: deferredStatusUrl as String?,
     );
   }
 }

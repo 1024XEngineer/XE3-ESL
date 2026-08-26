@@ -1,7 +1,9 @@
 package app
 
 import (
+	"context"
 	"errors"
+	"log/slog"
 	"time"
 
 	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
@@ -76,6 +78,7 @@ type InterviewResumeConfiguration struct {
 // buildPracticeInteractionApplication constructs infrastructure and delegates
 // Practice Interaction business wiring to the owning package.
 func buildPracticeInteractionApplication(
+	ctx context.Context,
 	database *pgxpool.Pool,
 	configuration PracticeInteractionConfiguration,
 	completion practicepostgres.CompletionScheduler,
@@ -91,7 +94,7 @@ func buildPracticeInteractionApplication(
 	*practiceinteraction.RecordingService,
 	error,
 ) {
-	if database == nil ||
+	if ctx == nil || database == nil ||
 		configuration.Recognizer == nil ||
 		configuration.RecordedRecognizer == nil ||
 		configuration.Synthesizer == nil ||
@@ -144,6 +147,8 @@ func buildPracticeInteractionApplication(
 				Recordings:         recordings,
 				ASRLease:           configuration.ASRLease,
 				FeedbackReader:     feedbackReader,
+				DeferredContext:    ctx,
+				Logger:             slog.Default(),
 			},
 		)
 	if err != nil {

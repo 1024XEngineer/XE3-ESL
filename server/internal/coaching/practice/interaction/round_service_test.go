@@ -433,6 +433,52 @@ func TestVoiceRoundPersistsRecordingThroughReservationAndTurn(t *testing.T) {
 	}
 }
 
+func TestVoiceRoundStagesRecordingBeforeDeferredASR(t *testing.T) {
+	store := newVoiceTestStore()
+	store.addQuestion("question-1")
+	recordings := newVoiceTestRecordings()
+	vault, err := platformmedia.NewTemporaryAudioVault(
+		platformmedia.TemporaryAudioVaultConfig{
+			ScratchDirectory: t.TempDir(), Lifetime: time.Minute,
+			MaxItems: 2, MaxBytes: platformmedia.MaxAudioBytes * 2,
+		},
+	)
+	if err != nil {
+		t.Fatalf("new vault: %v", err)
+	}
+	t.Cleanup(func() { _ = vault.Close() })
+	recognizer := &voiceTestRecognizer{}
+	service, err := NewRoundServiceWithRecordings(
+		store, vault, recognizer, recognizer, &voiceTestSynthesizer{},
+		recordings, store,
+	)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	actor := voiceTestActor("a")
+	reservation, err := service.StageTranscription(
+		context.Background(), actor, "participant-a", TranscribeVoiceCommand{
+			SessionID: "session-1", QuestionID: "question-1",
+			IdempotencyKey: "deferred-question-1",
+			ContentType:    platformmedia.ContentTypeWAV,
+			Audio:          bytes.NewReader(voiceTestWAV()),
+		},
+	)
+	if err != nil {
+		t.Fatalf("stage transcription: %v", err)
+	}
+	if recognizer.calls != 0 || reservation.AudioAssetID == "" ||
+		recordings.uniqueUploads() != 1 {
+		t.Fatalf("staged reservation = %#v, ASR calls = %d", reservation, recognizer.calls)
+	}
+	candidate, err := service.ProcessDeferredTranscription(
+		context.Background(), actor, reservation,
+	)
+	if err != nil || recognizer.calls != 1 || candidate.Transcript == "" {
+		t.Fatalf("deferred candidate = %#v, calls = %d, error = %v", candidate, recognizer.calls, err)
+	}
+}
+
 func TestVoiceRoundRejectsInvalidAtomicRecordingProjection(
 	t *testing.T,
 ) {
@@ -1041,10 +1087,14 @@ func (store *voiceProjectionStore) ReserveRecordingConfirmation(
 type voiceTestRecordings struct {
 	mu      sync.Mutex
 	uploads map[string]string
+	audio   map[string][]byte
 }
 
 func newVoiceTestRecordings() *voiceTestRecordings {
-	return &voiceTestRecordings{uploads: make(map[string]string)}
+	return &voiceTestRecordings{
+		uploads: make(map[string]string),
+		audio:   make(map[string][]byte),
+	}
 }
 
 func (recordings *voiceTestRecordings) Upload(
@@ -1073,8 +1123,33 @@ func (recordings *voiceTestRecordings) Upload(
 		len(recordings.uploads)+1,
 	)
 	recordings.uploads[key] = assetID
+	recordings.audio[assetID] = append([]byte(nil), audio...)
 	return assetID, nil
 }
+
+func (recordings *voiceTestRecordings) Load(
+	_ context.Context,
+	actor requestcontext.Actor,
+	assetID string,
+) (platformmedia.ManagedAudioSource, error) {
+	recordings.mu.Lock()
+	defer recordings.mu.Unlock()
+	if actor.UserID != "user-a" || recordings.audio[assetID] == nil {
+		return nil, ErrVoiceRoundNotFound
+	}
+	return &voiceTestDurableAudio{audio: append([]byte(nil), recordings.audio[assetID]...)}, nil
+}
+
+type voiceTestDurableAudio struct{ audio []byte }
+
+func (source *voiceTestDurableAudio) Open() (io.ReadCloser, error) {
+	return io.NopCloser(bytes.NewReader(source.audio)), nil
+}
+func (*voiceTestDurableAudio) MediaType() string       { return platformmedia.ContentTypeWAV }
+func (source *voiceTestDurableAudio) Size() int64      { return int64(len(source.audio)) }
+func (*voiceTestDurableAudio) Duration() time.Duration { return 10 * time.Millisecond }
+func (*voiceTestDurableAudio) SampleRate() int         { return 8_000 }
+func (*voiceTestDurableAudio) Close() error            { return nil }
 
 func (recordings *voiceTestRecordings) assetID(userID string, requestID string) string {
 	recordings.mu.Lock()
@@ -1089,12 +1164,17 @@ func (recordings *voiceTestRecordings) uniqueUploads() int {
 }
 
 type voiceTestReservation struct {
-	ID          string
-	Fingerprint string
-	CandidateID string
-	Failed      bool
-	LeaseToken  string
-	LeaseNumber int
+	ID                      string
+	Fingerprint             string
+	CandidateID             string
+	Failed                  bool
+	LeaseToken              string
+	LeaseNumber             int
+	SessionID               string
+	QuestionID              string
+	RespondentParticipantID string
+	IdempotencyKey          string
+	AudioAssetID            string
 }
 
 func newVoiceTestStore() *voiceTestStore {
@@ -1163,8 +1243,13 @@ func (store *voiceTestStore) ReserveTranscription(
 		}
 		if !existing.Failed {
 			return TranscriptionReservation{
-				ID:     existing.ID,
-				Status: TranscriptionProcessing,
+				ID: existing.ID, SessionID: existing.SessionID,
+				QuestionID:              existing.QuestionID,
+				RespondentParticipantID: existing.RespondentParticipantID,
+				IdempotencyKey:          existing.IdempotencyKey,
+				InputFingerprint:        existing.Fingerprint,
+				AudioAssetID:            existing.AudioAssetID,
+				Status:                  TranscriptionProcessing,
 			}, nil
 		}
 		existing.Failed = false
@@ -1172,23 +1257,94 @@ func (store *voiceTestStore) ReserveTranscription(
 		existing.LeaseToken = voiceLeaseToken(existing.LeaseNumber)
 		store.reservations[command.IdempotencyKey] = existing
 		return TranscriptionReservation{
-			ID:         existing.ID,
-			LeaseToken: existing.LeaseToken,
-			Status:     TranscriptionReserved,
+			ID: existing.ID, SessionID: existing.SessionID,
+			QuestionID:              existing.QuestionID,
+			RespondentParticipantID: existing.RespondentParticipantID,
+			IdempotencyKey:          existing.IdempotencyKey,
+			InputFingerprint:        existing.Fingerprint,
+			AudioAssetID:            existing.AudioAssetID,
+			LeaseToken:              existing.LeaseToken,
+			Status:                  TranscriptionReserved,
 		}, nil
 	}
 	id := "reservation-" + command.QuestionID
 	store.reservations[command.IdempotencyKey] = voiceTestReservation{
-		ID:          id,
-		Fingerprint: command.InputFingerprint,
-		LeaseToken:  voiceLeaseToken(1),
-		LeaseNumber: 1,
+		ID:                      id,
+		Fingerprint:             command.InputFingerprint,
+		LeaseToken:              voiceLeaseToken(1),
+		LeaseNumber:             1,
+		SessionID:               command.SessionID,
+		QuestionID:              command.QuestionID,
+		RespondentParticipantID: command.RespondentParticipantID,
+		IdempotencyKey:          command.IdempotencyKey,
 	}
 	return TranscriptionReservation{
-		ID:         id,
-		LeaseToken: voiceLeaseToken(1),
-		Status:     TranscriptionReserved,
+		ID: id, SessionID: command.SessionID,
+		QuestionID:              command.QuestionID,
+		RespondentParticipantID: command.RespondentParticipantID,
+		IdempotencyKey:          command.IdempotencyKey,
+		InputFingerprint:        command.InputFingerprint,
+		LeaseToken:              voiceLeaseToken(1),
+		Status:                  TranscriptionReserved,
 	}, nil
+}
+
+func (store *voiceTestStore) AttachTranscriptionRecording(
+	_ context.Context,
+	actor requestcontext.Actor,
+	reservationID string,
+	assetID string,
+) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if actor.UserID != "user-a" {
+		return ErrVoiceRoundNotFound
+	}
+	for key, reservation := range store.reservations {
+		if reservation.ID == reservationID {
+			reservation.AudioAssetID = assetID
+			store.reservations[key] = reservation
+			return nil
+		}
+	}
+	return ErrVoiceRoundNotFound
+}
+
+func (store *voiceTestStore) GetTranscriptionReservation(
+	_ context.Context,
+	actor requestcontext.Actor,
+	reservationID string,
+) (TranscriptionReservation, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if actor.UserID != "user-a" {
+		return TranscriptionReservation{}, ErrVoiceRoundNotFound
+	}
+	for _, reservation := range store.reservations {
+		if reservation.ID != reservationID {
+			continue
+		}
+		status := TranscriptionProcessing
+		if reservation.Failed {
+			status = TranscriptionFailed
+		}
+		if candidate, ok := store.candidates[reservation.CandidateID]; ok {
+			return TranscriptionReservation{
+				ID: reservation.ID, Status: TranscriptionCompleted,
+				Candidate: candidate,
+			}, nil
+		}
+		return TranscriptionReservation{
+			ID: reservation.ID, SessionID: reservation.SessionID,
+			QuestionID:              reservation.QuestionID,
+			RespondentParticipantID: reservation.RespondentParticipantID,
+			IdempotencyKey:          reservation.IdempotencyKey,
+			InputFingerprint:        reservation.Fingerprint,
+			AudioAssetID:            reservation.AudioAssetID,
+			Status:                  status,
+		}, nil
+	}
+	return TranscriptionReservation{}, ErrVoiceRoundNotFound
 }
 
 func (store *voiceTestStore) CompleteTranscription(

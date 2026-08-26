@@ -440,6 +440,58 @@ void main() {
     transport.expectDone();
   });
 
+  test('stages and polls a durable deferred transcription', () async {
+    final audioFile = await _temporaryAudio();
+    addTearDown(() => audioFile.parent.delete(recursive: true));
+    const transcriptionId = '5bcb9a8d-7404-4c4c-8242-f78fb8623cd9';
+    const statusUrl =
+        '/v1/practice-sessions/$_sessionId/deferred-transcriptions/'
+        '$transcriptionId';
+    final processing = <String, Object?>{
+      'transcription_id': transcriptionId,
+      'practice_session_id': _sessionId,
+      'question_id': _questionId,
+      'status': 'processing',
+      'status_url': statusUrl,
+    };
+    final transport = _Transport([
+      _Step(
+        method: 'POST',
+        path:
+            '/v1/practice-sessions/$_sessionId/questions/'
+            '$_questionId/deferred-transcriptions',
+        verify: (request) {
+          expect(request.rawFilePath, audioFile.path);
+          expect(request.headers['Idempotency-Key'], 'deferred-part-2');
+        },
+        response: _json(HttpStatus.accepted, processing),
+      ),
+      _Step(
+        method: 'GET',
+        path: statusUrl,
+        response: _json(HttpStatus.ok, {...processing, 'status': 'completed'}),
+      ),
+    ]);
+    final client = _client(transport);
+    final staged = await client.stageDeferredTranscription(
+      sessionId: _sessionId,
+      questionId: _questionId,
+      idempotencyKey: 'deferred-part-2',
+      audio: RecordedPracticeAudio(
+        path: audioFile.path,
+        contentType: 'audio/wav',
+        sizeBytes: 64044,
+      ),
+    );
+    final completed = await client.getDeferredTranscription(
+      statusUrl: staged.statusUrl,
+    );
+
+    expect(staged.status, DeferredTranscriptionStatus.processing);
+    expect(completed.status, DeferredTranscriptionStatus.completed);
+    transport.expectDone();
+  });
+
   test('streams a Practice transcript before PCM capture finishes', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(() => server.close(force: true));

@@ -78,6 +78,19 @@ type Application interface {
 	) (practiceinteraction.QuestionTipResult, error)
 }
 
+type deferredTranscriptionApplication interface {
+	StageDeferredTranscription(
+		context.Context,
+		requestcontext.Actor,
+		practiceinteraction.TranscribeVoiceCommand,
+	) (practiceinteraction.DeferredTranscriptionSubmission, error)
+	DeferredTranscriptionStatus(
+		context.Context,
+		requestcontext.Actor,
+		string,
+	) (practiceinteraction.DeferredTranscriptionSubmission, error)
+}
+
 type questionTextApplication interface {
 	QuestionText(context.Context, requestcontext.Actor, string) (string, error)
 }
@@ -141,6 +154,14 @@ func (handler *Handler) RegisterRoutes(routes gin.IRoutes) {
 	routes.POST(
 		"/v1/practice-sessions/:practice_session_id/questions/:question_id/transcription-candidates",
 		handler.transcribeCandidate,
+	)
+	routes.POST(
+		"/v1/practice-sessions/:practice_session_id/questions/:question_id/deferred-transcriptions",
+		handler.stageDeferredTranscription,
+	)
+	routes.GET(
+		"/v1/practice-sessions/:practice_session_id/deferred-transcriptions/:transcription_id",
+		handler.deferredTranscriptionStatus,
 	)
 	routes.GET(
 		"/v1/practice-sessions/:practice_session_id/questions/:question_id/transcription-candidates/realtime",
@@ -249,6 +270,74 @@ func (handler *Handler) transcribeCandidate(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, TranscriptionCandidateResponse(candidate))
+}
+
+func (handler *Handler) stageDeferredTranscription(c *gin.Context) {
+	application, ok := handler.application.(deferredTranscriptionApplication)
+	if !ok {
+		handler.write(c, mapError(practiceinteraction.ErrInvalidContext))
+		return
+	}
+	key, body, actor, cleanup, ok := handler.prepareAudio(c)
+	if !ok {
+		return
+	}
+	defer cleanup()
+	submission, err := application.StageDeferredTranscription(
+		c.Request.Context(),
+		actor,
+		practiceinteraction.TranscribeVoiceCommand{
+			SessionID:      c.Param("practice_session_id"),
+			QuestionID:     c.Param("question_id"),
+			IdempotencyKey: key,
+			ContentType:    platformmedia.ContentTypeWAV,
+			Audio:          body,
+		},
+	)
+	if err != nil {
+		handler.write(c, mapError(err))
+		return
+	}
+	c.Header("Cache-Control", "private, no-store")
+	c.JSON(http.StatusAccepted, deferredTranscriptionResponse(submission))
+}
+
+func (handler *Handler) deferredTranscriptionStatus(c *gin.Context) {
+	application, available := handler.application.(deferredTranscriptionApplication)
+	if !available {
+		handler.write(c, mapError(practiceinteraction.ErrInvalidContext))
+		return
+	}
+	actor, ok := requestcontext.ActorFromContext(c.Request.Context())
+	if !ok {
+		handler.write(c, authenticationRequired())
+		return
+	}
+	submission, err := application.DeferredTranscriptionStatus(
+		c.Request.Context(), actor, c.Param("transcription_id"),
+	)
+	if err != nil || submission.SessionID != c.Param("practice_session_id") {
+		if err == nil {
+			err = practiceinteraction.ErrInvalidContext
+		}
+		handler.write(c, mapError(err))
+		return
+	}
+	c.Header("Cache-Control", "private, no-store")
+	c.JSON(http.StatusOK, deferredTranscriptionResponse(submission))
+}
+
+func deferredTranscriptionResponse(
+	submission practiceinteraction.DeferredTranscriptionSubmission,
+) gin.H {
+	return gin.H{
+		"transcription_id":    submission.ID,
+		"practice_session_id": submission.SessionID,
+		"question_id":         submission.QuestionID,
+		"status":              submission.Status,
+		"status_url": "/v1/practice-sessions/" + submission.SessionID +
+			"/deferred-transcriptions/" + submission.ID,
+	}
 }
 
 func (handler *Handler) prepareAudio(c *gin.Context) (

@@ -143,6 +143,10 @@ paths:
     $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1interaction-state
   /v1/practice-sessions/{practice_session_id}/questions/{question_id}/transcription-candidates:
     $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1questions~1{question_id}~1transcription-candidates
+  /v1/practice-sessions/{practice_session_id}/questions/{question_id}/deferred-transcriptions:
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1questions~1{question_id}~1deferred-transcriptions
+  /v1/practice-sessions/{practice_session_id}/deferred-transcriptions/{transcription_id}:
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1deferred-transcriptions~1{transcription_id}
   /v1/retry-turns/{retry_turn_id}/transcription-candidates:
     $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1retry-turns~1{retry_turn_id}~1transcription-candidates
   /v1/retry-turns/{retry_turn_id}/transcription-candidates/{candidate_id}/confirmations:
@@ -340,6 +344,8 @@ components:
       $ref: ./modules/practice-runtime.yaml#/components/schemas/TurnReviewSource
     RetryTranscriptionCandidate:
       $ref: ./modules/practice-runtime.yaml#/components/schemas/RetryTranscriptionCandidate
+    DeferredTranscription:
+      $ref: ./modules/practice-runtime.yaml#/components/schemas/DeferredTranscription
     ConfirmedRetryTurn:
       $ref: ./modules/practice-runtime.yaml#/components/schemas/ConfirmedRetryTurn
     FeedbackItem:

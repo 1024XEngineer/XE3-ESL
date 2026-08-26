@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/objectstore"
 )
 
@@ -18,6 +19,27 @@ type Service struct {
 	clock      func() time.Time
 	config     Config
 }
+
+type readableObjectStore interface {
+	objectstore.Store
+	Open(context.Context, string) (io.ReadCloser, error)
+}
+
+type durableAudioSource struct {
+	ctx   context.Context
+	store readableObjectStore
+	asset Asset
+}
+
+func (source *durableAudioSource) Open() (io.ReadCloser, error) {
+	return source.store.Open(source.ctx, source.asset.ObjectKey)
+}
+
+func (source *durableAudioSource) MediaType() string       { return source.asset.ContentType }
+func (source *durableAudioSource) Size() int64             { return source.asset.Size }
+func (source *durableAudioSource) Duration() time.Duration { return source.asset.Duration }
+func (source *durableAudioSource) SampleRate() int         { return source.asset.SampleRate }
+func (*durableAudioSource) Close() error                   { return nil }
 
 func NewService(
 	repository Repository,
@@ -183,6 +205,29 @@ func (service *Service) Open(
 		return nil, ErrNotFound
 	}
 	return service.stores.Documents.Open(ctx, asset.ObjectKey)
+}
+
+// OpenAudio returns a ready owned audio asset for trusted server-side
+// processing. The object key never crosses the business-module boundary.
+func (service *Service) OpenAudio(
+	ctx context.Context,
+	userID string,
+	assetID string,
+) (platformmedia.ManagedAudioSource, error) {
+	asset, err := service.FindOwned(ctx, userID, assetID)
+	if err != nil {
+		return nil, err
+	}
+	store, ok := service.stores.Audio.(readableObjectStore)
+	if !ok || asset.Kind != KindAudio || asset.Status != StatusReady ||
+		asset.ETag == "" {
+		return nil, ErrNotFound
+	}
+	source := &durableAudioSource{ctx: ctx, store: store, asset: asset}
+	if platformmedia.ValidateAudioSource(source) != nil {
+		return nil, ErrNotFound
+	}
+	return source, nil
 }
 
 // Delete removes an owned asset only after all business references have been

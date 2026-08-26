@@ -3,6 +3,7 @@ package interaction
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
@@ -44,6 +45,8 @@ type RuntimeConfiguration struct {
 	Recordings         RecordingUploader
 	ASRLease           time.Duration
 	FeedbackReader     TurnFeedbackStatusReader
+	DeferredContext    context.Context
+	Logger             *slog.Logger
 }
 
 // NewRuntimeApplications assembles the authoritative Practice Interaction runtime.
@@ -148,5 +151,24 @@ func NewRuntimeApplications(
 		return nil, nil, err
 	}
 	application.tips = tipPort
+	if configuration.Recordings != nil {
+		deferredContext := configuration.DeferredContext
+		if deferredContext == nil {
+			deferredContext = context.Background()
+		}
+		logger := configuration.Logger
+		if logger == nil {
+			logger = slog.Default()
+		}
+		processor, processorErr := NewDeferredTranscriptionProcessor(
+			deferredContext, orchestrator, logger,
+		)
+		if processorErr != nil {
+			return nil, nil, processorErr
+		}
+		if err := application.EnableDeferredTranscription(processor); err != nil {
+			return nil, nil, err
+		}
+	}
 	return application, retryApplication, nil
 }

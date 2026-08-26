@@ -32,6 +32,8 @@ void main() {
       speakingDeadline: startedAt.add(const Duration(minutes: 3)),
       part2SpokenSeconds: 87,
       notes: 'skill · reason · learning plan',
+      deferredTranscriptionStatusUrl:
+          '/v1/practice-sessions/session-ielts-1/deferred-transcriptions/task-1',
     );
 
     await store.write(progress);
@@ -46,6 +48,10 @@ void main() {
     expect(restored.speakingDeadline, progress.speakingDeadline);
     expect(restored.part2SpokenSeconds, 87);
     expect(restored.notes, progress.notes);
+    expect(
+      restored.deferredTranscriptionStatusUrl,
+      progress.deferredTranscriptionStatusUrl,
+    );
   });
 
   test('isolates sessions and deletes only the selected checkpoint', () async {

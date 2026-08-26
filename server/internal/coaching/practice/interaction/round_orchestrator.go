@@ -12,6 +12,25 @@ import (
 
 // RoundPort is the boundary to transcription, confirmation, and speech for one
 // Practice Interaction round.
+type DeferredRoundPort interface {
+	StageTranscription(
+		context.Context,
+		requestcontext.Actor,
+		string,
+		TranscribeVoiceCommand,
+	) (TranscriptionReservation, error)
+	ProcessDeferredTranscription(
+		context.Context,
+		requestcontext.Actor,
+		TranscriptionReservation,
+	) (TranscriptionCandidate, error)
+	GetDeferredTranscription(
+		context.Context,
+		requestcontext.Actor,
+		string,
+	) (TranscriptionReservation, error)
+}
+
 type RoundPort interface {
 	Transcribe(
 		context.Context,
@@ -51,6 +70,23 @@ type RoundPort interface {
 		requestcontext.Actor,
 		ConfirmVoiceTurnCommand,
 	) (practice.Turn, error)
+}
+
+func (orchestrator *RoundOrchestrator) GetDeferredTranscription(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	reservationID string,
+) (TranscriptionReservation, error) {
+	if err := validateVoiceActor(ctx, actor); err != nil {
+		return TranscriptionReservation{}, err
+	}
+	deferred, ok := orchestrator.rounds.(DeferredRoundPort)
+	if !ok {
+		return TranscriptionReservation{}, ErrInvalidContext
+	}
+	return deferred.GetDeferredTranscription(
+		ctx, actor, reservationID,
+	)
 }
 
 // PracticePort exposes authoritative Practice progression. Implementations
@@ -116,6 +152,57 @@ func (orchestrator *RoundOrchestrator) Transcribe(
 		actor,
 		participantID,
 		command,
+	)
+}
+
+func (orchestrator *RoundOrchestrator) StageDeferredTranscription(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	command TranscribeVoiceCommand,
+) (TranscriptionReservation, error) {
+	if err := validateVoiceActor(ctx, actor); err != nil {
+		return TranscriptionReservation{}, err
+	}
+	participantID, err := orchestrator.practice.ResolveActorParticipant(
+		ctx, actor, command.SessionID,
+	)
+	if err != nil {
+		return TranscriptionReservation{}, err
+	}
+	if strings.TrimSpace(participantID) == "" {
+		return TranscriptionReservation{}, ErrInvalidContext
+	}
+	deferred, ok := orchestrator.rounds.(DeferredRoundPort)
+	if !ok {
+		return TranscriptionReservation{}, ErrInvalidContext
+	}
+	return deferred.StageTranscription(
+		ctx, actor, participantID, command,
+	)
+}
+
+func (orchestrator *RoundOrchestrator) ProcessDeferredTranscription(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	reservation TranscriptionReservation,
+) (practice.Turn, error) {
+	deferred, ok := orchestrator.rounds.(DeferredRoundPort)
+	if !ok {
+		return practice.Turn{}, ErrInvalidContext
+	}
+	candidate, err := deferred.ProcessDeferredTranscription(
+		ctx, actor, reservation,
+	)
+	if err != nil {
+		return practice.Turn{}, err
+	}
+	return orchestrator.Confirm(
+		ctx,
+		actor,
+		ConfirmVoiceTurnCommand{
+			CandidateID:    candidate.ID,
+			IdempotencyKey: "deferred-confirm-" + reservation.ID,
+		},
 	)
 }
 

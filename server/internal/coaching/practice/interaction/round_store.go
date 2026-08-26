@@ -64,7 +64,13 @@ func (store *roundStoreAdapter) ReserveTranscription(
 		return TranscriptionReservation{}, mapPersistenceError(err)
 	}
 	result := TranscriptionReservation{
-		ID: reservation.ID,
+		ID:                      reservation.ID,
+		SessionID:               reservation.SessionID,
+		QuestionID:              reservation.QuestionID,
+		RespondentParticipantID: reservation.RespondentParticipantID,
+		IdempotencyKey:          reservation.IdempotencyKey,
+		InputFingerprint:        reservation.InputFingerprint,
+		AudioAssetID:            reservation.AudioAssetID,
 	}
 	switch reservation.Status {
 	case StoredTranscriptionCompleted:
@@ -73,6 +79,15 @@ func (store *roundStoreAdapter) ReserveTranscription(
 			ctx,
 			actor,
 			reservation.CandidateID,
+		)
+		if candidateErr != nil {
+			return TranscriptionReservation{}, candidateErr
+		}
+		result.Candidate = candidate
+	case StoredTranscriptionConfirmed:
+		result.Status = TranscriptionConfirmed
+		candidate, candidateErr := store.GetTranscriptionCandidate(
+			ctx, actor, reservation.CandidateID,
 		)
 		if candidateErr != nil {
 			return TranscriptionReservation{}, candidateErr
@@ -88,11 +103,65 @@ func (store *roundStoreAdapter) ReserveTranscription(
 		} else {
 			result.Status = TranscriptionProcessing
 		}
+	case StoredTranscriptionFailed:
+		result.Status = TranscriptionFailed
 	default:
 		return TranscriptionReservation{},
 			ErrVoiceRoundConflict
 	}
 	return result, nil
+}
+
+func (store *roundStoreAdapter) GetTranscriptionReservation(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	reservationID string,
+) (TranscriptionReservation, error) {
+	reservation, err := store.repository.GetReservation(
+		ctx, persistenceActor(actor), reservationID,
+	)
+	if err != nil {
+		return TranscriptionReservation{}, mapPersistenceError(err)
+	}
+	result := TranscriptionReservation{
+		ID:                      reservation.ID,
+		SessionID:               reservation.SessionID,
+		QuestionID:              reservation.QuestionID,
+		RespondentParticipantID: reservation.RespondentParticipantID,
+		IdempotencyKey:          reservation.IdempotencyKey,
+		InputFingerprint:        reservation.InputFingerprint,
+		AudioAssetID:            reservation.AudioAssetID,
+	}
+	switch reservation.Status {
+	case StoredTranscriptionProcessing:
+		result.Status = TranscriptionProcessing
+	case StoredTranscriptionCompleted:
+		result.Status = TranscriptionCompleted
+		result.Candidate, err = store.GetTranscriptionCandidate(
+			ctx, actor, reservation.CandidateID,
+		)
+	case StoredTranscriptionConfirmed:
+		result.Status = TranscriptionConfirmed
+		result.Candidate, err = store.GetTranscriptionCandidate(
+			ctx, actor, reservation.CandidateID,
+		)
+	case StoredTranscriptionFailed:
+		result.Status = TranscriptionFailed
+	default:
+		return TranscriptionReservation{}, ErrVoiceRoundConflict
+	}
+	return result, err
+}
+
+func (store *roundStoreAdapter) AttachTranscriptionRecording(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	reservationID string,
+	assetID string,
+) error {
+	return mapPersistenceError(store.repository.AttachTranscriptionRecording(
+		ctx, persistenceActor(actor), reservationID, assetID,
+	))
 }
 
 func (store *roundStoreAdapter) CompleteTranscription(

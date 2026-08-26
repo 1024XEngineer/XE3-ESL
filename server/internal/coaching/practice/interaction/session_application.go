@@ -120,6 +120,17 @@ type SessionApplication struct {
 	orchestrator *RoundOrchestrator
 	translator   sharedtranslation.Translator
 	tips         QuestionTipPort
+	deferred     *DeferredTranscriptionProcessor
+}
+
+func (application *SessionApplication) EnableDeferredTranscription(
+	processor *DeferredTranscriptionProcessor,
+) error {
+	if application == nil || processor == nil || application.deferred != nil {
+		return errors.New("practice interaction: deferred transcription is invalid")
+	}
+	application.deferred = processor
+	return nil
 }
 
 func NewSessionApplication(
@@ -282,6 +293,69 @@ func (application *SessionApplication) Transcribe(
 	command TranscribeVoiceCommand,
 ) (TranscriptionCandidate, error) {
 	return application.orchestrator.Transcribe(ctx, actor, command)
+}
+
+func (application *SessionApplication) StageDeferredTranscription(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	command TranscribeVoiceCommand,
+) (DeferredTranscriptionSubmission, error) {
+	if application.deferred == nil {
+		return DeferredTranscriptionSubmission{}, ErrInvalidContext
+	}
+	reservation, err := application.orchestrator.StageDeferredTranscription(
+		ctx, actor, command,
+	)
+	if err != nil {
+		return DeferredTranscriptionSubmission{}, err
+	}
+	if reservation.Status != TranscriptionConfirmed {
+		if err := application.deferred.Enqueue(ctx, actor, reservation); err != nil {
+			return DeferredTranscriptionSubmission{}, err
+		}
+	}
+	return deferredSubmission(reservation), nil
+}
+
+func (application *SessionApplication) DeferredTranscriptionStatus(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	reservationID string,
+) (DeferredTranscriptionSubmission, error) {
+	if application.deferred == nil {
+		return DeferredTranscriptionSubmission{}, ErrInvalidContext
+	}
+	reservation, err := application.orchestrator.GetDeferredTranscription(
+		ctx, actor, reservationID,
+	)
+	if err != nil {
+		return DeferredTranscriptionSubmission{}, err
+	}
+	if reservation.Status == TranscriptionProcessing ||
+		reservation.Status == TranscriptionCompleted ||
+		reservation.Status == TranscriptionFailed {
+		_ = application.deferred.Enqueue(ctx, actor, reservation)
+	}
+	return deferredSubmission(reservation), nil
+}
+
+func deferredSubmission(
+	reservation TranscriptionReservation,
+) DeferredTranscriptionSubmission {
+	status := reservation.Status
+	if status == TranscriptionReserved {
+		status = TranscriptionProcessing
+	}
+	if status == TranscriptionCompleted {
+		status = TranscriptionProcessing
+	}
+	if status == TranscriptionConfirmed {
+		status = TranscriptionCompleted
+	}
+	return DeferredTranscriptionSubmission{
+		ID: reservation.ID, SessionID: reservation.SessionID,
+		QuestionID: reservation.QuestionID, Status: status,
+	}
 }
 
 func (application *SessionApplication) TranscribeStream(

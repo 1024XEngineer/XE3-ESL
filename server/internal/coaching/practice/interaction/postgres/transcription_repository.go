@@ -12,6 +12,8 @@ import (
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
 	practiceinteraction "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/interaction"
+	sharedmedia "github.com/1024XEngineer/XE3-ESL/server/internal/media"
+	mediapostgres "github.com/1024XEngineer/XE3-ESL/server/internal/media/postgres"
 )
 
 type transcriptionRow struct {
@@ -28,8 +30,67 @@ type transcriptionRow struct {
 	LeaseExpiresAt          *time.Time
 	AttemptCount            int
 	CandidateID             string
+	AudioAssetID            string
 	CreatedAt               time.Time
 	UpdatedAt               time.Time
+}
+
+func (r *Repository) AttachTranscriptionRecording(
+	ctx context.Context,
+	actor practiceinteraction.Actor,
+	reservationID string,
+	assetID string,
+) error {
+	if r == nil || r.pool == nil || ctx == nil || !validInputActor(actor) ||
+		strings.TrimSpace(reservationID) == "" || !sharedmedia.ValidUUID(assetID) {
+		return practiceinteraction.ErrPersistenceInvalid
+	}
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return safeDatabaseError(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := ensureActorWritable(ctx, tx, actor.UserID); err != nil {
+		return err
+	}
+	row, err := getTranscriptionByReservation(
+		ctx, tx, actor.UserID, reservationID, true,
+	)
+	if err != nil {
+		return err
+	}
+	if row.AudioAssetID != "" {
+		if row.AudioAssetID != assetID {
+			return practiceinteraction.ErrPersistenceConflict
+		}
+		return tx.Commit(ctx)
+	}
+	if err := mediapostgres.LockAttachableInTransaction(
+		ctx, tx, actor.UserID, sharedmedia.KindAudio, []string{assetID},
+	); err != nil {
+		return mapRecordingMediaError(err)
+	}
+	tag, err := tx.Exec(ctx, `
+		UPDATE practice_turns t
+		SET audio_asset_id = $3, updated_at = transaction_timestamp()
+		FROM practice_sessions s
+		WHERE s.session_id=t.session_id AND s.user_id=$1
+		  AND t.transcription_request_id=$2
+		  AND t.status IN ('transcribing','transcribed','confirmed')
+		  AND t.audio_asset_id IS NULL
+	`, actor.UserID, reservationID, assetID)
+	if err != nil {
+		return safeDatabaseError(err)
+	}
+	if tag.RowsAffected() != 1 {
+		return practiceinteraction.ErrPersistenceConflict
+	}
+	if err := mediapostgres.RetainInTransaction(
+		ctx, tx, actor.UserID, sharedmedia.KindAudio, []string{assetID},
+	); err != nil {
+		return mapRecordingMediaError(err)
+	}
+	return tx.Commit(ctx)
 }
 
 func (r *Repository) ReserveTranscription(
@@ -417,6 +478,7 @@ const transcriptionColumns = `
 	       COALESCE(t.transcription_client_request_id, ''),
 	       COALESCE(t.transcription_input_fingerprint, ''), t.asr_fencing_token,
 	       t.asr_lease_expires_at, t.asr_attempt_count, COALESCE(t.candidate_id::text, ''),
+	       COALESCE(t.audio_asset_id::text, ''),
 	       t.created_at, t.updated_at
 	FROM practice_turns t
 	JOIN practice_sessions s ON s.session_id=t.session_id
@@ -485,6 +547,7 @@ func scanTranscription(row rowScanner) (transcriptionRow, error) {
 		&value.QuestionID, &value.RespondentParticipantID,
 		&value.ReservationID, &value.ClientRequestID, &value.InputFingerprint,
 		&value.FencingToken, &lease, &value.AttemptCount, &value.CandidateID,
+		&value.AudioAssetID,
 		&value.CreatedAt, &value.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -507,8 +570,10 @@ func mapReservation(
 ) practiceinteraction.StoredTranscriptionReservation {
 	status := practiceinteraction.StoredTranscriptionProcessing
 	switch row.Status {
-	case "transcribed", "confirmed":
+	case "transcribed":
 		status = practiceinteraction.StoredTranscriptionCompleted
+	case "confirmed":
+		status = practiceinteraction.StoredTranscriptionConfirmed
 	case "failed":
 		status = practiceinteraction.StoredTranscriptionFailed
 	}
@@ -529,6 +594,7 @@ func mapReservation(
 		LeaseAcquired:           leaseAcquired,
 		LeaseExpiresAt:          leaseExpiresAt,
 		CandidateID:             row.CandidateID,
+		AudioAssetID:            row.AudioAssetID,
 		CurrentAttemptID:        fmt.Sprintf("%s:%d", row.TurnID, row.FencingToken),
 		CreatedAt:               row.CreatedAt,
 		UpdatedAt:               row.UpdatedAt,

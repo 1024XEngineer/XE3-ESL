@@ -636,6 +636,63 @@ void main() {
     expect(find.byKey(const Key('ielts-mock-record')), findsOneWidget);
   });
 
+  testWidgets('durable Part 2 upload enters Part 3 while ASR continues', (
+    tester,
+  ) async {
+    final base = _IeltsPracticeClient(initialCompleted: 8);
+    base.activeScene = _ieltsScene;
+    final practice = _DeferredIeltsPracticeClient(base);
+    final controller = PracticeController(
+      client: practice,
+      recorder: _Recorder(),
+    );
+    addTearDown(controller.dispose);
+    await controller.activateCreatedPractice(
+      scene: _ieltsScene,
+      sessionId: _sessionId,
+      planId: _planId,
+      practiceMode: PracticeMode.fullMock,
+      turnLimit: 14,
+      clientOperationId: 'activate-deferred-test',
+    );
+    final now = DateTime.utc(2026, 8, 26, 8);
+    final progressStore = _MemoryProgressStore(
+      IeltsMockProgress(
+        sessionId: _sessionId,
+        phase: IeltsMockPhase.part2Preparation,
+        startedAt: now,
+        preparationDeadline: now.add(const Duration(seconds: 60)),
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: progressStore,
+          examinerSpeaker: _ImmediateExaminerSpeaker(),
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-start-speaking')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-finish-speaking')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(practice.stageCalls, 1);
+    expect(progressStore.value?.phase, IeltsMockPhase.part3);
+    expect(find.byKey(const Key('ielts-mock-part-2-transition')), findsNothing);
+    expect(find.byKey(const Key('ielts-mock-part-3')), findsOneWidget);
+    expect(
+      find.byKey(const Key('ielts-part2-background-processing')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('ielts-mock-record')), findsNothing);
+  });
+
   testWidgets('Part 2 can exit while transcription is still in flight', (
     tester,
   ) async {
@@ -1192,7 +1249,7 @@ void main() {
     await tester.pump();
 
     expect(
-      find.byKey(const Key('ielts-mock-part-2-transition')),
+      find.byKey(const Key('ielts-mock-part-2-long-turn')),
       findsOneWidget,
     );
     expect(find.byKey(const Key('ielts-mock-part-3')), findsNothing);
@@ -2292,6 +2349,87 @@ final class _UnusedQuestionBankClient implements IeltsQuestionBankClient {
   Future<IeltsQuestionBank> getQuestionBank() {
     throw UnimplementedError();
   }
+}
+
+final class _DeferredIeltsPracticeClient
+    implements PracticeClient, PracticeDeferredTranscriptionClient {
+  _DeferredIeltsPracticeClient(this.delegate);
+
+  final _IeltsPracticeClient delegate;
+  int stageCalls = 0;
+  DeferredTranscription? submission;
+
+  @override
+  Future<void> clearAccountState() => delegate.clearAccountState();
+
+  @override
+  Future<PracticeSessionSnapshot> restorePractice({
+    required String sessionId,
+  }) => delegate.restorePractice(sessionId: sessionId);
+
+  @override
+  Future<PracticeSessionSnapshot> activatePractice({
+    required String sessionId,
+    required String clientOperationId,
+  }) => delegate.activatePractice(
+    sessionId: sessionId,
+    clientOperationId: clientOperationId,
+  );
+
+  @override
+  Future<TranscriptionCandidate> transcribe(
+    PracticeTranscriptionRequest request,
+  ) => delegate.transcribe(request);
+
+  @override
+  Future<PracticeTurnConfirmation> confirm({
+    required String sessionId,
+    required String questionId,
+    required String candidateId,
+    required String idempotencyKey,
+  }) => delegate.confirm(
+    sessionId: sessionId,
+    questionId: questionId,
+    candidateId: candidateId,
+    idempotencyKey: idempotencyKey,
+  );
+
+  @override
+  Future<PracticeTurnConfirmation> submitText({
+    required String sessionId,
+    required String questionId,
+    required String answerText,
+    required String idempotencyKey,
+  }) => delegate.submitText(
+    sessionId: sessionId,
+    questionId: questionId,
+    answerText: answerText,
+    idempotencyKey: idempotencyKey,
+  );
+
+  @override
+  Future<DeferredTranscription> stageDeferredTranscription({
+    required String sessionId,
+    required String questionId,
+    required String idempotencyKey,
+    required RecordedPracticeAudio audio,
+  }) async {
+    stageCalls++;
+    return submission ??= DeferredTranscription(
+      id: 'deferred-part-2',
+      sessionId: sessionId,
+      questionId: questionId,
+      status: DeferredTranscriptionStatus.processing,
+      statusUrl:
+          '/v1/practice-sessions/$sessionId/deferred-transcriptions/'
+          'deferred-part-2',
+    );
+  }
+
+  @override
+  Future<DeferredTranscription> getDeferredTranscription({
+    required String statusUrl,
+  }) async => submission!;
 }
 
 final class _IeltsPracticeClient

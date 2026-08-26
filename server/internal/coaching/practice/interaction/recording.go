@@ -42,6 +42,14 @@ type RecordingUploader interface {
 	) (string, error)
 }
 
+type RecordingSourceLoader interface {
+	Load(
+		context.Context,
+		requestcontext.Actor,
+		string,
+	) (platformmedia.ManagedAudioSource, error)
+}
+
 // RecordingService adapts Practice Interaction to the shared media lifecycle while
 // keeping the Practice-owned turn relationship in its own repository.
 type RecordingService struct {
@@ -142,6 +150,21 @@ func (service *RecordingService) Playback(
 		return objectstore.SignedGetResult{}, err
 	}
 	return service.media.SignedGet(ctx, actor.UserID, assetID)
+}
+
+func (service *RecordingService) Load(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	assetID string,
+) (platformmedia.ManagedAudioSource, error) {
+	if service == nil || ctx == nil || !actor.Valid() {
+		return nil, ErrVoiceRoundInvalid
+	}
+	source, err := service.media.OpenAudio(ctx, actor.UserID, assetID)
+	if err != nil {
+		return nil, ErrVoiceRoundNotFound
+	}
+	return source, nil
 }
 
 // Delete detaches the optional recording from its confirmed Turn and schedules
