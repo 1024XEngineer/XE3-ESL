@@ -26,14 +26,7 @@ export default function ChangelogPage() {
       </nav>
 
       <header className="changelog-hero">
-        <Link className="changelog-back" href="/">
-          ← 返回产品首页
-        </Link>
-        <p className="eyebrow">产品更新</p>
         <h1>更新日志</h1>
-        <p className="changelog-intro">
-          记录 SpeakUp 已正式发布的功能、体验优化与问题修复。
-        </p>
       </header>
 
       <ChangelogContent />

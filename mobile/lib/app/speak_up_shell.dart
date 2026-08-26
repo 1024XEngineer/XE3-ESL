@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:speakup/features/agent/composer/composer_controller.dart';
 import 'package:speakup/features/agent/conversation/agent_message_audio_controller.dart';
@@ -91,32 +92,32 @@ class _SpeakUpShellState extends State<SpeakUpShell>
   static const _destinations = [
     PlatformNavigationDestination(
       label: 'SpeakUp',
-      icon: Icons.mic_none_rounded,
-      selectedIcon: Icons.mic_rounded,
+      icon: CupertinoIcons.waveform_circle,
+      selectedIcon: CupertinoIcons.waveform_circle_fill,
       iosSystemImage: 'waveform.circle',
       iosSelectedSystemImage: 'waveform.circle.fill',
       key: Key('primary-tab-agent'),
     ),
     PlatformNavigationDestination(
       label: '训练',
-      icon: Icons.grid_view_rounded,
-      selectedIcon: Icons.dashboard_rounded,
+      icon: CupertinoIcons.square_grid_2x2,
+      selectedIcon: CupertinoIcons.square_grid_2x2_fill,
       iosSystemImage: 'square.grid.2x2',
       iosSelectedSystemImage: 'square.grid.2x2.fill',
       key: Key('primary-tab-scenes'),
     ),
     PlatformNavigationDestination(
       label: '复盘',
-      icon: Icons.insights_outlined,
-      selectedIcon: Icons.insights_rounded,
+      icon: CupertinoIcons.chart_bar,
+      selectedIcon: CupertinoIcons.chart_bar_fill,
       iosSystemImage: 'chart.bar',
       iosSelectedSystemImage: 'chart.bar.fill',
       key: Key('primary-tab-review'),
     ),
     PlatformNavigationDestination(
       label: '我的',
-      icon: Icons.person_outline_rounded,
-      selectedIcon: Icons.person_rounded,
+      icon: CupertinoIcons.person,
+      selectedIcon: CupertinoIcons.person_fill,
       iosSystemImage: 'person',
       iosSelectedSystemImage: 'person.fill',
       key: Key('primary-tab-profile'),
@@ -787,9 +788,7 @@ class _SpeakUpShellState extends State<SpeakUpShell>
           key: _scaffoldKey,
           extendBody: !practiceSelected,
           resizeToAvoidBottomInset: false,
-          backgroundColor: practiceSelected
-              ? SpeakUpDesign.canvas
-              : Colors.transparent,
+          backgroundColor: Colors.transparent,
           drawer: _ConversationDrawer(
             controller: widget.conversationController,
             avatarBytes: widget.authController?.avatarBytes,

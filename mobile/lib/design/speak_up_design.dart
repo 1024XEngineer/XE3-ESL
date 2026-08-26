@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 /// The single visual source of truth for SpeakUp's mobile surfaces.
 abstract final class SpeakUpDesign {
+  static const ambientTop = Color(0xFFEEF7FA);
+  static const ambientBase = Color(0xFFF7F8FC);
   static const canvas = Color(0xFFFFFFFF);
   static const surface = Color(0xFFFFFFFF);
   static const surfaceMuted = Color(0xFFF5F5F5);
@@ -11,6 +13,8 @@ abstract final class SpeakUpDesign {
   static const border = Color(0xFFE5E5E5);
   static const primary = ink;
   static const primaryMuted = Color(0xFFF0F0F0);
+  static const userBubble = Color(0xFFE6F2FF);
+  static const userBubbleBorder = Color(0xFFDDE5F0);
   static const success = Color(0xFF285443);
   static const successMuted = Color(0xFFEAF3EF);
   static const warning = Color(0xFFC58000);

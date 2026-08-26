@@ -33,12 +33,16 @@ class PlatformNavigationBar extends StatelessWidget {
 
   static const contentHeight = 64.0;
   static const minimumBottomInset = 10.0;
+  static const iosVerticalOffset = 12.0;
 
   final List<PlatformNavigationDestination> destinations;
   final int selectedIndex;
   final Future<int> Function(int) onDestinationSelected;
 
-  static double heightFor(BuildContext context) => contentHeight;
+  static double heightFor(BuildContext context) =>
+      defaultTargetPlatform == TargetPlatform.iOS && !kIsWeb
+      ? contentHeight - iosVerticalOffset
+      : contentHeight;
 
   @override
   Widget build(BuildContext context) {
@@ -46,10 +50,13 @@ class PlatformNavigationBar extends StatelessWidget {
       return SizedBox(
         key: const Key('primary-navigation'),
         height: contentHeight + MediaQuery.viewPaddingOf(context).bottom,
-        child: _NativeIosTabBar(
-          destinations: destinations,
-          selectedIndex: selectedIndex,
-          onDestinationSelected: onDestinationSelected,
+        child: Padding(
+          padding: const EdgeInsets.only(top: iosVerticalOffset),
+          child: _NativeIosTabBar(
+            destinations: destinations,
+            selectedIndex: selectedIndex,
+            onDestinationSelected: onDestinationSelected,
+          ),
         ),
       );
     }
@@ -67,12 +74,22 @@ class PlatformNavigationBar extends StatelessWidget {
         indicatorColor: SpeakUpDesign.primaryMuted,
         elevation: 0,
         labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+        labelTextStyle: WidgetStateProperty.resolveWith((states) {
+          final selected = states.contains(WidgetState.selected);
+          return SpeakUpDesign.label.copyWith(
+            color: selected ? SpeakUpDesign.ink : SpeakUpDesign.secondary,
+            fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+          );
+        }),
         destinations: [
           for (final destination in destinations)
             NavigationDestination(
               key: destination.key,
-              icon: Icon(destination.icon),
-              selectedIcon: Icon(destination.selectedIcon),
+              icon: Icon(destination.icon, color: SpeakUpDesign.secondary),
+              selectedIcon: Icon(
+                destination.selectedIcon,
+                color: SpeakUpDesign.ink,
+              ),
               label: destination.label,
             ),
         ],

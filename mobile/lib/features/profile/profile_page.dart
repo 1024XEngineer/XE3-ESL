@@ -57,10 +57,10 @@ class ProfilePage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       key: const Key('profile-page'),
-      backgroundColor: SpeakUpDesign.surfaceMuted,
+      backgroundColor: Colors.transparent,
       appBar: showBackButton
           ? AppBar(
-              backgroundColor: SpeakUpDesign.surfaceMuted,
+              backgroundColor: Colors.transparent,
               leading: IconButton(
                 key: const Key('profile-route-back-button'),
                 tooltip: '返回',

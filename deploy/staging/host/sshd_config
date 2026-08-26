@@ -1,0 +1,21 @@
+PermitUserEnvironment no
+
+Match User speakup-staging-ci
+    AuthenticationMethods publickey
+    PubkeyAuthentication yes
+    AuthorizedKeysFile /etc/ssh/authorized_keys/speakup-staging-ci
+    PasswordAuthentication no
+    KbdInteractiveAuthentication no
+    PermitTTY no
+    AllowAgentForwarding no
+    AllowTcpForwarding no
+    AllowStreamLocalForwarding no
+    X11Forwarding no
+    PermitTunnel no
+    PermitUserRC no
+    PermitOpen none
+    PermitListen none
+    GatewayPorts no
+    DisableForwarding yes
+    MaxSessions 1
+    ForceCommand /usr/local/libexec/speakup-staging-ssh-gate

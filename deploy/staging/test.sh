@@ -8,6 +8,9 @@ readonly compose_file="$staging_directory/compose.yaml"
 readonly portal_digest="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 readonly server_digest="sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 readonly git_sha="cccccccccccccccccccccccccccccccccccccccc"
+readonly rollback_portal_digest="sha256:1111111111111111111111111111111111111111111111111111111111111111"
+readonly rollback_server_digest="sha256:2222222222222222222222222222222222222222222222222222222222222222"
+readonly rollback_git_sha="3333333333333333333333333333333333333333"
 readonly staging_apk_sha="dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
 readonly production_apk_sha="eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 readonly certificate_sha="ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
@@ -25,54 +28,47 @@ expect_failure() {
   fi
 }
 
-write_environment() {
+write_runtime_environment() {
   local destination=$1
   local server_environment=$2
-  local certificate=${3:-$temporary_directory/fullchain.pem}
-  local certificate_key=${4:-$temporary_directory/privkey.pem}
-  local htpasswd=${5:-$temporary_directory/staging.htpasswd}
-  local acme_root=${6:-$temporary_directory/acme}
 
   printf '%s\n' \
     'STAGING_POSTGRES_DB=speakup_staging' \
     'STAGING_POSTGRES_USER=speakup_staging' \
     'STAGING_POSTGRES_PASSWORD=0123456789abcdef0123456789abcdef' \
     'PORTAL_ADMIN_PASSWORD=portal-admin-password-for-tests' \
-    "STAGING_SERVER_ENV_FILE=$server_environment" \
-    'STAGING_PORTAL_HOST=staging.speak-up.top' \
-    'STAGING_API_HOST=staging-api.speak-up.top' \
-    "STAGING_TLS_CERTIFICATE=$certificate" \
-    "STAGING_TLS_CERTIFICATE_KEY=$certificate_key" \
-    "STAGING_HTPASSWD_FILE=$htpasswd" \
-    "STAGING_ACME_ROOT=$acme_root" \
-    "STAGING_PUBLIC_ROOT=$temporary_directory/public" >"$destination"
+    "STAGING_SERVER_ENV_FILE=$server_environment" >"$destination"
   chmod 0600 "$destination"
 }
 
 write_manifest() {
   local destination=$1
   local selected_portal_digest=${2:-$portal_digest}
+  local selected_server_digest=${3:-$server_digest}
+  local selected_version=${4:-0.1.1}
+  local selected_git_sha=${5:-$git_sha}
+  local selected_schema=${6:-7}
 
   printf '%s\n' \
     '{' \
     '  "manifest_version": 1,' \
-    '  "version": "0.1.1",' \
-    "  \"git_sha\": \"$git_sha\"," \
+    "  \"version\": \"$selected_version\"," \
+    "  \"git_sha\": \"$selected_git_sha\"," \
     '  "version_code": 2,' \
     '  "portal_image": "ghcr.io/1024xengineer/xe3-esl-portal",' \
     "  \"portal_image_digest\": \"$selected_portal_digest\"," \
     '  "server_image": "ghcr.io/1024xengineer/xe3-esl-server",' \
-    "  \"server_image_digest\": \"$server_digest\"," \
-    '  "staging_apk_file": "speakup-v0.1.1-staging-arm64.apk",' \
+    "  \"server_image_digest\": \"$selected_server_digest\"," \
+    "  \"staging_apk_file\": \"speakup-v$selected_version-staging-arm64.apk\"," \
     "  \"staging_apk_sha256\": \"$staging_apk_sha\"," \
-    '  "production_apk_file": "speakup-v0.1.1-production-arm64.apk",' \
+    "  \"production_apk_file\": \"speakup-v$selected_version-production-arm64.apk\"," \
     '  "production_apk_size_bytes": 123456,' \
     "  \"production_apk_sha256\": \"$production_apk_sha\"," \
     '  "application_id": "com.xengineer.speakup",' \
     '  "minimum_android_api": 24,' \
     '  "abis": ["arm64-v8a"],' \
     "  \"apk_certificate_sha256\": \"$certificate_sha\"," \
-    '  "database_schema_version": 7,' \
+    "  \"database_schema_version\": $selected_schema," \
     '  "quality_run_url": "https://github.com/1024XEngineer/XE3-ESL/actions/runs/123456"' \
     '}' >"$destination"
 }
@@ -82,53 +78,191 @@ temporary_directory=$(cd "$temporary_directory" && pwd -P)
 readonly temporary_directory
 trap 'rm -rf "$temporary_directory"' EXIT
 
-mkdir -p \
-  "$temporary_directory/acme" \
-  "$temporary_directory/fake-bin" \
-  "$temporary_directory/public"
+mkdir -p "$temporary_directory/fake-bin"
 printf '%s\n' 'TEXT_GENERATION_PROVIDER=test-fixture' >"$temporary_directory/server.env"
-printf '%s\n' 'test-user:test-password-hash' >"$temporary_directory/staging.htpasswd"
-printf '%s\n' 'test-certificate-placeholder' >"$temporary_directory/fullchain.pem"
-printf '%s\n' 'test-key-placeholder' >"$temporary_directory/privkey.pem"
-chmod 0600 \
-  "$temporary_directory/server.env" \
-  "$temporary_directory/staging.htpasswd" \
-  "$temporary_directory/privkey.pem"
-write_environment "$temporary_directory/staging.env" "$temporary_directory/server.env"
+chmod 0600 "$temporary_directory/server.env"
+write_runtime_environment \
+  "$temporary_directory/staging-runtime.env" \
+  "$temporary_directory/server.env"
 write_manifest "$temporary_directory/release-manifest.json"
+write_manifest \
+  "$temporary_directory/rollback-manifest.json" \
+  "$rollback_portal_digest" \
+  "$rollback_server_digest" \
+  0.1.0 \
+  "$rollback_git_sha"
+write_manifest \
+  "$temporary_directory/rollback-schema-mismatch-manifest.json" \
+  "$rollback_portal_digest" \
+  "$rollback_server_digest" \
+  0.1.0 \
+  "$rollback_git_sha" \
+  8
 
 bash -n "$manage" "$0"
 
 "$manage" validate \
   --manifest "$temporary_directory/release-manifest.json" \
-  --env-file "$temporary_directory/staging.env" \
+  --runtime-env-file "$temporary_directory/staging-runtime.env" \
   >"$temporary_directory/validate.out"
 grep -Fq 'validated=true' "$temporary_directory/validate.out" ||
   fail "valid deployment contract was not accepted"
 
-chmod 0777 "$temporary_directory/public"
-expect_failure "world-writable public root" \
-  "$manage" validate \
-    --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/staging.env"
-chmod 0700 "$temporary_directory/public"
+mkdir "$temporary_directory/reject-bin"
+cat >"$temporary_directory/reject-bin/docker" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ -z "${COMMAND_LOG:-}" ]] || printf 'docker %s\n' "$*" >>"$COMMAND_LOG"
+exit 99
+EOF
+chmod +x "$temporary_directory/reject-bin/docker"
+readonly reject_path="$temporary_directory/reject-bin:$PATH"
 
-mkdir -p "$temporary_directory/public/downloads/android"
-chmod 0777 "$temporary_directory/public/downloads/android"
-expect_failure "world-writable Android public directory" \
+legacy_argument_log="$temporary_directory/legacy-argument.log"
+: >"$legacy_argument_log"
+expect_failure "legacy runtime --env-file argument" \
+  env COMMAND_LOG="$legacy_argument_log" PATH="$reject_path" \
   "$manage" validate \
     --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/staging.env"
-chmod 0700 "$temporary_directory/public/downloads/android"
-rmdir \
-  "$temporary_directory/public/downloads/android" \
-  "$temporary_directory/public/downloads"
+    --env-file "$temporary_directory/staging-runtime.env"
+grep -Fq -- '--runtime-env-file' "$temporary_directory/failure.out" ||
+  fail "legacy --env-file rejection did not identify --runtime-env-file"
+[[ ! -s "$legacy_argument_log" ]] ||
+  fail "legacy --env-file rejection invoked Docker"
+
+empty_edge_log="$temporary_directory/empty-edge.log"
+: >"$empty_edge_log"
+expect_failure "empty edge argument on runtime command" \
+  env COMMAND_LOG="$empty_edge_log" PATH="$reject_path" \
+  "$manage" validate \
+    --manifest "$temporary_directory/release-manifest.json" \
+    --runtime-env-file "$temporary_directory/staging-runtime.env" \
+    --edge-env-file ''
+[[ ! -s "$empty_edge_log" ]] ||
+  fail "empty forbidden edge argument invoked Docker"
+
+empty_current_log="$temporary_directory/empty-current-forbidden.log"
+: >"$empty_current_log"
+expect_failure "empty forbidden current manifest on validate" \
+  env COMMAND_LOG="$empty_current_log" PATH="$reject_path" \
+  "$manage" validate \
+    --manifest "$temporary_directory/release-manifest.json" \
+    --current-manifest '' \
+    --runtime-env-file "$temporary_directory/staging-runtime.env"
+[[ ! -s "$empty_current_log" ]] ||
+  fail "empty forbidden current manifest invoked Docker"
+
+empty_required_argument_index=0
+for empty_required_argument in \
+  --manifest --current-manifest --runtime-env-file --receipt; do
+  empty_required_argument_index=$((empty_required_argument_index + 1))
+  empty_required_argument_log="$temporary_directory/empty-required-argument-$empty_required_argument_index.log"
+  : >"$empty_required_argument_log"
+  case "$empty_required_argument" in
+    --manifest)
+      expect_failure "empty required runtime argument $empty_required_argument" \
+        env COMMAND_LOG="$empty_required_argument_log" PATH="$reject_path" \
+        "$manage" rollback \
+          --manifest '' \
+          --current-manifest "$temporary_directory/release-manifest.json" \
+          --runtime-env-file "$temporary_directory/staging-runtime.env" \
+          --receipt "$temporary_directory/empty-manifest-receipt.json"
+      ;;
+    --current-manifest)
+      expect_failure "empty required runtime argument $empty_required_argument" \
+        env COMMAND_LOG="$empty_required_argument_log" PATH="$reject_path" \
+        "$manage" rollback \
+          --manifest "$temporary_directory/rollback-manifest.json" \
+          --current-manifest '' \
+          --runtime-env-file "$temporary_directory/staging-runtime.env" \
+          --receipt "$temporary_directory/empty-current-receipt.json"
+      ;;
+    --runtime-env-file)
+      expect_failure "empty required runtime argument $empty_required_argument" \
+        env COMMAND_LOG="$empty_required_argument_log" PATH="$reject_path" \
+        "$manage" rollback \
+          --manifest "$temporary_directory/rollback-manifest.json" \
+          --current-manifest "$temporary_directory/release-manifest.json" \
+          --runtime-env-file '' \
+          --receipt "$temporary_directory/empty-runtime-receipt.json"
+      ;;
+    --receipt)
+      expect_failure "empty required runtime argument $empty_required_argument" \
+        env COMMAND_LOG="$empty_required_argument_log" PATH="$reject_path" \
+        "$manage" rollback \
+          --manifest "$temporary_directory/rollback-manifest.json" \
+          --current-manifest "$temporary_directory/release-manifest.json" \
+          --runtime-env-file "$temporary_directory/staging-runtime.env" \
+          --receipt ''
+      ;;
+  esac
+  [[ ! -s "$empty_required_argument_log" ]] ||
+    fail "empty required runtime argument invoked Docker: $empty_required_argument"
+done
+
+duplicate_runtime_argument_index=0
+for duplicate_runtime_argument in \
+  --manifest --current-manifest --runtime-env-file --receipt; do
+  duplicate_runtime_argument_index=$((duplicate_runtime_argument_index + 1))
+  duplicate_runtime_argument_log="$temporary_directory/duplicate-runtime-argument-$duplicate_runtime_argument_index.log"
+  : >"$duplicate_runtime_argument_log"
+  case "$duplicate_runtime_argument" in
+    --manifest)
+      duplicate_runtime_argument_value="$temporary_directory/rollback-manifest.json"
+      ;;
+    --current-manifest)
+      duplicate_runtime_argument_value="$temporary_directory/release-manifest.json"
+      ;;
+    --runtime-env-file)
+      duplicate_runtime_argument_value="$temporary_directory/staging-runtime.env"
+      ;;
+    --receipt)
+      duplicate_runtime_argument_value="$temporary_directory/other-receipt.json"
+      ;;
+  esac
+  expect_failure "duplicate runtime argument $duplicate_runtime_argument" \
+    env COMMAND_LOG="$duplicate_runtime_argument_log" PATH="$reject_path" \
+    "$manage" rollback \
+      --manifest "$temporary_directory/rollback-manifest.json" \
+      --current-manifest "$temporary_directory/release-manifest.json" \
+      --runtime-env-file "$temporary_directory/staging-runtime.env" \
+      --receipt "$temporary_directory/receipt.json" \
+      "$duplicate_runtime_argument" "$duplicate_runtime_argument_value"
+  [[ ! -s "$duplicate_runtime_argument_log" ]] ||
+    fail "duplicate runtime argument invoked Docker: $duplicate_runtime_argument"
+done
+
+missing_current_log="$temporary_directory/missing-current.log"
+: >"$missing_current_log"
+expect_failure "rollback without a current manifest" \
+  env COMMAND_LOG="$missing_current_log" PATH="$reject_path" \
+  "$manage" rollback \
+    --manifest "$temporary_directory/rollback-manifest.json" \
+    --runtime-env-file "$temporary_directory/staging-runtime.env" \
+    --receipt "$temporary_directory/missing-current-receipt.json"
+[[ ! -s "$missing_current_log" ]] ||
+  fail "missing rollback current manifest invoked Docker"
+
+printf '%s\n%s\n' \
+  "$(<"$temporary_directory/staging-runtime.env")" \
+  'STAGING_TLS_CERTIFICATE=/edge-only/fullchain.pem' \
+  >"$temporary_directory/cross-edge.env"
+chmod 0600 "$temporary_directory/cross-edge.env"
+cross_edge_log="$temporary_directory/cross-edge.log"
+: >"$cross_edge_log"
+expect_failure "edge key in runtime environment" \
+  env COMMAND_LOG="$cross_edge_log" PATH="$reject_path" \
+  "$manage" validate \
+    --manifest "$temporary_directory/release-manifest.json" \
+    --runtime-env-file "$temporary_directory/cross-edge.env"
+[[ ! -s "$cross_edge_log" ]] ||
+  fail "cross-scope runtime environment invoked Docker"
 
 write_manifest "$temporary_directory/invalid-manifest.json" 'latest'
 expect_failure "mutable Portal image reference" \
   "$manage" validate \
   --manifest "$temporary_directory/invalid-manifest.json" \
-  --env-file "$temporary_directory/staging.env"
+  --runtime-env-file "$temporary_directory/staging-runtime.env"
 
 write_manifest \
   "$temporary_directory/zero-digest-manifest.json" \
@@ -136,7 +270,7 @@ write_manifest \
 expect_failure "placeholder Portal digest" \
   "$manage" validate \
   --manifest "$temporary_directory/zero-digest-manifest.json" \
-  --env-file "$temporary_directory/staging.env"
+  --runtime-env-file "$temporary_directory/staging-runtime.env"
 
 jq 'del(.quality_run_url)' \
   "$temporary_directory/release-manifest.json" \
@@ -144,7 +278,7 @@ jq 'del(.quality_run_url)' \
 expect_failure "incomplete release manifest" \
   "$manage" validate \
     --manifest "$temporary_directory/incomplete-manifest.json" \
-    --env-file "$temporary_directory/staging.env"
+    --runtime-env-file "$temporary_directory/staging-runtime.env"
 
 jq '.unexpected = true' \
   "$temporary_directory/release-manifest.json" \
@@ -152,7 +286,7 @@ jq '.unexpected = true' \
 expect_failure "release manifest with an unknown field" \
   "$manage" validate \
     --manifest "$temporary_directory/extended-manifest.json" \
-    --env-file "$temporary_directory/staging.env"
+    --runtime-env-file "$temporary_directory/staging-runtime.env"
 
 printf '%s\n%s\n' \
   "$(< "$temporary_directory/release-manifest.json")" \
@@ -161,43 +295,52 @@ printf '%s\n%s\n' \
 expect_failure "multiple release manifest documents" \
   "$manage" validate \
     --manifest "$temporary_directory/multiple-manifests.json" \
-    --env-file "$temporary_directory/staging.env"
+    --runtime-env-file "$temporary_directory/staging-runtime.env"
 
 expect_failure "missing release manifest" \
   "$manage" validate \
   --manifest "$temporary_directory/missing.json" \
-  --env-file "$temporary_directory/staging.env"
+  --runtime-env-file "$temporary_directory/staging-runtime.env"
 
 expect_failure "missing environment file" \
   "$manage" validate \
   --manifest "$temporary_directory/release-manifest.json" \
-  --env-file "$temporary_directory/not-there.env"
+  --runtime-env-file "$temporary_directory/not-there.env"
 
 sed 's/^PORTAL_ADMIN_PASSWORD=.*/PORTAL_ADMIN_PASSWORD=/' \
-  "$temporary_directory/staging.env" >"$temporary_directory/missing-value.env"
+  "$temporary_directory/staging-runtime.env" >"$temporary_directory/missing-value.env"
 chmod 0600 "$temporary_directory/missing-value.env"
 expect_failure "missing required environment value" \
   "$manage" validate \
   --manifest "$temporary_directory/release-manifest.json" \
-  --env-file "$temporary_directory/missing-value.env"
+  --runtime-env-file "$temporary_directory/missing-value.env"
 
 sed '/^PORTAL_ADMIN_PASSWORD=/d' \
-  "$temporary_directory/staging.env" >"$temporary_directory/missing-key.env"
+  "$temporary_directory/staging-runtime.env" >"$temporary_directory/missing-key.env"
 chmod 0600 "$temporary_directory/missing-key.env"
 expect_failure "ambient value replacing a missing environment key" \
-  env PORTAL_ADMIN_PASSWORD=ambient-password-must-not-be-used \
+  env \
+    COMMAND_LOG="$temporary_directory/ambient-fallback.log" \
+    PATH="$reject_path" \
+    PORTAL_ADMIN_PASSWORD=ambient-password-must-not-be-used \
   "$manage" validate \
   --manifest "$temporary_directory/release-manifest.json" \
-  --env-file "$temporary_directory/missing-key.env"
+  --runtime-env-file "$temporary_directory/missing-key.env"
+[[ ! -s "$temporary_directory/ambient-fallback.log" ]] ||
+  fail "ambient runtime fallback invoked Docker"
+if grep -Fq 'ambient-password-must-not-be-used' \
+  "$temporary_directory/failure.out"; then
+  fail "ambient runtime value was exposed in the rejection output"
+fi
 
 printf '%s\n' \
-  "$(<"$temporary_directory/staging.env")" \
+  "$(<"$temporary_directory/staging-runtime.env")" \
   'UNKNOWN_SETTING=typo' >"$temporary_directory/unknown.env"
 chmod 0600 "$temporary_directory/unknown.env"
 expect_failure "unknown environment setting" \
   "$manage" validate \
   --manifest "$temporary_directory/release-manifest.json" \
-  --env-file "$temporary_directory/unknown.env"
+  --runtime-env-file "$temporary_directory/unknown.env"
 
 readonly secret_sentinel='must-not-leak-environment-secret-sentinel'
 environment_leak_index=0
@@ -209,12 +352,12 @@ for unsafe_environment_line in \
   leak_environment="$temporary_directory/leak-$environment_leak_index.env"
   leak_output="$temporary_directory/leak-$environment_leak_index.out"
   printf '%s\n%s\n' \
-    "$(< "$temporary_directory/staging.env")" \
+    "$(< "$temporary_directory/staging-runtime.env")" \
     "$unsafe_environment_line" > "$leak_environment"
   chmod 0600 "$leak_environment"
   if "$manage" validate \
     --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$leak_environment" > "$leak_output" 2>&1; then
+    --runtime-env-file "$leak_environment" > "$leak_output" 2>&1; then
     fail "invalid environment entry unexpectedly succeeded"
   fi
   if grep -Fq "$secret_sentinel" "$leak_output"; then
@@ -224,254 +367,79 @@ for unsafe_environment_line in \
     fail "invalid environment entry did not report a safe line number"
 done
 
-write_environment "$temporary_directory/missing-server.env" "$temporary_directory/not-there.env"
+write_runtime_environment "$temporary_directory/missing-server.env" "$temporary_directory/not-there.env"
 expect_failure "missing Server environment file" \
   "$manage" validate \
   --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/missing-server.env"
+    --runtime-env-file "$temporary_directory/missing-server.env"
 
-cp "$temporary_directory/staging.env" "$temporary_directory/insecure-staging.env"
-chmod 0640 "$temporary_directory/insecure-staging.env"
-expect_failure "group-readable Staging environment" \
+cp "$temporary_directory/staging-runtime.env" "$temporary_directory/insecure-runtime.env"
+chmod 0640 "$temporary_directory/insecure-runtime.env"
+expect_failure "group-readable runtime environment" \
   "$manage" validate \
     --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/insecure-staging.env"
+    --runtime-env-file "$temporary_directory/insecure-runtime.env"
 
-ln -s "$temporary_directory/staging.env" "$temporary_directory/symlink-staging.env"
-expect_failure "symbolic-link Staging environment" \
+ln -s "$temporary_directory/staging-runtime.env" "$temporary_directory/symlink-runtime.env"
+expect_failure "symbolic-link runtime environment" \
   "$manage" validate \
     --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/symlink-staging.env"
+    --runtime-env-file "$temporary_directory/symlink-runtime.env"
 
-mkdir "$temporary_directory/staging-env-ancestor-target"
-cp "$temporary_directory/staging.env" \
-  "$temporary_directory/staging-env-ancestor-target/staging.env"
-chmod 0600 "$temporary_directory/staging-env-ancestor-target/staging.env"
-ln -s "$temporary_directory/staging-env-ancestor-target" \
-  "$temporary_directory/staging-env-ancestor-link"
-expect_failure "Staging environment with a symbolic-link ancestor" \
+mkdir "$temporary_directory/runtime-env-ancestor-target"
+cp "$temporary_directory/staging-runtime.env" \
+  "$temporary_directory/runtime-env-ancestor-target/runtime.env"
+chmod 0600 "$temporary_directory/runtime-env-ancestor-target/runtime.env"
+ln -s "$temporary_directory/runtime-env-ancestor-target" \
+  "$temporary_directory/runtime-env-ancestor-link"
+expect_failure "runtime environment with a symbolic-link ancestor" \
   "$manage" validate \
     --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/staging-env-ancestor-link/staging.env"
+    --runtime-env-file "$temporary_directory/runtime-env-ancestor-link/runtime.env"
 
 cp "$temporary_directory/server.env" "$temporary_directory/insecure-server.env"
 chmod 0644 "$temporary_directory/insecure-server.env"
-write_environment "$temporary_directory/insecure-server-config.env" \
+write_runtime_environment "$temporary_directory/insecure-server-config.env" \
   "$temporary_directory/insecure-server.env"
 expect_failure "world-readable Server environment" \
   "$manage" validate \
     --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/insecure-server-config.env"
+    --runtime-env-file "$temporary_directory/insecure-server-config.env"
 
 ln -s "$temporary_directory/server.env" "$temporary_directory/server-link.env"
-write_environment "$temporary_directory/server-link-config.env" \
+write_runtime_environment "$temporary_directory/server-link-config.env" \
   "$temporary_directory/server-link.env"
 expect_failure "symbolic-link Server environment" \
   "$manage" validate \
     --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/server-link-config.env"
+    --runtime-env-file "$temporary_directory/server-link-config.env"
 
 mkdir -p \
-  "$temporary_directory/input-ancestor-target/nested/acme" \
+  "$temporary_directory/input-ancestor-target/nested" \
   "$temporary_directory/unsafe-input-ancestor/nested"
 cp "$temporary_directory/server.env" \
-  "$temporary_directory/fullchain.pem" \
-  "$temporary_directory/privkey.pem" \
-  "$temporary_directory/staging.htpasswd" \
   "$temporary_directory/input-ancestor-target/nested/"
-chmod 0600 \
-  "$temporary_directory/input-ancestor-target/nested/server.env" \
-  "$temporary_directory/input-ancestor-target/nested/privkey.pem" \
-  "$temporary_directory/input-ancestor-target/nested/staging.htpasswd"
+chmod 0600 "$temporary_directory/input-ancestor-target/nested/server.env"
 ln -s "$temporary_directory/input-ancestor-target" \
   "$temporary_directory/input-ancestor-link"
 
-write_environment "$temporary_directory/server-ancestor-link.env" \
+write_runtime_environment "$temporary_directory/server-ancestor-link.env" \
   "$temporary_directory/input-ancestor-link/nested/server.env"
 expect_failure "Server environment with a symbolic-link ancestor" \
   "$manage" validate \
     --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/server-ancestor-link.env"
-
-write_environment "$temporary_directory/certificate-ancestor-link.env" \
-  "$temporary_directory/server.env" \
-  "$temporary_directory/input-ancestor-link/nested/fullchain.pem"
-expect_failure "TLS certificate with a symbolic-link ancestor" \
-  "$manage" validate \
-    --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/certificate-ancestor-link.env"
-
-write_environment "$temporary_directory/key-ancestor-link.env" \
-  "$temporary_directory/server.env" \
-  "$temporary_directory/fullchain.pem" \
-  "$temporary_directory/input-ancestor-link/nested/privkey.pem"
-expect_failure "TLS private key with a symbolic-link ancestor" \
-  "$manage" validate \
-    --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/key-ancestor-link.env"
-
-write_environment "$temporary_directory/htpasswd-ancestor-link.env" \
-  "$temporary_directory/server.env" \
-  "$temporary_directory/fullchain.pem" \
-  "$temporary_directory/privkey.pem" \
-  "$temporary_directory/input-ancestor-link/nested/staging.htpasswd"
-expect_failure "htpasswd with a symbolic-link ancestor" \
-  "$manage" validate \
-    --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/htpasswd-ancestor-link.env"
-
-write_environment "$temporary_directory/acme-ancestor-link.env" \
-  "$temporary_directory/server.env" \
-  "$temporary_directory/fullchain.pem" \
-  "$temporary_directory/privkey.pem" \
-  "$temporary_directory/staging.htpasswd" \
-  "$temporary_directory/input-ancestor-link/nested/acme"
-expect_failure "ACME root with a symbolic-link ancestor" \
-  "$manage" validate \
-    --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/acme-ancestor-link.env"
+    --runtime-env-file "$temporary_directory/server-ancestor-link.env"
 
 chmod 0777 "$temporary_directory/unsafe-input-ancestor"
 cp "$temporary_directory/server.env" \
   "$temporary_directory/unsafe-input-ancestor/nested/server.env"
 chmod 0600 "$temporary_directory/unsafe-input-ancestor/nested/server.env"
-write_environment "$temporary_directory/unsafe-server-ancestor.env" \
+write_runtime_environment "$temporary_directory/unsafe-server-ancestor.env" \
   "$temporary_directory/unsafe-input-ancestor/nested/server.env"
 expect_failure "Server environment with an unsafe writable ancestor" \
   "$manage" validate \
     --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/unsafe-server-ancestor.env"
-
-cp "$temporary_directory/privkey.pem" "$temporary_directory/insecure-key.pem"
-chmod 0644 "$temporary_directory/insecure-key.pem"
-write_environment "$temporary_directory/insecure-key.env" \
-  "$temporary_directory/server.env" \
-  "$temporary_directory/fullchain.pem" \
-  "$temporary_directory/insecure-key.pem"
-expect_failure "world-readable TLS private key" \
-  "$manage" validate \
-    --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/insecure-key.env"
-
-ln -s "$temporary_directory/privkey.pem" "$temporary_directory/key-link.pem"
-write_environment "$temporary_directory/key-link.env" \
-  "$temporary_directory/server.env" \
-  "$temporary_directory/fullchain.pem" \
-  "$temporary_directory/key-link.pem"
-"$manage" validate \
-  --manifest "$temporary_directory/release-manifest.json" \
-  --env-file "$temporary_directory/key-link.env" \
-  > "$temporary_directory/key-link-validate.out"
-grep -Fq 'validated=true' "$temporary_directory/key-link-validate.out" ||
-  fail "valid Certbot-style TLS private-key symlink was rejected"
-
-mkdir -p \
-  "$temporary_directory/certbot/live/staging.speak-up.top" \
-  "$temporary_directory/certbot/archive/staging.speak-up.top"
-cp "$temporary_directory/fullchain.pem" \
-  "$temporary_directory/certbot/archive/staging.speak-up.top/fullchain1.pem"
-cp "$temporary_directory/privkey.pem" \
-  "$temporary_directory/certbot/archive/staging.speak-up.top/privkey1.pem"
-chmod 0600 \
-  "$temporary_directory/certbot/archive/staging.speak-up.top/privkey1.pem"
-ln -s ../../archive/staging.speak-up.top/fullchain1.pem \
-  "$temporary_directory/certbot/live/staging.speak-up.top/fullchain.pem"
-ln -s ../../archive/staging.speak-up.top/privkey1.pem \
-  "$temporary_directory/certbot/live/staging.speak-up.top/privkey.pem"
-write_environment "$temporary_directory/certbot-links.env" \
-  "$temporary_directory/server.env" \
-  "$temporary_directory/certbot/live/staging.speak-up.top/fullchain.pem" \
-  "$temporary_directory/certbot/live/staging.speak-up.top/privkey.pem"
-"$manage" validate \
-  --manifest "$temporary_directory/release-manifest.json" \
-  --env-file "$temporary_directory/certbot-links.env" \
-  > "$temporary_directory/certbot-links.out"
-grep -Fq 'validated=true' "$temporary_directory/certbot-links.out" ||
-  fail "valid Certbot live/archive links were rejected"
-
-ln -s "$temporary_directory/not-there-key.pem" \
-  "$temporary_directory/broken-key-link.pem"
-write_environment "$temporary_directory/broken-key-link.env" \
-  "$temporary_directory/server.env" \
-  "$temporary_directory/fullchain.pem" \
-  "$temporary_directory/broken-key-link.pem"
-expect_failure "broken TLS private-key symlink" \
-  "$manage" validate \
-    --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/broken-key-link.env"
-
-ln -s "$temporary_directory/insecure-key.pem" \
-  "$temporary_directory/insecure-key-link.pem"
-write_environment "$temporary_directory/insecure-key-link.env" \
-  "$temporary_directory/server.env" \
-  "$temporary_directory/fullchain.pem" \
-  "$temporary_directory/insecure-key-link.pem"
-expect_failure "TLS private-key symlink with an insecure target" \
-  "$manage" validate \
-    --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/insecure-key-link.env"
-
-cp "$temporary_directory/staging.htpasswd" \
-  "$temporary_directory/insecure.htpasswd"
-chmod 0644 "$temporary_directory/insecure.htpasswd"
-write_environment "$temporary_directory/insecure-htpasswd.env" \
-  "$temporary_directory/server.env" \
-  "$temporary_directory/fullchain.pem" \
-  "$temporary_directory/privkey.pem" \
-  "$temporary_directory/insecure.htpasswd"
-expect_failure "world-readable htpasswd" \
-  "$manage" validate \
-    --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/insecure-htpasswd.env"
-
-ln -s "$temporary_directory/staging.htpasswd" \
-  "$temporary_directory/htpasswd-link"
-write_environment "$temporary_directory/htpasswd-link.env" \
-  "$temporary_directory/server.env" \
-  "$temporary_directory/fullchain.pem" \
-  "$temporary_directory/privkey.pem" \
-  "$temporary_directory/htpasswd-link"
-expect_failure "symbolic-link htpasswd" \
-  "$manage" validate \
-    --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/htpasswd-link.env"
-
-cp "$temporary_directory/fullchain.pem" \
-  "$temporary_directory/insecure-certificate.pem"
-chmod 0664 "$temporary_directory/insecure-certificate.pem"
-write_environment "$temporary_directory/insecure-certificate.env" \
-  "$temporary_directory/server.env" \
-  "$temporary_directory/insecure-certificate.pem"
-expect_failure "group-writable public certificate" \
-  "$manage" validate \
-    --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/insecure-certificate.env"
-
-mkdir "$temporary_directory/insecure-acme"
-chmod 0777 "$temporary_directory/insecure-acme"
-write_environment "$temporary_directory/insecure-acme.env" \
-  "$temporary_directory/server.env" \
-  "$temporary_directory/fullchain.pem" \
-  "$temporary_directory/privkey.pem" \
-  "$temporary_directory/staging.htpasswd" \
-  "$temporary_directory/insecure-acme"
-expect_failure "world-writable ACME root" \
-  "$manage" validate \
-    --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/insecure-acme.env"
-
-mkdir "$temporary_directory/acme-target"
-ln -s "$temporary_directory/acme-target" "$temporary_directory/acme-link"
-write_environment "$temporary_directory/acme-link.env" \
-  "$temporary_directory/server.env" \
-  "$temporary_directory/fullchain.pem" \
-  "$temporary_directory/privkey.pem" \
-  "$temporary_directory/staging.htpasswd" \
-  "$temporary_directory/acme-link"
-expect_failure "symbolic-link ACME root" \
-  "$manage" validate \
-    --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/acme-link.env"
+    --runtime-env-file "$temporary_directory/unsafe-server-ancestor.env"
 
 real_id=$(command -v id)
 printf '%s\n' \
@@ -482,11 +450,11 @@ printf '%s\n' \
   'fi' \
   'exec "$TEST_REAL_ID" "$@"' > "$temporary_directory/fake-bin/id"
 chmod +x "$temporary_directory/fake-bin/id"
-expect_failure "Staging environment owned by another UID" \
+expect_failure "runtime environment owned by another UID" \
   env TEST_REAL_ID="$real_id" PATH="$temporary_directory/fake-bin:$PATH" \
   "$manage" validate \
     --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/staging.env"
+    --runtime-env-file "$temporary_directory/staging-runtime.env"
 rm "$temporary_directory/fake-bin/id"
 
 mkdir "$temporary_directory/fake-owner-bin"
@@ -506,60 +474,20 @@ fi
 exec "$TEST_REAL_STAT" "$@"
 EOF
 chmod +x "$temporary_directory/fake-owner-bin/stat"
-for owner_case in \
-  "$temporary_directory/server.env|Server environment" \
-  "$temporary_directory/fullchain.pem|public certificate" \
-  "$temporary_directory/acme|ACME root"; do
-  owner_path=${owner_case%%|*}
-  owner_description=${owner_case#*|}
-  expect_failure "$owner_description owned by another UID" \
-    env \
-      TEST_REAL_STAT="$real_stat" \
-      TEST_WRONG_OWNER_PATH="$owner_path" \
-      PATH="$temporary_directory/fake-owner-bin:$PATH" \
-    "$manage" validate \
-      --manifest "$temporary_directory/release-manifest.json" \
-      --env-file "$temporary_directory/staging.env"
-done
-expect_failure "TLS private-key symlink target owned by another UID" \
+expect_failure "Server environment owned by another UID" \
   env \
     TEST_REAL_STAT="$real_stat" \
-    TEST_WRONG_OWNER_PATH="$temporary_directory/privkey.pem" \
+    TEST_WRONG_OWNER_PATH="$temporary_directory/server.env" \
     PATH="$temporary_directory/fake-owner-bin:$PATH" \
   "$manage" validate \
     --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/key-link.env"
-
-"$manage" render-nginx \
-  --env-file "$temporary_directory/staging.env" \
-  --output "$temporary_directory/staging.conf" \
-  >"$temporary_directory/render.out"
-if grep -Eq '__STAGING_[A-Z_]+__' "$temporary_directory/staging.conf"; then
-  fail "rendered Nginx configuration contains a placeholder"
-fi
-[[ $(grep -Fc 'auth_basic "SpeakUp Staging";' "$temporary_directory/staging.conf") -eq 1 ]] ||
-  fail "Nginx Basic Auth must apply only to the Portal host"
-sed -n '/server_name staging-api.speak-up.top;/,$p' \
-  "$temporary_directory/staging.conf" >"$temporary_directory/api-server.conf"
-if grep -Fq 'auth_basic' "$temporary_directory/api-server.conf"; then
-  fail "API host must preserve application Bearer auth without HTTP Basic Auth"
-fi
-grep -Fq 'proxy_set_header Authorization $http_authorization;' \
-  "$temporary_directory/api-server.conf" ||
-  fail "API proxy does not explicitly preserve the Authorization header"
-[[ $(grep -Fc 'location = /metrics {' "$temporary_directory/staging.conf") -eq 2 ]] ||
-  fail "Nginx does not block /metrics on both hosts"
-grep -Fq 'proxy_pass http://127.0.0.1:28082;' "$temporary_directory/staging.conf" ||
-  fail "Portal proxy is not loopback-only"
-grep -Fq 'proxy_pass http://127.0.0.1:28083;' "$temporary_directory/staging.conf" ||
-  fail "Server proxy is not loopback-only"
+    --runtime-env-file "$temporary_directory/staging-runtime.env"
 
 STAGING_POSTGRES_DB=speakup_staging \
 STAGING_POSTGRES_USER=speakup_staging \
 STAGING_POSTGRES_PASSWORD=0123456789abcdef0123456789abcdef \
 PORTAL_ADMIN_PASSWORD=portal-admin-password-for-tests \
 STAGING_SERVER_ENV_FILE="$temporary_directory/server.env" \
-STAGING_PORTAL_HOST=staging.speak-up.top \
 PORTAL_IMAGE_DIGEST="$portal_digest" \
 SERVER_IMAGE_DIGEST="$server_digest" \
 COMPOSE_PROJECT_NAME=xe3-speakup-production \
@@ -599,6 +527,8 @@ jq --exit-status \
     (.services.server.networks | keys | sort) == ["database", "server_edge"] and
     .services.server.networks.server_edge.aliases ==
       ["staging-api-metrics"] and
+    .services.portal.environment.VINEXT_TRUSTED_HOSTS ==
+      "staging.speak-up.top" and
     .services.server.environment.METRICS_HOST == "0.0.0.0" and
     (.volumes | keys | sort) == ["portal_data", "postgres_data"]
   ' "$temporary_directory/compose.json" >/dev/null ||
@@ -615,8 +545,21 @@ readonly server_id=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 readonly postgres_id=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 readonly project=xe3-speakup-staging
 
+runtime_portal_digest=${TEST_RUNTIME_PORTAL_DIGEST:-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+runtime_server_digest=${TEST_RUNTIME_SERVER_DIGEST:-sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}
+if [[ -n "${TEST_RUNTIME_STATE_FILE:-}" && -s "$TEST_RUNTIME_STATE_FILE" ]]; then
+  IFS='|' read -r runtime_portal_digest runtime_server_digest \
+    <"$TEST_RUNTIME_STATE_FILE"
+fi
+
 if [[ "${1:-}" == compose ]]; then
   command_line=" $* "
+  if [[ -n "${TEST_RUNTIME_STATE_FILE:-}" &&
+    "$command_line" == *" up "* &&
+    "$command_line" == *" portal server "* ]]; then
+    printf '%s|%s\n' "$PORTAL_IMAGE_DIGEST" "$SERVER_IMAGE_DIGEST" \
+      >"$TEST_RUNTIME_STATE_FILE"
+  fi
   if [[ "$command_line" == *" run "* &&
     "$command_line" == *"/usr/local/bin/speakup-migrate version"* ]]; then
     printf '%s\n' "${SCHEMA_OUTPUT:-version=7 dirty=false}"
@@ -687,7 +630,7 @@ if [[ "${1:-}" == inspect && "$#" == 2 ]]; then
     aaaaaaaaaaaa)
       id=$portal_id
       service=portal
-      image="ghcr.io/1024xengineer/xe3-esl-portal@${TEST_RUNTIME_PORTAL_DIGEST:-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
+      image="ghcr.io/1024xengineer/xe3-esl-portal@$runtime_portal_digest"
       mounts='[{"Type":"volume","Name":"xe3-speakup-staging_portal_data","Destination":"/app/.wrangler","RW":true}]'
       ports='{"3000/tcp":[{"HostIp":"127.0.0.1","HostPort":"28082"}]}'
       networks='{"xe3-speakup-staging_portal_edge":{}}'
@@ -696,7 +639,7 @@ if [[ "${1:-}" == inspect && "$#" == 2 ]]; then
     bbbbbbbbbbbb)
       id=$server_id
       service=server
-      image="ghcr.io/1024xengineer/xe3-esl-server@${TEST_RUNTIME_SERVER_DIGEST:-sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}"
+      image="ghcr.io/1024xengineer/xe3-esl-server@$runtime_server_digest"
       mounts='[]'
       ports='{"8080/tcp":[{"HostIp":"127.0.0.1","HostPort":"28083"}]}'
       networks='{"xe3-speakup-staging_database":{},"xe3-speakup-staging_server_edge":{}}'
@@ -765,16 +708,32 @@ if [[ "${1:-}" == image && "${2:-}" == inspect && "$#" == 3 ]]; then
     *) exit 1 ;;
   esac
   [[ "${TEST_MISSING_IMAGE:-}" != "$service" ]] || exit 1
+  if [[ "${TEST_MISSING_TARGET_IMAGE:-}" == "$service" ]]; then
+    case "$expected_image" in
+      *@sha256:1111111111111111111111111111111111111111111111111111111111111111 | \
+        *@sha256:2222222222222222222222222222222222222222222222222222222222222222)
+        exit 1
+        ;;
+    esac
+  fi
   architecture=amd64
   [[ "${TEST_BAD_IMAGE_PLATFORM:-}" != "$service" ]] || architecture=arm64
   if [[ "$service" == postgres ]]; then
     labels='{}'
   else
     version=0.1.1
+    revision=cccccccccccccccccccccccccccccccccccccccc
+    case "$expected_image" in
+      *@sha256:1111111111111111111111111111111111111111111111111111111111111111 | \
+        *@sha256:2222222222222222222222222222222222222222222222222222222222222222)
+        version=0.1.0
+        revision=3333333333333333333333333333333333333333
+        ;;
+    esac
     [[ "${TEST_BAD_OCI_LABEL:-}" != "$service" ]] || version=9.9.9
     labels=$(jq --null-input \
       --arg version "$version" \
-      --arg revision cccccccccccccccccccccccccccccccccccccccc '
+      --arg revision "$revision" '
         {
           "org.opencontainers.image.source":
             "https://github.com/1024XEngineer/XE3-ESL",
@@ -892,12 +851,13 @@ readonly fake_path="$temporary_directory/fake-bin:$PATH"
 mkdir "$temporary_directory/lock-directory"
 chmod 0700 "$temporary_directory/lock-directory"
 readonly lock_file="$temporary_directory/lock-directory/deploy.lock"
+export SPEAKUP_STAGING_LOCK_FILE="$lock_file"
 
 expect_failure "deploy without a receipt" \
   env PATH="$fake_path" SPEAKUP_STAGING_LOCK_FILE="$lock_file" \
   "$manage" deploy \
     --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/staging.env"
+    --runtime-env-file "$temporary_directory/staging-runtime.env"
 
 receipt="$temporary_directory/staging-deploy-receipt.json"
 COMMAND_LOG="$temporary_directory/deploy.log" \
@@ -905,7 +865,7 @@ PATH="$fake_path" \
 SPEAKUP_STAGING_LOCK_FILE="$lock_file" \
   "$manage" deploy \
     --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/staging.env" \
+    --runtime-env-file "$temporary_directory/staging-runtime.env" \
     --receipt "$receipt" \
     > "$temporary_directory/deploy.out"
 
@@ -936,6 +896,13 @@ grep -Fq 'http://127.0.0.1:28083/health' "$temporary_directory/deploy.log" ||
 grep -Fq 'http://127.0.0.1:28083/readyz' "$temporary_directory/deploy.log" ||
   fail "deployment did not verify /readyz"
 [[ -f "$receipt" ]] || fail "successful deployment did not write a receipt"
+if receipt_mode=$(stat -c '%a' -- "$receipt" 2>/dev/null); then
+  :
+else
+  receipt_mode=$(stat -f '%Lp' "$receipt")
+fi
+[[ "$receipt_mode" == 444 ]] ||
+  fail "deployment receipt is not immutable mode 0444"
 manifest_sha=$(shasum -a 256 "$temporary_directory/release-manifest.json" |
   awk '{print $1}')
 jq --exit-status \
@@ -984,13 +951,159 @@ expect_failure "existing deployment receipt" \
     SPEAKUP_STAGING_LOCK_FILE="$lock_file" \
   "$manage" deploy \
     --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/staging.env" \
+    --runtime-env-file "$temporary_directory/staging-runtime.env" \
     --receipt "$receipt"
 jq --exit-status '.receipt_version == 1' "$receipt" >/dev/null ||
   fail "existing deployment receipt was changed"
 if grep -Eq ' compose .* (pull|up|run|down) ' \
   "$temporary_directory/no-clobber.log"; then
   fail "existing receipt was rejected only after a deployment side effect"
+fi
+
+rollback_receipt="$temporary_directory/staging-rollback-receipt.json"
+rollback_state="$temporary_directory/rollback-runtime.state"
+: >"$rollback_state"
+COMMAND_LOG="$temporary_directory/rollback.log" \
+PATH="$fake_path" \
+SPEAKUP_STAGING_LOCK_FILE="$lock_file" \
+TEST_RUNTIME_STATE_FILE="$rollback_state" \
+  "$manage" rollback \
+    --manifest "$temporary_directory/rollback-manifest.json" \
+    --current-manifest "$temporary_directory/release-manifest.json" \
+    --runtime-env-file "$temporary_directory/staging-runtime.env" \
+    --receipt "$rollback_receipt" \
+    >"$temporary_directory/rollback.out"
+grep -Fq 'rolled_back=true database_restored=false' \
+  "$temporary_directory/rollback.out" ||
+  fail "successful same-schema rollback was not reported"
+
+rollback_up_pattern='up --pull never --detach --no-build --no-deps --wait --wait-timeout 90 portal server'
+[[ "$(grep -Fc "$rollback_up_pattern" "$temporary_directory/rollback.log")" == 1 ]] ||
+  fail "rollback did not perform exactly one Portal/Server update"
+if grep -Eq ' compose .* (pull|down) ' "$temporary_directory/rollback.log" ||
+  grep -Eq ' compose .* up .* postgres' "$temporary_directory/rollback.log" ||
+  grep -Eq ' compose .* run .* migrate$' "$temporary_directory/rollback.log"; then
+  fail "rollback pulled, migrated, stopped, or changed PostgreSQL"
+fi
+rollback_up_line=$(grep -nF "$rollback_up_pattern" \
+  "$temporary_directory/rollback.log" | cut -d: -f1)
+target_portal_image_line=$(grep -nF \
+  "docker image inspect ghcr.io/1024xengineer/xe3-esl-portal@$rollback_portal_digest" \
+  "$temporary_directory/rollback.log" | head -n 1 | cut -d: -f1)
+target_server_image_line=$(grep -nF \
+  "docker image inspect ghcr.io/1024xengineer/xe3-esl-server@$rollback_server_digest" \
+  "$temporary_directory/rollback.log" | head -n 1 | cut -d: -f1)
+first_ready_line=$(grep -nF 'curl --fail --silent --max-time 3 http://127.0.0.1:28083/readyz' \
+  "$temporary_directory/rollback.log" | head -n 1 | cut -d: -f1)
+last_ready_line=$(grep -nF 'curl --fail --silent --max-time 3 http://127.0.0.1:28083/readyz' \
+  "$temporary_directory/rollback.log" | tail -n 1 | cut -d: -f1)
+[[ -n "$target_portal_image_line" && -n "$target_server_image_line" &&
+  -n "$first_ready_line" && -n "$last_ready_line" ]] ||
+  fail "rollback preflight or full verification was not recorded"
+((first_ready_line < target_portal_image_line &&
+  first_ready_line < target_server_image_line &&
+  target_portal_image_line < rollback_up_line &&
+  target_server_image_line < rollback_up_line &&
+  rollback_up_line < last_ready_line)) ||
+  fail "rollback verification and image preflight ordering is unsafe"
+
+rollback_manifest_sha=$(shasum -a 256 \
+  "$temporary_directory/rollback-manifest.json" | awk '{print $1}')
+jq --exit-status \
+  --arg manifest_sha "$rollback_manifest_sha" \
+  --arg portal_digest "$rollback_portal_digest" \
+  --arg server_digest "$rollback_server_digest" \
+  --arg git_sha "$rollback_git_sha" '
+    .receipt_version == 1 and
+    .manifest_sha256 == $manifest_sha and
+    .version == "0.1.0" and
+    .git_sha == $git_sha and
+    .database_schema_version == 7 and
+    .portal_image_digest == $portal_digest and
+    .server_image_digest == $server_digest and
+    .portal_container_id ==
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" and
+    .server_container_id ==
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" and
+    .postgres_container_id ==
+      "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  ' "$rollback_receipt" >/dev/null ||
+  fail "rollback receipt does not describe the verified target runtime"
+if rollback_receipt_mode=$(stat -c '%a' -- "$rollback_receipt" 2>/dev/null); then
+  :
+else
+  rollback_receipt_mode=$(stat -f '%Lp' "$rollback_receipt")
+fi
+[[ "$rollback_receipt_mode" == 444 ]] ||
+  fail "rollback receipt is not immutable mode 0444"
+
+: >"$temporary_directory/rollback-no-clobber.log"
+expect_failure "existing rollback receipt" env \
+  COMMAND_LOG="$temporary_directory/rollback-no-clobber.log" \
+  PATH="$fake_path" \
+  SPEAKUP_STAGING_LOCK_FILE="$lock_file" \
+  "$manage" rollback \
+    --manifest "$temporary_directory/rollback-manifest.json" \
+    --current-manifest "$temporary_directory/release-manifest.json" \
+    --runtime-env-file "$temporary_directory/staging-runtime.env" \
+    --receipt "$rollback_receipt"
+if grep -Fq "$rollback_up_pattern" \
+  "$temporary_directory/rollback-no-clobber.log"; then
+  fail "existing rollback receipt was rejected after a container update"
+fi
+
+assert_failed_rollback_before_update() {
+  local name=$1
+  local target_manifest=$2
+  local log=$3
+  local failed_receipt=$4
+  local state="${failed_receipt}.state"
+  shift 4
+
+  : >"$log"
+  : >"$state"
+  expect_failure "$name" env \
+    COMMAND_LOG="$log" \
+    PATH="$fake_path" \
+    SPEAKUP_STAGING_LOCK_FILE="$lock_file" \
+    TEST_RUNTIME_STATE_FILE="$state" \
+    "$@" \
+    "$manage" rollback \
+      --manifest "$target_manifest" \
+      --current-manifest "$temporary_directory/release-manifest.json" \
+      --runtime-env-file "$temporary_directory/staging-runtime.env" \
+      --receipt "$failed_receipt"
+  [[ ! -e "$failed_receipt" && ! -L "$failed_receipt" ]] ||
+    fail "$name wrote a rollback receipt"
+  [[ ! -s "$state" ]] || fail "$name changed the application runtime"
+  if grep -Fq "$rollback_up_pattern" "$log" ||
+    grep -Eq ' compose .* (pull|down) ' "$log" ||
+    grep -Eq ' compose .* up .* postgres' "$log" ||
+    grep -Eq ' compose .* run .* migrate$' "$log"; then
+    fail "$name reached a forbidden rollback mutation"
+  fi
+}
+
+assert_failed_rollback_before_update \
+  "rollback schema mismatch" \
+  "$temporary_directory/rollback-schema-mismatch-manifest.json" \
+  "$temporary_directory/rollback-schema-mismatch.log" \
+  "$temporary_directory/rollback-schema-mismatch-receipt.json"
+assert_failed_rollback_before_update \
+  "missing rollback target image" \
+  "$temporary_directory/rollback-manifest.json" \
+  "$temporary_directory/rollback-missing-image.log" \
+  "$temporary_directory/rollback-missing-image-receipt.json" \
+  TEST_MISSING_TARGET_IMAGE=portal
+assert_failed_rollback_before_update \
+  "current runtime mismatch" \
+  "$temporary_directory/rollback-manifest.json" \
+  "$temporary_directory/rollback-current-mismatch.log" \
+  "$temporary_directory/rollback-current-mismatch-receipt.json" \
+  TEST_BAD_RUNTIME_IMAGE=portal
+if grep -Fq "$rollback_portal_digest" \
+  "$temporary_directory/rollback-current-mismatch.log"; then
+  fail "current runtime mismatch reached target image preflight"
 fi
 
 assert_failed_deploy_before_application() {
@@ -1007,7 +1120,7 @@ assert_failed_deploy_before_application() {
     "$@" \
     "$manage" deploy \
       --manifest "$temporary_directory/release-manifest.json" \
-      --env-file "$temporary_directory/staging.env" \
+      --runtime-env-file "$temporary_directory/staging-runtime.env" \
       --receipt "$failed_receipt"
   [[ ! -e "$failed_receipt" && ! -L "$failed_receipt" ]] ||
     fail "$name wrote a deployment receipt"
@@ -1048,7 +1161,7 @@ expect_failure "runtime verification failure after update" \
     TEST_BAD_RUNTIME_IMAGE=portal \
   "$manage" deploy \
     --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/staging.env" \
+    --runtime-env-file "$temporary_directory/staging-runtime.env" \
     --receipt "$failed_runtime_receipt"
 [[ ! -e "$failed_runtime_receipt" ]] ||
   fail "runtime verification failure wrote a deployment receipt"
@@ -1062,7 +1175,7 @@ expect_failure "loopback verification failure after update" \
     FAIL_HEALTH=1 \
   "$manage" deploy \
     --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/staging.env" \
+    --runtime-env-file "$temporary_directory/staging-runtime.env" \
     --receipt "$failed_health_receipt"
 [[ ! -e "$failed_health_receipt" ]] ||
   fail "loopback verification failure wrote a deployment receipt"
@@ -1071,7 +1184,7 @@ COMMAND_LOG="$temporary_directory/verify.log" \
 PATH="$fake_path" \
   "$manage" verify \
     --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/staging.env" \
+    --runtime-env-file "$temporary_directory/staging-runtime.env" \
     > "$temporary_directory/verify.out"
 grep -Fq \
   'run --pull never --rm --no-deps migrate /usr/local/bin/speakup-migrate version' \
@@ -1093,7 +1206,7 @@ while IFS='|' read -r name variable value; do
     "$variable=$value" \
     "$manage" verify \
       --manifest "$temporary_directory/release-manifest.json" \
-      --env-file "$temporary_directory/staging.env"
+      --runtime-env-file "$temporary_directory/staging-runtime.env"
   if grep -Fq 'curl ' "$runtime_log"; then
     fail "$name reached endpoint checks before runtime identity validation"
   fi
@@ -1118,7 +1231,7 @@ expect_failure "verify with wrong live schema" env \
   'SCHEMA_OUTPUT=version=6 dirty=false' \
   "$manage" verify \
     --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/staging.env"
+    --runtime-env-file "$temporary_directory/staging-runtime.env"
 if grep -Fq 'curl ' "$temporary_directory/schema-verify.log"; then
   fail "verify checked endpoints after the schema mismatch"
 fi
@@ -1132,11 +1245,25 @@ expect_failure "concurrent Staging deploy" env \
   TEST_FLOCK_BUSY=1 \
   "$manage" deploy \
     --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/staging.env" \
+    --runtime-env-file "$temporary_directory/staging-runtime.env" \
     --receipt "$busy_receipt"
 [[ ! -e "$busy_receipt" ]] || fail "concurrent deploy wrote a receipt"
 if grep -Eq ' compose .* (pull|up|run|down) ' "$temporary_directory/busy.log"; then
   fail "concurrent deploy reached a mutation after lock failure"
+fi
+
+: > "$temporary_directory/busy-verify.log"
+expect_failure "verify while deployment lock is held" env \
+  COMMAND_LOG="$temporary_directory/busy-verify.log" \
+  PATH="$fake_path" \
+  SPEAKUP_STAGING_LOCK_FILE="$lock_file" \
+  TEST_FLOCK_BUSY=1 \
+  "$manage" verify \
+    --manifest "$temporary_directory/release-manifest.json" \
+    --runtime-env-file "$temporary_directory/staging-runtime.env"
+if grep -Eq ' compose .* (pull|up|run|down) |docker (inspect|image inspect)|curl ' \
+  "$temporary_directory/busy-verify.log"; then
+  fail "concurrent verify inspected runtime after lock failure"
 fi
 
 insecure_lock="$temporary_directory/insecure.lock"
@@ -1148,7 +1275,7 @@ expect_failure "insecure deployment lock" env \
   SPEAKUP_STAGING_LOCK_FILE="$insecure_lock" \
   "$manage" down \
     --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/staging.env"
+    --runtime-env-file "$temporary_directory/staging-runtime.env"
 
 lock_target="$temporary_directory/lock-target"
 : > "$lock_target"
@@ -1160,7 +1287,7 @@ expect_failure "symbolic-link deployment lock" env \
   SPEAKUP_STAGING_LOCK_FILE="$temporary_directory/lock-link" \
   "$manage" down \
     --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/staging.env"
+    --runtime-env-file "$temporary_directory/staging-runtime.env"
 
 missing_lock_directory="$temporary_directory/missing-lock-directory"
 expect_failure "missing dedicated deployment lock directory" env \
@@ -1169,7 +1296,7 @@ expect_failure "missing dedicated deployment lock directory" env \
   SPEAKUP_STAGING_LOCK_FILE="$missing_lock_directory/deploy.lock" \
   "$manage" down \
     --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/staging.env"
+    --runtime-env-file "$temporary_directory/staging-runtime.env"
 [[ ! -e "$missing_lock_directory" ]] ||
   fail "deployment created its missing lock directory"
 
@@ -1182,7 +1309,7 @@ expect_failure "world-writable deployment lock directory" env \
   SPEAKUP_STAGING_LOCK_FILE="$unsafe_lock_directory/deploy.lock" \
   "$manage" down \
     --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/staging.env"
+    --runtime-env-file "$temporary_directory/staging-runtime.env"
 [[ ! -e "$unsafe_lock_directory/deploy.lock" ]] ||
   fail "deployment created a lock in a world-writable directory"
 
@@ -1196,7 +1323,7 @@ expect_failure "symbolic-link deployment lock directory" env \
   SPEAKUP_STAGING_LOCK_FILE="$temporary_directory/symlink-lock-directory/deploy.lock" \
   "$manage" down \
     --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/staging.env"
+    --runtime-env-file "$temporary_directory/staging-runtime.env"
 [[ ! -e "$temporary_directory/real-lock-directory/deploy.lock" ]] ||
   fail "deployment followed a symbolic-link lock directory"
 
@@ -1212,7 +1339,7 @@ expect_failure "deployment lock with a symbolic-link ancestor" env \
   SPEAKUP_STAGING_LOCK_FILE="$temporary_directory/symlink-lock-ancestor/nested/deploy.lock" \
   "$manage" down \
     --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/staging.env"
+    --runtime-env-file "$temporary_directory/staging-runtime.env"
 [[ ! -e "$temporary_directory/real-lock-ancestor/nested/deploy.lock" ]] ||
   fail "deployment followed a symbolic-link lock ancestor"
 
@@ -1232,7 +1359,7 @@ expect_failure "deployment lock replaced during acquisition" env \
   TEST_LOCK_SWAP_TARGET="$race_target" \
   "$manage" down \
     --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/staging.env"
+    --runtime-env-file "$temporary_directory/staging-runtime.env"
 [[ -L "$race_lock" ]] || fail "lock replacement boundary was not exercised"
 if grep -Fq ' down ' "$temporary_directory/race-lock.log"; then
   fail "deployment continued after the lock path was replaced"
@@ -1246,7 +1373,7 @@ expect_failure "concurrent Staging down" env \
   TEST_FLOCK_BUSY=1 \
   "$manage" down \
     --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/staging.env"
+    --runtime-env-file "$temporary_directory/staging-runtime.env"
 if grep -Fq ' compose ' "$temporary_directory/down-busy.log" &&
   grep -Fq ' down ' "$temporary_directory/down-busy.log"; then
   fail "concurrent down mutated the Staging project"
@@ -1257,7 +1384,7 @@ PATH="$fake_path" \
 SPEAKUP_STAGING_LOCK_FILE="$lock_file" \
   "$manage" down \
     --manifest "$temporary_directory/release-manifest.json" \
-    --env-file "$temporary_directory/staging.env"
+    --runtime-env-file "$temporary_directory/staging-runtime.env"
 grep -Fq 'flock --nonblock 9' "$temporary_directory/down.log" ||
   fail "down did not acquire the shared Staging lock"
 grep -Fq 'down --remove-orphans' "$temporary_directory/down.log" ||

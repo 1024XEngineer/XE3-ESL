@@ -1,7 +1,7 @@
 # SpeakUp Android 发布与服务器部署方案
 
-> 状态：实施基线（PR Review 前）
-> 更新时间：2026-08-21
+> 状态：实施基线
+> 更新时间：2026-08-27
 > 关联 Issue：[#819](https://github.com/1024XEngineer/XE3-ESL/issues/819)
 > 目标 Milestone：MS4
 
@@ -98,12 +98,18 @@
 | 名称 | 含义 |
 | --- | --- |
 | PR Gate | 决定代码是否允许合入的自动化测试与审核门禁 |
-| Release Candidate | 从确定 commit 构建、等待验收的候选版本 |
+| Release Candidate | 从官方 `main` 精确 commit 构建、等待验收的内部 Candidate；不等于正式发布 |
+| Stable Tag | Candidate 通过验收后才创建的不可变 `vX.Y.Z` Git 引用 |
+| GitHub Release | 基于 Stable Tag 发布用户制品和更新说明的正式发布记录 |
 | Artifact | APK、Portal 镜像、后端镜像、校验和与发布清单 |
-| Staging | 与生产隔离、供团队验证的真实测试环境 |
-| Production | 普通用户访问的正式环境 |
+| Staging | 部署 Candidate 制品、与生产隔离并供团队验证的真实测试环境 |
+| Production | 已批准正式版本面向普通用户运行的环境 |
 | Deploy | 把已经构建好的指定版本放到目标环境运行 |
 | Promote | 将已经验证的候选版本批准进入生产 |
+
+Release Candidate、Stable Tag、GitHub Release、Staging 部署和 Production 部署是
+五种不同状态。Candidate 构建成功不表示已经部署 Staging；创建 Stable Tag 不表示
+GitHub Release 已发布；发布 GitHub Release 也不表示 Production 已完成部署或切换。
 
 测试环境不等于 Mock，也不要求购买第二台服务器。首版可以在同一物理服务器上
 使用不同的容器、端口、域名和数据库建立隔离环境，并通过密码或 IP 白名单只向
@@ -115,8 +121,10 @@
 
 - `dev` 是日常集成分支，功能 PR 合入 `dev`。
 - `main` 是发布分支，只通过 `dev -> main` 的 Release PR 接收候选版本。
-- Release PR 合并后，给 `main` 上新产生的 merge commit 创建 `vX.Y.Z` Tag；
-  Tag 触发制品构建。不存在“合入 main 后再把全部代码额外推送一次”。
+- Release PR 合并后，官方仓库 `main` 的 `push` 自动以精确 commit 触发内部
+  Candidate 构建，不提前创建 `vX.Y.Z` Tag。不存在“合入 main 后再把全部代码
+  额外推送一次”。
+- Stable Tag 只留给通过验收、准备进入正式发布流程的同一 commit 和制品。
 - `main` 上的 Release merge commit 不会自动回到 `dev`，因此 GitHub 可能显示
   `dev` 落后若干 merge commit。这是历史拓扑差异，不等于 `dev` 缺少代码。
 - 判断是否需要同步时，必须检查 `main` 独有的非 merge commit 和实际 tree diff，
@@ -134,17 +142,19 @@
   -> PR Gate 与 Review
   -> 合入 dev
   -> Release PR: dev -> main
-  -> 创建不可变 vX.Y.Z Tag
-  -> 全量测试并构建 Release Candidate
-  -> 自动部署 Staging
+  -> 官方 main `push` 自动以精确 SHA 触发内部 Release Candidate
+  -> 全量测试并构建完整、可追溯制品
+  -> 成功后由独立 Staging Workflow 自动部署同一 Candidate
   -> 自动冒烟 + 真人验收
   -> 等待 Production 人工批准
   -> 生产数据备份与 migration
   -> 部署同一版本的 Portal/后端制品
   -> 上传正式 APK，但暂不更新公开入口
   -> 生产冒烟
+  -> 基于同一制品创建 GitHub Release 草稿并上传完整资产
   -> 原子更新 Portal APK 下载入口
-  -> 发布 GitHub Release 与部署记录
+  -> 校验公开 APK、更新日志与同一发布时间
+  -> 发布不可变 vX.Y.Z Tag、GitHub Release 与部署记录
 ```
 
 任一自动化检查失败时流程停止。没有人工批准时，生产环境不发生变化。
@@ -186,12 +196,23 @@ Check 严格模式已暂缓，不在本阶段擅自重新启用。
 
 ### 7.2 Release Candidate
 
-不可变 `vX.Y.Z` Tag 触发 Release Workflow。Workflow 必须先验证：
+Release Candidate Workflow 仅响应官方仓库 `refs/heads/main` 的 `push`，并将
+GitHub Actions 事件提供的精确 `github.sha` 作为 Candidate commit。Workflow 必须
+先验证：
 
-- Tag commit 位于 `main`。
-- Flutter versionName 与 Tag 一致。
-- Android versionCode 高于上一发布版本。
+- 事件为 `push`，仓库为 `1024XEngineer/XE3-ESL`，ref 为官方 `main`。
+- checkout HEAD 与完整小写 Candidate SHA 一致，且 commit 位于 `main` 的
+  first-parent 历史。
+- Candidate 的 versionName 或 commit 尚未被 Stable Tag 使用。
+- Flutter versionName 使用 `X.Y.Z`，且版本与 Android versionCode 均高于上一
+  稳定发布版本。
+- 现有 Stable Tag 集合与运行时远端精确一致，且全部位于 `main` first-parent；
+  Tag、versionName 和 versionCode 继续保持单调。
 - 全量测试通过。
+
+Candidate 身份由 `version`、`versionCode`、`git_sha` 和 GitHub Actions run ID
+共同组成。run ID 由 Actions 运行及 manifest 的 `quality_run_url` 保留；内部
+Candidate 不创建、模拟或要求 `vX.Y.Z` Stable Tag。
 
 一次构建产生：
 
@@ -224,11 +245,15 @@ Check 严格模式已暂缓，不在本阶段擅自重新启用。
 镜像可使用语义版本标签方便识别，但部署必须引用 digest，不能引用可变
 `latest`。
 
+Release Candidate 只构建并上传上述制品，不提前创建 Stable Tag 或 GitHub
+Release。独立 Staging Workflow 自动部署同一 Candidate；Production Workflow 在
+Staging 成功后进入 Environment 人工审批，批准后才取得生产凭证并继续正式发布。
+
 Android 正式签名采用以下已确认边界：
 
 - GitHub Environment 固定为 `android-release-signing`。
-- Required reviewer 为 `Lq0412`；当前单人发布阶段允许本人审核，未来增加独立
-  发布负责人后再启用禁止自审。
+- 不设置 Required reviewer，避免在 Candidate 构建阶段提前暂停；唯一人工发布
+  审批保留在后续 `production` Environment。
 - 正式签名证书 Owner 为 `Lq0412`。
 - 证书与密码均保存两份：团队密码管理器一份、离线加密备份一份，不能只保存在
   GitHub Secret。
@@ -236,8 +261,8 @@ Android 正式签名采用以下已确认边界：
   Runner；构建结束后删除，不进入 Artifact、日志或仓库。
 
 首次运行前，管理员必须先创建该 Environment，将 Deployment branches and tags
-设为 Selected branches and tags、Tag pattern 设为 `v*.*.*`，并配置 Required
-reviewer；随后才能添加以下 Environment Secrets：
+设为 Selected branches and tags，并且只允许 Branch pattern `main`；随后才能添加
+以下 Environment Secrets。Candidate 的正式签名不需要 Tag pattern：
 
 - `SPEAKUP_ANDROID_KEYSTORE_BASE64`
 - `SPEAKUP_ANDROID_KEY_ALIAS`
@@ -245,13 +270,45 @@ reviewer；随后才能添加以下 Environment Secrets：
 - `SPEAKUP_ANDROID_KEY_PASSWORD`
 - `SPEAKUP_ANDROID_CERT_SHA256`
 
-正式 Tag 还需要单独的 Tag ruleset 禁止更新和删除。Workflow 会严格校验 Tag
-格式及其 commit 是否位于 `main`，但 Workflow 本身不能阻止有权限的人移动 Tag。
+如果 `android-release-signing` 没有允许 `main`，由 `main` 的 `push` 触发的
+Candidate 将无法进入签名 job 或取得 Environment Secrets。不能通过移出
+Environment 或复制 Secrets 绕过该边界。
+
+正式 Tag 还需要单独的 Tag ruleset 禁止更新和删除。Candidate Workflow 不创建
+Tag；保留的 Stable Tag 校验会继续检查运行时本地/远端集合、Tag 格式、commit、
+`main` 历史和版本单调性，但单次 Workflow 无法重建运行前已经被移动或删除的历史，
+因此不能替代平台 Tag ruleset。
 
 ### 7.3 Staging 与 Production Deploy
 
+Release Candidate Workflow 本身不直接执行部署。独立的 Staging Workflow 仅在
+由官方 `main` 的 `push` 触发的 Candidate 成功后自动部署同一制品；成功后独立
+Production Workflow 校验 Candidate 与 Staging 回执，并停在 GitHub Environment
+等待人工批准。
+
 Deploy Workflow 接收确定的 `version` 和 `environment`，读取 Release manifest
 后部署现有制品，不重新构建。
+
+Staging 主机 contract 先把配置和命令依赖拆成两个互不重叠的接口：
+
+| 输入 | 职责与命令 | 调用身份所需访问 |
+| --- | --- | --- |
+| `staging-runtime.env` | 只包含 PostgreSQL、Portal、Server runtime 输入；`validate`、`deploy`、`verify`、`status`、`down` 只接受 `--runtime-env-file`，负责 manifest、Compose、migration、loopback health、锁和 receipt | 读取 manifest、runtime env 及其引用的 Server env，访问 Staging Docker/Compose runtime，并按命令访问锁和新 receipt；不需要 edge env、TLS key、htpasswd、ACME 或 public root |
+| `staging-edge.env` | 只包含 TLS certificate/key、htpasswd、ACME root 和 public root；`render-nginx` 只接受 `--edge-env-file` 与 `--output` | 读取 edge env 及其引用的边缘文件、遍历边缘目录并创建指定输出；不需要 manifest、runtime/Server env、receipt、Docker 或 Compose |
+
+`staging.speak-up.top` 与 `staging-api.speak-up.top` 固定为仓库 contract，不在两个
+env 中重复配置。两类 env 使用精确 allowlist，未知、重复、交叉 key 或 ambient
+environment 补值均 fail closed，错误不得输出 Secret 值。现有合并式 `staging.env`
+迁移时必须拆出两个 mode `0400`/`0600`、由各自执行 UID 持有的文件，删除两个旧
+hostname key，并分别替换为 `--runtime-env-file` 和 `--edge-env-file`；旧
+`--env-file` 明确失败，不提供兼容 fallback。
+
+这次拆分只消除 runtime 命令读取 edge Secret 的功能依赖，不构成主机级强制隔离。
+当前 runtime 路径仍会调用 Docker Compose；原始 rootful Docker socket、`docker`
+group、无限制 `sudo` 或 root SSH 都具有主机 root 级影响面，未来 CI 不得获得这些
+能力。受限 broker/forced-command、独立 Staging daemon 或更强 VM/主机边界、专用
+身份和资源限制属于后续独立任务。#1001 对应 PR 不创建 Workflow、主机用户、ACL、
+sudoers、systemd service 或 broker，也不授权 CI 连接服务器。
 
 Staging 自动部署并验证：
 
@@ -270,10 +327,22 @@ Release manifest 指向的同一 Production APK 完成安装、启动与生产 A
 Production 使用 GitHub Environment：
 
 - 必须由指定发布负责人批准。
-- 禁止部署发起人自行批准。
+- 当前单人发布阶段允许指定负责人批准自己发起的部署，但不能跳过显式批准；增加
+  第二位发布负责人后启用禁止自审。
 - 审批前不释放生产环境 SSH 凭证和 Secret。
 - 同一时间只允许一个生产部署。
-- 只允许正式版本 Tag 部署。
+- 只允许官方 `main` 的已验证 Candidate 部署；Stable Tag 只在 Production 成功、
+  APK 公开入口校验完成后由 Workflow 创建。
+
+Production 部署成功后的发布顺序固定为：创建或复用 Release 草稿、上传并校验全部
+正式资产、通过受限 broker 激活 APK 指针、公网校验 APK 和 changelog、最后发布
+GitHub Release。仓库启用 immutable releases，`v*.*.*` Tag ruleset 禁止更新和
+删除。Production job 仅在 Environment 批准后取得 `contents: write` 并创建新
+Tag；已发布的历史 Tag 不能移动或删除。
+
+同一 Production workflow run 的后续 attempt 可以复用已成功的相同部署回执，
+只执行只读 verify，不重复备份、migration 或容器重启。不同 workflow run、不同
+Candidate、不同 Staging 回执或不同 bundle 均 fail closed。
 
 ### 7.4 备份任务
 
@@ -486,7 +555,9 @@ Portal 报名和访问事件继续使用独立 SQLite。它与产品核心业务
 ### 14.1 自动门禁
 
 - [ ] PR Gate 全绿。
-- [ ] Release Tag、commit 和版本一致。
+- [ ] Candidate 来自官方 `main` 精确 SHA，version、versionCode、SHA 和 run ID
+      已记录。
+- [ ] Production 成功后，Stable Tag、commit 和版本一致且不可修改。
 - [ ] Portal/后端镜像 digest 已记录。
 - [ ] APK 签名、版本、架构和 SHA-256 正确。
 - [ ] Staging migration、健康检查和真实供应商冒烟通过。
@@ -531,7 +602,8 @@ Portal 报名和访问事件继续使用独立 SQLite。它与产品核心业务
 
 7. 为 Go 后端增加最小生产多阶段 Dockerfile 和健康检查。
 8. 建立 Android 正式签名、版本规则、Staging/Production API 配置和 APK 校验。
-9. 建立 Release Candidate Workflow、OCI 镜像、APK、SHA-256 与 manifest。
+9. 建立不依赖 Stable Tag 的内部 Release Candidate Workflow、OCI 镜像、APK、
+   SHA-256 与 manifest。
 10. 为 Portal 增加版本化 APK 下载展示，但在生产验证前不公开新版本。
 
 ### Phase 3：测试环境与生产部署
@@ -565,6 +637,9 @@ Workflow 猜测或静默采用默认值。
 
 - [GitHub Deployments and environments](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments)
 - [GitHub Reviewing deployments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/review-deployments)
+- [GitHub secure use of self-hosted runners](https://docs.github.com/en/actions/reference/security/secure-use)
+- [Docker Engine security and daemon attack surface](https://docs.docker.com/engine/security/)
+- [Docker group root-level privileges](https://docs.docker.com/engine/install/linux-postinstall/)
 - [Android Sign your app](https://developer.android.com/studio/publish/app-signing)
 - [Android Version your app](https://developer.android.com/studio/publish/versioning)
 - [Android Release through a website](https://developer.android.com/studio/publish#publishing-website)

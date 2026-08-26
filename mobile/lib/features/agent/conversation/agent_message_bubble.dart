@@ -317,7 +317,7 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
         InlineLanguageFeedback(
           leading: recordingDeleted
               ? null
-              : _VoicePlaybackAction(
+              : InlineVoicePlaybackAction(
                   key: Key('agent-user-voice-play-${message.id}'),
                   loading: loading,
                   playing: playing,
@@ -355,54 +355,6 @@ class _AgentMessageBubbleState extends State<AgentMessageBubble> {
           ),
         ],
       ],
-    );
-  }
-}
-
-class _VoicePlaybackAction extends StatelessWidget {
-  const _VoicePlaybackAction({
-    required this.loading,
-    required this.playing,
-    required this.duration,
-    required this.onPressed,
-    super.key,
-  });
-
-  final bool loading;
-  final bool playing;
-  final Duration duration;
-  final VoidCallback? onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      button: true,
-      enabled: onPressed != null,
-      label: playing ? '停止播放原声' : '播放原声，${_formatDuration(duration)}',
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onPressed,
-          borderRadius: BorderRadius.circular(SpeakUpDesign.radiusControl),
-          child: SizedBox.square(
-            dimension: SpeakUpDesign.minTapTarget,
-            child: Center(
-              child: loading
-                  ? const SizedBox.square(
-                      dimension: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : Icon(
-                      playing ? Icons.pause_rounded : Icons.graphic_eq_rounded,
-                      size: 24,
-                      color: onPressed == null
-                          ? SpeakUpDesign.tertiary
-                          : SpeakUpDesign.primary,
-                    ),
-            ),
-          ),
-        ),
-      ),
     );
   }
 }
@@ -472,13 +424,6 @@ typedef _AgentMessageAudioSnapshot = ({
   double speechSpeed,
   bool usesPreview,
 });
-
-String _formatDuration(Duration value) {
-  final totalSeconds = value.inSeconds.clamp(0, 3599);
-  final minutes = totalSeconds ~/ 60;
-  final seconds = totalSeconds % 60;
-  return '$minutes:${seconds.toString().padLeft(2, '0')}';
-}
 
 String _formatSpeed(double value) {
   return value == value.roundToDouble()

@@ -43,7 +43,6 @@ type RuntimeConfiguration struct {
 	AnswerTipGenerator AnswerTipGenerator
 	Recordings         RecordingUploader
 	ASRLease           time.Duration
-	Feedback           TurnFeedbackPort
 	FeedbackReader     TurnFeedbackStatusReader
 }
 
@@ -100,14 +99,14 @@ func NewRuntimeApplications(
 		return nil, nil, err
 	}
 
-	feedbackPorts := make([]TurnFeedbackPort, 0, 1)
-	if configuration.Feedback != nil {
-		feedbackPorts = append(feedbackPorts, configuration.Feedback)
+	feedbackReaders := make([]TurnFeedbackStatusReader, 0, 1)
+	if configuration.FeedbackReader != nil {
+		feedbackReaders = append(feedbackReaders, configuration.FeedbackReader)
 	}
 	orchestrator, err := NewRoundOrchestrator(
 		roundService,
 		participantResolver,
-		feedbackPorts...,
+		feedbackReaders...,
 	)
 	if err != nil {
 		return nil, nil, err

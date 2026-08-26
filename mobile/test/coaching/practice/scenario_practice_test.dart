@@ -55,6 +55,65 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('requests every scenario question from the playback owner once', (
+    tester,
+  ) async {
+    final controller = await _scenarioController();
+    addTearDown(controller.dispose);
+    final playedQuestionIds = <String>[];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ScenarioPracticePage(
+          practiceController: controller,
+          onPlayQuestion: () async {
+            playedQuestionIds.add(controller.currentQuestion!.id);
+            return true;
+          },
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final firstQuestionId = controller.currentQuestion!.id;
+    expect(playedQuestionIds, <String>[firstQuestionId]);
+
+    await tester.pump();
+    expect(playedQuestionIds, <String>[firstQuestionId]);
+
+    await controller.submitPracticeText('I have a reservation under Chen.');
+    await tester.pump();
+    await tester.pump();
+
+    final secondQuestionId = controller.currentQuestion!.id;
+    expect(secondQuestionId, isNot(firstQuestionId));
+    expect(playedQuestionIds, <String>[firstQuestionId, secondQuestionId]);
+  });
+
+  testWidgets('offers question replay when owned playback fails', (
+    tester,
+  ) async {
+    final controller = await _scenarioController();
+    addTearDown(controller.dispose);
+    var playbackCalls = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ScenarioPracticePage(
+          practiceController: controller,
+          onPlayQuestion: () async {
+            playbackCalls++;
+            return false;
+          },
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(playbackCalls, 1);
+    expect(find.text('重试朗读'), findsOneWidget);
+  });
+
   testWidgets('hides round progress and lets open scenarios finish manually', (
     tester,
   ) async {
@@ -427,7 +486,7 @@ void main() {
     final userBubble = find.byKey(Key('practice-message-${userMessage.id}'));
     expect(
       (tester.widget<Container>(userBubble).decoration! as BoxDecoration).color,
-      SpeakUpDesign.primaryMuted,
+      SpeakUpDesign.userBubble,
     );
 
     final userTurnsAfterSend = controller.practiceMessages
@@ -489,62 +548,56 @@ void main() {
     expect(find.byKey(const Key('scenario-record')), findsOneWidget);
   });
 
-  testWidgets(
-    'keeps pending feedback silent without breaking the composer row',
-    (tester) async {
-      final controller = await _scenarioController(
-        practiceClient: _AsyncReviewPracticeClient(),
-      );
-      addTearDown(controller.dispose);
-      for (var turn = 0; turn < 3; turn++) {
-        await controller.startRecording();
-        await controller.stopRecording();
-        await controller.confirmTranscript();
-      }
-      expect(controller.recordingState, PracticeRecordingState.completed);
+  testWidgets('shows pending optimization without breaking the composer row', (
+    tester,
+  ) async {
+    final controller = await _scenarioController(
+      practiceClient: _AsyncReviewPracticeClient(),
+    );
+    addTearDown(controller.dispose);
+    for (var turn = 0; turn < 3; turn++) {
+      await controller.startRecording();
+      await controller.stopRecording();
+      await controller.confirmTranscript();
+    }
+    expect(controller.recordingState, PracticeRecordingState.completed);
 
-      final feedbackController = SpeechFeedbackController(
-        client: _PendingSpeechFeedbackClient(),
-      );
-      addTearDown(feedbackController.dispose);
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: SpeakUpTheme.light,
-          home: ScenarioPracticePage(
-            practiceController: controller,
-            speechFeedbackController: feedbackController,
-          ),
+    final feedbackController = SpeechFeedbackController(
+      client: _PendingSpeechFeedbackClient(),
+    );
+    addTearDown(feedbackController.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: SpeakUpTheme.light,
+        home: ScenarioPracticePage(
+          practiceController: controller,
+          speechFeedbackController: feedbackController,
         ),
-      );
-      await tester.pump();
+      ),
+    );
+    await tester.pump();
 
-      expect(tester.takeException(), isNull);
-      expect(
-        find.byKey(const Key('speech-feedback-loading-indicator')),
-        findsNothing,
-      );
-      expect(find.byType(SpeechFeedbackDisclosure), findsNothing);
-      expect(find.text('正在生成评分与纠错…'), findsNothing);
-      expect(
-        find.byKey(const Key('scenario-completion-sheet')),
-        findsOneWidget,
-      );
-      expect(find.text('场景练习已完成'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    expect(find.byKey(const Key('inline-language-optimizing')), findsWidgets);
+    expect(find.text('优化中'), findsNothing);
+    expect(find.byType(SpeechFeedbackDisclosure), findsNothing);
+    expect(find.text('正在生成评分与纠错…'), findsNothing);
+    expect(find.byKey(const Key('scenario-completion-sheet')), findsOneWidget);
+    expect(find.text('场景练习已完成'), findsOneWidget);
 
-      await tester.timedDrag(
-        find.byKey(const Key('scenario-completion-drag-region')),
-        const Offset(0, 200),
-        const Duration(milliseconds: 600),
-      );
-      await tester.pumpAndSettle();
+    await tester.timedDrag(
+      find.byKey(const Key('scenario-completion-drag-region')),
+      const Offset(0, 200),
+      const Duration(milliseconds: 600),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
 
-      expect(find.byKey(const Key('scenario-completion-sheet')), findsNothing);
-      expect(
-        find.byKey(const Key('scenario-conversation-history')),
-        findsOneWidget,
-      );
-    },
-  );
+    expect(find.byKey(const Key('scenario-completion-sheet')), findsNothing);
+    expect(
+      find.byKey(const Key('scenario-conversation-history')),
+      findsOneWidget,
+    );
+  });
 
   testWidgets('hands completed scenario to the generic completion callback', (
     tester,

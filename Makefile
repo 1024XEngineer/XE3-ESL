@@ -11,6 +11,7 @@ SHELL := /bin/bash
 	check-flutter-analyze \
 	check-flutter-test \
 	check-flutter-coverage \
+	check-ios-simulator-stub \
 	check-android-release-guard \
 	check-go \
 	check-go-coverage \
@@ -33,6 +34,7 @@ SHELL := /bin/bash
 	check-production-deploy \
 	check-production-nginx \
 	check-staging-deploy \
+	check-staging-host-access \
 	check-staging-nginx \
 	dev-android \
 	dev-ios-simulator \
@@ -48,6 +50,7 @@ help:
 		'  make check          Run Flutter, Go, and API checks' \
 		'  make check-flutter  Run Flutter dependency, format, analysis, and test checks' \
 		'  make check-flutter-coverage  Run Flutter checks and write mobile/coverage/lcov.info' \
+		'  make check-ios-simulator-stub  Verify the Intel simulator AvatarKit contract' \
 		'  make check-android-release-guard  Verify release signing fails closed' \
 		'  make check-go       Run Go format, vet, and test checks' \
 		'  make check-go-coverage  Run Go checks and write server/coverage.out' \
@@ -64,8 +67,9 @@ help:
 		'  make check-observability  Validate monitoring, alert, and log rotation contracts' \
 		'  make check-production-deploy  Validate the immutable Production contract' \
 		'  make check-production-nginx  Run nginx -t against the Production template' \
-		'  make check-staging-deploy  Validate Staging runtime, schema, lock, and receipt contracts' \
-		'  make check-staging-nginx  Run nginx -t against the rendered Staging template' \
+		'  make check-staging-deploy  Validate Staging runtime-env, schema, lock, and receipt contracts' \
+		'  make check-staging-host-access  Validate restricted Staging SSH and rootless host access' \
+		'  make check-staging-nginx  Validate the Staging edge-env and rendered Nginx contract' \
 		'  make dev-android    Start the backend and run the App on an Android device' \
 		'  make dev-ios-simulator  Start the backend on an iOS Simulator' \
 		'  make build-android-release-staging  Build the signed staging arm64 APK' \
@@ -87,11 +91,20 @@ check-flutter-format: check-flutter-dependencies
 check-flutter-analyze: check-flutter-format
 	cd mobile && flutter analyze --no-pub
 
-check-flutter-test: check-flutter-analyze
+check-flutter-test: check-flutter-analyze check-ios-simulator-stub
 	cd mobile && flutter test --no-pub
 
-check-flutter-coverage: check-flutter-analyze check-android-release-guard
+check-flutter-coverage: check-flutter-analyze check-android-release-guard check-ios-simulator-stub
 	cd mobile && flutter test --no-pub --coverage
+
+check-ios-simulator-stub:
+	@set -euo pipefail; \
+	stub_dir="$$(mktemp -d)"; \
+	trap 'rm -rf "$$stub_dir"' EXIT; \
+	cp -R tools/ios-simulator-dev/avatar_kit_stub/. "$$stub_dir/"; \
+	cd "$$stub_dir"; \
+	flutter pub get; \
+	flutter test --no-pub
 
 check-android-release-guard: check-flutter-dependencies
 	@set -euo pipefail; \
@@ -332,6 +345,10 @@ check-observability:
 	./deploy/observability/test-nginx.sh
 
 check-production-deploy:
+	node --test tools/production-deploy/*.test.mjs
+	node --test tools/release-finalize/*.test.mjs
+	cd server && go test -count=1 ./cmd/production-broker
+	./deploy/production/test-host-access.sh
 	./deploy/production/test.sh
 
 check-production-nginx:
@@ -340,6 +357,9 @@ check-production-nginx:
 check-staging-deploy:
 	node --test deploy/staging/uat.test.mjs
 	./deploy/staging/test.sh
+
+check-staging-host-access:
+	./deploy/staging/test-host-access.sh
 
 check-staging-nginx:
 	./deploy/staging/test-nginx.sh

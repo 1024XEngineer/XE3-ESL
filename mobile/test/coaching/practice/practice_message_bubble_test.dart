@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:speakup/design/practice_conversation_components.dart';
 import 'package:speakup/features/coaching/practice/practice_message_bubble.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 
@@ -89,5 +90,30 @@ void main() {
 
     expect(actionCalls, 1);
     expect(find.text('查看反馈'), findsOneWidget);
+  });
+
+  testWidgets('reuses the inline original-voice action for a recorded answer', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: PracticeMessageBubble(
+            message: PracticeMessage(
+              id: 'practice-user-voice',
+              role: PracticeMessageRole.user,
+              text: 'I led the migration.',
+              audioAssetId: 'audio-asset-1',
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(
+      find.byKey(const Key('practice-user-voice-play-practice-user-voice')),
+      findsOneWidget,
+    );
+    expect(find.byType(InlineVoicePlaybackAction), findsOneWidget);
   });
 }

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -11,6 +12,8 @@ import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/platform_navigation_bar.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/app/speak_up_shell.dart';
+import 'package:speakup/design/speak_up_components.dart';
+import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/agent/client_action/agent_client_action.dart';
 import 'package:speakup/features/agent/conversation/conversation.dart';
 import 'package:speakup/features/agent/conversation/agent_message_bubble.dart';
@@ -21,22 +24,43 @@ import 'package:speakup/features/coaching/preparation/practice_plan_client_actio
 import 'package:speakup/features/coaching/review/review.dart';
 
 void main() {
-  testWidgets('uses voice and analysis icons for Material navigation', (
+  testWidgets('reuses the iOS icon set for Material navigation', (
     tester,
   ) async {
     await tester.pumpWidget(const SpeakUpApp.preview());
     final navigation = find.byKey(const Key('primary-navigation'));
 
     expect(
-      find.descendant(of: navigation, matching: find.byIcon(Icons.mic_rounded)),
+      find.descendant(
+        of: navigation,
+        matching: find.byIcon(CupertinoIcons.waveform_circle_fill),
+      ),
       findsOneWidget,
     );
     expect(
       find.descendant(
         of: navigation,
-        matching: find.byIcon(Icons.insights_outlined),
+        matching: find.byIcon(CupertinoIcons.chart_bar),
       ),
       findsOneWidget,
+    );
+    expect(
+      tester
+          .widget<Icon>(find.byIcon(CupertinoIcons.waveform_circle_fill))
+          .color,
+      SpeakUpDesign.ink,
+    );
+    expect(
+      tester.widget<Icon>(find.byIcon(CupertinoIcons.square_grid_2x2)).color,
+      SpeakUpDesign.secondary,
+    );
+    expect(
+      tester.widget<Text>(find.text('SpeakUp')).style?.color,
+      SpeakUpDesign.ink,
+    );
+    expect(
+      tester.widget<Text>(find.text('训练')).style?.color,
+      SpeakUpDesign.secondary,
     );
 
     await tester.tap(find.byKey(const Key('primary-tab-review')));
@@ -44,16 +68,32 @@ void main() {
     expect(
       find.descendant(
         of: navigation,
-        matching: find.byIcon(Icons.mic_none_rounded),
+        matching: find.byIcon(CupertinoIcons.waveform_circle),
       ),
       findsOneWidget,
     );
     expect(
       find.descendant(
         of: navigation,
-        matching: find.byIcon(Icons.insights_rounded),
+        matching: find.byIcon(CupertinoIcons.chart_bar_fill),
       ),
       findsOneWidget,
+    );
+    expect(
+      tester.widget<Icon>(find.byIcon(CupertinoIcons.waveform_circle)).color,
+      SpeakUpDesign.secondary,
+    );
+    expect(
+      tester.widget<Icon>(find.byIcon(CupertinoIcons.chart_bar_fill)).color,
+      SpeakUpDesign.ink,
+    );
+    expect(
+      tester.widget<Text>(find.text('SpeakUp')).style?.color,
+      SpeakUpDesign.secondary,
+    );
+    expect(
+      tester.widget<Text>(find.text('复盘')).style?.color,
+      SpeakUpDesign.ink,
     );
   });
 
@@ -134,7 +174,10 @@ void main() {
     final navigation = find.byKey(const Key('primary-navigation'));
     expect(navigation, findsOneWidget);
     expect(
-      find.descendant(of: navigation, matching: find.byIcon(Icons.mic_rounded)),
+      find.descendant(
+        of: navigation,
+        matching: find.byIcon(CupertinoIcons.waveform_circle_fill),
+      ),
       findsOneWidget,
     );
     expect(find.byType(BackdropFilter), findsNothing);
@@ -171,6 +214,8 @@ void main() {
     await tester.pumpWidget(const SpeakUpApp.preview());
     final semantics = tester.ensureSemantics();
 
+    expect(find.byType(SpeakUpAmbientBackground), findsWidgets);
+
     await _tapPrimaryDestination(
       tester,
       key: 'primary-tab-scenes',
@@ -180,7 +225,7 @@ void main() {
     expect(
       find.descendant(
         of: find.byKey(const Key('primary-navigation')),
-        matching: find.byIcon(Icons.dashboard_rounded),
+        matching: find.byIcon(CupertinoIcons.square_grid_2x2_fill),
       ),
       findsOneWidget,
     );
@@ -192,6 +237,13 @@ void main() {
       ),
     );
     expect(shellScaffold.extendBody, isFalse);
+    expect(shellScaffold.backgroundColor, Colors.transparent);
+    expect(
+      tester
+          .widget<Scaffold>(find.byKey(const Key('scenes-page')))
+          .backgroundColor,
+      Colors.transparent,
+    );
     await _tapPrimaryDestination(
       tester,
       key: 'primary-tab-review',
@@ -207,6 +259,12 @@ void main() {
     );
     expect(find.byKey(const Key('profile-avatar')), findsOneWidget);
     expect(find.byKey(const Key('profile-display-name')), findsOneWidget);
+    expect(
+      tester
+          .widget<Scaffold>(find.byKey(const Key('profile-page')))
+          .backgroundColor,
+      Colors.transparent,
+    );
     expect(
       find.byKey(const Key('profile-ielts-ability-button')),
       findsOneWidget,
@@ -945,7 +1003,7 @@ void main() {
     );
   });
 
-  testWidgets('keeps available Agent actions above the composer on iPhone', (
+  testWidgets('anchors available Agent actions above the composer', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(402, 874);
@@ -973,7 +1031,7 @@ void main() {
     final composerRect = tester.getRect(
       find.byKey(const Key('agent-composer-surface')),
     );
-    expect(composerRect.top - lastActionRect.bottom, greaterThanOrEqualTo(16));
+    expect(composerRect.top - lastActionRect.bottom, closeTo(16, 0.01));
   });
 
   testWidgets('keeps three and four Agent actions on the same bottom edge', (

@@ -1,0 +1,16 @@
+#!/bin/bash
+
+set -euo pipefail
+
+fail() {
+  printf 'staging SSH gate: %s\n' "$*" >&2
+  exit 1
+}
+
+(( $# == 0 )) || fail "arguments are not accepted"
+[[ -z "${SSH_ORIGINAL_COMMAND:-}" ]] ||
+  fail "remote commands and subsystems are not accepted"
+
+unset SSH_ORIGINAL_COMMAND
+exec /usr/bin/sudo -n -u speakup-staging-runtime -- \
+  /usr/local/libexec/speakup-staging-broker

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:speakup/design/conversation_bubble_surface.dart';
 import 'package:speakup/design/speak_up_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/speak_up_theme.dart';
@@ -8,7 +9,8 @@ void main() {
   test('theme exposes the shared semantic visual tokens', () {
     final theme = SpeakUpTheme.light;
 
-    expect(theme.scaffoldBackgroundColor, SpeakUpDesign.canvas);
+    expect(theme.scaffoldBackgroundColor, Colors.transparent);
+    expect(theme.appBarTheme.backgroundColor, Colors.transparent);
     expect(theme.colorScheme.primary, SpeakUpDesign.primary);
     expect(SpeakUpDesign.primary, SpeakUpDesign.ink);
     expect(theme.progressIndicatorTheme.color, SpeakUpDesign.primary);
@@ -27,6 +29,69 @@ void main() {
     );
     expect(theme.inputDecorationTheme.fillColor, SpeakUpDesign.surface);
     expect(theme.bottomSheetTheme.showDragHandle, isTrue);
+  });
+
+  testWidgets('ambient background matches the approved product gradient', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const Directionality(
+        textDirection: TextDirection.ltr,
+        child: SizedBox.expand(child: SpeakUpAmbientBackground()),
+      ),
+    );
+
+    final box = tester.widget<DecoratedBox>(find.byType(DecoratedBox));
+    final decoration = box.decoration as BoxDecoration;
+    final gradient = decoration.gradient! as LinearGradient;
+
+    expect(gradient.begin, Alignment.topCenter);
+    expect(gradient.end, Alignment.bottomCenter);
+    expect(gradient.colors, const [
+      SpeakUpDesign.ambientTop,
+      SpeakUpDesign.ambientBase,
+      SpeakUpDesign.ambientBase,
+    ]);
+    expect(gradient.stops, const [0, 0.42, 1]);
+  });
+
+  testWidgets('user conversation bubbles use the dedicated pale blue surface', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Column(
+          children: [
+            ConversationBubbleSurface(
+              bubbleKey: Key('user-bubble'),
+              isUser: true,
+              child: Text('用户消息'),
+            ),
+            ConversationBubbleSurface(
+              bubbleKey: Key('assistant-bubble'),
+              isUser: false,
+              child: Text('AI 消息'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    final userDecoration =
+        tester
+                .widget<Container>(find.byKey(const Key('user-bubble')))
+                .decoration!
+            as BoxDecoration;
+    final assistantDecoration =
+        tester
+                .widget<Container>(find.byKey(const Key('assistant-bubble')))
+                .decoration!
+            as BoxDecoration;
+
+    expect(userDecoration.color, SpeakUpDesign.userBubble);
+    expect(userDecoration.border?.top.color, SpeakUpDesign.userBubbleBorder);
+    expect(assistantDecoration.color, Colors.transparent);
+    expect(assistantDecoration.border, isNull);
   });
 
   testWidgets(

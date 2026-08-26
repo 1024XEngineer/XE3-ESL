@@ -1,7 +1,7 @@
 name: speakup
 description: "A new Flutter project."
 publish_to: 'none'
-version: 0.1.7+8
+version: 0.1.8+9
 
 environment:
   sdk: ^3.12.2
@@ -9,6 +9,7 @@ environment:
 dependencies:
   avatar_kit: 1.0.0-beta.44
   audioplayers: ^6.8.1
+  cupertino_icons: ^1.0.8
   flutter:
     sdk: flutter
   flutter_markdown_plus: ^1.0.12

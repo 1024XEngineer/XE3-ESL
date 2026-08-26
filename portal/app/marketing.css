@@ -188,55 +188,219 @@
   background: #888;
 }
 
-.release-home .release-product {
+.release-home .hero-product-carousel {
+  --carousel-overhang: clamp(160px, 17vw, 220px);
+  --carousel-step: 88%;
+  --carousel-far-step: 176%;
   position: relative;
-  width: 100%;
-  height: min(660px, calc(100svh - 190px));
-  min-height: 540px;
-  margin: 0;
+  width: calc(100% + var(--carousel-overhang));
+  height: min(680px, calc(100svh - 176px));
+  min-height: 560px;
+  margin: 0 0 0 calc(0px - var(--carousel-overhang));
   padding: 0;
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
-  place-items: stretch center;
-  gap: 18px;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  overflow: visible;
-  box-shadow: none;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  gap: 10px;
 }
 
-.release-home .release-product img {
+.release-home .hero-product-carousel__stage {
+  position: relative;
+  min-height: 0;
+}
+
+.release-home .hero-product-carousel__viewport {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.release-home .hero-product-carousel__viewport::before,
+.release-home .hero-product-carousel__viewport::after {
+  content: "";
+  position: absolute;
+  z-index: 4;
+  top: 0;
+  bottom: 0;
+  width: 5%;
+  pointer-events: none;
+}
+
+.release-home .hero-product-carousel__viewport::before {
+  left: 0;
+  background: linear-gradient(90deg, #fff 8%, rgba(255, 255, 255, 0));
+}
+
+.release-home .hero-product-carousel__viewport::after {
+  right: 0;
+  background: linear-gradient(270deg, #fff 8%, rgba(255, 255, 255, 0));
+}
+
+.release-home .hero-product-carousel__track {
+  position: absolute;
+  inset: 0;
+}
+
+.release-home .hero-product-carousel__slide {
+  position: absolute;
+  z-index: 0;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 52%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  opacity: 0;
+  pointer-events: none;
+  filter: saturate(0.8);
+  transition:
+    transform 620ms cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 360ms ease,
+    filter 360ms ease;
+  will-change: transform, opacity;
+}
+
+.release-home .hero-product-carousel__slide[data-position="-2"] {
+  transform: translate3d(calc(-50% - var(--carousel-far-step)), 0, 0)
+    scale(0.92);
+}
+
+.release-home .hero-product-carousel__slide[data-position="-1"] {
+  transform: translate3d(calc(-50% - var(--carousel-step)), 0, 0)
+    scale(0.92);
+}
+
+.release-home .hero-product-carousel__slide[data-position="0"] {
+  transform: translate3d(-50%, 0, 0) scale(1);
+}
+
+.release-home .hero-product-carousel__slide[data-position="1"] {
+  transform: translate3d(calc(-50% + var(--carousel-step)), 0, 0)
+    scale(0.92);
+}
+
+.release-home .hero-product-carousel__slide[data-position="2"] {
+  transform: translate3d(calc(-50% + var(--carousel-far-step)), 0, 0)
+    scale(0.92);
+}
+
+.release-home .hero-product-carousel[data-snap="true"]
+  .hero-product-carousel__slide {
+  transition: none !important;
+}
+
+.release-home .hero-product-carousel__slide[data-adjacent="true"] {
+  z-index: 1;
+  opacity: 0.5;
+}
+
+.release-home .hero-product-carousel__slide[data-active="true"] {
+  z-index: 2;
+  opacity: 1;
+  filter: none;
+}
+
+.release-home .hero-product-carousel__device {
+  position: relative;
   width: auto;
   height: 100%;
-  min-height: 0;
-  max-height: 100%;
-  justify-self: center;
-  object-fit: contain;
-  transform: none;
+  aspect-ratio: 430 / 932;
+  margin-inline: auto;
+  overflow: hidden;
+  border: 7px solid #111;
+  border-radius: 46px;
+  background: #111;
+  box-shadow: 0 18px 46px rgba(17, 17, 17, 0.13);
 }
 
-.release-home .release-product figcaption {
-  position: static;
-  width: auto;
+.release-home .hero-product-carousel__screen {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: 38px;
+  background: #fff;
+}
+
+.release-home .hero-product-carousel__screen img {
+  position: absolute;
+  max-width: none;
+  pointer-events: none;
+}
+
+.release-home .hero-product-carousel__caption {
   display: grid;
   justify-items: center;
   gap: 3px;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
+  min-height: 42px;
   text-align: center;
 }
 
-.release-home .release-product figcaption strong {
+.release-home .hero-product-carousel__caption strong {
   font-size: 14px;
   font-weight: 620;
 }
 
-.release-home .release-product figcaption span {
+.release-home .hero-product-carousel__caption span {
   color: var(--muted);
   font-size: 13px;
+}
+
+.release-home .hero-product-carousel__controls {
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.release-home .hero-product-carousel__progress {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+
+.release-home .hero-product-carousel__autoplay {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.release-home .hero-product-carousel__progress > span {
+  width: 20px;
+  height: 3px;
+  border-radius: 999px;
+  background: #d7d7d7;
+  transition: width 260ms ease, background-color 260ms ease;
+}
+
+.release-home .hero-product-carousel__progress > span[data-active="true"] {
+  width: 28px;
+  background: #111;
+}
+
+.release-home .hero-product-carousel__autoplay {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 10px;
+}
+
+.release-home .hero-product-carousel__autoplay:hover {
+  background: #f2f2f2;
+  color: #111;
+}
+
+.release-home .hero-product-carousel__autoplay:focus-visible {
+  outline: 3px solid #2d62ff;
+  outline-offset: 2px;
 }
 
 .release-home .release-method {
@@ -369,8 +533,7 @@
 }
 
 .release-footer-meta a:focus-visible,
-.download-page .download-inline-link:focus-visible,
-.changelog-page .changelog-back:focus-visible {
+.download-page .download-inline-link:focus-visible {
   outline: 3px solid #2d62ff;
   outline-offset: 3px;
 }
@@ -387,30 +550,13 @@
 }
 
 .changelog-page .changelog-hero {
-  padding: clamp(72px, 8vw, 108px) 0 clamp(68px, 7vw, 96px);
-}
-
-.changelog-page .changelog-back {
-  display: inline-block;
-  margin-bottom: clamp(58px, 6vw, 82px);
-  color: var(--muted);
-  font-size: 14px;
-  font-weight: 650;
+  padding: 44px 0 28px;
 }
 
 .changelog-page .changelog-hero h1 {
-  max-width: 760px;
-  font-size: clamp(52px, 7vw, 88px);
+  font-size: clamp(38px, 4vw, 48px);
   font-weight: 700;
-  line-height: 1;
-}
-
-.changelog-page .changelog-intro {
-  max-width: 660px;
-  margin-top: 24px;
-  color: var(--muted);
-  font-size: clamp(17px, 1.7vw, 20px);
-  line-height: 1.7;
+  line-height: 1.1;
 }
 
 .changelog-page .changelog-list {
@@ -743,9 +889,16 @@
     font-size: 54px;
   }
 
-  .release-home .release-product {
+  .release-home .hero-product-carousel {
+    --carousel-overhang: 80px;
+    --carousel-step: 84%;
+    --carousel-far-step: 168%;
     height: 580px;
     min-height: 0;
+  }
+
+  .release-home .hero-product-carousel__slide {
+    width: 72%;
   }
 
   .release-home .release-memory,
@@ -815,15 +968,16 @@
     width: 100%;
   }
 
-  .release-home .release-product {
-    height: 600px;
+  .release-home .hero-product-carousel {
+    --carousel-overhang: 0px;
+    --carousel-step: 92%;
+    --carousel-far-step: 184%;
+    height: 640px;
     padding: 0;
-    border-radius: 0;
-    box-shadow: none;
   }
 
-  .release-home .release-product figcaption {
-    width: 100%;
+  .release-home .hero-product-carousel__slide {
+    width: 82%;
   }
 
   .release-home .release-method {
@@ -857,19 +1011,32 @@
   }
 
   .changelog-page .changelog-hero {
-    padding: 58px 0 64px;
-  }
-
-  .changelog-page .changelog-back {
-    margin-bottom: 56px;
+    padding: 30px 0 20px;
   }
 
   .changelog-page .changelog-hero h1 {
-    font-size: clamp(46px, 13vw, 54px);
+    font-size: 36px;
   }
 
   .changelog-page .changelog-release {
     padding: 40px 0 44px;
+    gap: 20px;
+  }
+
+  .changelog-page .changelog-release-meta {
+    padding-top: 0;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .changelog-page .changelog-release-meta p {
+    margin-bottom: 0;
+  }
+
+  .changelog-page .changelog-release-meta time {
+    white-space: nowrap;
   }
 
   .download-page .download-hero {
@@ -959,4 +1126,9 @@
   .release-home .button:hover {
     transform: none;
   }
+
+  .release-home .hero-product-carousel__slide {
+    will-change: auto;
+  }
+
 }

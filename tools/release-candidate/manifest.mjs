@@ -17,7 +17,10 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { readArguments } from "./cli.mjs";
-import { collectReleaseMetadata } from "./metadata.mjs";
+import {
+  collectCandidateMetadata,
+  collectReleaseMetadata,
+} from "./metadata.mjs";
 
 const sha256Pattern = /^[0-9a-f]{64}$/;
 const imageDigestPattern = /^sha256:[0-9a-f]{64}$/;
@@ -415,13 +418,15 @@ export function writeReleaseManifest(outputInput, manifest) {
 
 function main() {
   const usage =
-    "Usage: manifest.mjs --tag <vX.Y.Z> --main-ref <ref> " +
+    "Usage: manifest.mjs (--tag <vX.Y.Z> | --candidate-sha <sha>) " +
+    "--main-ref <ref> " +
     "--staging-apk <file> --production-apk <file> --output <file> " +
     "[--repo <path>] [--tag-remote <name>]";
   const arguments_ = readArguments(
     process.argv.slice(2),
     [
       "tag",
+      "candidate-sha",
       "main-ref",
       "staging-apk",
       "production-apk",
@@ -431,16 +436,24 @@ function main() {
     ],
     usage,
   );
-  for (const name of ["tag", "main-ref", "staging-apk", "production-apk", "output"]) {
+  for (const name of ["main-ref", "staging-apk", "production-apk", "output"]) {
     if (!arguments_[name]) throw new Error(`--${name} is required`);
   }
+  if (Boolean(arguments_.tag) === Boolean(arguments_["candidate-sha"])) {
+    throw new Error("Exactly one of --tag or --candidate-sha is required");
+  }
   const repoDir = path.resolve(arguments_.repo ?? ".");
-  const metadata = collectReleaseMetadata({
+  const common = {
     repoDir,
-    tag: arguments_.tag,
     mainRef: arguments_["main-ref"],
     tagRemote: arguments_["tag-remote"] ?? "origin",
-  });
+  };
+  const metadata = arguments_.tag
+    ? collectReleaseMetadata({ ...common, tag: arguments_.tag })
+    : collectCandidateMetadata({
+        ...common,
+        candidateSha: arguments_["candidate-sha"],
+      });
   const manifest = createReleaseManifest(
     {
       ...process.env,

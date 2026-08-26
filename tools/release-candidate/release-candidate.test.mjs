@@ -27,6 +27,7 @@ import {
   validateQualityRun,
 } from "./offline-manifest.mjs";
 import {
+  collectCandidateMetadata,
   collectReleaseMetadata,
   databaseSchemaVersion,
   parseStableTag,
@@ -36,6 +37,12 @@ const manifestScript = fileURLToPath(new URL("./manifest.mjs", import.meta.url))
 const metadataScript = fileURLToPath(new URL("./metadata.mjs", import.meta.url));
 const offlineManifestScript = fileURLToPath(
   new URL("./offline-manifest.mjs", import.meta.url),
+);
+const releaseCandidateWorkflow = fileURLToPath(
+  new URL("../../.github/workflows/release-candidate.yml", import.meta.url),
+);
+const stagingDeployWorkflow = fileURLToPath(
+  new URL("../../.github/workflows/staging-deploy.yml", import.meta.url),
 );
 const officialUpstreamUrl = "https://github.com/1024XEngineer/XE3-ESL.git";
 const officialRepository = "1024XEngineer/XE3-ESL";
@@ -72,6 +79,13 @@ function createRepository(version = "0.1.0+1") {
   git(repo, "commit", "-m", "initial release");
   git(repo, "remote", "add", "origin", repo);
   return repo;
+}
+
+function commitVersion(repo, version, message = `prepare ${version}`) {
+  writeReleaseFiles(repo, version);
+  git(repo, "add", ".");
+  git(repo, "commit", "-m", message);
+  return git(repo, "rev-parse", "HEAD");
 }
 
 function configureOfficialUpstream(repo) {
@@ -351,6 +365,24 @@ function manifestArguments(repo, input, output) {
   ];
 }
 
+function candidateManifestArguments(repo, input, output) {
+  return [
+    manifestScript,
+    "--candidate-sha",
+    git(repo, "rev-parse", "HEAD"),
+    "--main-ref",
+    "main",
+    "--staging-apk",
+    input.STAGING_APK_PATH,
+    "--production-apk",
+    input.PRODUCTION_APK_PATH,
+    "--output",
+    output,
+    "--repo",
+    repo,
+  ];
+}
+
 function offlineManifestArguments(
   repo,
   input,
@@ -401,6 +433,158 @@ test("accepts the first stable release and ignores prerelease tags", () => {
       git_sha: git(repo, "rev-parse", "HEAD"),
       database_schema_version: "7",
     },
+  );
+});
+
+test("accepts an untagged Candidate from the exact main checkout", () => {
+  const repo = createRepository();
+  const candidateSha = git(repo, "rev-parse", "HEAD");
+  const tagsBefore = git(repo, "tag", "--list");
+
+  assert.deepEqual(
+    collectCandidateMetadata({
+      repoDir: repo,
+      candidateSha,
+      mainRef: "main",
+    }),
+    {
+      version: "0.1.0",
+      version_code: "1",
+      git_sha: candidateSha,
+      database_schema_version: "7",
+    },
+  );
+  assert.equal(git(repo, "tag", "--list"), tagsBefore);
+});
+
+test("accepts a Candidate newer than the complete stable release history", () => {
+  const repo = createRepository();
+  git(repo, "tag", "v0.1.0");
+  const candidateSha = commitVersion(repo, "0.1.1+2");
+
+  assert.equal(
+    collectCandidateMetadata({ repoDir: repo, candidateSha, mainRef: "main" })
+      .version,
+    "0.1.1",
+  );
+});
+
+test("rejects Candidate checkout drift, side history, and reused stable identity", () => {
+  const drifted = createRepository();
+  const oldSha = git(drifted, "rev-parse", "HEAD");
+  assert.throws(
+    () => collectCandidateMetadata({
+      repoDir: drifted,
+      candidateSha: "not-a-full-sha",
+      mainRef: "main",
+    }),
+    /full lowercase Git commit SHA/,
+  );
+  commitVersion(drifted, "0.1.1+2");
+  assert.throws(
+    () => collectCandidateMetadata({
+      repoDir: drifted,
+      candidateSha: oldSha,
+      mainRef: "main",
+    }),
+    /does not match Candidate/,
+  );
+
+  const sideHistory = createRepository();
+  git(sideHistory, "checkout", "-b", "feature");
+  const sideSha = commitVersion(sideHistory, "0.1.1+2");
+  assert.throws(
+    () => collectCandidateMetadata({
+      repoDir: sideHistory,
+      candidateSha: sideSha,
+      mainRef: "main",
+    }),
+    /not contained in main/,
+  );
+
+  const tagged = createRepository();
+  const taggedSha = git(tagged, "rev-parse", "HEAD");
+  git(tagged, "tag", "v0.1.0");
+  assert.throws(
+    () => collectCandidateMetadata({
+      repoDir: tagged,
+      candidateSha: taggedSha,
+      mainRef: "main",
+    }),
+    /stable Tag already exists: v0\.1\.0/,
+  );
+});
+
+test("rejects Candidate version and versionCode regressions", () => {
+  const versionRegression = createRepository("0.2.0+2");
+  git(versionRegression, "tag", "v0.2.0");
+  const lowerVersionSha = commitVersion(versionRegression, "0.1.9+3");
+  assert.throws(
+    () => collectCandidateMetadata({
+      repoDir: versionRegression,
+      candidateSha: lowerVersionSha,
+      mainRef: "main",
+    }),
+    /Release version v0\.1\.9 must be newer than v0\.2\.0/,
+  );
+
+  const codeRegression = createRepository("0.1.0+2");
+  git(codeRegression, "tag", "v0.1.0");
+  const lowerCodeSha = commitVersion(codeRegression, "0.1.1+2");
+  assert.throws(
+    () => collectCandidateMetadata({
+      repoDir: codeRegression,
+      candidateSha: lowerCodeSha,
+      mainRef: "main",
+    }),
+    /versionCode 2 must be greater than 2/,
+  );
+});
+
+test("rejects malformed Candidate versions and incomplete Tag history", () => {
+  const prerelease = createRepository("0.1.0-rc.1+1");
+  const prereleaseSha = git(prerelease, "rev-parse", "HEAD");
+  assert.throws(
+    () => collectCandidateMetadata({
+      repoDir: prerelease,
+      candidateSha: prereleaseSha,
+      mainRef: "main",
+    }),
+    /must use vX\.Y\.Z/,
+  );
+
+  const source = createRepository();
+  git(source, "tag", "v0.1.0");
+  const candidateSha = commitVersion(source, "0.1.1+2");
+  const cloneParent = mkdtempSync(path.join(tmpdir(), "speakup-candidate-no-tags-"));
+  const clone = path.join(cloneParent, "repo");
+  execFileSync("git", ["clone", "--no-tags", source, clone], { stdio: "ignore" });
+  assert.throws(
+    () => collectCandidateMetadata({
+      repoDir: clone,
+      candidateSha,
+      mainRef: "main",
+    }),
+    /stable release tags do not match origin/,
+  );
+});
+
+test("rejects an existing stable Tag outside main history", () => {
+  const repo = createRepository();
+  git(repo, "tag", "v0.1.0");
+  git(repo, "checkout", "-b", "orphaned-release");
+  commitVersion(repo, "9.0.0+9");
+  git(repo, "tag", "v9.0.0");
+  git(repo, "checkout", "main");
+  const candidateSha = commitVersion(repo, "0.1.1+2");
+
+  assert.throws(
+    () => collectCandidateMetadata({
+      repoDir: repo,
+      candidateSha,
+      mainRef: "main",
+    }),
+    /Previous release tag v9\.0\.0 is not contained in main/,
   );
 });
 
@@ -570,6 +754,109 @@ test("metadata and manifest CLIs reject unknown and duplicate options", () => {
       },
     );
   }
+});
+
+test("metadata and manifest CLIs require exactly one release identity", () => {
+  const sharedManifestArguments = [
+    "--main-ref",
+    "main",
+    "--staging-apk",
+    "staging.apk",
+    "--production-apk",
+    "production.apk",
+    "--output",
+    "release-manifest.json",
+  ];
+  const cases = [
+    {
+      script: metadataScript,
+      arguments_: ["--main-ref", "main"],
+    },
+    {
+      script: metadataScript,
+      arguments_: [
+        "--tag",
+        "v0.1.0",
+        "--candidate-sha",
+        "a".repeat(40),
+        "--main-ref",
+        "main",
+      ],
+    },
+    {
+      script: manifestScript,
+      arguments_: sharedManifestArguments,
+    },
+    {
+      script: manifestScript,
+      arguments_: [
+        "--tag",
+        "v0.1.0",
+        "--candidate-sha",
+        "a".repeat(40),
+        ...sharedManifestArguments,
+      ],
+    },
+  ];
+
+  for (const scenario of cases) {
+    assert.throws(
+      () => execFileSync(
+        process.execPath,
+        [scenario.script, ...scenario.arguments_],
+        { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+      ),
+      (error) => {
+        assert.match(error.stderr, /Exactly one of --tag or --candidate-sha is required/);
+        return true;
+      },
+    );
+  }
+});
+
+test("Release Candidate workflow is automatic, official-main-only, and Tag-free", () => {
+  const workflow = readFileSync(releaseCandidateWorkflow, "utf8");
+  assert.match(workflow, /on:\n  push:\n    branches:\n      - main/);
+  assert.match(workflow, /CANDIDATE_REPOSITORY.*github\.repository/);
+  assert.match(workflow, /1024XEngineer\/XE3-ESL/);
+  assert.match(workflow, /CANDIDATE_REF.*github\.ref/);
+  assert.match(workflow, /refs\/heads\/main/);
+  assert.match(workflow, /CANDIDATE_EVENT" != "push"/);
+  assert.match(workflow, /--candidate-sha "\$GITHUB_SHA"/);
+  assert.doesNotMatch(workflow, /workflow_dispatch/);
+  assert.doesNotMatch(workflow, /push:\n\s+tags:/);
+  assert.doesNotMatch(workflow, /GITHUB_REF_NAME/);
+  assert.doesNotMatch(workflow, /--tag "\$GITHUB_REF_NAME"/);
+  assert.doesNotMatch(workflow, /contents:\s*write/);
+  assert.doesNotMatch(workflow, /deploy\/(staging|production)\/manage\.sh/);
+});
+
+test("Staging deploy accepts only a successful official Candidate artifact", () => {
+  const workflow = readFileSync(stagingDeployWorkflow, "utf8");
+  assert.match(workflow, /workflow_run:\n\s+workflows:\n\s+- Release Candidate/);
+  assert.match(workflow, /github\.event\.workflow_run\.conclusion == 'success'/);
+  assert.match(workflow, /CANDIDATE_HEAD_REPOSITORY.*head_repository\.full_name/);
+  assert.match(workflow, /CANDIDATE_EVENT.*workflow_run\.event/);
+  assert.match(workflow, /CANDIDATE_HEAD_BRANCH.*workflow_run\.head_branch/);
+  assert.match(workflow, /CANDIDATE_EVENT" != "push"/);
+  assert.match(workflow, /CANDIDATE_HEAD_BRANCH" != "main"/);
+  assert.doesNotMatch(workflow, /workflow_dispatch/);
+  assert.match(workflow, /environment:\n\s+name: staging/);
+  assert.match(workflow, /group: staging-deployment\n\s+cancel-in-progress: false/);
+  assert.match(workflow, /listWorkflowRunArtifacts/);
+  assert.match(workflow, /manifests\.length !== 1/);
+  assert.match(workflow, /name:.*manifest_artifact/);
+  assert.match(workflow, /run-id:.*candidate_run_id/);
+  assert.match(workflow, /github-token:.*github\.token/);
+  assert.match(workflow, /StrictHostKeyChecking=yes/);
+  assert.match(workflow, /action:\s*"inspect"/);
+  assert.match(workflow, /action:\s*"deploy"/);
+  assert.match(workflow, /expected_current_receipt_sha256/);
+  assert.match(workflow, /Candidate run .* is already deployed to Staging/);
+  assert.match(workflow, /https:\/\/staging-api\.speak-up\.top\/health/);
+  assert.match(workflow, /staging-deployment-\$\{\{ github\.run_id \}\}/);
+  assert.doesNotMatch(workflow, /actions\/checkout/);
+  assert.doesNotMatch(workflow, /deploy\/production/);
 });
 
 test("rejects a release tag that is not contained in main", () => {
@@ -825,6 +1112,26 @@ test("writes the validated manifest atomically through the CLI", () => {
     ),
   );
   assert.equal(existsSync(rejectedOutput), false);
+});
+
+test("writes the unchanged v1 manifest for an untagged Candidate", () => {
+  const repo = createRepository();
+  const { input } = validManifestFixture();
+  const output = path.join(repo, "candidate-release-manifest.json");
+  const tagsBefore = git(repo, "tag", "--list");
+
+  execFileSync(
+    process.execPath,
+    candidateManifestArguments(repo, input, output),
+    { env: { ...process.env, ...input }, stdio: "pipe" },
+  );
+
+  const manifest = JSON.parse(readFileSync(output, "utf8"));
+  assert.equal(manifest.manifest_version, 1);
+  assert.equal(manifest.version, "0.1.0");
+  assert.equal(manifest.git_sha, git(repo, "rev-parse", "HEAD"));
+  assert.equal(Object.hasOwn(manifest, "tag"), false);
+  assert.equal(git(repo, "tag", "--list"), tagsBefore);
 });
 
 test("refuses to replace an existing manifest file, directory, or symbolic link", () => {

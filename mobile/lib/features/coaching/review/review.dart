@@ -114,9 +114,9 @@ class CurrentIeltsAbilityPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       key: const Key('current-ielts-ability-page'),
-      backgroundColor: SpeakUpDesign.surfaceMuted,
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
-        backgroundColor: SpeakUpDesign.surfaceMuted,
+        backgroundColor: Colors.transparent,
         leading: IconButton(
           key: const Key('current-ielts-ability-back-button'),
           tooltip: '返回',

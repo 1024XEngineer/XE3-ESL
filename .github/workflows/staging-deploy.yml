@@ -1,0 +1,287 @@
+name: Deploy Staging Candidate
+
+on:
+  workflow_run:
+    workflows:
+      - Release Candidate
+    types:
+      - completed
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: staging-deployment
+  cancel-in-progress: false
+
+jobs:
+  authorize:
+    name: Authorize official Candidate
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      candidate_run_id: ${{ steps.candidate.outputs.run_id }}
+      candidate_sha: ${{ steps.candidate.outputs.sha }}
+      manifest_artifact: ${{ steps.artifact.outputs.name }}
+    steps:
+      - name: Require the successful official main Candidate
+        id: candidate
+        env:
+          CANDIDATE_EVENT: ${{ github.event.workflow_run.event }}
+          CANDIDATE_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          CANDIDATE_HEAD_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
+          CANDIDATE_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          CANDIDATE_REPOSITORY: ${{ github.repository }}
+          CANDIDATE_RUN_ID: ${{ github.event.workflow_run.id }}
+          CANDIDATE_WORKFLOW: ${{ github.event.workflow_run.name }}
+        run: |
+          set -euo pipefail
+          if [[ "$CANDIDATE_REPOSITORY" != "1024XEngineer/XE3-ESL" ||
+                "$CANDIDATE_HEAD_REPOSITORY" != "$CANDIDATE_REPOSITORY" ||
+                "$CANDIDATE_WORKFLOW" != "Release Candidate" ||
+                "$CANDIDATE_EVENT" != "push" ||
+                "$CANDIDATE_HEAD_BRANCH" != "main" ||
+                ! "$CANDIDATE_HEAD_SHA" =~ ^[0-9a-f]{40}$ ||
+                ! "$CANDIDATE_RUN_ID" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Only a successful official main Release Candidate may deploy Staging." >&2
+            exit 1
+          fi
+          printf 'run_id=%s\n' "$CANDIDATE_RUN_ID" >> "$GITHUB_OUTPUT"
+          printf 'sha=%s\n' "$CANDIDATE_HEAD_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Select the single immutable manifest artifact
+        id: artifact
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          CANDIDATE_RUN_ID: ${{ steps.candidate.outputs.run_id }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const runId = Number(process.env.CANDIDATE_RUN_ID);
+            const artifacts = await github.paginate(
+              github.rest.actions.listWorkflowRunArtifacts,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: runId,
+                per_page: 100,
+              },
+            );
+            const manifests = artifacts.filter(
+              (artifact) =>
+                !artifact.expired &&
+                /^speakup-v[0-9]+\.[0-9]+\.[0-9]+-release-manifest$/.test(
+                  artifact.name,
+                ),
+            );
+            if (manifests.length !== 1) {
+              core.setFailed(
+                `Candidate run ${runId} has ${manifests.length} release manifest artifacts.`,
+              );
+              return;
+            }
+            core.setOutput("name", manifests[0].name);
+
+  deploy:
+    name: Deploy immutable Candidate to Staging
+    needs: authorize
+    environment:
+      name: staging
+      url: https://staging.speak-up.top
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Download only the Candidate release manifest
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: ${{ needs.authorize.outputs.manifest_artifact }}
+          path: ${{ runner.temp }}/candidate-manifest
+          run-id: ${{ needs.authorize.outputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Validate immutable Candidate identity
+        id: manifest
+        env:
+          CANDIDATE_RUN_ID: ${{ needs.authorize.outputs.candidate_run_id }}
+          CANDIDATE_SHA: ${{ needs.authorize.outputs.candidate_sha }}
+          MANIFEST_DIRECTORY: ${{ runner.temp }}/candidate-manifest
+        run: |
+          set -euo pipefail
+          manifest="$MANIFEST_DIRECTORY/release-manifest.json"
+          [[ ! -L "$manifest" && -f "$manifest" && -s "$manifest" ]]
+          [[ "$(find "$MANIFEST_DIRECTORY" -mindepth 1 -maxdepth 1 | wc -l)" == 1 ]]
+          jq -e \
+            --arg sha "$CANDIDATE_SHA" \
+            --arg run_url "https://github.com/1024XEngineer/XE3-ESL/actions/runs/$CANDIDATE_RUN_ID" \
+            '.git_sha == $sha and
+             .quality_run_url == $run_url and
+             (.version | type == "string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' \
+            "$manifest" >/dev/null
+          manifest_sha256="$(sha256sum "$manifest" | cut -d ' ' -f 1)"
+          version="$(jq -er '.version' "$manifest")"
+          printf 'file=%s\n' "$manifest" >> "$GITHUB_OUTPUT"
+          printf 'sha256=%s\n' "$manifest_sha256" >> "$GITHUB_OUTPUT"
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+      - name: Install the restricted Staging SSH identity
+        env:
+          DEPLOY_HOST: ${{ vars.STAGING_DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ vars.STAGING_DEPLOY_PORT }}
+          DEPLOY_USER: ${{ vars.STAGING_DEPLOY_USER }}
+          KNOWN_HOSTS: ${{ secrets.STAGING_DEPLOY_KNOWN_HOSTS }}
+          SSH_PRIVATE_KEY: ${{ secrets.STAGING_DEPLOY_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          [[ "$DEPLOY_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$DEPLOY_PORT" =~ ^[0-9]+$ ]] && (( DEPLOY_PORT >= 1 && DEPLOY_PORT <= 65535 ))
+          [[ "$DEPLOY_USER" == "speakup-staging-ci" ]]
+          [[ -n "$KNOWN_HOSTS" && -n "$SSH_PRIVATE_KEY" ]]
+          install -d -m 700 "$RUNNER_TEMP/staging-ssh"
+          printf '%s\n' "$KNOWN_HOSTS" > "$RUNNER_TEMP/staging-ssh/known_hosts"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$RUNNER_TEMP/staging-ssh/id_ed25519"
+          chmod 600 \
+            "$RUNNER_TEMP/staging-ssh/known_hosts" \
+            "$RUNNER_TEMP/staging-ssh/id_ed25519"
+
+      - name: Deploy through the restricted Staging broker
+        id: deploy
+        env:
+          CANDIDATE_RUN_ID: ${{ needs.authorize.outputs.candidate_run_id }}
+          CANDIDATE_SHA: ${{ needs.authorize.outputs.candidate_sha }}
+          DEPLOY_HOST: ${{ vars.STAGING_DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ vars.STAGING_DEPLOY_PORT }}
+          DEPLOY_USER: ${{ vars.STAGING_DEPLOY_USER }}
+          MANIFEST_FILE: ${{ steps.manifest.outputs.file }}
+          MANIFEST_SHA256: ${{ steps.manifest.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          ssh_options=(
+            -i "$RUNNER_TEMP/staging-ssh/id_ed25519"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=$RUNNER_TEMP/staging-ssh/known_hosts"
+            -o ConnectTimeout=15
+            -p "$DEPLOY_PORT"
+          )
+          inspect_request="$RUNNER_TEMP/staging-inspect-request.json"
+          inspect_response="$RUNNER_TEMP/staging-inspect-response.json"
+          jq -cn '{protocol_version:1,action:"inspect"}' > "$inspect_request"
+          ssh "${ssh_options[@]}" "$DEPLOY_USER@$DEPLOY_HOST" \
+            < "$inspect_request" > "$inspect_response"
+          jq -e '
+            .protocol_version == 1 and
+            .ok == true and
+            .action == "inspect" and
+            ((.current_receipt_sha256 == null and .receipt == null) or
+             ((.current_receipt_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+              (.receipt | type == "object")))
+          ' "$inspect_response" >/dev/null
+
+          if jq -e \
+            --argjson candidate_run_id "$CANDIDATE_RUN_ID" \
+            '.receipt.candidate_run_id == $candidate_run_id' \
+            "$inspect_response" >/dev/null; then
+            echo "Candidate run $CANDIDATE_RUN_ID is already deployed to Staging." >&2
+            exit 1
+          fi
+
+          expected_current="$(jq -c '.current_receipt_sha256' "$inspect_response")"
+          manifest_base64="$(base64 -w 0 "$MANIFEST_FILE")"
+          deploy_request="$RUNNER_TEMP/staging-deploy-request.json"
+          deploy_response="$RUNNER_TEMP/staging-deploy-response.json"
+          jq -cn \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --argjson candidate_run_id "$CANDIDATE_RUN_ID" \
+            --argjson deployment_run_id "$GITHUB_RUN_ID" \
+            --argjson deployment_run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --argjson expected_current_receipt_sha256 "$expected_current" \
+            --arg manifest_sha256 "$MANIFEST_SHA256" \
+            --arg manifest_base64 "$manifest_base64" \
+            '{
+              protocol_version: 1,
+              action: "deploy",
+              repository: $repository,
+              candidate_run_id: $candidate_run_id,
+              deployment_run_id: $deployment_run_id,
+              deployment_run_attempt: $deployment_run_attempt,
+              expected_current_receipt_sha256: $expected_current_receipt_sha256,
+              manifest_sha256: $manifest_sha256,
+              manifest_base64: $manifest_base64
+            }' > "$deploy_request"
+          ssh "${ssh_options[@]}" "$DEPLOY_USER@$DEPLOY_HOST" \
+            < "$deploy_request" > "$deploy_response"
+          jq -e \
+            --arg manifest_sha256 "$MANIFEST_SHA256" \
+            --arg git_sha "$CANDIDATE_SHA" \
+            --argjson candidate_run_id "$CANDIDATE_RUN_ID" \
+            --argjson deployment_run_id "$GITHUB_RUN_ID" \
+            --argjson deployment_run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --argjson previous_receipt_sha256 "$expected_current" \
+            '
+              .protocol_version == 1 and
+              .ok == true and
+              .action == "deploy" and
+              (.receipt_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+              .receipt.environment == "staging" and
+              .receipt.operation == "deploy" and
+              .receipt.repository == "1024XEngineer/XE3-ESL" and
+              .receipt.manifest_sha256 == $manifest_sha256 and
+              .receipt.git_sha == $git_sha and
+              .receipt.candidate_run_id == $candidate_run_id and
+              .receipt.deployment_run_id == $deployment_run_id and
+              .receipt.deployment_run_attempt == $deployment_run_attempt and
+              .receipt.previous_receipt_sha256 == $previous_receipt_sha256
+            ' "$deploy_response" >/dev/null
+          receipt_sha256="$(jq -er '.receipt_sha256' "$deploy_response")"
+          printf 'response=%s\n' "$deploy_response" >> "$GITHUB_OUTPUT"
+          printf 'receipt_sha256=%s\n' "$receipt_sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Verify the public Staging edge
+        run: |
+          set -euo pipefail
+          portal_status="$(curl \
+            --silent \
+            --show-error \
+            --max-time 20 \
+            --output /dev/null \
+            --write-out '%{http_code}' \
+            https://staging.speak-up.top/)"
+          [[ "$portal_status" == 401 ]]
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            --max-time 20 \
+            https://staging-api.speak-up.top/health >/dev/null
+
+      - name: Upload the Staging deployment receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: staging-deployment-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.deploy.outputs.response }}
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Record the Staging deployment
+        env:
+          CANDIDATE_SHA: ${{ needs.authorize.outputs.candidate_sha }}
+          RECEIPT_SHA256: ${{ steps.deploy.outputs.receipt_sha256 }}
+          VERSION: ${{ steps.manifest.outputs.version }}
+        run: |
+          {
+            printf '## Staging deployment\n\n'
+            printf -- '- Version: `%s`\n' "$VERSION"
+            printf -- '- Commit: `%s`\n' "$CANDIDATE_SHA"
+            printf -- '- Receipt: `%s`\n' "$RECEIPT_SHA256"
+            printf -- '- Portal: https://staging.speak-up.top\n'
+            printf -- '- API: https://staging-api.speak-up.top/health\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove the Staging SSH identity
+        if: always()
+        run: |
+          shred -u "$RUNNER_TEMP/staging-ssh/id_ed25519" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/staging-ssh/known_hosts"

@@ -1,0 +1,1 @@
+speakup-production-ci ALL=(root) NOPASSWD: /usr/local/libexec/speakup-production-broker ""

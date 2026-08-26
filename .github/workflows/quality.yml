@@ -87,11 +87,11 @@ jobs:
             while IFS= read -r -d '' file; do
               printf 'Changed file: %q\n' "$file"
               case "$file" in
-                Makefile|.github/workflows/quality.yml|.github/workflows/release-candidate.yml)
+                Makefile|.github/workflows/quality.yml|.github/workflows/release-candidate.yml|.github/workflows/staging-deploy.yml)
                   set_all_checks
                   android_release=true
                   ;;
-                .github/workflows/production-probe.yml)
+                .github/workflows/production-probe.yml|.github/workflows/production-deploy.yml|tools/production-deploy/*|tools/release-finalize/*)
                   deploy=true
                   ;;
                 .github/workflows/database.yml|.github/workflows/coverage-comment.yml|tools/release-candidate/*)

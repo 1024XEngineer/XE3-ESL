@@ -2,6 +2,7 @@
 library;
 
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:speakup/design/practice_conversation_components.dart';
@@ -146,8 +147,6 @@ class ConversationPage extends StatefulWidget {
     final horizontalPadding = width >= 390 ? 20.0 : 16.0;
     final keyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
     final titleSize = width < 350 ? 27.0 : 30.0;
-    final emptyHomeActionGap = (MediaQuery.sizeOf(context).height * 0.325)
-        .clamp(180.0, 274.0);
     final composerBottom = keyboardVisible ? 10.0 : restingComposerBottom;
     final acceptedUserMessage = _lastUserMessage(messages);
     final canCompose = hasFocusedThread || onCreateConversation != null;
@@ -174,9 +173,10 @@ class ConversationPage extends StatefulWidget {
               child: Stack(
                 children: [
                   Positioned.fill(
-                    child: SingleChildScrollView(
-                      key: const Key('agent-conversation-scroll'),
+                    child: _ConversationScrollView(
+                      scrollKey: const Key('agent-conversation-scroll'),
                       controller: scrollController,
+                      fillViewport: messages.isEmpty,
                       padding: EdgeInsets.fromLTRB(
                         horizontalPadding,
                         topContentInset,
@@ -208,7 +208,7 @@ class ConversationPage extends StatefulWidget {
                                 ),
                               ),
                             ],
-                            SizedBox(height: emptyHomeActionGap),
+                            const Spacer(),
                             if (practiceAvailable)
                               _QuickActions(
                                 onCreatePlan: onCreatePlan,
@@ -347,9 +347,9 @@ class ConversationPage extends StatefulWidget {
                             begin: Alignment.topCenter,
                             end: Alignment.bottomCenter,
                             colors: [
-                              SpeakUpDesign.canvas,
-                              SpeakUpDesign.canvas.withValues(alpha: 0.94),
-                              SpeakUpDesign.canvas.withValues(alpha: 0),
+                              SpeakUpDesign.ambientTop,
+                              SpeakUpDesign.ambientTop.withValues(alpha: 0.94),
+                              SpeakUpDesign.ambientTop.withValues(alpha: 0),
                             ],
                             stops: const [0, 0.7, 1],
                           ),
@@ -371,9 +371,11 @@ class ConversationPage extends StatefulWidget {
                               begin: Alignment.topCenter,
                               end: Alignment.bottomCenter,
                               colors: [
-                                SpeakUpDesign.canvas.withValues(alpha: 0),
-                                SpeakUpDesign.canvas.withValues(alpha: 0.94),
-                                SpeakUpDesign.canvas,
+                                SpeakUpDesign.ambientBase.withValues(alpha: 0),
+                                SpeakUpDesign.ambientBase.withValues(
+                                  alpha: 0.94,
+                                ),
+                                SpeakUpDesign.ambientBase,
                               ],
                               stops: const [0, 0.38, 1],
                             ),
@@ -451,6 +453,47 @@ class ConversationPage extends StatefulWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _ConversationScrollView extends StatelessWidget {
+  const _ConversationScrollView({
+    required this.scrollKey,
+    required this.controller,
+    required this.fillViewport,
+    required this.padding,
+    required this.child,
+  });
+
+  final Key scrollKey;
+  final ScrollController controller;
+  final bool fillViewport;
+  final EdgeInsets padding;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final content = fillViewport
+            ? ConstrainedBox(
+                constraints: BoxConstraints(
+                  minHeight: math.max(
+                    0,
+                    constraints.maxHeight - padding.vertical,
+                  ),
+                ),
+                child: IntrinsicHeight(child: child),
+              )
+            : child;
+        return SingleChildScrollView(
+          key: scrollKey,
+          controller: controller,
+          padding: padding,
+          child: content,
+        );
+      },
     );
   }
 }
@@ -722,9 +765,7 @@ class _AgentBackground extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const ExcludeSemantics(
-      child: ColoredBox(color: SpeakUpDesign.canvas),
-    );
+    return const SpeakUpAmbientBackground();
   }
 }
 

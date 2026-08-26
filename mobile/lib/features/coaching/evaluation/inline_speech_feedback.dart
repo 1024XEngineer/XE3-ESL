@@ -50,6 +50,8 @@ class InlineSpeechFeedback extends StatelessWidget {
               explanation: polish.explanation,
             ),
       feedbackNotice: strength == null ? null : '表达已经很自然，无需润色',
+      feedbackLoading: projection?.isPolling ?? false,
+      optimizeIconOnly: true,
       correctionFooter: correction == null || onRepractice == null
           ? null
           : TextButton.icon(
