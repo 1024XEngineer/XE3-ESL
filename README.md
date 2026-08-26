@@ -145,19 +145,9 @@ ANDROID_DEVICE_ID=<设备 ID> make dev-android
 
 ## <img src="https://img.shields.io/badge/ARCHITECTURE-526A82?style=flat-square" alt="" height="18" /> 技术架构
 
-```mermaid
-flowchart LR
-    Page["Flutter Page"] --> Controller
-    Controller --> ClientPort["Client Port"]
-    WireAdapter["Wire Adapter"] -. implements .-> ClientPort
-    WireAdapter --> Contract["OpenAPI / WebSocket Contract"]
-    Contract --> Handler["Go Handler"]
-    Handler --> Application["Application Orchestration"]
-    Application --> Domain["Domain Capability"]
-    Domain --> DomainPort["Domain Port"]
-    Postgres["PostgreSQL Adapter"] -. implements .-> DomainPort
-    Providers["LLM / ASR / TTS / ISE / OCR / Storage"] -. implements .-> DomainPort
-```
+<p align="center">
+  <img src="portal/public/assets/portal-shots/readme-architecture.png" alt="SpeakUp 技术架构：Flutter 客户端经传输契约连接 Go 后端，领域端口由 PostgreSQL 与 AI 服务适配器实现" width="100%" />
+</p>
 
 代码依赖保持为：
 
