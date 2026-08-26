@@ -22,7 +22,7 @@ void main() {
   testWidgets('waits for an explicit question playback request', (
     tester,
   ) async {
-    final media = _RealtimeQuestionMediaClient()..release();
+    final media = _RealtimeQuestionMediaClient();
     final nativePlayer = _RecordingPCMStreamPlayer();
     final practiceController = PracticeController(
       client: FakePracticeClient(),
@@ -60,9 +60,13 @@ void main() {
     expect(nativePlayer.events, isEmpty);
 
     final completed = sessionView!.onPlayQuestion!();
+    final duplicate = sessionView!.onPlayQuestion!();
+    expect(identical(completed, duplicate), isTrue);
+    media.release();
     await tester.pumpAndSettle();
 
     expect(await completed, isTrue);
+    expect(await duplicate, isTrue);
     expect(renderer.sends.map((send) => send.end), <bool>[false, true]);
     expect(nativePlayer.events, isEmpty);
   });
