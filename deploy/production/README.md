@@ -674,8 +674,9 @@ immutable Release is verified, never rewritten.
 The deploy job needs job-scoped `actions: read` and `contents: write`. Those
 permissions and all Production Secrets remain behind the `production`
 Environment approval. Enable repository immutable releases before the first
-real run. Protect `v*.*.*` tags from update and deletion; allow GitHub Actions
-to create a new stable tag, but never to update or delete one.
+real run. Protect `v*.*.*` tags from update and deletion. The Production job's
+Environment-gated `contents: write` permission creates the new stable tag when
+the Release is published; it cannot move or delete a published tag.
 
 If `manage.sh` fails, the broker leaves the previous current pointer unchanged
 and retains `pending.json` plus any engine receipt as recovery evidence. Later

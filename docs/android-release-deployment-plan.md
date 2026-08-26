@@ -339,7 +339,8 @@ Production 使用 GitHub Environment：
 Production 部署成功后的发布顺序固定为：创建或复用 Release 草稿、上传并校验全部
 正式资产、通过受限 broker 激活 APK 指针、公网校验 APK 和 changelog、最后发布
 GitHub Release。仓库启用 immutable releases，`v*.*.*` Tag ruleset 禁止更新和
-删除。GitHub Actions 只获准创建新 Tag，不能修改历史 Tag。
+删除。Production job 仅在 Environment 批准后取得 `contents: write` 并创建新
+Tag；已发布的历史 Tag 不能移动或删除。
 
 同一 Production workflow run 的后续 attempt 可以复用已成功的相同部署回执，
 只执行只读 verify，不重复备份、migration 或容器重启。不同 workflow run、不同
