@@ -55,9 +55,8 @@
 ## <img src="https://img.shields.io/badge/SHOWCASE-526A82?style=flat-square" alt="" height="18" /> 产品体验
 
 <p align="center">
-  <img src="portal/public/assets/portal-shots/readme-practice-flow.png" alt="SpeakUp 开练流程：Agent 目标理解与 IELTS 语音练习" width="72%" />
-  <br />
-  <img src="portal/public/assets/portal-shots/readme-review-flow.png" alt="SpeakUp 复盘流程：多维评分与训练建议" width="72%" />
+  <img src="portal/public/assets/portal-shots/readme-practice-flow.png" alt="SpeakUp 开练流程：Agent 目标理解与 IELTS 语音练习" width="49%" />
+  <img src="portal/public/assets/portal-shots/readme-review-flow.png" alt="SpeakUp 复盘流程：多维评分与训练建议" width="49%" />
 </p>
 
 <p align="center">
