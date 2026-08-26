@@ -8,7 +8,8 @@ void main() {
   test('theme exposes the shared semantic visual tokens', () {
     final theme = SpeakUpTheme.light;
 
-    expect(theme.scaffoldBackgroundColor, SpeakUpDesign.canvas);
+    expect(theme.scaffoldBackgroundColor, Colors.transparent);
+    expect(theme.appBarTheme.backgroundColor, Colors.transparent);
     expect(theme.colorScheme.primary, SpeakUpDesign.primary);
     expect(SpeakUpDesign.primary, SpeakUpDesign.ink);
     expect(theme.progressIndicatorTheme.color, SpeakUpDesign.primary);
@@ -27,6 +28,30 @@ void main() {
     );
     expect(theme.inputDecorationTheme.fillColor, SpeakUpDesign.surface);
     expect(theme.bottomSheetTheme.showDragHandle, isTrue);
+  });
+
+  testWidgets('ambient background matches the approved product gradient', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const Directionality(
+        textDirection: TextDirection.ltr,
+        child: SizedBox.expand(child: SpeakUpAmbientBackground()),
+      ),
+    );
+
+    final box = tester.widget<DecoratedBox>(find.byType(DecoratedBox));
+    final decoration = box.decoration as BoxDecoration;
+    final gradient = decoration.gradient! as LinearGradient;
+
+    expect(gradient.begin, Alignment.topCenter);
+    expect(gradient.end, Alignment.bottomCenter);
+    expect(gradient.colors, const [
+      SpeakUpDesign.ambientTop,
+      SpeakUpDesign.ambientBase,
+      SpeakUpDesign.ambientBase,
+    ]);
+    expect(gradient.stops, const [0, 0.42, 1]);
   });
 
   testWidgets(

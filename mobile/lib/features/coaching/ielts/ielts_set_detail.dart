@@ -265,9 +265,9 @@ class _IeltsSetDetailPageState extends State<IeltsSetDetailPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       key: const Key('ielts-set-detail'),
-      backgroundColor: PreparationDesign.canvas,
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
-        backgroundColor: PreparationDesign.canvas,
+        backgroundColor: Colors.transparent,
         surfaceTintColor: Colors.transparent,
         leading: IconButton(
           key: const Key('ielts-set-detail-back'),

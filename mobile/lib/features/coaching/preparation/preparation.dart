@@ -531,10 +531,10 @@ class _PreparationPageState extends State<PreparationPage> {
       },
       child: Scaffold(
         key: const Key('scenes-page'),
-        backgroundColor: PreparationDesign.canvas,
+        backgroundColor: Colors.transparent,
         appBar: widget.showBackButton
             ? AppBar(
-                backgroundColor: PreparationDesign.canvas,
+                backgroundColor: Colors.transparent,
                 surfaceTintColor: Colors.transparent,
                 elevation: 0,
                 scrolledUnderElevation: 0,

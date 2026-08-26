@@ -347,9 +347,9 @@ class ConversationPage extends StatefulWidget {
                             begin: Alignment.topCenter,
                             end: Alignment.bottomCenter,
                             colors: [
-                              SpeakUpDesign.canvas,
-                              SpeakUpDesign.canvas.withValues(alpha: 0.94),
-                              SpeakUpDesign.canvas.withValues(alpha: 0),
+                              SpeakUpDesign.ambientTop,
+                              SpeakUpDesign.ambientTop.withValues(alpha: 0.94),
+                              SpeakUpDesign.ambientTop.withValues(alpha: 0),
                             ],
                             stops: const [0, 0.7, 1],
                           ),
@@ -371,9 +371,11 @@ class ConversationPage extends StatefulWidget {
                               begin: Alignment.topCenter,
                               end: Alignment.bottomCenter,
                               colors: [
-                                SpeakUpDesign.canvas.withValues(alpha: 0),
-                                SpeakUpDesign.canvas.withValues(alpha: 0.94),
-                                SpeakUpDesign.canvas,
+                                SpeakUpDesign.ambientBase.withValues(alpha: 0),
+                                SpeakUpDesign.ambientBase.withValues(
+                                  alpha: 0.94,
+                                ),
+                                SpeakUpDesign.ambientBase,
                               ],
                               stops: const [0, 0.38, 1],
                             ),
@@ -763,9 +765,7 @@ class _AgentBackground extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const ExcludeSemantics(
-      child: ColoredBox(color: SpeakUpDesign.canvas),
-    );
+    return const SpeakUpAmbientBackground();
   }
 }
 

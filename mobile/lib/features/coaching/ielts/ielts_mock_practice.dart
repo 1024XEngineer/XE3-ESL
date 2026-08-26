@@ -1584,7 +1584,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       },
       child: Scaffold(
         key: const Key('ielts-mock-page'),
-        backgroundColor: SpeakUpDesign.surface,
+        backgroundColor: Colors.transparent,
         appBar: showCompletionPage ? _buildAppBar(progress.phase) : null,
         body: SafeArea(
           top: !showCompletionPage,
@@ -1912,7 +1912,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       _ => 'IELTS Speaking',
     };
     return AppBar(
-      backgroundColor: SpeakUpDesign.surface,
+      backgroundColor: Colors.transparent,
       surfaceTintColor: Colors.transparent,
       centerTitle: true,
       leading: IconButton(

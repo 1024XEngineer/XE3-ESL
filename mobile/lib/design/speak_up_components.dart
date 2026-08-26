@@ -1,6 +1,30 @@
 import 'package:flutter/material.dart';
 import 'package:speakup/design/speak_up_design.dart';
 
+class SpeakUpAmbientBackground extends StatelessWidget {
+  const SpeakUpAmbientBackground({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const ExcludeSemantics(
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              SpeakUpDesign.ambientTop,
+              SpeakUpDesign.ambientBase,
+              SpeakUpDesign.ambientBase,
+            ],
+            stops: [0, 0.42, 1],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class SpeakUpWordmark extends StatelessWidget {
   const SpeakUpWordmark({this.height = 28, super.key});
 

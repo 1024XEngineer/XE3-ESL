@@ -629,7 +629,7 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
       },
       child: Scaffold(
         key: const Key('scenario-practice-page'),
-        backgroundColor: SpeakUpDesign.canvas,
+        backgroundColor: Colors.transparent,
         body: SafeArea(
           child: scene == null
               ? const Center(child: Text('请先选择一个情景开始对话。'))

@@ -105,7 +105,7 @@ class AuthFormScaffold extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AuthPalette.background,
+      backgroundColor: Colors.transparent,
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
@@ -212,7 +212,6 @@ class AuthSwitchPrompt extends StatelessWidget {
 }
 
 abstract final class AuthPalette {
-  static const background = SpeakUpDesign.canvas;
   static const field = SpeakUpDesign.surface;
   static const ink = SpeakUpDesign.ink;
   static const muted = SpeakUpDesign.secondary;
