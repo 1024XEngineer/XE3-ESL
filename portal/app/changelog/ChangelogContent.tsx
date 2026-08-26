@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { loadAndroidRelease } from "../../lib/android-release-metadata.mjs";
-import { loadAndroidReleaseNotes } from "../../lib/android-release-notes.mjs";
+import { loadAndroidReleaseHistory } from "../../lib/android-release-notes.mjs";
 
 type AndroidReleaseMetadata = {
   version: string;
@@ -31,7 +31,7 @@ type ChangelogState =
   | { status: "loading" }
   | { status: "preparing" }
   | { status: "unavailable" }
-  | { status: "ready"; notes: ReleaseNotes };
+  | { status: "ready"; notes: ReleaseNotes[] };
 
 const changeSections: Array<{ type: ChangeType; title: string }> = [
   { type: "feature", title: "新功能" },
@@ -60,12 +60,15 @@ export default function ChangelogContent() {
       const releaseState = await loadAndroidRelease();
       if (!active) return;
       if (releaseState.status !== "ready") {
-        setState({ status: releaseState.status });
+        setState({
+          status:
+            releaseState.status === "preparing" ? "preparing" : "unavailable",
+        });
         return;
       }
 
       const release = releaseState.release as AndroidReleaseMetadata;
-      const notesState = await loadAndroidReleaseNotes(release);
+      const notesState = await loadAndroidReleaseHistory(release);
       if (!active) return;
       if (notesState.status !== "ready") {
         setState({ status: "unavailable" });
@@ -73,7 +76,7 @@ export default function ChangelogContent() {
       }
       setState({
         status: "ready",
-        notes: notesState.notes as ReleaseNotes,
+        notes: notesState.notes as ReleaseNotes[],
       });
     }
 
@@ -111,38 +114,42 @@ export default function ChangelogContent() {
 
   return (
     <section className="changelog-list" aria-label="Android 正式版本更新">
-      <article
-        className="changelog-release"
-        aria-labelledby={`release-v${state.notes.version.replaceAll(".", "-")}`}
-      >
-        <div className="changelog-release-meta">
-          <p>当前正式版本</p>
-          <time dateTime={state.notes.published_at}>
-            {formatReleaseDate(state.notes.published_at)}
-          </time>
-        </div>
-        <div className="changelog-release-body">
-          <h2 id={`release-v${state.notes.version.replaceAll(".", "-")}`}>
-            v{state.notes.version}
-          </h2>
-          {changeSections.map((section) => {
-            const changes = state.notes.changes.filter(
-              (change) => change.type === section.type,
-            );
-            if (changes.length === 0) return null;
-            return (
-              <div className="changelog-change-group" key={section.type}>
-                <h3>{section.title}</h3>
-                <ul>
-                  {changes.map((change) => (
-                    <li key={change.text}>{change.text}</li>
-                  ))}
-                </ul>
-              </div>
-            );
-          })}
-        </div>
-      </article>
+      {state.notes.map((notes, index) => {
+        const headingId = `release-v${notes.version.replaceAll(".", "-")}`;
+        return (
+          <article
+            className="changelog-release"
+            aria-labelledby={headingId}
+            key={notes.version}
+          >
+            <div className="changelog-release-meta">
+              <p>{index === 0 ? "当前正式版本" : "历史版本"}</p>
+              <time dateTime={notes.published_at}>
+                {formatReleaseDate(notes.published_at)}
+              </time>
+            </div>
+            <div className="changelog-release-body">
+              <h2 id={headingId}>v{notes.version}</h2>
+              {changeSections.map((section) => {
+                const changes = notes.changes.filter(
+                  (change) => change.type === section.type,
+                );
+                if (changes.length === 0) return null;
+                return (
+                  <div className="changelog-change-group" key={section.type}>
+                    <h3>{section.title}</h3>
+                    <ul>
+                      {changes.map((change) => (
+                        <li key={change.text}>{change.text}</li>
+                      ))}
+                    </ul>
+                  </div>
+                );
+              })}
+            </div>
+          </article>
+        );
+      })}
     </section>
   );
 }
