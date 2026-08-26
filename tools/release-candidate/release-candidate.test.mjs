@@ -814,14 +814,16 @@ test("metadata and manifest CLIs require exactly one release identity", () => {
   }
 });
 
-test("Release Candidate workflow is manual, official-main-only, and Tag-free", () => {
+test("Release Candidate workflow is automatic, official-main-only, and Tag-free", () => {
   const workflow = readFileSync(releaseCandidateWorkflow, "utf8");
-  assert.match(workflow, /on:\n  workflow_dispatch:/);
+  assert.match(workflow, /on:\n  push:\n    branches:\n      - main/);
   assert.match(workflow, /CANDIDATE_REPOSITORY.*github\.repository/);
   assert.match(workflow, /1024XEngineer\/XE3-ESL/);
   assert.match(workflow, /CANDIDATE_REF.*github\.ref/);
   assert.match(workflow, /refs\/heads\/main/);
+  assert.match(workflow, /CANDIDATE_EVENT" != "push"/);
   assert.match(workflow, /--candidate-sha "\$GITHUB_SHA"/);
+  assert.doesNotMatch(workflow, /workflow_dispatch/);
   assert.doesNotMatch(workflow, /push:\n\s+tags:/);
   assert.doesNotMatch(workflow, /GITHUB_REF_NAME/);
   assert.doesNotMatch(workflow, /--tag "\$GITHUB_REF_NAME"/);
@@ -836,8 +838,9 @@ test("Staging deploy accepts only a successful official Candidate artifact", () 
   assert.match(workflow, /CANDIDATE_HEAD_REPOSITORY.*head_repository\.full_name/);
   assert.match(workflow, /CANDIDATE_EVENT.*workflow_run\.event/);
   assert.match(workflow, /CANDIDATE_HEAD_BRANCH.*workflow_run\.head_branch/);
-  assert.match(workflow, /CANDIDATE_EVENT" != "workflow_dispatch"/);
+  assert.match(workflow, /CANDIDATE_EVENT" != "push"/);
   assert.match(workflow, /CANDIDATE_HEAD_BRANCH" != "main"/);
+  assert.doesNotMatch(workflow, /workflow_dispatch/);
   assert.match(workflow, /environment:\n\s+name: staging/);
   assert.match(workflow, /group: staging-deployment\n\s+cancel-in-progress: false/);
   assert.match(workflow, /listWorkflowRunArtifacts/);

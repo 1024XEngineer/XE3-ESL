@@ -41,7 +41,7 @@ jobs:
           if [[ "$CANDIDATE_REPOSITORY" != "1024XEngineer/XE3-ESL" ||
                 "$CANDIDATE_HEAD_REPOSITORY" != "$CANDIDATE_REPOSITORY" ||
                 "$CANDIDATE_WORKFLOW" != "Release Candidate" ||
-                "$CANDIDATE_EVENT" != "workflow_dispatch" ||
+                "$CANDIDATE_EVENT" != "push" ||
                 "$CANDIDATE_HEAD_BRANCH" != "main" ||
                 ! "$CANDIDATE_HEAD_SHA" =~ ^[0-9a-f]{40}$ ||
                 ! "$CANDIDATE_RUN_ID" =~ ^[1-9][0-9]*$ ]]; then
