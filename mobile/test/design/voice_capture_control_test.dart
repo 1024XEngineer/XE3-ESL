@@ -205,6 +205,40 @@ void main() {
     expect(harness.currentState?.sends, 1);
   });
 
+  testWidgets('external restart after busy restores tap send and cancel', (
+    tester,
+  ) async {
+    final harness = GlobalKey<_VoiceCaptureHarnessState>();
+    await tester.pumpWidget(
+      _VoiceCaptureHarness(key: harness, upwardCancelOnly: true),
+    );
+
+    harness.currentState?.setPhase(VoiceCapturePhase.busy);
+    await tester.pump();
+    harness.currentState?.setPhase(VoiceCapturePhase.starting);
+    await tester.pump();
+    harness.currentState?.setPhase(VoiceCapturePhase.recording);
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('voice-capture-target')));
+    await tester.pump();
+    expect(harness.currentState?.sends, 1);
+
+    harness.currentState?.setPhase(VoiceCapturePhase.starting);
+    await tester.pump();
+    harness.currentState?.setPhase(VoiceCapturePhase.recording);
+    await tester.pump();
+
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byKey(const Key('voice-capture-target'))),
+    );
+    await gesture.moveBy(const Offset(0, -80));
+    await gesture.up();
+    await tester.pump();
+
+    expect(harness.currentState?.cancels, 1);
+  });
+
   testWidgets('release waits for asynchronous microphone start', (
     tester,
   ) async {
@@ -318,6 +352,7 @@ class _VoiceCaptureHarness extends StatefulWidget {
     this.sendCompleter,
     this.showTapActions = false,
     this.detachTargetWhileRecording = false,
+    this.upwardCancelOnly = false,
   });
 
   final Completer<void>? startCompleter;
@@ -325,6 +360,7 @@ class _VoiceCaptureHarness extends StatefulWidget {
   final Completer<void>? sendCompleter;
   final bool showTapActions;
   final bool detachTargetWhileRecording;
+  final bool upwardCancelOnly;
 
   @override
   State<_VoiceCaptureHarness> createState() => _VoiceCaptureHarnessState();
@@ -373,6 +409,10 @@ class _VoiceCaptureHarnessState extends State<_VoiceCaptureHarness> {
     setState(() => phase = VoiceCapturePhase.idle);
   }
 
+  void setPhase(VoiceCapturePhase value) {
+    setState(() => phase = value);
+  }
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -387,6 +427,7 @@ class _VoiceCaptureHarnessState extends State<_VoiceCaptureHarness> {
             onSendVoice: _send,
             onConvertToText: _convert,
             onCancel: _cancel,
+            upwardCancelOnly: widget.upwardCancelOnly,
             builder: (context, capture) {
               if (widget.detachTargetWhileRecording &&
                   phase == VoiceCapturePhase.recording) {
