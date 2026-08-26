@@ -788,9 +788,7 @@ class _SpeakUpShellState extends State<SpeakUpShell>
           key: _scaffoldKey,
           extendBody: !practiceSelected,
           resizeToAvoidBottomInset: false,
-          backgroundColor: practiceSelected
-              ? SpeakUpDesign.canvas
-              : Colors.transparent,
+          backgroundColor: Colors.transparent,
           drawer: _ConversationDrawer(
             controller: widget.conversationController,
             avatarBytes: widget.authController?.avatarBytes,

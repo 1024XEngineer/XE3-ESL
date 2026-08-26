@@ -12,6 +12,7 @@ import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/platform_navigation_bar.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/app/speak_up_shell.dart';
+import 'package:speakup/design/speak_up_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/agent/client_action/agent_client_action.dart';
 import 'package:speakup/features/agent/conversation/conversation.dart';
@@ -213,6 +214,8 @@ void main() {
     await tester.pumpWidget(const SpeakUpApp.preview());
     final semantics = tester.ensureSemantics();
 
+    expect(find.byType(SpeakUpAmbientBackground), findsWidgets);
+
     await _tapPrimaryDestination(
       tester,
       key: 'primary-tab-scenes',
@@ -234,6 +237,13 @@ void main() {
       ),
     );
     expect(shellScaffold.extendBody, isFalse);
+    expect(shellScaffold.backgroundColor, Colors.transparent);
+    expect(
+      tester
+          .widget<Scaffold>(find.byKey(const Key('scenes-page')))
+          .backgroundColor,
+      Colors.transparent,
+    );
     await _tapPrimaryDestination(
       tester,
       key: 'primary-tab-review',
@@ -249,6 +259,12 @@ void main() {
     );
     expect(find.byKey(const Key('profile-avatar')), findsOneWidget);
     expect(find.byKey(const Key('profile-display-name')), findsOneWidget);
+    expect(
+      tester
+          .widget<Scaffold>(find.byKey(const Key('profile-page')))
+          .backgroundColor,
+      Colors.transparent,
+    );
     expect(
       find.byKey(const Key('profile-ielts-ability-button')),
       findsOneWidget,
