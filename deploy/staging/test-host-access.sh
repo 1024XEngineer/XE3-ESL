@@ -63,6 +63,7 @@ assert_line 'exec /usr/bin/sudo -n -u speakup-staging-runtime -- \' \
 assert_line '  /usr/local/libexec/speakup-staging-broker' "$host_contract/ssh-gate"
 assert_line 'ExecStart=/usr/bin/dockerd-rootless.sh --host=unix://%t/docker.sock --config-file=/var/lib/speakup/staging-runtime/.config/docker/daemon.json' \
   "$host_contract/rootless-docker.service"
+assert_line 'Environment=TMPDIR=%t' "$host_contract/rootless-docker.service"
 if grep -Fq '/var/run/docker.sock' "$host_contract/rootless-docker.service"; then
   fail "rootless unit references the rootful Docker socket"
 fi
