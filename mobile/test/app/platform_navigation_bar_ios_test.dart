@@ -64,6 +64,20 @@ void main() {
 
       expect(find.byType(UiKitView), findsOneWidget);
       expect(find.byType(GestureDetector), findsNothing);
+      final navigationRect = tester.getRect(
+        find.byKey(const Key('primary-navigation')),
+      );
+      final platformViewRect = tester.getRect(find.byType(UiKitView));
+      expect(platformViewRect.left, navigationRect.left);
+      expect(platformViewRect.right, navigationRect.right);
+      expect(platformViewRect.top - navigationRect.top, 12);
+      expect(platformViewRect.bottom, navigationRect.bottom);
+      expect(
+        PlatformNavigationBar.heightFor(
+          tester.element(find.byKey(const Key('primary-navigation'))),
+        ),
+        52,
+      );
       final platformView = tester.widget<UiKitView>(find.byType(UiKitView));
       expect(platformView.viewType, 'speakup/native_tab_bar');
       expect(platformView.creationParams, <String, Object>{
