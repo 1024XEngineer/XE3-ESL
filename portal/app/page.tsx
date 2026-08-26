@@ -39,6 +39,14 @@ export default function Home() {
         <div className="nav-links">
           <a href="#top">产品介绍</a>
           <Link href="/changelog">更新日志</Link>
+          <a
+            href="https://github.com/1024XEngineer/XE3-ESL"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="在 GitHub 查看 SpeakUp 主仓库（新窗口打开）"
+          >
+            GitHub <span aria-hidden="true">↗</span>
+          </a>
         </div>
       </nav>
 

@@ -41,6 +41,10 @@ test("renders the standalone SpeakUp portal", async () => {
   assert.match(html, /speakup-mark\.svg/);
   assert.doesNotMatch(html, /speakup-mascot-blue/);
   assert.match(html, /href="\/changelog"[^>]*>更新日志<\/a>/);
+  assert.match(
+    html,
+    /href="https:\/\/github\.com\/1024XEngineer\/XE3-ESL"[^>]*target="_blank"[^>]*rel="noopener noreferrer"[^>]*>GitHub <span aria-hidden="true">↗<\/span><\/a>/,
+  );
   assert.doesNotMatch(html, /href="\/download\/android"/);
   assert.doesNotMatch(html, /常见问题|唯一官方下载|制品信息完整/);
   assert.doesNotMatch(html, /SHA-256|签名证书|ABI/);
