@@ -67,7 +67,10 @@ class AvatarManager {
 
   static final AvatarManager shared = AvatarManager._();
 
-  Future<Avatar> load({required String id}) =>
+  Future<Avatar> load({
+    required String id,
+    bool useCompressedModel = false,
+  }) =>
       Future<Avatar>.error(_unsupported());
 
   Future<void> cancelLoading({required String id}) async {}
