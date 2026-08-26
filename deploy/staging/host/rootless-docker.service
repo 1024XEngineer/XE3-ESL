@@ -5,7 +5,6 @@ Documentation=https://docs.docker.com/engine/security/rootless/
 [Service]
 Environment=HOME=/var/lib/speakup/staging-runtime
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-Environment=TMPDIR=%t
 Environment=DOCKERD_ROOTLESS_ROOTLESSKIT_STATE_DIR=%t/speakup-staging-rootlesskit
 ExecStart=/usr/bin/dockerd-rootless.sh --host=unix://%t/docker.sock --config-file=/var/lib/speakup/staging-runtime/.config/docker/daemon.json
 ExecStartPost=/usr/bin/chmod 0600 %t/docker.sock
