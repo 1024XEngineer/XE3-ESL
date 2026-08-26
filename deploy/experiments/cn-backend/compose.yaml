@@ -63,7 +63,7 @@ services:
       DATABASE_URL: postgres://${EXPERIMENT_POSTGRES_USER:?EXPERIMENT_POSTGRES_USER is required}:${EXPERIMENT_POSTGRES_PASSWORD:?EXPERIMENT_POSTGRES_PASSWORD is required}@postgres:5432/${EXPERIMENT_POSTGRES_DB:?EXPERIMENT_POSTGRES_DB is required}?sslmode=disable
       SERVER_HOST: 0.0.0.0
       SERVER_PORT: "8080"
-      METRICS_HOST: 127.0.0.1
+      METRICS_HOST: 0.0.0.0
     ports:
       - "127.0.0.1:28083:8080"
     depends_on:
@@ -72,6 +72,7 @@ services:
     networks:
       - server_egress
       - database
+      - monitor
     healthcheck:
       test:
         [
@@ -91,6 +92,8 @@ services:
 networks:
   server_egress:
   database:
+    internal: true
+  monitor:
     internal: true
 
 volumes:

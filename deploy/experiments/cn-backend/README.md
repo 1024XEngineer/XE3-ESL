@@ -95,6 +95,54 @@ The account remains only in the isolated experiment database so repeated runs
 are auditable. ASR, WebSocket voice streaming, and report generation still
 require the comparison APK and a real-device session.
 
+## Private experiment metrics
+
+The optional monitoring overlay runs only Prometheus and a textfile-only
+node_exporter. It does not install Grafana, Alertmanager, Nginx, blackbox probes,
+or a Docker socket mount. Prometheus is available only on host loopback port
+`29091`; Server metrics remain unpublished and are reachable only through the
+internal `monitor` Docker network. Prometheus alone also joins an otherwise
+empty bridge network so Docker can publish its UI to host loopback; neither the
+Server nor node_exporter joins that bridge.
+
+Install the fixed host exporter and timer, then start the overlay with the base
+Compose file so it shares the same private network:
+
+```sh
+install -d -o root -g root -m 0755 /var/lib/speakup-cn-experiment/metrics
+install -m 0755 observability/export-host-metrics.sh \
+  /usr/local/sbin/xe3-speakup-cn-experiment-export-metrics
+install -m 0644 observability/xe3-speakup-cn-experiment-metrics.service \
+  observability/xe3-speakup-cn-experiment-metrics.timer \
+  /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now xe3-speakup-cn-experiment-metrics.timer
+systemctl start xe3-speakup-cn-experiment-metrics.service
+
+docker compose \
+  --env-file /etc/speakup-cn-experiment/runtime.env \
+  --file /opt/speakup-cn-experiment/compose.yaml \
+  --file /opt/speakup-cn-experiment/compose.observability.yaml \
+  up --detach --wait server prometheus node-exporter
+```
+
+Inspect Prometheus through an encrypted local forward rather than a public
+port:
+
+```sh
+ssh -N -L 29091:127.0.0.1:29091 -p "$CN_EXPERIMENT_SSH_PORT" \
+  "$CN_EXPERIMENT_SSH_TARGET"
+curl --fail http://127.0.0.1:29091/-/ready
+```
+
+The host exporter records local health/readiness, exact experiment container
+state and restart counts, plus root filesystem bytes and inodes. Application
+metrics provide real provider calls, failures, duration, and usage. The smoke
+test is deliberately not scheduled because it consumes paid providers and
+creates accounts. This private stack cannot detect a complete host outage and
+has no notification delivery path; those remain formal HTTPS and Alertmanager
+cutover prerequisites.
+
 ## Stop without deleting experiment data
 
 ```sh

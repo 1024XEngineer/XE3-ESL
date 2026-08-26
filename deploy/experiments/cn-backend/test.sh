@@ -6,6 +6,7 @@ temporary_directory="$(mktemp -d)"
 trap 'rm -rf "$temporary_directory"' EXIT
 
 bash -n "$directory/smoke-current-providers.sh"
+bash -n "$directory/observability/export-host-metrics.sh"
 
 if [[ "$(grep -Ec '^[[:space:]]+ports:$' "$directory/compose.yaml")" -ne 1 ]] ||
   ! grep -Fqx '      - "127.0.0.1:28083:8080"' "$directory/compose.yaml"; then
@@ -52,6 +53,47 @@ printf '%s\n' 'DATABASE_URL=postgres://forbidden' >>"$server_env"
 write_runtime '0123456789abcdef_ABCDEF-'
 if "$directory/validate-runtime.sh" "$runtime_env" >/dev/null 2>&1; then
   printf 'validator accepted a Compose-owned server key\n' >&2
+  exit 1
+fi
+
+printf '%s\n' 'TEXT_GENERATION_PROVIDER=test-fixture' >"$server_env"
+write_runtime '0123456789abcdef_ABCDEF-'
+rendered="$temporary_directory/rendered.json"
+docker compose \
+  --env-file "$runtime_env" \
+  --file "$directory/compose.yaml" \
+  --file "$directory/compose.observability.yaml" \
+  config --format json >"$rendered"
+
+jq --exit-status '
+  .networks.monitor.internal == true and
+  (.networks.monitor_ui | has("internal") | not) and
+  .services.server.environment.METRICS_HOST == "0.0.0.0" and
+  (.services.server.ports | length) == 1 and
+  .services.server.ports[0].host_ip == "127.0.0.1" and
+  (.services.server.ports[0].published | tostring) == "28083" and
+  (.services.prometheus.ports | length) == 1 and
+  .services.prometheus.ports[0].host_ip == "127.0.0.1" and
+  (.services.prometheus.ports[0].published | tostring) == "29091" and
+  (.services.prometheus.networks | has("monitor")) and
+  (.services.prometheus.networks | has("monitor_ui")) and
+  (.services["node-exporter"].networks | keys) == ["monitor"] and
+  (.services["node-exporter"] | has("ports") | not) and
+  .services.prometheus.read_only == true and
+  .services["node-exporter"].read_only == true and
+  .services.prometheus.pull_policy == "never" and
+  .services["node-exporter"].pull_policy == "never" and
+  .services.prometheus.pids_limit == 64 and
+  .services["node-exporter"].pids_limit == 32 and
+  ([.services[] | .volumes[]? | .source] | any(. == "/var/run/docker.sock") | not)
+' "$rendered" >/dev/null || {
+  printf 'observability stack violates the private runtime contract\n' >&2
+  exit 1
+}
+
+if grep -R --fixed-strings '/var/run/docker.sock' \
+  "$directory/compose.yaml" "$directory/compose.observability.yaml" >/dev/null; then
+  printf 'observability stack must not mount the Docker socket\n' >&2
   exit 1
 fi
 
