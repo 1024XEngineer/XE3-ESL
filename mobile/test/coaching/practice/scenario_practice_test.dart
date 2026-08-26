@@ -427,7 +427,7 @@ void main() {
     final userBubble = find.byKey(Key('practice-message-${userMessage.id}'));
     expect(
       (tester.widget<Container>(userBubble).decoration! as BoxDecoration).color,
-      SpeakUpDesign.primaryMuted,
+      SpeakUpDesign.userBubble,
     );
 
     final userTurnsAfterSend = controller.practiceMessages

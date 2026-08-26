@@ -13,6 +13,8 @@ abstract final class SpeakUpDesign {
   static const border = Color(0xFFE5E5E5);
   static const primary = ink;
   static const primaryMuted = Color(0xFFF0F0F0);
+  static const userBubble = Color(0xFFE6F2FF);
+  static const userBubbleBorder = Color(0xFFDDE5F0);
   static const success = Color(0xFF285443);
   static const successMuted = Color(0xFFEAF3EF);
   static const warning = Color(0xFFC58000);
