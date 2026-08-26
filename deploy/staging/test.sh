@@ -8,6 +8,9 @@ readonly compose_file="$staging_directory/compose.yaml"
 readonly portal_digest="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 readonly server_digest="sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 readonly git_sha="cccccccccccccccccccccccccccccccccccccccc"
+readonly rollback_portal_digest="sha256:1111111111111111111111111111111111111111111111111111111111111111"
+readonly rollback_server_digest="sha256:2222222222222222222222222222222222222222222222222222222222222222"
+readonly rollback_git_sha="3333333333333333333333333333333333333333"
 readonly staging_apk_sha="dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
 readonly production_apk_sha="eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 readonly certificate_sha="ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
@@ -41,27 +44,31 @@ write_runtime_environment() {
 write_manifest() {
   local destination=$1
   local selected_portal_digest=${2:-$portal_digest}
+  local selected_server_digest=${3:-$server_digest}
+  local selected_version=${4:-0.1.1}
+  local selected_git_sha=${5:-$git_sha}
+  local selected_schema=${6:-7}
 
   printf '%s\n' \
     '{' \
     '  "manifest_version": 1,' \
-    '  "version": "0.1.1",' \
-    "  \"git_sha\": \"$git_sha\"," \
+    "  \"version\": \"$selected_version\"," \
+    "  \"git_sha\": \"$selected_git_sha\"," \
     '  "version_code": 2,' \
     '  "portal_image": "ghcr.io/1024xengineer/xe3-esl-portal",' \
     "  \"portal_image_digest\": \"$selected_portal_digest\"," \
     '  "server_image": "ghcr.io/1024xengineer/xe3-esl-server",' \
-    "  \"server_image_digest\": \"$server_digest\"," \
-    '  "staging_apk_file": "speakup-v0.1.1-staging-arm64.apk",' \
+    "  \"server_image_digest\": \"$selected_server_digest\"," \
+    "  \"staging_apk_file\": \"speakup-v$selected_version-staging-arm64.apk\"," \
     "  \"staging_apk_sha256\": \"$staging_apk_sha\"," \
-    '  "production_apk_file": "speakup-v0.1.1-production-arm64.apk",' \
+    "  \"production_apk_file\": \"speakup-v$selected_version-production-arm64.apk\"," \
     '  "production_apk_size_bytes": 123456,' \
     "  \"production_apk_sha256\": \"$production_apk_sha\"," \
     '  "application_id": "com.xengineer.speakup",' \
     '  "minimum_android_api": 24,' \
     '  "abis": ["arm64-v8a"],' \
     "  \"apk_certificate_sha256\": \"$certificate_sha\"," \
-    '  "database_schema_version": 7,' \
+    "  \"database_schema_version\": $selected_schema," \
     '  "quality_run_url": "https://github.com/1024XEngineer/XE3-ESL/actions/runs/123456"' \
     '}' >"$destination"
 }
@@ -78,6 +85,19 @@ write_runtime_environment \
   "$temporary_directory/staging-runtime.env" \
   "$temporary_directory/server.env"
 write_manifest "$temporary_directory/release-manifest.json"
+write_manifest \
+  "$temporary_directory/rollback-manifest.json" \
+  "$rollback_portal_digest" \
+  "$rollback_server_digest" \
+  0.1.0 \
+  "$rollback_git_sha"
+write_manifest \
+  "$temporary_directory/rollback-schema-mismatch-manifest.json" \
+  "$rollback_portal_digest" \
+  "$rollback_server_digest" \
+  0.1.0 \
+  "$rollback_git_sha" \
+  8
 
 bash -n "$manage" "$0"
 
@@ -121,8 +141,20 @@ expect_failure "empty edge argument on runtime command" \
 [[ ! -s "$empty_edge_log" ]] ||
   fail "empty forbidden edge argument invoked Docker"
 
+empty_current_log="$temporary_directory/empty-current-forbidden.log"
+: >"$empty_current_log"
+expect_failure "empty forbidden current manifest on validate" \
+  env COMMAND_LOG="$empty_current_log" PATH="$reject_path" \
+  "$manage" validate \
+    --manifest "$temporary_directory/release-manifest.json" \
+    --current-manifest '' \
+    --runtime-env-file "$temporary_directory/staging-runtime.env"
+[[ ! -s "$empty_current_log" ]] ||
+  fail "empty forbidden current manifest invoked Docker"
+
 empty_required_argument_index=0
-for empty_required_argument in --manifest --runtime-env-file --receipt; do
+for empty_required_argument in \
+  --manifest --current-manifest --runtime-env-file --receipt; do
   empty_required_argument_index=$((empty_required_argument_index + 1))
   empty_required_argument_log="$temporary_directory/empty-required-argument-$empty_required_argument_index.log"
   : >"$empty_required_argument_log"
@@ -130,22 +162,36 @@ for empty_required_argument in --manifest --runtime-env-file --receipt; do
     --manifest)
       expect_failure "empty required runtime argument $empty_required_argument" \
         env COMMAND_LOG="$empty_required_argument_log" PATH="$reject_path" \
-        "$manage" validate \
+        "$manage" rollback \
           --manifest '' \
-          --runtime-env-file "$temporary_directory/staging-runtime.env"
+          --current-manifest "$temporary_directory/release-manifest.json" \
+          --runtime-env-file "$temporary_directory/staging-runtime.env" \
+          --receipt "$temporary_directory/empty-manifest-receipt.json"
+      ;;
+    --current-manifest)
+      expect_failure "empty required runtime argument $empty_required_argument" \
+        env COMMAND_LOG="$empty_required_argument_log" PATH="$reject_path" \
+        "$manage" rollback \
+          --manifest "$temporary_directory/rollback-manifest.json" \
+          --current-manifest '' \
+          --runtime-env-file "$temporary_directory/staging-runtime.env" \
+          --receipt "$temporary_directory/empty-current-receipt.json"
       ;;
     --runtime-env-file)
       expect_failure "empty required runtime argument $empty_required_argument" \
         env COMMAND_LOG="$empty_required_argument_log" PATH="$reject_path" \
-        "$manage" validate \
-          --manifest "$temporary_directory/release-manifest.json" \
-          --runtime-env-file ''
+        "$manage" rollback \
+          --manifest "$temporary_directory/rollback-manifest.json" \
+          --current-manifest "$temporary_directory/release-manifest.json" \
+          --runtime-env-file '' \
+          --receipt "$temporary_directory/empty-runtime-receipt.json"
       ;;
     --receipt)
       expect_failure "empty required runtime argument $empty_required_argument" \
         env COMMAND_LOG="$empty_required_argument_log" PATH="$reject_path" \
-        "$manage" deploy \
-          --manifest "$temporary_directory/release-manifest.json" \
+        "$manage" rollback \
+          --manifest "$temporary_directory/rollback-manifest.json" \
+          --current-manifest "$temporary_directory/release-manifest.json" \
           --runtime-env-file "$temporary_directory/staging-runtime.env" \
           --receipt ''
       ;;
@@ -155,12 +201,16 @@ for empty_required_argument in --manifest --runtime-env-file --receipt; do
 done
 
 duplicate_runtime_argument_index=0
-for duplicate_runtime_argument in --manifest --runtime-env-file --receipt; do
+for duplicate_runtime_argument in \
+  --manifest --current-manifest --runtime-env-file --receipt; do
   duplicate_runtime_argument_index=$((duplicate_runtime_argument_index + 1))
   duplicate_runtime_argument_log="$temporary_directory/duplicate-runtime-argument-$duplicate_runtime_argument_index.log"
   : >"$duplicate_runtime_argument_log"
   case "$duplicate_runtime_argument" in
     --manifest)
+      duplicate_runtime_argument_value="$temporary_directory/rollback-manifest.json"
+      ;;
+    --current-manifest)
       duplicate_runtime_argument_value="$temporary_directory/release-manifest.json"
       ;;
     --runtime-env-file)
@@ -172,14 +222,26 @@ for duplicate_runtime_argument in --manifest --runtime-env-file --receipt; do
   esac
   expect_failure "duplicate runtime argument $duplicate_runtime_argument" \
     env COMMAND_LOG="$duplicate_runtime_argument_log" PATH="$reject_path" \
-    "$manage" deploy \
-      --manifest "$temporary_directory/release-manifest.json" \
+    "$manage" rollback \
+      --manifest "$temporary_directory/rollback-manifest.json" \
+      --current-manifest "$temporary_directory/release-manifest.json" \
       --runtime-env-file "$temporary_directory/staging-runtime.env" \
       --receipt "$temporary_directory/receipt.json" \
       "$duplicate_runtime_argument" "$duplicate_runtime_argument_value"
   [[ ! -s "$duplicate_runtime_argument_log" ]] ||
     fail "duplicate runtime argument invoked Docker: $duplicate_runtime_argument"
 done
+
+missing_current_log="$temporary_directory/missing-current.log"
+: >"$missing_current_log"
+expect_failure "rollback without a current manifest" \
+  env COMMAND_LOG="$missing_current_log" PATH="$reject_path" \
+  "$manage" rollback \
+    --manifest "$temporary_directory/rollback-manifest.json" \
+    --runtime-env-file "$temporary_directory/staging-runtime.env" \
+    --receipt "$temporary_directory/missing-current-receipt.json"
+[[ ! -s "$missing_current_log" ]] ||
+  fail "missing rollback current manifest invoked Docker"
 
 printf '%s\n%s\n' \
   "$(<"$temporary_directory/staging-runtime.env")" \
@@ -483,8 +545,21 @@ readonly server_id=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 readonly postgres_id=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 readonly project=xe3-speakup-staging
 
+runtime_portal_digest=${TEST_RUNTIME_PORTAL_DIGEST:-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+runtime_server_digest=${TEST_RUNTIME_SERVER_DIGEST:-sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}
+if [[ -n "${TEST_RUNTIME_STATE_FILE:-}" && -s "$TEST_RUNTIME_STATE_FILE" ]]; then
+  IFS='|' read -r runtime_portal_digest runtime_server_digest \
+    <"$TEST_RUNTIME_STATE_FILE"
+fi
+
 if [[ "${1:-}" == compose ]]; then
   command_line=" $* "
+  if [[ -n "${TEST_RUNTIME_STATE_FILE:-}" &&
+    "$command_line" == *" up "* &&
+    "$command_line" == *" portal server "* ]]; then
+    printf '%s|%s\n' "$PORTAL_IMAGE_DIGEST" "$SERVER_IMAGE_DIGEST" \
+      >"$TEST_RUNTIME_STATE_FILE"
+  fi
   if [[ "$command_line" == *" run "* &&
     "$command_line" == *"/usr/local/bin/speakup-migrate version"* ]]; then
     printf '%s\n' "${SCHEMA_OUTPUT:-version=7 dirty=false}"
@@ -555,7 +630,7 @@ if [[ "${1:-}" == inspect && "$#" == 2 ]]; then
     aaaaaaaaaaaa)
       id=$portal_id
       service=portal
-      image="ghcr.io/1024xengineer/xe3-esl-portal@${TEST_RUNTIME_PORTAL_DIGEST:-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
+      image="ghcr.io/1024xengineer/xe3-esl-portal@$runtime_portal_digest"
       mounts='[{"Type":"volume","Name":"xe3-speakup-staging_portal_data","Destination":"/app/.wrangler","RW":true}]'
       ports='{"3000/tcp":[{"HostIp":"127.0.0.1","HostPort":"28082"}]}'
       networks='{"xe3-speakup-staging_portal_edge":{}}'
@@ -564,7 +639,7 @@ if [[ "${1:-}" == inspect && "$#" == 2 ]]; then
     bbbbbbbbbbbb)
       id=$server_id
       service=server
-      image="ghcr.io/1024xengineer/xe3-esl-server@${TEST_RUNTIME_SERVER_DIGEST:-sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}"
+      image="ghcr.io/1024xengineer/xe3-esl-server@$runtime_server_digest"
       mounts='[]'
       ports='{"8080/tcp":[{"HostIp":"127.0.0.1","HostPort":"28083"}]}'
       networks='{"xe3-speakup-staging_database":{},"xe3-speakup-staging_server_edge":{}}'
@@ -633,16 +708,32 @@ if [[ "${1:-}" == image && "${2:-}" == inspect && "$#" == 3 ]]; then
     *) exit 1 ;;
   esac
   [[ "${TEST_MISSING_IMAGE:-}" != "$service" ]] || exit 1
+  if [[ "${TEST_MISSING_TARGET_IMAGE:-}" == "$service" ]]; then
+    case "$expected_image" in
+      *@sha256:1111111111111111111111111111111111111111111111111111111111111111 | \
+        *@sha256:2222222222222222222222222222222222222222222222222222222222222222)
+        exit 1
+        ;;
+    esac
+  fi
   architecture=amd64
   [[ "${TEST_BAD_IMAGE_PLATFORM:-}" != "$service" ]] || architecture=arm64
   if [[ "$service" == postgres ]]; then
     labels='{}'
   else
     version=0.1.1
+    revision=cccccccccccccccccccccccccccccccccccccccc
+    case "$expected_image" in
+      *@sha256:1111111111111111111111111111111111111111111111111111111111111111 | \
+        *@sha256:2222222222222222222222222222222222222222222222222222222222222222)
+        version=0.1.0
+        revision=3333333333333333333333333333333333333333
+        ;;
+    esac
     [[ "${TEST_BAD_OCI_LABEL:-}" != "$service" ]] || version=9.9.9
     labels=$(jq --null-input \
       --arg version "$version" \
-      --arg revision cccccccccccccccccccccccccccccccccccccccc '
+      --arg revision "$revision" '
         {
           "org.opencontainers.image.source":
             "https://github.com/1024XEngineer/XE3-ESL",
@@ -760,6 +851,7 @@ readonly fake_path="$temporary_directory/fake-bin:$PATH"
 mkdir "$temporary_directory/lock-directory"
 chmod 0700 "$temporary_directory/lock-directory"
 readonly lock_file="$temporary_directory/lock-directory/deploy.lock"
+export SPEAKUP_STAGING_LOCK_FILE="$lock_file"
 
 expect_failure "deploy without a receipt" \
   env PATH="$fake_path" SPEAKUP_STAGING_LOCK_FILE="$lock_file" \
@@ -804,6 +896,13 @@ grep -Fq 'http://127.0.0.1:28083/health' "$temporary_directory/deploy.log" ||
 grep -Fq 'http://127.0.0.1:28083/readyz' "$temporary_directory/deploy.log" ||
   fail "deployment did not verify /readyz"
 [[ -f "$receipt" ]] || fail "successful deployment did not write a receipt"
+if receipt_mode=$(stat -c '%a' -- "$receipt" 2>/dev/null); then
+  :
+else
+  receipt_mode=$(stat -f '%Lp' "$receipt")
+fi
+[[ "$receipt_mode" == 444 ]] ||
+  fail "deployment receipt is not immutable mode 0444"
 manifest_sha=$(shasum -a 256 "$temporary_directory/release-manifest.json" |
   awk '{print $1}')
 jq --exit-status \
@@ -859,6 +958,152 @@ jq --exit-status '.receipt_version == 1' "$receipt" >/dev/null ||
 if grep -Eq ' compose .* (pull|up|run|down) ' \
   "$temporary_directory/no-clobber.log"; then
   fail "existing receipt was rejected only after a deployment side effect"
+fi
+
+rollback_receipt="$temporary_directory/staging-rollback-receipt.json"
+rollback_state="$temporary_directory/rollback-runtime.state"
+: >"$rollback_state"
+COMMAND_LOG="$temporary_directory/rollback.log" \
+PATH="$fake_path" \
+SPEAKUP_STAGING_LOCK_FILE="$lock_file" \
+TEST_RUNTIME_STATE_FILE="$rollback_state" \
+  "$manage" rollback \
+    --manifest "$temporary_directory/rollback-manifest.json" \
+    --current-manifest "$temporary_directory/release-manifest.json" \
+    --runtime-env-file "$temporary_directory/staging-runtime.env" \
+    --receipt "$rollback_receipt" \
+    >"$temporary_directory/rollback.out"
+grep -Fq 'rolled_back=true database_restored=false' \
+  "$temporary_directory/rollback.out" ||
+  fail "successful same-schema rollback was not reported"
+
+rollback_up_pattern='up --pull never --detach --no-build --no-deps --wait --wait-timeout 90 portal server'
+[[ "$(grep -Fc "$rollback_up_pattern" "$temporary_directory/rollback.log")" == 1 ]] ||
+  fail "rollback did not perform exactly one Portal/Server update"
+if grep -Eq ' compose .* (pull|down) ' "$temporary_directory/rollback.log" ||
+  grep -Eq ' compose .* up .* postgres' "$temporary_directory/rollback.log" ||
+  grep -Eq ' compose .* run .* migrate$' "$temporary_directory/rollback.log"; then
+  fail "rollback pulled, migrated, stopped, or changed PostgreSQL"
+fi
+rollback_up_line=$(grep -nF "$rollback_up_pattern" \
+  "$temporary_directory/rollback.log" | cut -d: -f1)
+target_portal_image_line=$(grep -nF \
+  "docker image inspect ghcr.io/1024xengineer/xe3-esl-portal@$rollback_portal_digest" \
+  "$temporary_directory/rollback.log" | head -n 1 | cut -d: -f1)
+target_server_image_line=$(grep -nF \
+  "docker image inspect ghcr.io/1024xengineer/xe3-esl-server@$rollback_server_digest" \
+  "$temporary_directory/rollback.log" | head -n 1 | cut -d: -f1)
+first_ready_line=$(grep -nF 'curl --fail --silent --max-time 3 http://127.0.0.1:28083/readyz' \
+  "$temporary_directory/rollback.log" | head -n 1 | cut -d: -f1)
+last_ready_line=$(grep -nF 'curl --fail --silent --max-time 3 http://127.0.0.1:28083/readyz' \
+  "$temporary_directory/rollback.log" | tail -n 1 | cut -d: -f1)
+[[ -n "$target_portal_image_line" && -n "$target_server_image_line" &&
+  -n "$first_ready_line" && -n "$last_ready_line" ]] ||
+  fail "rollback preflight or full verification was not recorded"
+((first_ready_line < target_portal_image_line &&
+  first_ready_line < target_server_image_line &&
+  target_portal_image_line < rollback_up_line &&
+  target_server_image_line < rollback_up_line &&
+  rollback_up_line < last_ready_line)) ||
+  fail "rollback verification and image preflight ordering is unsafe"
+
+rollback_manifest_sha=$(shasum -a 256 \
+  "$temporary_directory/rollback-manifest.json" | awk '{print $1}')
+jq --exit-status \
+  --arg manifest_sha "$rollback_manifest_sha" \
+  --arg portal_digest "$rollback_portal_digest" \
+  --arg server_digest "$rollback_server_digest" \
+  --arg git_sha "$rollback_git_sha" '
+    .receipt_version == 1 and
+    .manifest_sha256 == $manifest_sha and
+    .version == "0.1.0" and
+    .git_sha == $git_sha and
+    .database_schema_version == 7 and
+    .portal_image_digest == $portal_digest and
+    .server_image_digest == $server_digest and
+    .portal_container_id ==
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" and
+    .server_container_id ==
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" and
+    .postgres_container_id ==
+      "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  ' "$rollback_receipt" >/dev/null ||
+  fail "rollback receipt does not describe the verified target runtime"
+if rollback_receipt_mode=$(stat -c '%a' -- "$rollback_receipt" 2>/dev/null); then
+  :
+else
+  rollback_receipt_mode=$(stat -f '%Lp' "$rollback_receipt")
+fi
+[[ "$rollback_receipt_mode" == 444 ]] ||
+  fail "rollback receipt is not immutable mode 0444"
+
+: >"$temporary_directory/rollback-no-clobber.log"
+expect_failure "existing rollback receipt" env \
+  COMMAND_LOG="$temporary_directory/rollback-no-clobber.log" \
+  PATH="$fake_path" \
+  SPEAKUP_STAGING_LOCK_FILE="$lock_file" \
+  "$manage" rollback \
+    --manifest "$temporary_directory/rollback-manifest.json" \
+    --current-manifest "$temporary_directory/release-manifest.json" \
+    --runtime-env-file "$temporary_directory/staging-runtime.env" \
+    --receipt "$rollback_receipt"
+if grep -Fq "$rollback_up_pattern" \
+  "$temporary_directory/rollback-no-clobber.log"; then
+  fail "existing rollback receipt was rejected after a container update"
+fi
+
+assert_failed_rollback_before_update() {
+  local name=$1
+  local target_manifest=$2
+  local log=$3
+  local failed_receipt=$4
+  local state="${failed_receipt}.state"
+  shift 4
+
+  : >"$log"
+  : >"$state"
+  expect_failure "$name" env \
+    COMMAND_LOG="$log" \
+    PATH="$fake_path" \
+    SPEAKUP_STAGING_LOCK_FILE="$lock_file" \
+    TEST_RUNTIME_STATE_FILE="$state" \
+    "$@" \
+    "$manage" rollback \
+      --manifest "$target_manifest" \
+      --current-manifest "$temporary_directory/release-manifest.json" \
+      --runtime-env-file "$temporary_directory/staging-runtime.env" \
+      --receipt "$failed_receipt"
+  [[ ! -e "$failed_receipt" && ! -L "$failed_receipt" ]] ||
+    fail "$name wrote a rollback receipt"
+  [[ ! -s "$state" ]] || fail "$name changed the application runtime"
+  if grep -Fq "$rollback_up_pattern" "$log" ||
+    grep -Eq ' compose .* (pull|down) ' "$log" ||
+    grep -Eq ' compose .* up .* postgres' "$log" ||
+    grep -Eq ' compose .* run .* migrate$' "$log"; then
+    fail "$name reached a forbidden rollback mutation"
+  fi
+}
+
+assert_failed_rollback_before_update \
+  "rollback schema mismatch" \
+  "$temporary_directory/rollback-schema-mismatch-manifest.json" \
+  "$temporary_directory/rollback-schema-mismatch.log" \
+  "$temporary_directory/rollback-schema-mismatch-receipt.json"
+assert_failed_rollback_before_update \
+  "missing rollback target image" \
+  "$temporary_directory/rollback-manifest.json" \
+  "$temporary_directory/rollback-missing-image.log" \
+  "$temporary_directory/rollback-missing-image-receipt.json" \
+  TEST_MISSING_TARGET_IMAGE=portal
+assert_failed_rollback_before_update \
+  "current runtime mismatch" \
+  "$temporary_directory/rollback-manifest.json" \
+  "$temporary_directory/rollback-current-mismatch.log" \
+  "$temporary_directory/rollback-current-mismatch-receipt.json" \
+  TEST_BAD_RUNTIME_IMAGE=portal
+if grep -Fq "$rollback_portal_digest" \
+  "$temporary_directory/rollback-current-mismatch.log"; then
+  fail "current runtime mismatch reached target image preflight"
 fi
 
 assert_failed_deploy_before_application() {
@@ -1005,6 +1250,20 @@ expect_failure "concurrent Staging deploy" env \
 [[ ! -e "$busy_receipt" ]] || fail "concurrent deploy wrote a receipt"
 if grep -Eq ' compose .* (pull|up|run|down) ' "$temporary_directory/busy.log"; then
   fail "concurrent deploy reached a mutation after lock failure"
+fi
+
+: > "$temporary_directory/busy-verify.log"
+expect_failure "verify while deployment lock is held" env \
+  COMMAND_LOG="$temporary_directory/busy-verify.log" \
+  PATH="$fake_path" \
+  SPEAKUP_STAGING_LOCK_FILE="$lock_file" \
+  TEST_FLOCK_BUSY=1 \
+  "$manage" verify \
+    --manifest "$temporary_directory/release-manifest.json" \
+    --runtime-env-file "$temporary_directory/staging-runtime.env"
+if grep -Eq ' compose .* (pull|up|run|down) |docker (inspect|image inspect)|curl ' \
+  "$temporary_directory/busy-verify.log"; then
+  fail "concurrent verify inspected runtime after lock failure"
 fi
 
 insecure_lock="$temporary_directory/insecure.lock"

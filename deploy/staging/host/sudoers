@@ -1,0 +1,1 @@
+speakup-staging-ci ALL=(speakup-staging-runtime) NOPASSWD: /usr/local/libexec/speakup-staging-broker ""
