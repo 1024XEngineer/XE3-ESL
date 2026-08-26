@@ -67,12 +67,22 @@ class PlatformNavigationBar extends StatelessWidget {
         indicatorColor: SpeakUpDesign.primaryMuted,
         elevation: 0,
         labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+        labelTextStyle: WidgetStateProperty.resolveWith((states) {
+          final selected = states.contains(WidgetState.selected);
+          return SpeakUpDesign.label.copyWith(
+            color: selected ? SpeakUpDesign.ink : SpeakUpDesign.secondary,
+            fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+          );
+        }),
         destinations: [
           for (final destination in destinations)
             NavigationDestination(
               key: destination.key,
-              icon: Icon(destination.icon),
-              selectedIcon: Icon(destination.selectedIcon),
+              icon: Icon(destination.icon, color: SpeakUpDesign.secondary),
+              selectedIcon: Icon(
+                destination.selectedIcon,
+                color: SpeakUpDesign.ink,
+              ),
               label: destination.label,
             ),
         ],

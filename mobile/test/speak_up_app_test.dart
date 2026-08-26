@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -11,6 +12,7 @@ import 'package:speakup/app/app_routes.dart';
 import 'package:speakup/app/platform_navigation_bar.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/app/speak_up_shell.dart';
+import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/agent/client_action/agent_client_action.dart';
 import 'package:speakup/features/agent/conversation/conversation.dart';
 import 'package:speakup/features/agent/conversation/agent_message_bubble.dart';
@@ -21,22 +23,43 @@ import 'package:speakup/features/coaching/preparation/practice_plan_client_actio
 import 'package:speakup/features/coaching/review/review.dart';
 
 void main() {
-  testWidgets('uses voice and analysis icons for Material navigation', (
+  testWidgets('reuses the iOS icon set for Material navigation', (
     tester,
   ) async {
     await tester.pumpWidget(const SpeakUpApp.preview());
     final navigation = find.byKey(const Key('primary-navigation'));
 
     expect(
-      find.descendant(of: navigation, matching: find.byIcon(Icons.mic_rounded)),
+      find.descendant(
+        of: navigation,
+        matching: find.byIcon(CupertinoIcons.waveform_circle_fill),
+      ),
       findsOneWidget,
     );
     expect(
       find.descendant(
         of: navigation,
-        matching: find.byIcon(Icons.insights_outlined),
+        matching: find.byIcon(CupertinoIcons.chart_bar),
       ),
       findsOneWidget,
+    );
+    expect(
+      tester
+          .widget<Icon>(find.byIcon(CupertinoIcons.waveform_circle_fill))
+          .color,
+      SpeakUpDesign.ink,
+    );
+    expect(
+      tester.widget<Icon>(find.byIcon(CupertinoIcons.square_grid_2x2)).color,
+      SpeakUpDesign.secondary,
+    );
+    expect(
+      tester.widget<Text>(find.text('SpeakUp')).style?.color,
+      SpeakUpDesign.ink,
+    );
+    expect(
+      tester.widget<Text>(find.text('训练')).style?.color,
+      SpeakUpDesign.secondary,
     );
 
     await tester.tap(find.byKey(const Key('primary-tab-review')));
@@ -44,16 +67,32 @@ void main() {
     expect(
       find.descendant(
         of: navigation,
-        matching: find.byIcon(Icons.mic_none_rounded),
+        matching: find.byIcon(CupertinoIcons.waveform_circle),
       ),
       findsOneWidget,
     );
     expect(
       find.descendant(
         of: navigation,
-        matching: find.byIcon(Icons.insights_rounded),
+        matching: find.byIcon(CupertinoIcons.chart_bar_fill),
       ),
       findsOneWidget,
+    );
+    expect(
+      tester.widget<Icon>(find.byIcon(CupertinoIcons.waveform_circle)).color,
+      SpeakUpDesign.secondary,
+    );
+    expect(
+      tester.widget<Icon>(find.byIcon(CupertinoIcons.chart_bar_fill)).color,
+      SpeakUpDesign.ink,
+    );
+    expect(
+      tester.widget<Text>(find.text('SpeakUp')).style?.color,
+      SpeakUpDesign.secondary,
+    );
+    expect(
+      tester.widget<Text>(find.text('复盘')).style?.color,
+      SpeakUpDesign.ink,
     );
   });
 
@@ -134,7 +173,10 @@ void main() {
     final navigation = find.byKey(const Key('primary-navigation'));
     expect(navigation, findsOneWidget);
     expect(
-      find.descendant(of: navigation, matching: find.byIcon(Icons.mic_rounded)),
+      find.descendant(
+        of: navigation,
+        matching: find.byIcon(CupertinoIcons.waveform_circle_fill),
+      ),
       findsOneWidget,
     );
     expect(find.byType(BackdropFilter), findsNothing);
@@ -180,7 +222,7 @@ void main() {
     expect(
       find.descendant(
         of: find.byKey(const Key('primary-navigation')),
-        matching: find.byIcon(Icons.dashboard_rounded),
+        matching: find.byIcon(CupertinoIcons.square_grid_2x2_fill),
       ),
       findsOneWidget,
     );
