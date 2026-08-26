@@ -33,9 +33,11 @@ class ConversationBubbleSurface extends StatelessWidget {
               ? const EdgeInsets.fromLTRB(14, 11, 12, 11)
               : const EdgeInsets.fromLTRB(2, 7, 12, 9)),
       decoration: BoxDecoration(
-        color: isUser ? SpeakUpDesign.primaryMuted : Colors.transparent,
+        color: isUser ? SpeakUpDesign.userBubble : Colors.transparent,
         borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
-        border: isUser ? Border.all(color: SpeakUpDesign.border) : null,
+        border: isUser
+            ? Border.all(color: SpeakUpDesign.userBubbleBorder)
+            : null,
       ),
       child: child,
     );

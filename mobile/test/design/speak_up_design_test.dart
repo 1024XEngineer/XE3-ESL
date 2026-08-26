@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:speakup/design/conversation_bubble_surface.dart';
 import 'package:speakup/design/speak_up_components.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/speak_up_theme.dart';
@@ -52,6 +53,45 @@ void main() {
       SpeakUpDesign.ambientBase,
     ]);
     expect(gradient.stops, const [0, 0.42, 1]);
+  });
+
+  testWidgets('user conversation bubbles use the dedicated pale blue surface', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Column(
+          children: [
+            ConversationBubbleSurface(
+              bubbleKey: Key('user-bubble'),
+              isUser: true,
+              child: Text('用户消息'),
+            ),
+            ConversationBubbleSurface(
+              bubbleKey: Key('assistant-bubble'),
+              isUser: false,
+              child: Text('AI 消息'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    final userDecoration =
+        tester
+                .widget<Container>(find.byKey(const Key('user-bubble')))
+                .decoration!
+            as BoxDecoration;
+    final assistantDecoration =
+        tester
+                .widget<Container>(find.byKey(const Key('assistant-bubble')))
+                .decoration!
+            as BoxDecoration;
+
+    expect(userDecoration.color, SpeakUpDesign.userBubble);
+    expect(userDecoration.border?.top.color, SpeakUpDesign.userBubbleBorder);
+    expect(assistantDecoration.color, Colors.transparent);
+    expect(assistantDecoration.border, isNull);
   });
 
   testWidgets(
