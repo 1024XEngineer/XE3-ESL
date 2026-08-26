@@ -125,7 +125,7 @@ require_source_file() {
 }
 
 require_shared_tmp() {
-  local path mode owner group expected_uid expected_gid expected_mode
+  local path mode owner group expected_uid expected_gid
   path=$(host_path /tmp)
   [[ ! -L "$path" && -d "$path" ]] || fail "/tmp must be a real directory"
   mode=$(path_mode "$path") || fail "cannot inspect /tmp mode"
@@ -134,15 +134,15 @@ require_shared_tmp() {
   if (( test_mode )); then
     expected_uid=$(path_owner "$host_root") || fail "cannot inspect test root owner"
     expected_gid=$test_owner_gid
-    expected_mode=777
+    [[ "$mode" == 777 || "$mode" == 1777 ]] ||
+      fail "/tmp must have mode 1777"
     [[ -k "$path" ]] || fail "/tmp must have the sticky bit"
   else
     expected_uid=0
     expected_gid=0
-    expected_mode=1777
+    [[ "$mode" == 1777 ]] || fail "/tmp must have mode 1777"
   fi
-  [[ "$mode" == "$expected_mode" && "$owner" == "$expected_uid" &&
-     "$group" == "$expected_gid" ]] ||
+  [[ "$owner" == "$expected_uid" && "$group" == "$expected_gid" ]] ||
     fail "/tmp must be owned by root:root with mode 1777"
 }
 
