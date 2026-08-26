@@ -144,6 +144,74 @@ func TestSessionStartReturnsQuestionFromFrozenSession(t *testing.T) {
 	}
 }
 
+func TestSessionApplicationStagesAndRestoresDeferredTranscription(t *testing.T) {
+	candidate := roundCandidate()
+	rounds := &roundVoice{
+		candidate: candidate,
+		turn:      roundTurn(candidate),
+		deferred: TranscriptionReservation{
+			ID: "reservation-1", SessionID: candidate.SessionID,
+			QuestionID: candidate.QuestionID, Status: TranscriptionReserved,
+		},
+	}
+	orchestrator, err := NewRoundOrchestrator(rounds, roundPractice{})
+	if err != nil {
+		t.Fatalf("NewRoundOrchestrator: %v", err)
+	}
+	application, err := NewSessionApplication(
+		sessionPortStub{session: sessionFixture()},
+		questionPortStub{},
+		checkpointPortStub{},
+		orchestrator,
+	)
+	if err != nil {
+		t.Fatalf("NewSessionApplication: %v", err)
+	}
+	processor := &DeferredTranscriptionProcessor{
+		ctx: context.Background(), orchestrator: orchestrator,
+		queue:   make(chan deferredTranscriptionRequest, 4),
+		pending: make(map[string]struct{}),
+	}
+	if err := application.EnableDeferredTranscription(processor); err != nil {
+		t.Fatalf("EnableDeferredTranscription: %v", err)
+	}
+	if err := application.EnableDeferredTranscription(processor); err == nil {
+		t.Fatal("duplicate deferred processor was accepted")
+	}
+
+	submission, err := application.StageDeferredTranscription(
+		context.Background(),
+		roundActor(),
+		TranscribeVoiceCommand{
+			SessionID: candidate.SessionID, QuestionID: candidate.QuestionID,
+			IdempotencyKey: "part-2-recording",
+		},
+	)
+	if err != nil || submission.ID != rounds.deferred.ID ||
+		submission.Status != TranscriptionProcessing || len(processor.queue) != 1 {
+		t.Fatalf("submission = %#v, queue = %d, error = %v", submission, len(processor.queue), err)
+	}
+
+	rounds.deferred.Status = TranscriptionConfirmed
+	completed, err := application.DeferredTranscriptionStatus(
+		context.Background(), roundActor(), rounds.deferred.ID,
+	)
+	if err != nil || completed.Status != TranscriptionCompleted ||
+		len(processor.queue) != 1 {
+		t.Fatalf("completed = %#v, queue = %d, error = %v", completed, len(processor.queue), err)
+	}
+
+	processor.removePending(rounds.deferred.ID)
+	rounds.deferred.Status = TranscriptionFailed
+	failed, err := application.DeferredTranscriptionStatus(
+		context.Background(), roundActor(), rounds.deferred.ID,
+	)
+	if err != nil || failed.Status != TranscriptionFailed ||
+		len(processor.queue) != 2 {
+		t.Fatalf("failed = %#v, queue = %d, error = %v", failed, len(processor.queue), err)
+	}
+}
+
 type sessionPortStub struct{ session Session }
 
 func (p sessionPortStub) Start(

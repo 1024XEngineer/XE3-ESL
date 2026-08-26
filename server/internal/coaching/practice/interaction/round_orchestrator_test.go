@@ -96,9 +96,65 @@ func TestRoundRejectsTurnWithoutAtomicProgress(t *testing.T) {
 	}
 }
 
+func TestRoundOrchestratesDeferredTranscriptionLifecycle(t *testing.T) {
+	candidate := roundCandidate()
+	reservation := TranscriptionReservation{
+		ID: "reservation-1", SessionID: candidate.SessionID,
+		QuestionID: candidate.QuestionID, Status: TranscriptionReserved,
+	}
+	rounds := &roundVoice{
+		candidate: candidate,
+		turn:      roundTurn(candidate),
+		deferred:  reservation,
+	}
+	orchestrator, err := NewRoundOrchestrator(rounds, roundPractice{})
+	if err != nil {
+		t.Fatalf("NewRoundOrchestrator: %v", err)
+	}
+
+	staged, err := orchestrator.StageDeferredTranscription(
+		context.Background(),
+		roundActor(),
+		TranscribeVoiceCommand{
+			SessionID: candidate.SessionID, QuestionID: candidate.QuestionID,
+			IdempotencyKey: "record-part-2",
+		},
+	)
+	if err != nil || staged.ID != reservation.ID ||
+		rounds.deferredParticipantID != "learner-1" {
+		t.Fatalf("staged = %#v, participant = %q, error = %v", staged, rounds.deferredParticipantID, err)
+	}
+
+	loaded, err := orchestrator.GetDeferredTranscription(
+		context.Background(), roundActor(), reservation.ID,
+	)
+	if err != nil || loaded.ID != reservation.ID ||
+		rounds.deferredReservationID != reservation.ID {
+		t.Fatalf("loaded = %#v, requested = %q, error = %v", loaded, rounds.deferredReservationID, err)
+	}
+
+	turn, err := orchestrator.ProcessDeferredTranscription(
+		context.Background(), roundActor(), reservation,
+	)
+	if err != nil || turn.ID != rounds.turn.ID ||
+		rounds.processedReservationID != reservation.ID ||
+		rounds.confirmationKey != "deferred-confirm-reservation-1" {
+		t.Fatalf(
+			"turn = %#v, processed = %q, confirmation = %q, error = %v",
+			turn, rounds.processedReservationID, rounds.confirmationKey, err,
+		)
+	}
+}
+
 type roundVoice struct {
-	candidate TranscriptionCandidate
-	turn      practice.Turn
+	candidate              TranscriptionCandidate
+	turn                   practice.Turn
+	deferred               TranscriptionReservation
+	deferredParticipantID  string
+	deferredReservationID  string
+	processedReservationID string
+	confirmationKey        string
+	confirmationCalled     chan string
 }
 
 func (c *roundVoice) Transcribe(
@@ -129,11 +185,43 @@ func (c *roundVoice) GetTranscriptionCandidate(
 }
 
 func (c *roundVoice) Confirm(
-	context.Context,
-	requestcontext.Actor,
-	ConfirmVoiceTurnCommand,
+	_ context.Context,
+	_ requestcontext.Actor,
+	command ConfirmVoiceTurnCommand,
 ) (practice.Turn, error) {
+	c.confirmationKey = command.IdempotencyKey
+	if c.confirmationCalled != nil {
+		c.confirmationCalled <- command.IdempotencyKey
+	}
 	return c.turn, nil
+}
+
+func (c *roundVoice) StageTranscription(
+	_ context.Context,
+	_ requestcontext.Actor,
+	participantID string,
+	_ TranscribeVoiceCommand,
+) (TranscriptionReservation, error) {
+	c.deferredParticipantID = participantID
+	return c.deferred, nil
+}
+
+func (c *roundVoice) ProcessDeferredTranscription(
+	_ context.Context,
+	_ requestcontext.Actor,
+	reservation TranscriptionReservation,
+) (TranscriptionCandidate, error) {
+	c.processedReservationID = reservation.ID
+	return c.candidate, nil
+}
+
+func (c *roundVoice) GetDeferredTranscription(
+	_ context.Context,
+	_ requestcontext.Actor,
+	reservationID string,
+) (TranscriptionReservation, error) {
+	c.deferredReservationID = reservationID
+	return c.deferred, nil
 }
 
 func (c *roundVoice) SynthesizeQuestion(

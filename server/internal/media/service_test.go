@@ -75,6 +75,79 @@ func TestDocumentUploadOpenAndSignedGet(t *testing.T) {
 	}
 }
 
+func TestAudioUploadOpensDurableManagedSource(t *testing.T) {
+	t.Parallel()
+
+	store, err := objectstorefake.New("audio/v1", time.Minute)
+	if err != nil {
+		t.Fatalf("new audio store: %v", err)
+	}
+	repository := &documentRepository{}
+	service, err := NewService(
+		repository,
+		Stores{Audio: store},
+		fixedIDGenerator{id: "10000000-0000-4000-8000-000000000002"},
+		Config{
+			UploadLease: time.Minute, CleanupLease: time.Minute,
+			PlaybackTTL: time.Minute, CleanupBatch: 8,
+		},
+	)
+	if err != nil {
+		t.Fatalf("new media service: %v", err)
+	}
+	body := []byte("RIFF durable audio")
+	sum := sha256.Sum256(body)
+	asset, err := service.Upload(context.Background(), Upload{
+		UserID:         "20000000-0000-4000-8000-000000000001",
+		Kind:           KindAudio,
+		IdempotencyKey: "part-2-recording-0001",
+		ContentType:    "audio/wav",
+		Body:           bytes.NewReader(body),
+		Size:           int64(len(body)),
+		ChecksumSHA256: hex.EncodeToString(sum[:]),
+		Duration:       10 * time.Second,
+		SampleRate:     16_000,
+		ExpiresAt:      time.Now().UTC().Add(10 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("upload audio: %v", err)
+	}
+	source, err := service.OpenAudio(
+		context.Background(), asset.UserID, asset.ID,
+	)
+	if err != nil {
+		t.Fatalf("open audio: %v", err)
+	}
+	if source.MediaType() != "audio/wav" || source.Size() != int64(len(body)) ||
+		source.Duration() != 10*time.Second || source.SampleRate() != 16_000 {
+		t.Fatalf("audio metadata = type %q, size %d, duration %s, rate %d", source.MediaType(), source.Size(), source.Duration(), source.SampleRate())
+	}
+	reader, err := source.Open()
+	if err != nil {
+		t.Fatalf("open audio source: %v", err)
+	}
+	readBody, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("read audio source: %v", err)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatalf("close audio source: %v", err)
+	}
+	if err := source.Close(); err != nil {
+		t.Fatalf("close managed audio: %v", err)
+	}
+	if !bytes.Equal(readBody, body) {
+		t.Fatalf("opened audio = %q", readBody)
+	}
+
+	repository.asset.Kind = KindDocument
+	if _, err := service.OpenAudio(
+		context.Background(), asset.UserID, asset.ID,
+	); err != ErrNotFound {
+		t.Fatalf("open non-audio error = %v", err)
+	}
+}
+
 type fixedIDGenerator struct {
 	id string
 }

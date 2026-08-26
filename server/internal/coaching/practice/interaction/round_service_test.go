@@ -471,6 +471,17 @@ func TestVoiceRoundStagesRecordingBeforeDeferredASR(t *testing.T) {
 		recordings.uniqueUploads() != 1 {
 		t.Fatalf("staged reservation = %#v, ASR calls = %d", reservation, recognizer.calls)
 	}
+	stored, err := service.GetDeferredTranscription(
+		context.Background(), actor, reservation.ID,
+	)
+	if err != nil || stored.ID != reservation.ID ||
+		stored.Status != TranscriptionProcessing ||
+		stored.AudioAssetID != reservation.AudioAssetID {
+		t.Fatalf("stored reservation = %#v, error = %v", stored, err)
+	}
+	store.expireReservation("deferred-question-1")
+	reservation.LeaseToken = ""
+	reservation.Status = TranscriptionFailed
 	candidate, err := service.ProcessDeferredTranscription(
 		context.Background(), actor, reservation,
 	)
