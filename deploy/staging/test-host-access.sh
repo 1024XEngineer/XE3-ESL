@@ -44,6 +44,8 @@ done
 [[ "$(<"$host_contract/sudoers")" == \
   'speakup-staging-ci ALL=(speakup-staging-runtime) NOPASSWD: /usr/local/libexec/speakup-staging-broker ""' ]] ||
   fail "sudoers must permit only the no-argument broker command"
+[[ "$(head -n 1 "$host_contract/sshd_config")" == 'PermitUserEnvironment no' ]] ||
+  fail "PermitUserEnvironment must be disabled before the Match block"
 assert_line 'Match User speakup-staging-ci' "$host_contract/sshd_config"
 assert_line '    AuthenticationMethods publickey' "$host_contract/sshd_config"
 assert_line '    PasswordAuthentication no' "$host_contract/sshd_config"

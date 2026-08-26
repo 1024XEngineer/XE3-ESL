@@ -1,3 +1,5 @@
+PermitUserEnvironment no
+
 Match User speakup-staging-ci
     AuthenticationMethods publickey
     PubkeyAuthentication yes
@@ -11,7 +13,6 @@ Match User speakup-staging-ci
     X11Forwarding no
     PermitTunnel no
     PermitUserRC no
-    PermitUserEnvironment no
     PermitOpen none
     PermitListen none
     GatewayPorts no
