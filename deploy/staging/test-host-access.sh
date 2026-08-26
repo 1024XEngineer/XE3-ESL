@@ -254,6 +254,19 @@ set -euo pipefail
 [[ "$1" == --create && -f "$2" ]]
 EOF
 
+cat >"$mock_bin/mv" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == -Tf && "${2:-}" == -- && $# == 4 ]]; then
+  source=$3
+  destination=$4
+  [[ ! -e "$destination" || -L "$destination" ]]
+  /bin/rm -f -- "$destination"
+  exec /bin/mv -f -- "$source" "$destination"
+fi
+exec /bin/mv "$@"
+EOF
+
 cat >"$mock_bin/docker" <<'EOF'
 #!/usr/bin/env bash
 exit 99
@@ -339,6 +352,15 @@ mv "$temporary_directory/slirp4netns" "$fixture_root/usr/bin/slirp4netns"
 
 "${host_environment[@]}" "${bootstrap_command[@]}" \
   >"$temporary_directory/bootstrap.log"
+
+rootless_enablement_link="$fixture_root/var/lib/speakup/staging-runtime/.config/systemd/user/default.target.wants/speakup-staging-rootless-docker.service"
+[[ -L "$rootless_enablement_link" ]] ||
+  fail "bootstrap did not install the fixed rootless Docker enablement link"
+[[ "$(readlink "$rootless_enablement_link")" == '../speakup-staging-rootless-docker.service' ]] ||
+  fail "rootless Docker enablement link has an unexpected target"
+
+"${host_environment[@]}" "${bootstrap_command[@]}" \
+  >"$temporary_directory/bootstrap-repeat.log"
 
 runtime_env="$fixture_root/etc/speakup/staging-runtime.env"
 server_env="$fixture_root/etc/speakup/staging-server.env"
