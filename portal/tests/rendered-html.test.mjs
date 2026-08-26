@@ -26,21 +26,48 @@ test("renders the standalone SpeakUp portal", async () => {
   );
   assert.match(html, /Android 版本准备中/);
   assert.match(html, /正式 APK 就绪后开放下载/);
-  assert.match(html, /href="#method"[^>]*>怎么练<\/a>/);
+  assert.doesNotMatch(html, /href="#method"[^>]*>怎么练<\/a>/);
   assert.match(
     html,
     /<section class="release-method" id="method"[^>]*><div class="release-section-heading"><h2 id="method-title">/,
   );
-  assert.match(html, /href="#memory"[^>]*>长期记忆<\/a>/);
+  assert.doesNotMatch(html, /href="#memory"[^>]*>长期记忆<\/a>/);
   assert.match(
     html,
     /<section class="release-memory" id="memory"[^>]*><div><h2 id="memory-title">/,
   );
-  assert.match(html, /portal-interview-practice\.png/);
+  assert.match(html, /aria-roledescription="轮播图"/);
+  assert.match(html, /interview-entry\.webp/);
+  assert.match(html, /interview-chat\.webp/);
+  assert.match(html, /ielts-review\.webp/);
+  assert.match(html, /practice-progress\.webp/);
+  assert.equal(
+    html.match(/class="hero-product-carousel__slide"/g)?.length,
+    8,
+  );
+  assert.match(html, /data-source-index="0"/);
+  assert.match(html, /data-source-index="3"/);
+  assert.doesNotMatch(html, /aria-label="上一张产品截图"/);
+  assert.doesNotMatch(html, /aria-label="下一张产品截图"/);
+  assert.match(
+    html,
+    /<div class="hero-product-carousel__progress" aria-hidden="true"><span/,
+  );
+  assert.doesNotMatch(
+    html,
+    /<div class="hero-product-carousel__progress"[^>]*><button/,
+  );
+  assert.match(html, /aria-label="暂停自动播放"/);
+  assert.match(html, /场景化专项练习/);
+  assert.doesNotMatch(html, /portal-interview-practice\.png/);
   assert.match(html, /speak-up-wordmark-black\.png/);
   assert.match(html, /speakup-mark\.svg/);
   assert.doesNotMatch(html, /speakup-mascot-blue/);
   assert.match(html, /href="\/changelog"[^>]*>更新日志<\/a>/);
+  assert.match(
+    html,
+    /href="https:\/\/github\.com\/1024XEngineer\/XE3-ESL"[^>]*target="_blank"[^>]*rel="noopener noreferrer"[^>]*>GitHub <span aria-hidden="true">↗<\/span><\/a>/,
+  );
   assert.doesNotMatch(html, /href="\/download\/android"/);
   assert.doesNotMatch(html, /常见问题|唯一官方下载|制品信息完整/);
   assert.doesNotMatch(html, /SHA-256|签名证书|ABI/);
