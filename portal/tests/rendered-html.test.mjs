@@ -41,12 +41,18 @@ test("renders the standalone SpeakUp portal", async () => {
   assert.match(html, /interview-chat\.webp/);
   assert.match(html, /ielts-review\.webp/);
   assert.match(html, /practice-progress\.webp/);
-  assert.match(html, /aria-label="上一张产品截图"/);
-  assert.match(html, /aria-label="下一张产品截图"/);
+  assert.doesNotMatch(html, /aria-label="上一张产品截图"/);
+  assert.doesNotMatch(html, /aria-label="下一张产品截图"/);
+  assert.match(
+    html,
+    /<div class="hero-product-carousel__progress" aria-hidden="true"><span/,
+  );
+  assert.doesNotMatch(
+    html,
+    /<div class="hero-product-carousel__progress"[^>]*><button/,
+  );
   assert.match(html, /aria-label="暂停自动播放"/);
   assert.match(html, /场景化专项练习/);
-  assert.match(html, /多维能力评分/);
-  assert.match(html, /看见长期进步/);
   assert.doesNotMatch(html, /portal-interview-practice\.png/);
   assert.match(html, /speak-up-wordmark-black\.png/);
   assert.match(html, /speakup-mark\.svg/);
