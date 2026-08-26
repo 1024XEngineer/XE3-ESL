@@ -280,13 +280,11 @@
 .release-home .hero-product-carousel__slide[data-position="1"] {
   transform: translate3d(calc(-50% + var(--carousel-step)), 0, 0)
     scale(0.92);
-  transition: none;
 }
 
 .release-home .hero-product-carousel__slide[data-position="2"] {
   transform: translate3d(calc(-50% + var(--carousel-far-step)), 0, 0)
     scale(0.92);
-  transition: none;
 }
 
 .release-home .hero-product-carousel[data-snap="true"]
