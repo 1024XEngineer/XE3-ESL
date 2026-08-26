@@ -1,0 +1,9 @@
+Match User speakup-production-ci
+    AuthenticationMethods publickey
+    AuthorizedKeysFile /etc/ssh/authorized_keys/speakup-production-ci
+    ForceCommand /usr/local/libexec/speakup-production-ssh-gate
+    DisableForwarding yes
+    PermitTTY no
+    PasswordAuthentication no
+    KbdInteractiveAuthentication no
+    X11Forwarding no
