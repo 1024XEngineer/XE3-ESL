@@ -693,6 +693,70 @@ void main() {
     expect(find.byKey(const Key('ielts-mock-record')), findsNothing);
   });
 
+  testWidgets('standalone Part 2 keeps polling its durable transcription', (
+    tester,
+  ) async {
+    final base = _IeltsPracticeClient(initialCompleted: 0, turnLimit: 1);
+    base
+      ..activeScene = _ieltsScene
+      ..activeMode = PracticeMode.part2;
+    final practice = _DeferredIeltsPracticeClient(base)
+      ..completeAfterStatusCalls = 2;
+    final controller = PracticeController(
+      client: practice,
+      recorder: _Recorder(),
+    );
+    addTearDown(controller.dispose);
+    await controller.activateCreatedPractice(
+      scene: _ieltsScene,
+      sessionId: _sessionId,
+      planId: _planId,
+      practiceMode: PracticeMode.part2,
+      turnLimit: 1,
+      clientOperationId: 'activate-deferred-part2-test',
+    );
+    var now = DateTime.utc(2026, 8, 26, 8);
+    final progressStore = _MemoryProgressStore(
+      IeltsMockProgress(
+        sessionId: _sessionId,
+        phase: IeltsMockPhase.part2Preparation,
+        startedAt: now,
+        preparationDeadline: now.add(const Duration(seconds: 60)),
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: progressStore,
+          examinerSpeaker: _ImmediateExaminerSpeaker(),
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-start-speaking')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-finish-speaking')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(progressStore.value?.phase, IeltsMockPhase.part2Complete);
+    expect(practice.statusCalls, 1);
+    expect(controller.completedTurns, 0);
+
+    now = now.add(const Duration(seconds: 3));
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(practice.statusCalls, greaterThanOrEqualTo(2));
+    expect(controller.completedTurns, 1);
+    expect(progressStore.value?.deferredTranscriptionStatusUrl, isNull);
+    expect(find.text('Part 2 已完成'), findsOneWidget);
+    expect(find.text('查看复盘报告'), findsOneWidget);
+  });
+
   testWidgets('Part 2 can exit while transcription is still in flight', (
     tester,
   ) async {
@@ -2357,6 +2421,8 @@ final class _DeferredIeltsPracticeClient
 
   final _IeltsPracticeClient delegate;
   int stageCalls = 0;
+  int statusCalls = 0;
+  int? completeAfterStatusCalls;
   DeferredTranscription? submission;
 
   @override
@@ -2429,7 +2495,22 @@ final class _DeferredIeltsPracticeClient
   @override
   Future<DeferredTranscription> getDeferredTranscription({
     required String statusUrl,
-  }) async => submission!;
+  }) async {
+    statusCalls++;
+    final threshold = completeAfterStatusCalls;
+    if (threshold != null && statusCalls >= threshold) {
+      delegate.completed = delegate.turnLimit;
+      final current = submission!;
+      submission = DeferredTranscription(
+        id: current.id,
+        sessionId: current.sessionId,
+        questionId: current.questionId,
+        status: DeferredTranscriptionStatus.completed,
+        statusUrl: current.statusUrl,
+      );
+    }
+    return submission!;
+  }
 }
 
 final class _IeltsPracticeClient

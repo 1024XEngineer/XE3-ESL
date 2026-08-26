@@ -977,10 +977,15 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
 
   void _syncTicker() {
     final phase = _progress?.phase;
+    final hasDeferredPart2 =
+        _progress?.deferredTranscriptionStatusUrl != null &&
+        !_part2TurnConfirmed &&
+        (phase == IeltsMockPhase.part2Complete ||
+            phase == IeltsMockPhase.part3);
     final needsTicker =
         phase == IeltsMockPhase.part2Preparation ||
         phase == IeltsMockPhase.part2Speaking ||
-        (phase == IeltsMockPhase.part3 && !_part2TurnConfirmed);
+        hasDeferredPart2;
     if (!needsTicker) {
       _ticker?.cancel();
       _ticker = null;
@@ -1004,8 +1009,11 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     final progress = _progress;
     final statusUrl = progress?.deferredTranscriptionStatusUrl;
     final now = widget.now().toUtc();
+    final canPollPart2 =
+        progress?.phase == IeltsMockPhase.part2Complete ||
+        progress?.phase == IeltsMockPhase.part3;
     if (!mounted ||
-        progress?.phase != IeltsMockPhase.part3 ||
+        !canPollPart2 ||
         _part2TurnConfirmed ||
         statusUrl == null ||
         _pollingDeferredTranscription ||
