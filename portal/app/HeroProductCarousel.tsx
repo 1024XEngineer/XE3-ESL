@@ -12,7 +12,10 @@ import {
 
 const AUTOPLAY_DELAY_MS = 5000;
 const SLIDE_TRANSITION_MS = 620;
+const WHEEL_DELTA_THRESHOLD_PX = 40;
+const WHEEL_GESTURE_IDLE_MS = 180;
 const LOOP_START_INDEX = 1;
+const LOOP_LEADING_CLONE_INDEX = 0;
 
 const productSlides = [
   {
@@ -71,7 +74,19 @@ const loopSlides = [
   })),
 ];
 
-const LOOP_RESET_INDEX = productSlides.length + LOOP_START_INDEX;
+const LOOP_TRAILING_CLONE_INDEX = productSlides.length + LOOP_START_INDEX;
+
+function getLoopResetIndex(trackIndex: number) {
+  if (trackIndex === LOOP_LEADING_CLONE_INDEX) return productSlides.length;
+  if (trackIndex === LOOP_TRAILING_CLONE_INDEX) return LOOP_START_INDEX;
+  return null;
+}
+
+function getWheelDeltaInPixels(event: WheelEvent, pageHeight: number) {
+  if (event.deltaMode === 1) return event.deltaY * 16;
+  if (event.deltaMode === 2) return event.deltaY * pageHeight;
+  return event.deltaY;
+}
 
 function getSlidePosition(index: number, trackIndex: number) {
   return Math.max(-2, Math.min(2, index - trackIndex));
@@ -95,18 +110,32 @@ export default function HeroProductCarousel() {
   const [isInView, setIsInView] = useState(true);
   const [isDocumentVisible, setIsDocumentVisible] = useState(true);
   const rootRef = useRef<HTMLElement>(null);
+  const isSlidingRef = useRef(false);
+  const wheelDeltaRef = useRef(0);
+  const wheelGestureLockedRef = useRef(false);
+  const wheelGestureTimerRef = useRef<number | null>(null);
 
   const activeIndex =
     (trackIndex - LOOP_START_INDEX + productSlides.length) %
     productSlides.length;
 
-  const resetLoop = useCallback(() => {
+  const resetLoop = useCallback((resetIndex: number) => {
     setTransitionsEnabled(false);
-    setTrackIndex(LOOP_START_INDEX);
+    setTrackIndex(resetIndex);
 
     window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => setTransitionsEnabled(true));
+      window.requestAnimationFrame(() => {
+        setTransitionsEnabled(true);
+        isSlidingRef.current = false;
+      });
     });
+  }, []);
+
+  const moveSlides = useCallback((offset: -1 | 1) => {
+    if (isSlidingRef.current) return;
+
+    isSlidingRef.current = true;
+    setTrackIndex((current) => current + offset);
   }, []);
 
   useEffect(() => {
@@ -144,6 +173,63 @@ export default function HeroProductCarousel() {
   }, []);
 
   useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+
+    const finishWheelGesture = () => {
+      wheelDeltaRef.current = 0;
+      wheelGestureLockedRef.current = false;
+      wheelGestureTimerRef.current = null;
+    };
+
+    const scheduleWheelGestureEnd = () => {
+      if (wheelGestureTimerRef.current !== null) {
+        window.clearTimeout(wheelGestureTimerRef.current);
+      }
+
+      wheelGestureTimerRef.current = window.setTimeout(
+        finishWheelGesture,
+        WHEEL_GESTURE_IDLE_MS,
+      );
+    };
+
+    const handleWheel = (event: WheelEvent) => {
+      if (event.ctrlKey || event.deltaY === 0) return;
+
+      event.preventDefault();
+      scheduleWheelGestureEnd();
+
+      if (wheelGestureLockedRef.current) return;
+
+      const delta = getWheelDeltaInPixels(event, root.clientHeight);
+      const accumulatedDelta = wheelDeltaRef.current;
+
+      if (
+        accumulatedDelta !== 0 &&
+        Math.sign(accumulatedDelta) !== Math.sign(delta)
+      ) {
+        wheelDeltaRef.current = 0;
+      }
+
+      wheelDeltaRef.current += delta;
+
+      if (Math.abs(wheelDeltaRef.current) < WHEEL_DELTA_THRESHOLD_PX) return;
+
+      wheelGestureLockedRef.current = true;
+      moveSlides(wheelDeltaRef.current > 0 ? 1 : -1);
+    };
+
+    root.addEventListener("wheel", handleWheel, { passive: false });
+
+    return () => {
+      root.removeEventListener("wheel", handleWheel);
+      if (wheelGestureTimerRef.current !== null) {
+        window.clearTimeout(wheelGestureTimerRef.current);
+      }
+    };
+  }, [moveSlides]);
+
+  useEffect(() => {
     const shouldAutoplay =
       autoplayEnabled &&
       !isHovered &&
@@ -154,7 +240,7 @@ export default function HeroProductCarousel() {
     if (!shouldAutoplay) return;
 
     const timer = window.setTimeout(() => {
-      setTrackIndex((current) => current + 1);
+      moveSlides(1);
     }, AUTOPLAY_DELAY_MS);
 
     return () => window.clearTimeout(timer);
@@ -165,12 +251,20 @@ export default function HeroProductCarousel() {
     isDocumentVisible,
     isHovered,
     isInView,
+    moveSlides,
   ]);
 
   useEffect(() => {
-    if (trackIndex !== LOOP_RESET_INDEX) return;
+    const resetIndex = getLoopResetIndex(trackIndex);
 
-    const fallback = window.setTimeout(resetLoop, SLIDE_TRANSITION_MS + 80);
+    const fallback = window.setTimeout(() => {
+      if (resetIndex === null) {
+        isSlidingRef.current = false;
+        return;
+      }
+
+      resetLoop(resetIndex);
+    }, SLIDE_TRANSITION_MS + 80);
     return () => window.clearTimeout(fallback);
   }, [resetLoop, trackIndex]);
 
@@ -190,12 +284,18 @@ export default function HeroProductCarousel() {
     event: TransitionEvent<HTMLElement>,
   ) => {
     if (
-      event.target === event.currentTarget &&
-      event.propertyName === "transform" &&
-      trackIndex === LOOP_RESET_INDEX
-    ) {
-      resetLoop();
+      event.target !== event.currentTarget ||
+      event.propertyName !== "transform"
+    )
+      return;
+
+    const resetIndex = getLoopResetIndex(trackIndex);
+    if (resetIndex === null) {
+      isSlidingRef.current = false;
+      return;
     }
+
+    resetLoop(resetIndex);
   };
 
   const activeSlide = productSlides[activeIndex];
