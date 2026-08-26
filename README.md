@@ -6,12 +6,12 @@
   <img
     src="portal/public/assets/brand/speakup-mark.svg"
     alt="SpeakUp 品牌标识"
-    width="84"
+    width="72"
   />
   <img
     src="portal/public/assets/brand/speak-up-wordmark-black.png"
     alt="SpeakUp"
-    width="252"
+    width="216"
   />
 </p>
 
