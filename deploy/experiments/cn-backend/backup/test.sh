@@ -231,6 +231,10 @@ existing_containers="$(docker container ls --all --quiet \
 [[ -z "$existing_containers" ]] || fail 'refusing to run beside an existing experiment PostgreSQL container'
 ! docker volume inspect "$source_volume" >/dev/null 2>&1 || fail 'source test volume already exists'
 ! docker network inspect "$database_network" >/dev/null 2>&1 || fail 'database test network already exists'
+if ! docker image inspect "$postgres_image" >/dev/null 2>&1; then
+  docker image pull "$postgres_image" >/dev/null ||
+    fail 'cannot pull the audited PostgreSQL image'
+fi
 [[ "$(docker image inspect --format '{{.Id}}' "$postgres_image")" == "$postgres_image_id" ]] ||
   fail 'audited PostgreSQL image is not available locally'
 
