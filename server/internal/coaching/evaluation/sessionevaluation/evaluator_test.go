@@ -690,6 +690,35 @@ func TestGeneralEvaluatorRejectsPolicyCategoryMismatch(t *testing.T) {
 	}
 }
 
+func TestGeneralEvaluatorPassesExactReportContract(t *testing.T) {
+	generator := &reportGeneratorFake{}
+	evaluators, err := New(generator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lineages, err := Lineages("qianwen", "qwen-plus")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := sessionSnapshotFixture()
+	snapshot.EvaluationPolicyRef = evaluation.WorkplaceEvaluationPolicyRef
+	snapshot.PracticeExperience = "WORKPLACE"
+	snapshot.SceneCategory = "WORKPLACE_GENERAL"
+	snapshot.PracticeMode = "GUIDED"
+	if _, err := evaluators.EvaluateGeneral(
+		context.Background(), evaluation.Record{}, snapshot, lineages.General,
+	); err != nil {
+		t.Fatalf("EvaluateGeneral() error = %v", err)
+	}
+	want := []string{
+		"TASK_ACHIEVEMENT", "CLARITY_COHERENCE", "LANGUAGE_CONTROL", "INTERACTION",
+	}
+	if !slices.Equal(generator.last.Report.DimensionKeys, want) ||
+		generator.last.Report.ScoreMaximum != 100 {
+		t.Fatalf("report contract = %#v", generator.last.Report)
+	}
+}
+
 func TestSessionEvaluationPromptsRequireChineseFeedbackAndOriginalEvidence(t *testing.T) {
 	tests := []struct {
 		name    string

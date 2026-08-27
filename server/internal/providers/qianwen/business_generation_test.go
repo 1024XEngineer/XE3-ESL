@@ -41,6 +41,10 @@ func TestBusinessGeneratorsMapOwnedRequests(t *testing.T) {
 					textgeneration.Request{
 						SystemPrompt: "evaluate frozen evidence",
 						UserPrompt:   "sanitized evidence payload",
+						Report: textgeneration.ReportContract{
+							DimensionKeys: []string{"TASK_ACHIEVEMENT"},
+							ScoreMaximum:  100,
+						},
 					},
 				)
 				return result.Provider, result.Model, result.Content, err

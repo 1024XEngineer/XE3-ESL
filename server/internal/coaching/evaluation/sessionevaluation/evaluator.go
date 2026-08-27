@@ -319,9 +319,26 @@ func evaluate(
 	if err != nil {
 		return nil, evaluation.ErrInvalidRequest
 	}
+	var scoreMaximum float64
+	switch scale {
+	case report.ReportScalePercentage100:
+		scoreMaximum = 100
+	case report.ReportScaleIELTSBand:
+		scoreMaximum = 9
+	default:
+		return nil, evaluation.ErrInvalidRequest
+	}
+	contract := textgeneration.ReportContract{
+		DimensionKeys: slices.Clone(dimensionKeys),
+		ScoreMaximum:  scoreMaximum,
+	}
+	if !contract.Valid() {
+		return nil, evaluation.ErrInvalidRequest
+	}
 	generated, err := generator.Generate(ctx, textgeneration.Request{
 		SystemPrompt: systemPrompt,
 		UserPrompt:   string(payload),
+		Report:       contract,
 	})
 	if err != nil {
 		return nil, err
@@ -355,6 +372,7 @@ func evaluate(
 	repaired, err := generator.Generate(ctx, textgeneration.Request{
 		SystemPrompt: systemPrompt,
 		UserPrompt:   string(repairPayload),
+		Report:       contract,
 	})
 	if err != nil {
 		return nil, err
