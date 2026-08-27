@@ -24,6 +24,74 @@ import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
 
 void main() {
+  for (final mode in <PracticeMode>[PracticeMode.part1, PracticeMode.part3]) {
+    testWidgets('${mode.name} scrolls to the expanded Tips card', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(390, 640);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      const capabilities = PracticeCapabilities(
+        retryAllowed: false,
+        questionTranslationAllowed: false,
+        questionTipsAllowed: true,
+        speechFeedbackAllowed: false,
+      );
+      final practice = _IeltsPracticeClient(
+        initialCompleted: 0,
+        turnLimit: 2,
+        capabilities: capabilities,
+      );
+      final controller = PracticeController(
+        client: practice,
+        recorder: _Recorder(),
+      );
+      addTearDown(controller.dispose);
+      await _activatePractice(controller, practice, _ieltsScene, mode: mode);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: IeltsSpeakingMockPage(
+            controller: controller,
+            progressStore: _MemoryProgressStore(),
+            examinerSpeaker: _ImmediateExaminerSpeaker(),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      final tipButton = find.byKey(
+        const ValueKey('ielts-question-tip-question-1'),
+      );
+      await tester.ensureVisible(tipButton);
+      await tester.pump();
+      final conversation = tester.widget<ListView>(
+        find.byKey(const Key('ielts-mock-conversation')),
+      );
+      final scrollController = conversation.controller!;
+      final maxScrollExtentBeforeTip =
+          scrollController.position.maxScrollExtent;
+
+      await tester.tap(tipButton);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('practice-question-tip-card')),
+        findsOneWidget,
+      );
+      expect(
+        scrollController.position.maxScrollExtent,
+        greaterThan(maxScrollExtentBeforeTip),
+      );
+      expect(
+        scrollController.offset,
+        moreOrLessEquals(scrollController.position.maxScrollExtent),
+      );
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets('Part 1 keeps Tips visible while recording', (tester) async {
     const capabilities = PracticeCapabilities(
       retryAllowed: false,

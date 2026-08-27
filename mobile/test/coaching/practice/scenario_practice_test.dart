@@ -340,54 +340,58 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('shows capability-gated Tips without blocking the composer', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(390, 844);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.reset);
-    final controller = await _scenarioController(
-      practiceClient: _TranslationPracticeClient(),
-    );
-    addTearDown(controller.dispose);
-    await controller.submitPracticeText('I have a reservation under Chen.');
+  testWidgets(
+    'interview Tips scroll to the new bottom without blocking the composer',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final controller = await _scenarioController(
+        practiceClient: _TranslationPracticeClient(),
+      );
+      addTearDown(controller.dispose);
+      await controller.submitPracticeText('I have a reservation under Chen.');
 
-    await tester.pumpWidget(
-      MaterialApp(home: ScenarioPracticePage(practiceController: controller)),
-    );
-    await tester.pump();
+      await tester.pumpWidget(
+        MaterialApp(home: ScenarioPracticePage(practiceController: controller)),
+      );
+      await tester.pump();
 
-    final questionId = controller.currentQuestion!.id;
-    final tipButton = find.byKey(Key('scenario-question-tip-$questionId'));
-    final conversation = tester.widget<ListView>(
-      find.byKey(const Key('scenario-conversation-history')),
-    );
-    final scrollController = conversation.controller!;
-    final offsetBeforeTip = scrollController.offset;
-    expect(tipButton, findsOneWidget);
-    await tester.tap(tipButton);
-    await tester.pumpAndSettle();
+      final questionId = controller.currentQuestion!.id;
+      final tipButton = find.byKey(Key('scenario-question-tip-$questionId'));
+      final conversation = tester.widget<ListView>(
+        find.byKey(const Key('scenario-conversation-history')),
+      );
+      final scrollController = conversation.controller!;
+      final offsetBeforeTip = scrollController.offset;
+      expect(tipButton, findsOneWidget);
+      await tester.tap(tipButton);
+      await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('practice-question-tip-card')), findsOneWidget);
-    expect(
-      scrollController.position.maxScrollExtent,
-      greaterThan(offsetBeforeTip),
-    );
-    expect(
-      scrollController.offset,
-      moreOrLessEquals(scrollController.position.maxScrollExtent),
-    );
-    expect(
-      find.text('I would describe the situation and my specific role.'),
-      findsOneWidget,
-    );
-    expect(find.text('我会描述当时的情况以及我的具体职责。'), findsOneWidget);
-    expect(
-      find.byKey(const Key('scenario-record')).hitTestable(),
-      findsOneWidget,
-    );
-    expect(tester.takeException(), isNull);
-  });
+      expect(
+        find.byKey(const Key('practice-question-tip-card')),
+        findsOneWidget,
+      );
+      expect(
+        scrollController.position.maxScrollExtent,
+        greaterThan(offsetBeforeTip),
+      );
+      expect(
+        scrollController.offset,
+        moreOrLessEquals(scrollController.position.maxScrollExtent),
+      );
+      expect(
+        find.text('I would describe the situation and my specific role.'),
+        findsOneWidget,
+      );
+      expect(find.text('我会描述当时的情况以及我的具体职责。'), findsOneWidget);
+      expect(
+        find.byKey(const Key('scenario-record')).hitTestable(),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('keeps the existing typed-answer flow in the scenario shell', (
     tester,
