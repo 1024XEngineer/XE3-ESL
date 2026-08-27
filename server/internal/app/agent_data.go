@@ -33,6 +33,9 @@ import (
 	practiceinteraction "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/interaction"
 	practiceinteractionhttp "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/interaction/http"
 	preparationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/repository/postgres"
+	coachpresentation "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/presentation"
+	presentationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/presentation/postgres"
+	presentationhttp "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/presentation/transport/http"
 	coachingprofile "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/profile"
 	profileagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/profile/agentcapability"
 	profileagentcontext "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/profile/agentcontext"
@@ -90,16 +93,17 @@ func NewIdentityAndAgentModules(
 }
 
 type identityAgentComposition struct {
-	identity         *identityComposition
-	agentModule      RouteRegistrar
-	agentService     *agentconversation.Service
-	conversationData *conversationpostgres.Repository
-	mediaReclaimer   MediaObjectReclaimer
-	mediaService     *sharedmedia.Service
-	productionTools  *capability.Registry
-	runService       *agentrun.Service
-	summaryProcessor agentsummary.Processor
-	ids              *identity.UUIDv4Generator
+	identity            *identityComposition
+	agentModule         RouteRegistrar
+	agentService        *agentconversation.Service
+	conversationData    *conversationpostgres.Repository
+	mediaReclaimer      MediaObjectReclaimer
+	mediaService        *sharedmedia.Service
+	productionTools     *capability.Registry
+	runService          *agentrun.Service
+	summaryProcessor    agentsummary.Processor
+	presentationService *coachpresentation.Service
+	ids                 *identity.UUIDv4Generator
 }
 
 // MediaObjectReclaimer is the single shared object cleanup capability retained
@@ -185,6 +189,14 @@ func buildIdentityAgentComposition(
 		return nil, err
 	}
 	profileService, err := coachingprofile.NewService(profileRepository, time.Now)
+	if err != nil {
+		return nil, err
+	}
+	presentationRepository, err := presentationpostgres.New(database)
+	if err != nil {
+		return nil, err
+	}
+	presentationService, err := coachpresentation.NewService(presentationRepository)
 	if err != nil {
 		return nil, err
 	}
@@ -387,6 +399,13 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
+	presentationHTTP, err := presentationhttp.New(
+		presentationService,
+		errorRenderer,
+	)
+	if err != nil {
+		return nil, err
+	}
 	conversationHTTPOptions := []agentconversationhttp.Option{
 		agentconversationhttp.WithClientActions(runService),
 	}
@@ -432,6 +451,7 @@ func buildIdentityAgentComposition(
 	}
 	registrars := []ProtectedRouteRegistrar{
 		profileHTTP,
+		presentationHTTP,
 		conversationHTTP,
 		translationHTTP,
 		runHTTP,
@@ -504,11 +524,12 @@ func buildIdentityAgentComposition(
 		practiceHTTP, practiceHTTPErr := practiceinteractionhttp.NewHandler(
 			voiceApplication,
 			practiceinteractionhttp.Options{
-				RealtimeReadTimeout: voiceConfigurations[0].PracticeInteraction.RealtimeReadTimeout,
-				RecordedReadTimeout: voiceConfigurations[0].PracticeInteraction.RecordedReadTimeout,
-				SameQuestionRetry:   sameQuestionRetry,
-				Recordings:          practiceRecordings,
-				RealtimeSpeech:      voiceConfigurations[0].AgentVoice.AssistantSpeech,
+				RealtimeReadTimeout:  voiceConfigurations[0].PracticeInteraction.RealtimeReadTimeout,
+				RecordedReadTimeout:  voiceConfigurations[0].PracticeInteraction.RecordedReadTimeout,
+				SameQuestionRetry:    sameQuestionRetry,
+				Recordings:           practiceRecordings,
+				RealtimeSpeech:       voiceConfigurations[0].PracticeInteraction.RealtimeSynthesizer,
+				LegacyRealtimeSpeech: voiceConfigurations[0].AgentVoice.AssistantSpeech,
 			},
 			errorRenderer,
 		)
@@ -526,16 +547,17 @@ func buildIdentityAgentComposition(
 		mediaReclaimer = agentMedia
 	}
 	return &identityAgentComposition{
-		identity:         identityContext,
-		agentModule:      handler,
-		agentService:     agentService,
-		conversationData: conversationRepository,
-		mediaReclaimer:   mediaReclaimer,
-		mediaService:     agentMedia,
-		productionTools:  toolOptions.productionRegistry,
-		runService:       runService,
-		summaryProcessor: summaryProcessor,
-		ids:              ids,
+		identity:            identityContext,
+		agentModule:         handler,
+		agentService:        agentService,
+		conversationData:    conversationRepository,
+		mediaReclaimer:      mediaReclaimer,
+		mediaService:        agentMedia,
+		productionTools:     toolOptions.productionRegistry,
+		runService:          runService,
+		summaryProcessor:    summaryProcessor,
+		presentationService: presentationService,
+		ids:                 ids,
 	}, nil
 }
 

@@ -40,6 +40,8 @@ var cleanBaselineTables = []string{
 	"agent_threads",
 	"agent_voice_drafts",
 	"auth_sessions",
+	"coach_avatar_options",
+	"coach_voice_options",
 	"coaching_user_profiles",
 	"credentials",
 	"evaluation_feedback_items",
@@ -51,6 +53,7 @@ var cleanBaselineTables = []string{
 	"practice_questions",
 	"practice_sessions",
 	"practice_turns",
+	"user_coach_presentation_preferences",
 	"users",
 }
 
@@ -74,51 +77,63 @@ func TestMigrationHistoryFreshUpDownUp(t *testing.T) {
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
-		t.Fatalf("DownOne to v8 Product health views = %t, %v", changed, err)
+		t.Fatalf("DownOne to v10 presentation preferences = %t, %v", changed, err)
 	}
 	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables))
+
+	changed, err = runner.DownOne()
+	if err != nil || !changed {
+		t.Fatalf("DownOne to v9 IELTS profiles = %t, %v", changed, err)
+	}
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-3)
+
+	changed, err = runner.DownOne()
+	if err != nil || !changed {
+		t.Fatalf("DownOne to v8 Product health views = %t, %v", changed, err)
+	}
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-3)
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
 		t.Fatalf("DownOne to v7 Pending Practice actions = %t, %v", changed, err)
 	}
-	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables))
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-3)
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
 		t.Fatalf("DownOne to v6 User profile avatar = %t, %v", changed, err)
 	}
-	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-1)
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-4)
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
 		t.Fatalf("DownOne to v5 Scene selection source = %t, %v", changed, err)
 	}
-	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-1)
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-4)
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
 		t.Fatalf("DownOne to v4 Question Tip translation = %t, %v", changed, err)
 	}
-	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-1)
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-4)
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
 		t.Fatalf("DownOne to v3 Practice Plan archive = %t, %v", changed, err)
 	}
-	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-1)
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-4)
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
 		t.Fatalf("DownOne to v2 Agent domain completion = %t, %v", changed, err)
 	}
-	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-1)
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-4)
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
 		t.Fatalf("DownOne to v1 baseline = %t, %v", changed, err)
 	}
-	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-1)
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-4)
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
@@ -144,6 +159,12 @@ func TestSceneSelectionSourceMigrationTransformsPlansAndPreservesSessions(
 	t.Cleanup(func() { _ = runner.Close() })
 	if changed, upErr := runner.Up(); upErr != nil || !changed {
 		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v10 presentation preferences = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v9 IELTS profiles = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("DownOne to v8 Product health views = %t, %v", changed, downErr)
@@ -285,6 +306,12 @@ FROM practice_sessions WHERE session_id = $1
 	}
 
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("roll back v11 = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("roll back v10 = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("roll back v9 = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
@@ -328,6 +355,12 @@ func TestMigratedLegacyCatalogPlanCompletesThroughFormalReport(t *testing.T) {
 	t.Cleanup(func() { _ = runner.Close() })
 	if changed, upErr := runner.Up(); upErr != nil || !changed {
 		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v10 presentation preferences = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v9 IELTS profiles = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("DownOne to v8 Product health views = %t, %v", changed, downErr)
@@ -593,6 +626,12 @@ func TestSceneSelectionSourceMigrationRejectsDownWithCustomPlan(t *testing.T) {
 	t.Cleanup(func() { _ = runner.Close() })
 	if changed, upErr := runner.Up(); upErr != nil || !changed {
 		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v10 presentation preferences = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v9 IELTS profiles = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("DownOne to v8 Product health views = %t, %v", changed, downErr)
@@ -1054,11 +1093,12 @@ INSERT INTO practice_plans (
 INSERT INTO practice_sessions (
     session_id, user_id, plan_id, plan_version, practice_experience,
     scene_category, practice_mode, evaluation_policy_ref, status,
-    plan_snapshot, participants, initial_client_request_id,
+    plan_snapshot, participants, presentation_snapshot, initial_client_request_id,
     initial_request_fingerprint
 ) VALUES (
     $1, $2, $3, 1, 'conversation', 'general', 'voice',
     'general.evaluation.v1', 'starting', '{}'::jsonb, '[{}]'::jsonb,
+    '{"schema_version":1,"avatar":{"option_id":"avatar_lisa","provider":"spatialreal","provider_profile":"spatialreal_default","provider_avatar_id":"avatar","binding_version":1},"voice":{"option_id":"voice_ava","provider":"qianwen","provider_profile":"qianwen_default","provider_model":"model","provider_voice_id":"voice","locale":"en-US","binding_version":1}}'::jsonb,
     'request-session-a', decode(repeat('02', 32), 'hex')
 )
 `, sessionA, userA, planA); err != nil {

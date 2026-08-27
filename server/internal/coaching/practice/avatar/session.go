@@ -15,14 +15,15 @@ const maximumSessionTokenTTL = 10 * time.Minute
 
 type SessionReader interface {
 	GetSession(context.Context, practice.Actor, string) (practice.Session, error)
+	GetSessionSnapshot(context.Context, practice.Actor, string) (practice.SessionSnapshot, error)
 }
 
 type ServiceConfiguration struct {
-	Enabled  bool
-	AppID    string
-	AvatarID string
-	Region   string
-	TokenTTL time.Duration
+	Enabled         bool
+	AppID           string
+	ProviderProfile string
+	Region          string
+	TokenTTL        time.Duration
 }
 
 type Service struct {
@@ -51,7 +52,7 @@ func NewService(configuration ServiceConfiguration, sessions SessionReader, prov
 	if sessions == nil || configuration.TokenTTL <= 0 || configuration.TokenTTL > maximumSessionTokenTTL {
 		return nil, errors.New("practice avatar: service dependency is required")
 	}
-	if configuration.Enabled && (provider == nil || strings.TrimSpace(configuration.AppID) == "" || strings.TrimSpace(configuration.AvatarID) == "" || strings.TrimSpace(configuration.Region) == "") {
+	if configuration.Enabled && (provider == nil || strings.TrimSpace(configuration.AppID) == "" || strings.TrimSpace(configuration.ProviderProfile) == "" || strings.TrimSpace(configuration.Region) == "") {
 		return nil, errors.New("practice avatar: enabled provider configuration is required")
 	}
 	return &Service{configuration: configuration, sessions: sessions, provider: provider, now: time.Now}, nil
@@ -71,6 +72,17 @@ func (service *Service) IssueSessionToken(ctx context.Context, actor requestcont
 	if !service.configuration.Enabled || service.provider == nil {
 		return SessionToken{}, providerUnavailableError(nil)
 	}
+	snapshot, err := service.sessions.GetSessionSnapshot(
+		ctx,
+		practice.Actor{UserID: actor.UserID, SessionID: actor.SessionID},
+		sessionID,
+	)
+	if err != nil || !snapshot.Presentation.Valid() ||
+		snapshot.Presentation.Avatar.Provider != "spatialreal" ||
+		snapshot.Presentation.Avatar.ProviderProfile != service.configuration.ProviderProfile {
+		return SessionToken{}, providerUnavailableError(err)
+	}
+	avatarID := snapshot.Presentation.Avatar.ProviderAvatarID
 	now := service.now().UTC()
 	expiry := now.Add(service.configuration.TokenTTL).Truncate(time.Second)
 	providerToken, err := service.provider.CreateSessionToken(ctx, service.configuration.AppID, expiry)
@@ -84,7 +96,7 @@ func (service *Service) IssueSessionToken(ctx context.Context, actor requestcont
 		return SessionToken{}, providerUnavailableError(ErrInvalidProviderResponse)
 	}
 	return SessionToken{
-		AppID: service.configuration.AppID, AvatarID: service.configuration.AvatarID,
+		AppID: service.configuration.AppID, AvatarID: avatarID,
 		SessionToken: providerToken.Value, Region: service.configuration.Region,
 		ExpiresAt:   providerToken.ExpiresAt.UTC().Truncate(time.Second).Format(time.RFC3339),
 		AudioFormat: AudioFormat{Encoding: "PCM_S16LE", SampleRateHz: 24000, Channels: 1},

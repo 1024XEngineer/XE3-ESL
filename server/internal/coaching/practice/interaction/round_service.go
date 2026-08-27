@@ -729,15 +729,16 @@ type QuestionSpeech struct {
 func (service *RoundService) SynthesizeQuestion(
 	ctx context.Context,
 	text string,
+	profile SynthesisProfile,
 ) (QuestionSpeech, error) {
 	text = strings.TrimSpace(text)
-	if ctx == nil || text == "" {
+	if ctx == nil || text == "" || !profile.Valid() {
 		return QuestionSpeech{}, ErrVoiceRoundInvalid
 	}
 	startedAt := service.now()
 	result, err := service.synthesizer.Synthesize(
 		ctx,
-		SynthesisRequest{Text: text},
+		SynthesisRequest{Text: text, Profile: profile},
 	)
 	if err != nil {
 		attempt := safeAttempt(

@@ -267,11 +267,12 @@ func seedRetryPractice(t *testing.T, pool *pgxpool.Pool) {
 		session_id,user_id,plan_id,plan_version,practice_experience,
 		scene_category,practice_mode,evaluation_policy_ref,status,version,
 		effective_turns,plan_snapshot,participants,initial_client_request_id,
-		initial_request_fingerprint,started_at,ended_at,end_reason
+		initial_request_fingerprint,started_at,ended_at,end_reason,presentation_snapshot
 	) VALUES ($1,$2,$3,1,'INTERVIEW','INTERVIEW_PROFESSIONAL',
 		'FULL_SIMULATION','interview.evaluation.v1','completed',2,1,
 		$4::jsonb,$5::jsonb,$6,$7,transaction_timestamp(),
-		transaction_timestamp(),'COMPLETED')`, retrySessionID, retryUserID,
+		transaction_timestamp(),'COMPLETED',
+		'{"schema_version":1,"avatar":{"option_id":"avatar_lisa","provider":"spatialreal","provider_profile":"spatialreal_default","provider_avatar_id":"avatar","binding_version":1},"voice":{"option_id":"voice_ava","provider":"qianwen","provider_profile":"qianwen_default","provider_model":"model","provider_voice_id":"voice","locale":"en-US","binding_version":1}}'::jsonb)`, retrySessionID, retryUserID,
 		retryPlanID, planSnapshot, participants, "session-create-0001", fingerprint); err != nil {
 		t.Fatal(err)
 	}

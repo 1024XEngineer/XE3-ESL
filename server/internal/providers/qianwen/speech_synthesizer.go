@@ -54,6 +54,40 @@ type speechSynthesizer struct {
 	now              func() time.Time
 }
 
+type synthesisSettings struct {
+	model        string
+	voice        string
+	languageHint string
+}
+
+func (synthesizer *speechSynthesizer) settings(
+	request protocol.SynthesisRequest,
+) (synthesisSettings, error) {
+	model := synthesizer.model
+	if strings.TrimSpace(request.Model) != "" {
+		model = request.Model
+	}
+	voice := synthesizer.voice
+	if strings.TrimSpace(request.Voice) != "" {
+		voice = request.Voice
+	}
+	language := synthesizer.languageHint
+	if strings.TrimSpace(request.LanguageHint) != "" {
+		language = request.LanguageHint
+	}
+	var err error
+	if model, err = normalizeTTSModel(model); err != nil {
+		return synthesisSettings{}, err
+	}
+	if voice, err = normalizeTTSVoice(voice); err != nil {
+		return synthesisSettings{}, err
+	}
+	if language, err = normalizeTTSLanguage(language); err != nil {
+		return synthesisSettings{}, err
+	}
+	return synthesisSettings{model: model, voice: voice, languageHint: language}, nil
+}
+
 func (synthesizer *speechSynthesizer) String() string {
 	if synthesizer == nil {
 		return "QianwenSynthesizer(<nil>)"
@@ -162,20 +196,29 @@ func (synthesizer *speechSynthesizer) Synthesize(
 			err,
 		)
 	}
+	settings, err := synthesizer.settings(request)
+	if err != nil {
+		return protocol.SynthesisResult{}, protocol.NewSpeechError(
+			protocol.SpeechOperationSynthesis,
+			protocol.ErrorInvalidRequest,
+			0, "", "", err,
+		)
+	}
 	if synthesizer.synthesizeOverWS {
 		return synthesizer.synthesizeRealtimeWAV(
 			ctx,
 			strings.TrimSpace(request.Text),
+			settings,
 		)
 	}
 	payload := ttsRequest{
-		Model: synthesizer.model,
+		Model: settings.model,
 		Input: ttsInput{
 			Text:          strings.TrimSpace(request.Text),
-			Voice:         synthesizer.voice,
+			Voice:         settings.voice,
 			Format:        "wav",
 			SampleRate:    ttsOutputSampleRate,
-			LanguageHints: []string{synthesizer.languageHint},
+			LanguageHints: []string{settings.languageHint},
 		},
 	}
 	body, err := json.Marshal(payload)
@@ -265,7 +308,7 @@ func (synthesizer *speechSynthesizer) Synthesize(
 			"decode Qianwen TTS response",
 		)
 	}
-	metadata, err := completion.metadata(synthesizer.model, synthesizer.now())
+	metadata, err := completion.metadata(settings.model, synthesizer.now())
 	if err != nil {
 		var speechError *protocol.SpeechError
 		if errors.As(err, &speechError) {
@@ -285,7 +328,7 @@ func (synthesizer *speechSynthesizer) Synthesize(
 	return protocol.SynthesisResult{
 		RequestID: metadata.requestID,
 		Provider:  providerName,
-		Model:     synthesizer.model,
+		Model:     settings.model,
 		AudioID:   metadata.audioID,
 		Audio:     audio,
 		Usage:     metadata.usage,
@@ -677,7 +720,8 @@ func normalizeTTSVoice(raw string) (string, error) {
 }
 
 func normalizeTTSLanguage(raw string) (string, error) {
-	if !strings.EqualFold(strings.TrimSpace(raw), "en") {
+	language := strings.ToLower(strings.TrimSpace(raw))
+	if language != "en" && language != "en-us" {
 		return "", errors.New("Qianwen TTS adapter currently accepts only English")
 	}
 	return "en", nil

@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice"
+	presentationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/presentation/postgres"
 )
 
 const sessionColumns = `session_id, plan_id, plan_version, practice_experience,
@@ -46,43 +47,83 @@ func (r *Repository) CreateSession(ctx context.Context, actor practice.Actor, co
 	if err := lockActiveActor(ctx, tx, actor.UserID); err != nil {
 		return practice.SessionBootstrap{}, false, err
 	}
-	tag, err := tx.Exec(ctx, `INSERT INTO practice_sessions (
+	var existingSessionID, storedPlanID string
+	var storedPlanVersion int
+	var storedFingerprint []byte
+	err = tx.QueryRow(ctx, `SELECT session_id,plan_id,plan_version,initial_request_fingerprint
+FROM practice_sessions WHERE user_id=$1 AND initial_client_request_id=$2`,
+		actor.UserID, command.ClientRequestID,
+	).Scan(&existingSessionID, &storedPlanID, &storedPlanVersion, &storedFingerprint)
+	if err == nil {
+		if !bytes.Equal(storedFingerprint, command.RequestFingerprint[:]) ||
+			storedPlanID != command.PlanID || storedPlanVersion != command.PlanVersion {
+			return practice.SessionBootstrap{}, false, practice.ErrIdempotencyConflict
+		}
+		value, readErr := readBootstrap(ctx, tx, actor.UserID, existingSessionID)
+		if readErr != nil {
+			return practice.SessionBootstrap{}, false, readErr
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return practice.SessionBootstrap{}, false, err
+		}
+		return value, true, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return practice.SessionBootstrap{}, false, err
+	}
+	presentationRepository, err := presentationpostgres.New(tx)
+	if err != nil {
+		return practice.SessionBootstrap{}, false, practice.ErrConflict
+	}
+	selection, err := presentationRepository.ResolveSelection(ctx, actor.UserID)
+	if err != nil {
+		return practice.SessionBootstrap{}, false, practice.ErrConflict
+	}
+	presentationSnapshot := practice.PresentationSnapshot{
+		SchemaVersion: practice.PresentationSnapshotSchemaVersion,
+		Avatar: practice.AvatarPresentationSnapshot{
+			OptionID: selection.Avatar.ID, Provider: selection.Avatar.Provider,
+			ProviderProfile:  selection.Avatar.ProviderProfile,
+			ProviderAvatarID: selection.Avatar.ProviderAvatarID,
+			BindingVersion:   selection.Avatar.BindingVersion,
+		},
+		Voice: practice.VoicePresentationSnapshot{
+			OptionID: selection.Voice.ID, Provider: selection.Voice.Provider,
+			ProviderProfile: selection.Voice.ProviderProfile,
+			ProviderModel:   selection.Voice.ProviderModel,
+			ProviderVoiceID: selection.Voice.ProviderVoiceID,
+			Locale:          selection.Voice.Locale,
+			BindingVersion:  selection.Voice.BindingVersion,
+		},
+	}
+	if !presentationSnapshot.Valid() {
+		return practice.SessionBootstrap{}, false, practice.ErrConflict
+	}
+	presentationJSON, err := json.Marshal(presentationSnapshot)
+	if err != nil {
+		return practice.SessionBootstrap{}, false, practice.ErrInvalidArgument
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO practice_sessions (
 user_id,session_id,plan_id,plan_version,practice_experience,scene_category,
 practice_mode,evaluation_policy_ref,status,version,effective_turns,plan_snapshot,
-participants,initial_client_request_id,initial_request_fingerprint)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'starting',1,0,$9,$10,$11,$12)
-ON CONFLICT (user_id, initial_client_request_id) DO NOTHING`, actor.UserID,
+participants,presentation_snapshot,initial_client_request_id,initial_request_fingerprint)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'starting',1,0,$9,$10,$11,$12,$13)`, actor.UserID,
 		command.SessionID, command.PlanID, command.PlanVersion,
 		string(command.Snapshot.Experience), string(command.Snapshot.Category),
 		string(command.Snapshot.PracticeMode), evaluationPolicy, planJSON,
-		participantsJSON, command.ClientRequestID, command.RequestFingerprint[:])
+		participantsJSON, presentationJSON, command.ClientRequestID,
+		command.RequestFingerprint[:])
 	if err != nil {
 		return practice.SessionBootstrap{}, false, classifyWriteError("create practice session", err)
 	}
-	id := command.SessionID
-	replayed := tag.RowsAffected() == 0
-	if replayed {
-		var storedPlanID string
-		var storedPlanVersion int
-		var storedFingerprint []byte
-		err := tx.QueryRow(ctx, `SELECT session_id,plan_id,plan_version,initial_request_fingerprint FROM practice_sessions WHERE user_id=$1 AND initial_client_request_id=$2`, actor.UserID, command.ClientRequestID).Scan(&id, &storedPlanID, &storedPlanVersion, &storedFingerprint)
-		if err != nil {
-			return practice.SessionBootstrap{}, false, err
-		}
-		if !bytes.Equal(storedFingerprint, command.RequestFingerprint[:]) ||
-			storedPlanID != command.PlanID ||
-			storedPlanVersion != command.PlanVersion {
-			return practice.SessionBootstrap{}, false, practice.ErrIdempotencyConflict
-		}
-	}
-	value, err := readBootstrap(ctx, tx, actor.UserID, id)
+	value, err := readBootstrap(ctx, tx, actor.UserID, command.SessionID)
 	if err != nil {
 		return practice.SessionBootstrap{}, false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return practice.SessionBootstrap{}, false, err
 	}
-	return value, replayed, nil
+	return value, false, nil
 }
 
 func (r *Repository) GetSession(ctx context.Context, actor practice.Actor, id string) (practice.Session, error) {
@@ -287,15 +328,15 @@ type sessionQuery interface {
 
 func readBootstrap(ctx context.Context, query sessionQuery, ownerID, sessionID string) (practice.SessionBootstrap, error) {
 	var value practice.SessionBootstrap
-	var snapshotJSON, participantsJSON []byte
-	err := query.QueryRow(ctx, `SELECT `+sessionColumns+`,plan_snapshot,participants FROM practice_sessions WHERE user_id=$1 AND session_id=$2`, ownerID, sessionID).Scan(&value.Session.ID, &value.Session.PlanID, &value.Session.PlanVersion, &value.Session.Experience, &value.Session.Category, &value.Session.PracticeMode, &value.Session.EvaluationPolicyRef, &value.Session.Status, &value.Session.Version, &value.Session.EffectiveTurns, &value.Session.StartedAt, &value.Session.EndedAt, &value.Session.EndReason, &value.Session.CreatedAt, &snapshotJSON, &participantsJSON)
+	var snapshotJSON, participantsJSON, presentationJSON []byte
+	err := query.QueryRow(ctx, `SELECT `+sessionColumns+`,plan_snapshot,participants,presentation_snapshot FROM practice_sessions WHERE user_id=$1 AND session_id=$2`, ownerID, sessionID).Scan(&value.Session.ID, &value.Session.PlanID, &value.Session.PlanVersion, &value.Session.Experience, &value.Session.Category, &value.Session.PracticeMode, &value.Session.EvaluationPolicyRef, &value.Session.Status, &value.Session.Version, &value.Session.EffectiveTurns, &value.Session.StartedAt, &value.Session.EndedAt, &value.Session.EndReason, &value.Session.CreatedAt, &snapshotJSON, &participantsJSON, &presentationJSON)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return practice.SessionBootstrap{}, practice.ErrNotFound
 	}
 	if err != nil {
 		return practice.SessionBootstrap{}, err
 	}
-	if decodeStrictJSON(snapshotJSON, &value.Snapshot) != nil || decodeStrictJSON(participantsJSON, &value.Snapshot.Participants) != nil {
+	if decodeStrictJSON(snapshotJSON, &value.Snapshot) != nil || decodeStrictJSON(participantsJSON, &value.Snapshot.Participants) != nil || decodeStrictJSON(presentationJSON, &value.Snapshot.Presentation) != nil || !value.Snapshot.Presentation.Valid() {
 		return practice.SessionBootstrap{}, practice.ErrConflict
 	}
 	return value, nil

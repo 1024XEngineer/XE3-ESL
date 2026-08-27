@@ -29,6 +29,8 @@ tags:
     description: Minimal account registration, opaque Session, and current-user operations.
   - name: Coaching Profile
     description: Fixed-schema cross-conversation coaching facts and preferences.
+  - name: Coach Presentation
+    description: Selectable coach avatars, voices, and current-user preferences.
   - name: Agent
     description: Durable Agent Threads and committed Messages.
   - name: Scene
@@ -85,6 +87,10 @@ paths:
     $ref: ./modules/identity.yaml#/paths/~1v1~1me~1avatar~1content
   /v1/me/coaching-profile:
     $ref: ./modules/coaching-profile.yaml#/paths/~1v1~1me~1coaching-profile
+  /v1/coach-presentation-catalog:
+    $ref: ./modules/coach-presentation.yaml#/paths/~1v1~1coach-presentation-catalog
+  /v1/me/coach-presentation:
+    $ref: ./modules/coach-presentation.yaml#/paths/~1v1~1me~1coach-presentation
   /v1/scenes:
     $ref: ./modules/scene.yaml#/paths/~1v1~1scenes
   /v1/ielts-speaking/question-bank:
@@ -157,8 +163,8 @@ paths:
     $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1practice-questions~1{question_id}~1speech
   /v1/practice-questions/{question_id}/speech/realtime:
     $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1practice-questions~1{question_id}~1speech~1realtime
-  /v1/practice-speech/realtime:
-    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1practice-speech~1realtime
+  /v1/practice-sessions/{practice_session_id}/speech/realtime:
+    $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1practice-sessions~1{practice_session_id}~1speech~1realtime
   /v1/practice-questions/{question_id}/translation:
     $ref: ./modules/practice-runtime.yaml#/paths/~1v1~1practice-questions~1{question_id}~1translation
   /v1/evaluation-reports:
@@ -254,6 +260,12 @@ components:
       $ref: ./modules/coaching-profile.yaml#/components/schemas/CoachingProfile
     UpdateCoachingProfileRequest:
       $ref: ./modules/coaching-profile.yaml#/components/schemas/UpdateCoachingProfileRequest
+    CoachPresentationCatalog:
+      $ref: ./modules/coach-presentation.yaml#/components/schemas/CoachPresentationCatalog
+    CoachPresentationPreference:
+      $ref: ./modules/coach-presentation.yaml#/components/schemas/CoachPresentationPreference
+    UpdateCoachPresentationRequest:
+      $ref: ./modules/coach-presentation.yaml#/components/schemas/UpdateCoachPresentationRequest
     RegisterRequest:
       $ref: ./modules/identity.yaml#/components/schemas/RegisterRequest
     LoginRequest:

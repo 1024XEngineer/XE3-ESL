@@ -17,12 +17,16 @@ func TestIssueSessionTokenUsesOwnedActivePractice(t *testing.T) {
 	}}
 	service, err := NewService(
 		ServiceConfiguration{
-			Enabled: true, AppID: "app", AvatarID: "avatar",
+			Enabled: true, AppID: "app", ProviderProfile: "spatialreal_default",
 			Region: "ap-northeast", TokenTTL: 5 * time.Minute,
 		},
 		avatarSessionReaderStub{session: practice.Session{
 			ID: "session-1", Status: practice.SessionInProgress,
-		}},
+		}, snapshot: practice.SessionSnapshot{Presentation: practice.PresentationSnapshot{
+			SchemaVersion: practice.PresentationSnapshotSchemaVersion,
+			Avatar:        practice.AvatarPresentationSnapshot{OptionID: "avatar_lisa", Provider: "spatialreal", ProviderProfile: "spatialreal_default", ProviderAvatarID: "avatar", BindingVersion: 1},
+			Voice:         practice.VoicePresentationSnapshot{OptionID: "voice_ava", Provider: "qianwen", ProviderProfile: "qianwen_default", ProviderModel: "model", ProviderVoiceID: "voice", Locale: "en-US", BindingVersion: 1},
+		}}},
 		provider,
 	)
 	if err != nil {
@@ -38,12 +42,16 @@ func TestIssueSessionTokenUsesOwnedActivePractice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("issue session token: %v", err)
 	}
-	if grant.SessionToken != provider.token.Value || grant.AudioFormat.SampleRateHz != 24000 {
+	if grant.SessionToken != provider.token.Value || grant.AvatarID != "avatar" ||
+		grant.AudioFormat.SampleRateHz != 24000 {
 		t.Fatalf("grant = %#v", grant)
 	}
 }
 
-type avatarSessionReaderStub struct{ session practice.Session }
+type avatarSessionReaderStub struct {
+	session  practice.Session
+	snapshot practice.SessionSnapshot
+}
 
 func (stub avatarSessionReaderStub) GetSession(
 	context.Context,
@@ -51,6 +59,14 @@ func (stub avatarSessionReaderStub) GetSession(
 	string,
 ) (practice.Session, error) {
 	return stub.session, nil
+}
+
+func (stub avatarSessionReaderStub) GetSessionSnapshot(
+	context.Context,
+	practice.Actor,
+	string,
+) (practice.SessionSnapshot, error) {
+	return stub.snapshot, nil
 }
 
 type avatarProviderStub struct{ token ProviderSessionToken }

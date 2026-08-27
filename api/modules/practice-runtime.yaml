@@ -418,19 +418,22 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/NotFound
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
-  /v1/practice-speech/realtime:
+  /v1/practice-sessions/{practice_session_id}/speech/realtime:
     get:
       tags:
         - Practice
-      summary: Stream authenticated Coaching prompt text as synthesized PCM
+      summary: Stream session-scoped Coaching prompt text as synthesized PCM
       description: |
-        Authenticates the Actor before upgrading. After `stream.ready`, the
+        Authenticates the Actor and resolves the owned Practice Session before
+        upgrading. The Session's immutable presentation snapshot selects the
+        speech model and voice. After `stream.ready`, the
         client sends exactly one bounded `speak` event. The server streams mono
         24 kHz signed 16-bit little-endian PCM chunks and then exactly one
         `stream.completed` or `stream.failed` event. The prompt is ephemeral and
         must not be persisted or logged.
       operationId: streamPracticePromptSpeech
       parameters:
+        - $ref: '#/components/parameters/PracticeSessionId'
         - name: Sec-WebSocket-Protocol
           in: header
           required: true
@@ -449,6 +452,8 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/BadRequest
         '401':
           $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
       x-websocket-client-event-schema:
@@ -462,6 +467,19 @@ paths:
         other_credential_locations_allowed: false
         production_transport: wss
         local_loopback_transport: ws
+        pre_upgrade:
+          validation_order:
+            - session
+            - actor
+            - resource_ownership
+            - subprotocol
+            - upgrade
+        connection_binding:
+          actor_fields:
+            - user_id
+            - session_id
+          target_field: practice_session_id
+          target_switch_allowed: false
         subprotocol:
           allowed:
             - speakup.practice-question-speech.v1

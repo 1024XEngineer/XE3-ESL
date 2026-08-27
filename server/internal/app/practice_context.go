@@ -21,6 +21,7 @@ import (
 	preparationrouter "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/router"
 	preparationservice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/service"
 	preparationhttp "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/transport/http"
+	coachpresentation "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/presentation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/gin-gonic/gin"
@@ -59,6 +60,7 @@ type IdentityAgentPracticeComposition struct {
 	practiceRepository   *practicepostgres.Repository
 	practiceHTTP         *practiceapi.Handler
 	productionTools      *capability.Registry
+	presentationService  *coachpresentation.Service
 }
 
 // NewIdentityAgentAndPracticeComposition builds the production Identity,
@@ -346,6 +348,7 @@ func newIdentityAgentAndPracticeComposition(
 		practiceRepository:   practiceRepository,
 		practiceHTTP:         practiceHTTP,
 		productionTools:      base.productionTools,
+		presentationService:  base.presentationService,
 	}, nil
 }
 
@@ -397,6 +400,15 @@ func (c *IdentityAgentPracticeComposition) PracticeApplication() *practice.Sessi
 		return nil
 	}
 	return c.practiceApplication
+}
+
+// CoachPresentationService exposes the validated catalog and user preference
+// port for the practice-session snapshot composition added by the next slice.
+func (c *IdentityAgentPracticeComposition) CoachPresentationService() *coachpresentation.Service {
+	if c == nil {
+		return nil
+	}
+	return c.presentationService
 }
 
 // PracticeRepository exposes the single infrastructure adapter to the root

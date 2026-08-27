@@ -194,7 +194,7 @@ func TestSingaporeSynthesizeUsesRealtimeWebSocketAndReturnsValidatedWAV(
 		pcm[index] = byte(index)
 	}
 	server := newRealtimeSynthesisServer(t, "Say hello.", realtimeSynthesisOutcome{
-		pcm: pcm,
+		pcm: pcm, expectedVoice: "loongjohn",
 	})
 	directory := t.TempDir()
 	synthesizer := newSingaporeTestSynthesizer(
@@ -205,7 +205,10 @@ func TestSingaporeSynthesizeUsesRealtimeWebSocketAndReturnsValidatedWAV(
 	)
 	result, err := synthesizer.Synthesize(
 		context.Background(),
-		protocol.SynthesisRequest{Text: "  Say hello.  "},
+		protocol.SynthesisRequest{
+			Text: "  Say hello.  ", Model: "qwen-audio-3.0-tts-flash",
+			Voice: "loongjohn", LanguageHint: "en-US",
+		},
 	)
 	if err != nil {
 		t.Fatalf("synthesize Singapore WAV: %v", err)
@@ -339,6 +342,7 @@ type realtimeSynthesisOutcome struct {
 	failBeforeStart bool
 	providerCode    string
 	providerMessage string
+	expectedVoice   string
 }
 
 func newRealtimeSynthesisServer(
@@ -374,6 +378,7 @@ func newRealtimeSynthesisServer(
 				Parameters struct {
 					Format     string `json:"format"`
 					SampleRate int    `json:"sample_rate"`
+					Voice      string `json:"voice"`
 				} `json:"parameters"`
 			} `json:"payload"`
 		}
@@ -384,6 +389,10 @@ func newRealtimeSynthesisServer(
 			run.Payload.Parameters.Format != "pcm" ||
 			run.Payload.Parameters.SampleRate != ttsOutputSampleRate {
 			t.Errorf("unexpected run-task: %s", payload)
+			return
+		}
+		if outcome.expectedVoice != "" && run.Payload.Parameters.Voice != outcome.expectedVoice {
+			t.Errorf("unexpected realtime voice: %s", payload)
 			return
 		}
 		if outcome.withholdStart {

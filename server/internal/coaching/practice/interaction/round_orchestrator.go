@@ -39,6 +39,7 @@ type RoundPort interface {
 	SynthesizeQuestion(
 		context.Context,
 		string,
+		SynthesisProfile,
 	) (QuestionSpeech, error)
 	SubmitTextAnswer(
 		context.Context,
@@ -266,11 +267,12 @@ func (orchestrator *RoundOrchestrator) finishTurn(
 func (orchestrator *RoundOrchestrator) SynthesizeQuestion(
 	ctx context.Context,
 	text string,
+	profile SynthesisProfile,
 ) (QuestionSpeech, error) {
-	if ctx == nil {
+	if ctx == nil || !profile.Valid() {
 		return QuestionSpeech{}, ErrInvalidRequest
 	}
-	return orchestrator.rounds.SynthesizeQuestion(ctx, text)
+	return orchestrator.rounds.SynthesizeQuestion(ctx, text, profile)
 }
 
 func validateVoiceActor(

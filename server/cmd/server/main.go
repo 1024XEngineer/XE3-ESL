@@ -487,6 +487,7 @@ func run() int {
 					Recognizer:          practiceRecognizer,
 					RecordedRecognizer:  practiceRecordedRecognizer,
 					Synthesizer:         practiceSynthesizer,
+					RealtimeSynthesizer: practiceSynthesizer,
 					QuestionGenerator:   practiceQuestions,
 					QuestionTranslator:  modelProviders.Translation,
 					AnswerTipGenerator:  practiceAnswerTips,
@@ -521,7 +522,7 @@ func run() int {
 	avatarService, err := practiceavatar.NewService(
 		practiceavatar.ServiceConfiguration{
 			Enabled: spatiusConfig.Enabled, AppID: spatiusConfig.AppID,
-			AvatarID: spatiusConfig.AvatarID, Region: spatiusConfig.Region,
+			ProviderProfile: "spatialreal_default", Region: spatiusConfig.Region,
 			TokenTTL: spatiusConfig.TokenTTL,
 		},
 		applicationComposition.PracticeRepository(),

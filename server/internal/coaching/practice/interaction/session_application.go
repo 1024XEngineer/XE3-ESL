@@ -42,6 +42,7 @@ type Session struct {
 	Status                     string
 	FacilitatorParticipantID   string
 	LearnerParticipantID       string
+	SynthesisProfile           SynthesisProfile
 }
 
 // InterviewQuestionContext is the smallest frozen Preparation projection the
@@ -360,7 +361,54 @@ func (application *SessionApplication) QuestionSpeech(
 	if question.ID != questionID || strings.TrimSpace(question.Content) == "" {
 		return QuestionSpeech{}, ErrInvalidContext
 	}
-	return application.orchestrator.SynthesizeQuestion(ctx, question.Content)
+	session, err := application.sessions.GetByID(ctx, actor, question.SessionID)
+	if err != nil || !session.SynthesisProfile.Valid() {
+		return QuestionSpeech{}, ErrInvalidContext
+	}
+	return application.orchestrator.SynthesizeQuestion(
+		ctx,
+		question.Content,
+		session.SynthesisProfile,
+	)
+}
+
+type QuestionSynthesisInput struct {
+	Text    string
+	Profile SynthesisProfile
+}
+
+func (application *SessionApplication) QuestionSynthesis(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	questionID string,
+) (QuestionSynthesisInput, error) {
+	if err := validateVoiceActor(ctx, actor); err != nil || strings.TrimSpace(questionID) == "" {
+		return QuestionSynthesisInput{}, ErrInvalidRequest
+	}
+	question, err := application.questions.GetQuestion(ctx, actor, questionID)
+	if err != nil {
+		return QuestionSynthesisInput{}, err
+	}
+	session, err := application.sessions.GetByID(ctx, actor, question.SessionID)
+	if err != nil || question.ID != questionID || strings.TrimSpace(question.Content) == "" || !session.SynthesisProfile.Valid() {
+		return QuestionSynthesisInput{}, ErrInvalidContext
+	}
+	return QuestionSynthesisInput{Text: strings.TrimSpace(question.Content), Profile: session.SynthesisProfile}, nil
+}
+
+func (application *SessionApplication) SessionSynthesisProfile(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	sessionID string,
+) (SynthesisProfile, error) {
+	if err := validateVoiceActor(ctx, actor); err != nil || strings.TrimSpace(sessionID) == "" {
+		return SynthesisProfile{}, ErrInvalidRequest
+	}
+	session, err := application.sessions.GetByID(ctx, actor, sessionID)
+	if err != nil || session.ID != sessionID || !session.SynthesisProfile.Valid() {
+		return SynthesisProfile{}, ErrInvalidContext
+	}
+	return session.SynthesisProfile, nil
 }
 
 func (application *SessionApplication) QuestionText(

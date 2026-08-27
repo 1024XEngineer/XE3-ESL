@@ -261,7 +261,7 @@ func TestPracticePromptSpeechStreamsBoundedClientText(t *testing.T) {
 	)
 	defer server.Close()
 	endpoint := "ws" + strings.TrimPrefix(server.URL, "http") +
-		"/v1/practice-speech/realtime"
+		"/v1/practice-sessions/session-a/speech/realtime"
 	connection, response, err := (&websocket.Dialer{
 		Subprotocols: []string{practiceQuestionSpeechWebSocketProtocol},
 	}).Dial(
@@ -292,8 +292,8 @@ func TestPracticePromptSpeechStreamsBoundedClientText(t *testing.T) {
 		!strings.Contains(string(completed), `"type":"stream.completed"`) {
 		t.Fatalf("completed = %q, err = %v", completed, err)
 	}
-	if synthesizer.text != "Try this answer." {
-		t.Fatalf("speech text = %q", synthesizer.text)
+	if synthesizer.text != "Try this answer." || application.speechSessionID != "session-a" {
+		t.Fatalf("speech text = %q, session = %q", synthesizer.text, application.speechSessionID)
 	}
 }
 
@@ -387,19 +387,35 @@ type practiceRealtimeHTTPApplication struct {
 	questionText     string
 	questionID       string
 	questionActor    string
+	speechSessionID  string
 }
 
-func (application *practiceRealtimeHTTPApplication) QuestionText(
+func (application *practiceRealtimeHTTPApplication) SessionSynthesisProfile(
+	_ context.Context,
+	actor requestcontext.Actor,
+	sessionID string,
+) (practiceinteraction.SynthesisProfile, error) {
+	if actor.UserID != "user-a" || sessionID != "session-a" {
+		return practiceinteraction.SynthesisProfile{}, practiceinteraction.ErrNotFound
+	}
+	application.speechSessionID = sessionID
+	return practiceinteraction.SynthesisProfile{Provider: "qianwen", ProviderProfile: "qianwen_default", Model: "model", VoiceID: "voice", Locale: "en-US"}, nil
+}
+
+func (application *practiceRealtimeHTTPApplication) QuestionSynthesis(
 	_ context.Context,
 	actor requestcontext.Actor,
 	questionID string,
-) (string, error) {
+) (practiceinteraction.QuestionSynthesisInput, error) {
 	if actor.UserID != "user-a" || questionID != "question-1" {
-		return "", practiceinteraction.ErrNotFound
+		return practiceinteraction.QuestionSynthesisInput{}, practiceinteraction.ErrNotFound
 	}
 	application.questionID = questionID
 	application.questionActor = actor.UserID
-	return application.questionText, nil
+	return practiceinteraction.QuestionSynthesisInput{
+		Text:    application.questionText,
+		Profile: practiceinteraction.SynthesisProfile{Provider: "qianwen", ProviderProfile: "qianwen_default", Model: "model", VoiceID: "voice", Locale: "en-US"},
+	}, nil
 }
 
 func (application *practiceRealtimeHTTPApplication) Start(
@@ -523,6 +539,14 @@ func (synthesizer *practiceQuestionSpeechSynthesizer) OpenAssistantSpeech(
 		synthesizer: synthesizer,
 		onAudio:     onAudio,
 	}, nil
+}
+
+func (synthesizer *practiceQuestionSpeechSynthesizer) OpenPracticeSpeech(
+	_ context.Context,
+	_ practiceinteraction.SynthesisProfile,
+	onAudio func([]byte) error,
+) (practiceinteraction.StreamingSpeechSession, error) {
+	return &practiceQuestionSpeechSession{synthesizer: synthesizer, onAudio: onAudio}, nil
 }
 
 type practiceQuestionSpeechSession struct {
