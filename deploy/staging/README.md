@@ -28,6 +28,8 @@ This Staging contract deliberately uses:
 - a one-shot migration before either application container is updated;
 - a runtime-only configuration for PostgreSQL, Portal, and Server containers;
 - an edge-only configuration for TLS, Basic Auth, ACME, and public downloads;
+- a runtime-owned `/var/lib/speakup/staging-apk-public` tree used only for
+  immutable Staging Candidate APKs and their atomic current pointer;
 - HTTP Basic Authentication on the Staging Portal only;
 - TLS plus the application's Bearer authentication on the Staging API, so the
   mobile client's `Authorization` header is never consumed by Nginx;
@@ -92,7 +94,10 @@ snapshots below
 atomically points the root-owned `current` symlink at that commit. The fixed
 broker is `/usr/local/libexec/speakup-staging-broker`; its state is
 `/var/lib/speakup/staging-broker`, and the shared lock directory is
-`/run/lock/xe3-speakup-staging`.
+`/run/lock/xe3-speakup-staging`. The bootstrap also creates the isolated
+`/var/lib/speakup/staging-apk-public` tree as
+`speakup-staging-runtime:speakup-staging-runtime`; it never grants that account
+write access to the Production public root.
 
 The CI account receives a random password that is never retained, has a
 root-owned non-writable home, no supplementary groups, and `/bin/bash` only
@@ -157,9 +162,20 @@ the repository by these Environment values:
 | Variable | `STAGING_DEPLOY_USER` | `speakup-staging-ci` |
 | Secret | `STAGING_DEPLOY_SSH_PRIVATE_KEY` | Private half of the single restricted authorized key |
 | Secret | `STAGING_DEPLOY_KNOWN_HOSTS` | Out-of-band-verified host-key line used as the SSH integrity anchor |
+| Secret | `STAGING_PORTAL_BASIC_AUTH` | Existing read-only Portal credential in `username:password` form, used only for public Candidate smoke verification |
+
+After a successful official `main` Release Candidate, the Staging workflow
+downloads the exact manifest and signed Android artifact from that same run.
+It deploys the immutable Portal and Server digests through the existing v1 JSON
+broker request, then streams one bounded v2 tar payload containing only the
+validated Staging APK bundle. The broker binds the publication to the current
+runtime receipt, writes an immutable Candidate directory, and atomically moves
+`staging-candidate.json`. It rejects links, unknown paths, extra files, hash
+mismatches, and a Candidate that differs from the running Staging receipt.
+Neither Staging action creates a Git tag, GitHub Release, or Production pointer.
 
 To replace the Staging server, bootstrap and fully validate the new host with a
-new SSH key, verify its host key out of band, update all five Environment
+new SSH key, verify its host key out of band, update all six Environment
 values, run one successful Staging deployment and verification, and only then
 revoke the old authorized key and retire the old host. Do not reuse a host key
 or copy the old rootless Docker socket, broker state, runtime environment, or
@@ -352,15 +368,14 @@ then test and reload Nginx using the paths appropriate to that host. The
 committed template keeps ACME HTTP challenges reachable, redirects other HTTP
 traffic to HTTPS, protects the Portal with Basic Auth, preserves the API Bearer
 header and WebSocket upgrades, and returns `404` for exact `/metrics` requests
-before they reach either application. It also serves only the strict versioned
-Android APK, checksum, and metadata routes from `STAGING_PUBLIC_ROOT`; the
-current metadata is not cached, versioned files are immutable, and unknown or
-directory paths return `404`. These Portal download routes inherit Basic Auth.
-The API host intentionally has no `auth_basic` directive and returns `404` for
-the complete Android download namespace.
-
-Build, validate, publish, activate, and roll back the public APK bundle with
-the separate [Android publication contract](../android-download/README.md).
+before they reach either application. It serves only the current Staging
+Candidate metadata and the immutable APK, checksum, and Candidate metadata
+below `/var/lib/speakup/staging-apk-public`; the current pointer is not cached,
+immutable files are cached permanently, and unknown or directory paths return
+`404`. These Portal download routes inherit Basic Auth. The API host
+intentionally has no `auth_basic` directive and returns `404` for the complete
+Android download namespace. Production metadata and APK routes are never
+served by the Staging host.
 
 ## 5. Verify
 
@@ -375,7 +390,7 @@ the separate [Android publication contract](../android-download/README.md).
 
 curl --fail --user staging-user https://staging.speak-up.top/
 curl --fail --user staging-user \
-  https://staging.speak-up.top/downloads/android/release.json
+  https://staging.speak-up.top/downloads/android/staging-candidate.json
 curl --fail https://staging-api.speak-up.top/health
 curl --fail https://staging-api.speak-up.top/readyz
 test "$(curl --silent --output /dev/null --write-out '%{http_code}' \

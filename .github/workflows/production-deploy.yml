@@ -26,6 +26,7 @@ jobs:
       candidate_run_id: ${{ steps.receipt.outputs.candidate_run_id }}
       candidate_sha: ${{ steps.receipt.outputs.candidate_sha }}
       manifest_artifact: ${{ steps.candidate.outputs.manifest_artifact }}
+      staging_publication_sha256: ${{ steps.receipt.outputs.publication_sha256 }}
       staging_receipt_sha256: ${{ steps.receipt.outputs.sha256 }}
       staging_run_attempt: ${{ steps.staging.outputs.run_attempt }}
       staging_run_id: ${{ steps.staging.outputs.run_id }}
@@ -71,11 +72,20 @@ jobs:
           run-id: ${{ steps.staging.outputs.run_id }}
           github-token: ${{ github.token }}
 
+      - name: Download the exact Staging publication receipt
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: staging-publication-${{ steps.staging.outputs.run_id }}-${{ steps.staging.outputs.run_attempt }}
+          path: ${{ runner.temp }}/staging-publication
+          run-id: ${{ steps.staging.outputs.run_id }}
+          github-token: ${{ github.token }}
+
       - name: Validate the Staging deployment receipt
         id: receipt
         env:
           STAGING_DIRECTORY: ${{ runner.temp }}/staging-receipt
           STAGING_HEAD_SHA: ${{ steps.staging.outputs.sha }}
+          STAGING_PUBLICATION_DIRECTORY: ${{ runner.temp }}/staging-publication
           STAGING_RUN_ATTEMPT: ${{ steps.staging.outputs.run_attempt }}
           STAGING_RUN_ID: ${{ steps.staging.outputs.run_id }}
         run: |
@@ -86,6 +96,12 @@ jobs:
           [[ "${#files[@]}" == 1 ]]
           receipt="${files[0]}"
           [[ ! -L "$receipt" && -s "$receipt" ]]
+          mapfile -d '' publication_files < <(
+            find "$STAGING_PUBLICATION_DIRECTORY" -mindepth 1 -maxdepth 1 -type f -print0
+          )
+          [[ "${#publication_files[@]}" == 1 ]]
+          publication="${publication_files[0]}"
+          [[ ! -L "$publication" && -s "$publication" ]]
           jq -e \
             --arg git_sha "$STAGING_HEAD_SHA" \
             --argjson run_id "$STAGING_RUN_ID" \
@@ -107,7 +123,8 @@ jobs:
                 .operation == "deploy" and .repository == "1024XEngineer/XE3-ESL" and
                 .git_sha == $git_sha and
                 .deployment_run_id == $run_id and
-                .deployment_run_attempt == $run_attempt and
+                (.deployment_run_attempt | type == "number" and . >= 1 and
+                  . == floor and . <= $run_attempt) and
                 (.candidate_run_id | type == "number" and . >= 1 and . == floor) and
                 (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$")) and
                 (.version_code | type == "number" and . >= 1 and . == floor) and
@@ -124,8 +141,69 @@ jobs:
             ' "$receipt" >/dev/null
           embedded_sha256="$(jq -cj '.receipt' "$receipt" | sha256sum | cut -d ' ' -f 1)"
           [[ "$embedded_sha256" == "$(jq -er '.receipt_sha256' "$receipt")" ]]
+          runtime_receipt_sha256="$(jq -er '.receipt_sha256' "$receipt")"
+          jq -e \
+            --arg git_sha "$STAGING_HEAD_SHA" \
+            --arg runtime_receipt_sha256 "$runtime_receipt_sha256" \
+            --argjson run_attempt "$STAGING_RUN_ATTEMPT" \
+            --argjson run_id "$STAGING_RUN_ID" \
+            --slurpfile deployment "$receipt" '
+              type == "object" and
+              keys == [
+                "action", "ok", "protocol_version", "publication_receipt_sha256",
+                "receipt", "runtime_receipt_sha256"
+              ] and
+              .protocol_version == 2 and .ok == true and .action == "publish" and
+              (.publication_receipt_sha256 | type == "string" and
+                test("^[0-9a-f]{64}$") and test("[1-9a-f]")) and
+              .runtime_receipt_sha256 == $runtime_receipt_sha256 and
+              ($deployment | length == 1) and
+              (.receipt | type == "object" and
+                keys == [
+                  "apk_certificate_sha256", "bundle_manifest_sha256",
+                  "candidate_metadata_sha256", "candidate_run_id",
+                  "deployment_run_attempt", "deployment_run_id", "environment",
+                  "git_sha", "manifest_sha256", "operation",
+                  "previous_publication_receipt_sha256", "receipt_version",
+                  "recorded_at_utc", "repository", "runtime_receipt_sha256",
+                  "staging_apk_file", "staging_apk_sha256",
+                  "staging_apk_size_bytes", "version", "version_code"
+                ] and
+                .receipt_version == 1 and .environment == "staging" and
+                .operation == "publish" and .repository == "1024XEngineer/XE3-ESL" and
+                .runtime_receipt_sha256 == $runtime_receipt_sha256 and
+                .manifest_sha256 == $deployment[0].receipt.manifest_sha256 and
+                (.bundle_manifest_sha256 | type == "string" and
+                  test("^[0-9a-f]{64}$") and test("[1-9a-f]")) and
+                (.candidate_metadata_sha256 | type == "string" and
+                  test("^[0-9a-f]{64}$") and test("[1-9a-f]")) and
+                .version == $deployment[0].receipt.version and
+                .version_code == $deployment[0].receipt.version_code and
+                .git_sha == $git_sha and
+                .candidate_run_id == $deployment[0].receipt.candidate_run_id and
+                .staging_apk_file == ("speakup-v" + .version + "-staging-arm64.apk") and
+                (.staging_apk_size_bytes | type == "number" and . >= 1 and . == floor) and
+                (.staging_apk_sha256 | type == "string" and
+                  test("^[0-9a-f]{64}$") and test("[1-9a-f]")) and
+                (.apk_certificate_sha256 | type == "string" and
+                  test("^[0-9a-f]{64}$") and test("[1-9a-f]")) and
+                .deployment_run_id == $run_id and
+                (.deployment_run_attempt | type == "number" and . >= 1 and
+                  . <= $run_attempt and . == floor) and
+                ((.previous_publication_receipt_sha256 == null) or
+                  (.previous_publication_receipt_sha256 | type == "string" and
+                    test("^[0-9a-f]{64}$"))) and
+                (.recorded_at_utc | type == "string" and
+                  test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")))
+            ' "$publication" >/dev/null
+          publication_embedded_sha256="$(jq -cj '.receipt' "$publication" | sha256sum | cut -d ' ' -f 1)"
+          [[ "$publication_embedded_sha256" == \
+            "$(jq -er '.publication_receipt_sha256' "$publication")" ]]
           printf 'candidate_run_id=%s\n' "$(jq -er '.receipt.candidate_run_id' "$receipt")" >> "$GITHUB_OUTPUT"
           printf 'candidate_sha=%s\n' "$(jq -er '.receipt.git_sha' "$receipt")" >> "$GITHUB_OUTPUT"
+          printf 'publication_sha256=%s\n' \
+            "$(sha256sum "$publication" | cut -d ' ' -f 1)" \
+            >> "$GITHUB_OUTPUT"
           printf 'sha256=%s\n' "$(sha256sum "$receipt" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
           printf 'version=%s\n' "$(jq -er '.receipt.version' "$receipt")" >> "$GITHUB_OUTPUT"
 
@@ -243,6 +321,14 @@ jobs:
           run-id: ${{ needs.authorize.outputs.staging_run_id }}
           github-token: ${{ github.token }}
 
+      - name: Download the approved Staging publication receipt
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: staging-publication-${{ needs.authorize.outputs.staging_run_id }}-${{ needs.authorize.outputs.staging_run_attempt }}
+          path: ${{ runner.temp }}/staging-publication
+          run-id: ${{ needs.authorize.outputs.staging_run_id }}
+          github-token: ${{ github.token }}
+
       - name: Revalidate the bound Candidate artifacts
         id: artifacts
         env:
@@ -251,6 +337,8 @@ jobs:
           CANDIDATE_SHA: ${{ needs.authorize.outputs.candidate_sha }}
           MANIFEST_DIRECTORY: ${{ runner.temp }}/candidate-manifest
           STAGING_DIRECTORY: ${{ runner.temp }}/staging-receipt
+          STAGING_PUBLICATION_DIRECTORY: ${{ runner.temp }}/staging-publication
+          STAGING_PUBLICATION_SHA256: ${{ needs.authorize.outputs.staging_publication_sha256 }}
           STAGING_RECEIPT_SHA256: ${{ needs.authorize.outputs.staging_receipt_sha256 }}
           STAGING_RUN_ATTEMPT: ${{ needs.authorize.outputs.staging_run_attempt }}
           STAGING_RUN_ID: ${{ needs.authorize.outputs.staging_run_id }}
@@ -267,6 +355,14 @@ jobs:
           staging_receipt="${staging_files[0]}"
           [[ ! -L "$staging_receipt" && -s "$staging_receipt" ]]
           [[ "$(sha256sum "$staging_receipt" | cut -d ' ' -f 1)" == "$STAGING_RECEIPT_SHA256" ]]
+          mapfile -d '' staging_publication_files < <(
+            find "$STAGING_PUBLICATION_DIRECTORY" -mindepth 1 -maxdepth 1 -type f -print0
+          )
+          [[ "${#staging_publication_files[@]}" == 1 ]]
+          staging_publication="${staging_publication_files[0]}"
+          [[ ! -L "$staging_publication" && -s "$staging_publication" ]]
+          [[ "$(sha256sum "$staging_publication" | cut -d ' ' -f 1)" == \
+            "$STAGING_PUBLICATION_SHA256" ]]
 
           production_apk="speakup-v$VERSION-production-arm64.apk"
           staging_apk="speakup-v$VERSION-staging-arm64.apk"
@@ -291,10 +387,13 @@ jobs:
             --arg quality_run_url "https://github.com/1024XEngineer/XE3-ESL/actions/runs/$CANDIDATE_RUN_ID" \
             --arg version "$VERSION" \
             --argjson candidate_run_id "$CANDIDATE_RUN_ID" \
+            --argjson staging_apk_size "$(stat -c '%s' "$ANDROID_DIRECTORY/$staging_apk")" \
             --argjson staging_run_id "$STAGING_RUN_ID" \
             --argjson staging_run_attempt "$STAGING_RUN_ATTEMPT" \
-            --slurpfile manifest "$manifest" '
+            --slurpfile manifest "$manifest" \
+            --slurpfile publication "$staging_publication" '
               ($manifest | length == 1) and
+              ($publication | length == 1) and
               ($manifest[0] | .git_sha == $git_sha and .version == $version and
                 .quality_run_url == $quality_run_url) and
               .receipt.manifest_sha256 == $manifest_sha256 and
@@ -306,7 +405,22 @@ jobs:
               .receipt.server_image_digest == $manifest[0].server_image_digest and
               .receipt.candidate_run_id == $candidate_run_id and
               .receipt.deployment_run_id == $staging_run_id and
-              .receipt.deployment_run_attempt == $staging_run_attempt
+              (.receipt.deployment_run_attempt >= 1 and
+                .receipt.deployment_run_attempt <= $staging_run_attempt) and
+              $publication[0].runtime_receipt_sha256 == .receipt_sha256 and
+              $publication[0].receipt.runtime_receipt_sha256 == .receipt_sha256 and
+              $publication[0].receipt.manifest_sha256 == $manifest_sha256 and
+              $publication[0].receipt.version == $manifest[0].version and
+              $publication[0].receipt.version_code == $manifest[0].version_code and
+              $publication[0].receipt.git_sha == $git_sha and
+              $publication[0].receipt.candidate_run_id == $candidate_run_id and
+              $publication[0].receipt.staging_apk_file == $manifest[0].staging_apk_file and
+              $publication[0].receipt.staging_apk_size_bytes == $staging_apk_size and
+              $publication[0].receipt.staging_apk_sha256 == $manifest[0].staging_apk_sha256 and
+              $publication[0].receipt.apk_certificate_sha256 == $manifest[0].apk_certificate_sha256 and
+              $publication[0].receipt.deployment_run_id == $staging_run_id and
+              ($publication[0].receipt.deployment_run_attempt >= 1 and
+                $publication[0].receipt.deployment_run_attempt <= $staging_run_attempt)
             ' "$staging_receipt" >/dev/null
           [[ "$(tr -d '[:space:]' < "$ANDROID_DIRECTORY/apk-certificate-sha256.txt")" == \
             "$(jq -er '.apk_certificate_sha256' "$manifest")" ]]

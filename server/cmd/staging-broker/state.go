@@ -68,6 +68,7 @@ type stateStore struct {
 	engineDir   string
 	currentPath string
 	pendingPath string
+	incomingDir string
 }
 
 type loadedReceipt struct {
@@ -81,7 +82,8 @@ func openStateStore(root string) (*stateStore, error) {
 	manifestDir := filepath.Join(root, "manifests")
 	receiptDir := filepath.Join(root, "receipts")
 	engineDir := filepath.Join(root, "engine-receipts")
-	for _, directory := range []string{root, manifestDir, receiptDir, engineDir} {
+	incomingDir := filepath.Join(root, "incoming")
+	for _, directory := range []string{root, manifestDir, receiptDir, engineDir, incomingDir} {
 		if err := ensurePrivateDirectory(directory); err != nil {
 			return nil, failure("state_invalid")
 		}
@@ -93,6 +95,7 @@ func openStateStore(root string) (*stateStore, error) {
 		engineDir:   engineDir,
 		currentPath: filepath.Join(root, "current"),
 		pendingPath: filepath.Join(root, "pending.json"),
+		incomingDir: incomingDir,
 	}, nil
 }
 

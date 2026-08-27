@@ -10,6 +10,7 @@ readonly broker_path="/usr/local/libexec/speakup-staging-broker"
 readonly gate_path="/usr/local/libexec/speakup-staging-ssh-gate"
 readonly control_root="/opt/xe3-speakup-staging-control"
 readonly broker_state="/var/lib/speakup/staging-broker"
+readonly candidate_public_root="/var/lib/speakup/staging-apk-public"
 readonly lock_directory="/run/lock/xe3-speakup-staging"
 readonly sshd_drop_in="/etc/ssh/sshd_config.d/60-speakup-staging-ci.conf"
 readonly authorized_keys_file="/etc/ssh/authorized_keys/speakup-staging-ci"
@@ -502,6 +503,10 @@ install_directory "$runtime_home/docker-data" "$runtime_user" "$runtime_user" 71
 install_directory /var/lib/speakup/staging-broker "$runtime_user" "$runtime_user" 700
 install_directory /var/lib/speakup/staging-broker/manifests "$runtime_user" "$runtime_user" 700
 install_directory /var/lib/speakup/staging-broker/receipts "$runtime_user" "$runtime_user" 700
+install_directory "$candidate_public_root" "$runtime_user" "$runtime_user" 755
+install_directory "$candidate_public_root/downloads" "$runtime_user" "$runtime_user" 755
+install_directory "$candidate_public_root/downloads/android" "$runtime_user" "$runtime_user" 755
+install_directory "$candidate_public_root/downloads/android/candidates" "$runtime_user" "$runtime_user" 755
 install_directory /etc/speakup root "$runtime_user" 710
 install_directory /run/lock/xe3-speakup-staging "$runtime_user" "$runtime_user" 700
 install_directory /usr/local/libexec root root 755

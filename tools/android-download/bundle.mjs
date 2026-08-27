@@ -374,6 +374,139 @@ export function buildAndroidDownloadBundle({
   }
 }
 
+export function buildStagingCandidateBundle({
+  manifestPath,
+  stagingApkPath,
+  candidateRunId,
+  outputPath,
+}) {
+  const manifestFile = path.resolve(manifestPath);
+  const apkFile = path.resolve(stagingApkPath);
+  const output = path.resolve(outputPath);
+  const outputParent = path.dirname(output);
+  const outputName = path.basename(output);
+  const parsedCandidateRunId = Number(candidateRunId);
+  positiveSafeInteger(parsedCandidateRunId, "candidate run id");
+
+  const manifestSnapshot = readRegularFileSnapshot(manifestFile, "release manifest");
+  const releaseManifestSha256 = sha256Bytes(manifestSnapshot.bytes);
+  const manifest = validateReleaseManifest(
+    parseJsonSnapshot(manifestSnapshot, "release manifest"),
+  );
+  if (
+    manifest.quality_run_url !==
+    `https://github.com/1024XEngineer/XE3-ESL/actions/runs/${parsedCandidateRunId}`
+  ) {
+    fail("candidate run id does not match the release manifest");
+  }
+
+  const apkSnapshot = readRegularFileSnapshot(apkFile, "Staging APK");
+  if (path.basename(apkFile) !== manifest.staging_apk_file) {
+    fail(`Staging APK must be named ${manifest.staging_apk_file}`);
+  }
+  const apkSha256 = sha256Bytes(apkSnapshot.bytes);
+  if (apkSha256 !== manifest.staging_apk_sha256) {
+    fail("Staging APK SHA-256 does not match the release manifest");
+  }
+
+  const parentStatus = lstatSync(outputParent);
+  if (parentStatus.isSymbolicLink() || !parentStatus.isDirectory()) {
+    fail("output parent must be a real directory");
+  }
+  outputMustNotExist(output);
+
+  const lock = path.join(outputParent, `.${outputName}.lock`);
+  let lockDescriptor;
+  let lockCreated = false;
+  let temporary;
+  try {
+    lockDescriptor = openSync(
+      lock,
+      constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
+      0o600,
+    );
+    lockCreated = true;
+    temporary = mkdtempSync(path.join(outputParent, `.${outputName}.tmp-`));
+    const candidateDirectory = path.join(
+      temporary,
+      "downloads",
+      "android",
+      "candidates",
+      String(parsedCandidateRunId),
+    );
+    mkdirSync(candidateDirectory, { recursive: true, mode: 0o755 });
+
+    const prefix = path.posix.join(
+      "downloads",
+      "android",
+      "candidates",
+      String(parsedCandidateRunId),
+    );
+    const apkRelativePath = path.posix.join(prefix, manifest.staging_apk_file);
+    const checksumRelativePath = `${apkRelativePath}.sha256`;
+    const metadataRelativePath = path.posix.join(prefix, "candidate.json");
+
+    writeFileSync(path.join(temporary, apkRelativePath), apkSnapshot.bytes, {
+      flag: "wx",
+      mode: 0o644,
+    });
+    writeFileSync(
+      path.join(temporary, checksumRelativePath),
+      `${apkSha256}  ${manifest.staging_apk_file}\n`,
+      { encoding: "utf8", flag: "wx", mode: 0o644 },
+    );
+    writeJson(path.join(temporary, metadataRelativePath), {
+      candidate_metadata_version: 1,
+      environment: "staging",
+      version: manifest.version,
+      version_code: manifest.version_code,
+      git_sha: manifest.git_sha,
+      candidate_run_id: parsedCandidateRunId,
+      manifest_sha256: releaseManifestSha256,
+      file_name: manifest.staging_apk_file,
+      download_path: `/${apkRelativePath}`,
+      size_bytes: apkSnapshot.size,
+      minimum_android_api: manifest.minimum_android_api,
+      abis: manifest.abis,
+      apk_sha256: manifest.staging_apk_sha256,
+      apk_certificate_sha256: manifest.apk_certificate_sha256,
+    });
+
+    const files = [apkRelativePath, checksumRelativePath, metadataRelativePath].map(
+      (relativePath) => fileEntry(temporary, relativePath),
+    );
+    writeJson(path.join(temporary, "bundle-manifest.json"), {
+      bundle_version: 1,
+      environment: "staging",
+      version: manifest.version,
+      git_sha: manifest.git_sha,
+      candidate_run_id: parsedCandidateRunId,
+      release_manifest_sha256: releaseManifestSha256,
+      files,
+    });
+
+    outputMustNotExist(output);
+    renameSync(temporary, output);
+    temporary = undefined;
+    return {
+      output,
+      version: manifest.version,
+      candidateRunId: parsedCandidateRunId,
+      bundleManifestSha256: sha256File(path.join(output, "bundle-manifest.json")),
+    };
+  } finally {
+    if (lockDescriptor !== undefined) closeSync(lockDescriptor);
+    if (temporary) rmSync(temporary, { recursive: true, force: true });
+    if (lockCreated) {
+      try {
+        unlinkSync(lock);
+      } catch (error) {
+        if (!error || error.code !== "ENOENT") throw error;
+      }
+    }
+  }
+}
+
 function readArguments(arguments_) {
   const values = {};
   for (let index = 0; index < arguments_.length; index += 2) {
@@ -382,7 +515,9 @@ function readArguments(arguments_) {
     if (!flag?.startsWith("--") || value === undefined || values[flag.slice(2)]) {
       fail(
         "Usage: bundle.mjs --manifest FILE --production-apk FILE " +
-          "--published-at RFC3339_UTC --output DIRECTORY",
+          "--published-at RFC3339_UTC --output DIRECTORY, or " +
+          "bundle.mjs --profile staging --manifest FILE --staging-apk FILE " +
+          "--candidate-run-id INTEGER --output DIRECTORY",
       );
     }
     values[flag.slice(2)] = value;
@@ -392,19 +527,34 @@ function readArguments(arguments_) {
 
 function main() {
   const arguments_ = readArguments(process.argv.slice(2));
-  const allowed = ["manifest", "production-apk", "published-at", "output"];
+  const profile = arguments_.profile ?? "production";
+  const allowed =
+    profile === "staging"
+      ? ["profile", "manifest", "staging-apk", "candidate-run-id", "output"]
+      : ["profile", "manifest", "production-apk", "published-at", "output"];
+  if (profile !== "production" && profile !== "staging") {
+    fail("--profile must be production or staging");
+  }
   for (const name of allowed) {
-    if (!arguments_[name]) fail(`--${name} is required`);
+    if (name !== "profile" && !arguments_[name]) fail(`--${name} is required`);
   }
   for (const name of Object.keys(arguments_)) {
     if (!allowed.includes(name)) fail(`unknown argument: --${name}`);
   }
-  const result = buildAndroidDownloadBundle({
-    manifestPath: arguments_.manifest,
-    productionApkPath: arguments_["production-apk"],
-    publishedAt: arguments_["published-at"],
-    outputPath: arguments_.output,
-  });
+  const result =
+    profile === "staging"
+      ? buildStagingCandidateBundle({
+          manifestPath: arguments_.manifest,
+          stagingApkPath: arguments_["staging-apk"],
+          candidateRunId: arguments_["candidate-run-id"],
+          outputPath: arguments_.output,
+        })
+      : buildAndroidDownloadBundle({
+          manifestPath: arguments_.manifest,
+          productionApkPath: arguments_["production-apk"],
+          publishedAt: arguments_["published-at"],
+          outputPath: arguments_.output,
+        });
   process.stdout.write(
     `version=${result.version} bundle_manifest_sha256=${result.bundleManifestSha256} output=${result.output}\n`,
   );

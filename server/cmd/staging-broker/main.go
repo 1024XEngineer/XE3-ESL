@@ -21,6 +21,7 @@ const (
 	productionManagePath = "/opt/xe3-speakup-staging-control/current/deploy/staging/manage.sh"
 	productionRuntimeEnv = "/etc/speakup/staging-runtime.env"
 	productionStateDir   = "/var/lib/speakup/staging-broker"
+	productionPublicRoot = "/var/lib/speakup/staging-apk-public"
 	productionLockFile   = "/run/lock/xe3-speakup-staging/broker.lock"
 	productionHome       = "/var/lib/speakup/staging-runtime"
 	productionPATH       = "/usr/local/bin:/usr/bin:/bin"
@@ -37,8 +38,10 @@ type Config struct {
 	ManagePath     string
 	RuntimeEnvFile string
 	StateDir       string
+	PublicRoot     string
 	LockFile       string
 	RequestTimeout time.Duration
+	PublishTimeout time.Duration
 	Timeout        time.Duration
 	Home           string
 	XDGRuntimeDir  string
@@ -47,6 +50,7 @@ type Config struct {
 	Now            func() time.Time
 	RunCommand     commandRunner
 	AfterEngine    func() error
+	AfterPublish   func() error
 }
 
 type brokerError struct {
@@ -85,6 +89,15 @@ type mutationResponse struct {
 	Action          string        `json:"action"`
 	ReceiptSHA256   string        `json:"receipt_sha256"`
 	Receipt         brokerReceipt `json:"receipt"`
+}
+
+type publicationResponse struct {
+	ProtocolVersion          int                `json:"protocol_version"`
+	OK                       bool               `json:"ok"`
+	Action                   string             `json:"action"`
+	PublicationReceiptSHA256 string             `json:"publication_receipt_sha256"`
+	RuntimeReceiptSHA256     string             `json:"runtime_receipt_sha256"`
+	Receipt                  publicationReceipt `json:"receipt"`
 }
 
 func main() {
@@ -127,8 +140,10 @@ func productionConfig() (Config, error) {
 		ManagePath:     productionManagePath,
 		RuntimeEnvFile: productionRuntimeEnv,
 		StateDir:       productionStateDir,
+		PublicRoot:     productionPublicRoot,
 		LockFile:       productionLockFile,
 		RequestTimeout: 15 * time.Second,
+		PublishTimeout: 5 * time.Minute,
 		Timeout:        15 * time.Minute,
 		Home:           productionHome,
 		XDGRuntimeDir:  xdgRuntimeDir,
@@ -160,15 +175,12 @@ func execute(input io.Reader, config Config) (any, error) {
 	if err := validateConfig(config); err != nil {
 		return nil, err
 	}
-	requestContext, cancelRequest := context.WithTimeout(context.Background(), config.RequestTimeout)
-	request, err := parseRequestWithContext(requestContext, input, config.Repository)
-	cancelRequest()
+	store, err := openStateStore(config.StateDir)
 	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), config.Timeout)
 	defer cancel()
-
 	lock, err := acquireBrokerLock(ctx, config.LockFile)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -178,10 +190,18 @@ func execute(input io.Reader, config Config) (any, error) {
 	}
 	defer lock.close()
 
-	store, err := openStateStore(config.StateDir)
+	envelope, err := parseEnvelopeWithTimeouts(input, config.Repository, store.incomingDir, config.RequestTimeout, config.PublishTimeout)
 	if err != nil {
 		return nil, err
 	}
+	defer envelope.close()
+	request := envelope.request
+	if request.Action == "deploy" || request.Action == "rollback" {
+		if err := requireNoPublicationPending(store.root); err != nil {
+			return nil, err
+		}
+	}
+
 	recovered, err := recoverPending(ctx, store, config, request)
 	if err != nil {
 		return nil, err
@@ -207,6 +227,11 @@ func execute(input io.Reader, config Config) (any, error) {
 		return deploy(ctx, store, config, request, chain)
 	case "rollback":
 		return rollback(ctx, store, config, request, chain)
+	case "publish":
+		if envelope.payload == nil {
+			return nil, failure("invalid_request")
+		}
+		return publishCandidate(store, config, request, *envelope.payload, current)
 	default:
 		return nil, failure("invalid_request")
 	}
@@ -382,13 +407,15 @@ func runCommand(ctx context.Context, name string, arguments []string, environmen
 }
 
 func validateConfig(config Config) error {
-	if config.Repository != officialRepository || config.RequestTimeout <= 0 || config.Timeout <= 0 || config.Now == nil || config.RunCommand == nil {
+	if config.Repository != officialRepository || config.RequestTimeout <= 0 || config.PublishTimeout <= 0 || config.Timeout <= 0 ||
+		config.RequestTimeout > config.Timeout || config.PublishTimeout > config.Timeout || config.Now == nil || config.RunCommand == nil {
 		return failure("internal_error")
 	}
 	for _, path := range []string{
 		config.ManagePath,
 		config.RuntimeEnvFile,
 		config.StateDir,
+		config.PublicRoot,
 		config.LockFile,
 		config.Home,
 		config.XDGRuntimeDir,
@@ -397,7 +424,7 @@ func validateConfig(config Config) error {
 			return failure("internal_error")
 		}
 	}
-	if config.StateDir == "/" || config.Home == "/" || config.XDGRuntimeDir == "/" {
+	if config.StateDir == "/" || config.PublicRoot == "/" || config.Home == "/" || config.XDGRuntimeDir == "/" {
 		return failure("internal_error")
 	}
 	if config.DockerHost != "unix://"+filepath.Join(config.XDGRuntimeDir, "docker.sock") {

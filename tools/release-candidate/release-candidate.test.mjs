@@ -846,16 +846,39 @@ test("Staging deploy accepts only a successful official Candidate artifact", () 
   assert.match(workflow, /listWorkflowRunArtifacts/);
   assert.match(workflow, /manifests\.length !== 1/);
   assert.match(workflow, /name:.*manifest_artifact/);
+  assert.match(workflow, /name:.*android_artifact/);
   assert.match(workflow, /run-id:.*candidate_run_id/);
   assert.match(workflow, /github-token:.*github\.token/);
+  assert.match(workflow, /actions\/checkout@/);
+  assert.match(workflow, /ref:.*candidate_sha/);
   assert.match(workflow, /StrictHostKeyChecking=yes/);
   assert.match(workflow, /action:\s*"inspect"/);
   assert.match(workflow, /action:\s*"deploy"/);
+  assert.match(workflow, /action:\s*"publish"/);
+  assert.match(workflow, /--profile staging/);
+  assert.match(workflow, /expected_runtime_receipt_sha256/);
+  assert.match(
+    workflow,
+    /\.receipt\.deployment_run_attempt[\s\S]*<= \$deployment_run_attempt/,
+  );
+  assert.match(workflow, /STAGING_PORTAL_BASIC_AUTH:.*secrets\.STAGING_PORTAL_BASIC_AUTH/);
+  assert.match(workflow, /--user "\$STAGING_PORTAL_BASIC_AUTH"/);
+  assert.match(workflow, /downloads\/android\/staging-candidate\.json/);
+  assert.match(workflow, /cmp --silent "\$CANDIDATE_METADATA" "\$public_metadata"/);
+  assert.match(workflow, /\.manifest_sha256 == \$manifest_sha256/);
+  assert.match(workflow, /\.apk_sha256 == \$manifest\[0\]\.staging_apk_sha256/);
+  assert.match(workflow, /"https:\/\/staging\.speak-up\.top\$download_path"/);
+  assert.match(workflow, /sha256sum "\$public_apk"/);
+  assert.match(workflow, /keys == \[[\s\S]*"publication_receipt_sha256"/);
+  assert.match(workflow, /candidate_metadata_sha256 == \$candidate_metadata_sha256/);
+  assert.match(workflow, /staging_apk_file == \$manifest\[0\]\.staging_apk_file/);
+  assert.match(workflow, /staging_apk_sha256 == \$manifest\[0\]\.staging_apk_sha256/);
+  assert.match(workflow, /embedded_sha256=.*jq -cj '\.receipt'/);
+  assert.match(workflow, /staging-publication-\$\{\{ github\.run_id \}\}/);
   assert.match(workflow, /expected_current_receipt_sha256/);
-  assert.match(workflow, /Candidate run .* is already deployed to Staging/);
+  assert.doesNotMatch(workflow, /already deployed to Staging/);
   assert.match(workflow, /https:\/\/staging-api\.speak-up\.top\/health/);
   assert.match(workflow, /staging-deployment-\$\{\{ github\.run_id \}\}/);
-  assert.doesNotMatch(workflow, /actions\/checkout/);
   assert.doesNotMatch(workflow, /deploy\/production/);
 });
 
