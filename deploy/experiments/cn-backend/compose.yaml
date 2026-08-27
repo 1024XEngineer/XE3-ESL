@@ -37,7 +37,7 @@ services:
       start_period: 5s
 
   migrate:
-    image: ghcr.io/1024xengineer/xe3-esl-server@${SERVER_IMAGE_DIGEST:?SERVER_IMAGE_DIGEST is required}
+    image: ${SERVER_IMAGE_REPOSITORY:?SERVER_IMAGE_REPOSITORY is required}@${SERVER_IMAGE_DIGEST:?SERVER_IMAGE_DIGEST is required}
     pull_policy: never
     profiles:
       - migration
@@ -55,7 +55,7 @@ services:
       - database
 
   server:
-    image: ghcr.io/1024xengineer/xe3-esl-server@${SERVER_IMAGE_DIGEST:?SERVER_IMAGE_DIGEST is required}
+    image: ${SERVER_IMAGE_REPOSITORY:?SERVER_IMAGE_REPOSITORY is required}@${SERVER_IMAGE_DIGEST:?SERVER_IMAGE_DIGEST is required}
     pull_policy: never
     restart: unless-stopped
     init: true
