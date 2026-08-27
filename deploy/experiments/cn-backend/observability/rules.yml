@@ -1,0 +1,77 @@
+groups:
+  - name: speakup-cn-experiment
+    rules:
+      - alert: SpeakUpChinaExperimentScrapeDown
+        expr: up{job=~"speakup-cn-experiment-api|speakup-cn-experiment-host"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "China experiment metrics scrape is down"
+
+      - alert: SpeakUpChinaExperimentAPIUnavailable
+        expr: speakup_cn_experiment_api_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "China experiment API health or readiness failed"
+
+      - alert: SpeakUpChinaExperimentContainerUnavailable
+        expr: speakup_cn_experiment_container_running == 0 or speakup_cn_experiment_container_healthy == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "China experiment container is unavailable"
+
+      - alert: SpeakUpChinaExperimentHostMetricsStale
+        expr: |
+          absent(node_textfile_mtime_seconds{file=~".*speakup-cn-experiment[.]prom"})
+          or
+          time()
+          - max(node_textfile_mtime_seconds{file=~".*speakup-cn-experiment[.]prom"})
+          > 180
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "China experiment host metrics are stale"
+
+      - alert: SpeakUpChinaExperimentDiskLow
+        expr: speakup_cn_experiment_filesystem_available_bytes / speakup_cn_experiment_filesystem_size_bytes < 0.15
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "China experiment root disk has less than 15% free"
+
+      - alert: SpeakUpChinaExperimentInodesLow
+        expr: speakup_cn_experiment_filesystem_files_free / speakup_cn_experiment_filesystem_files < 0.15
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "China experiment root filesystem has less than 15% free inodes"
+
+      - alert: SpeakUpChinaExperimentProviderFailureRateHigh
+        expr: |
+          sum by (provider, capability) (
+            increase(speakup_provider_calls_total{outcome!="success"}[10m])
+          ) >= 5
+          and
+          sum by (provider, capability) (
+            increase(speakup_provider_calls_total{outcome!="success"}[10m])
+          )
+          /
+          clamp_min(
+            sum by (provider, capability) (
+              increase(speakup_provider_calls_total[10m])
+            ),
+            1
+          ) > 0.20
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "China experiment provider failures exceed 20%"

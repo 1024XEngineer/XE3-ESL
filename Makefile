@@ -33,6 +33,7 @@ SHELL := /bin/bash
 	check-observability \
 	check-production-deploy \
 	check-production-nginx \
+	check-cn-backend-experiment \
 	check-staging-deploy \
 	check-staging-host-access \
 	check-staging-nginx \
@@ -67,6 +68,7 @@ help:
 		'  make check-observability  Validate monitoring, alert, and log rotation contracts' \
 		'  make check-production-deploy  Validate the immutable Production contract' \
 		'  make check-production-nginx  Run nginx -t against the Production template' \
+		'  make check-cn-backend-experiment  Validate the isolated China backend experiment contract' \
 		'  make check-staging-deploy  Validate Staging runtime-env, schema, lock, and receipt contracts' \
 		'  make check-staging-host-access  Validate restricted Staging SSH and rootless host access' \
 		'  make check-staging-nginx  Validate the Staging edge-env and rendered Nginx contract' \
@@ -353,6 +355,9 @@ check-production-deploy:
 
 check-production-nginx:
 	./deploy/production/test-nginx.sh
+
+check-cn-backend-experiment:
+	./deploy/experiments/cn-backend/test.sh
 
 check-staging-deploy:
 	node --test deploy/staging/uat.test.mjs

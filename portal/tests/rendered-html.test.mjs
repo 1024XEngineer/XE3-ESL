@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-async function render(path = "/") {
+async function render(path = "/", host = "localhost") {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);
   return worker.fetch(
-    new Request(`http://localhost${path}`, { headers: { accept: "text/html" } }),
+    new Request(`http://${host}${path}`, {
+      headers: { accept: "text/html", host },
+    }),
     {
       ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) },
     },
@@ -19,13 +21,13 @@ test("renders the standalone SpeakUp portal", async () => {
   assert.equal(response.status, 200);
 
   const html = await response.text();
-  assert.match(html, /下一场重要的英文沟通，先练一遍/);
-  assert.match(
-    html,
-    /越用越懂你的 AI 口语老师，围绕真实任务陪你准备、开口和复盘/,
-  );
-  assert.match(html, /Android 版本准备中/);
-  assert.match(html, /正式 APK 就绪后开放下载/);
+  assert.match(html, /下一场重要的/);
+  assert.match(html, /英文沟通/);
+  assert.match(html, /先练一遍/);
+  assert.match(html, /越用越懂你的 AI 口语老师/);
+  assert.match(html, /围绕真实任务陪你准备、开口和复盘/);
+  assert.match(html, /客户端准备中/);
+  assert.match(html, /正式版本就绪后开放下载/);
   assert.doesNotMatch(html, /href="#method"[^>]*>怎么练<\/a>/);
   assert.match(
     html,
@@ -36,29 +38,19 @@ test("renders the standalone SpeakUp portal", async () => {
     html,
     /<section class="release-memory" id="memory"[^>]*><div><h2 id="memory-title">/,
   );
-  assert.match(html, /aria-roledescription="轮播图"/);
-  assert.match(html, /interview-entry\.webp/);
-  assert.match(html, /interview-chat\.webp/);
-  assert.match(html, /ielts-review\.webp/);
-  assert.match(html, /practice-progress\.webp/);
+  assert.match(html, /aria-label="SpeakUp 从开练到复盘的产品流程"/);
+  assert.match(html, /readme-practice-flow\.png/);
+  assert.match(html, /readme-review-flow\.png/);
   assert.equal(
-    html.match(/class="hero-product-carousel__slide"/g)?.length,
-    8,
+    html.match(/class="hero-product-showcase__panel hero-product-showcase__panel--/g)
+      ?.length,
+    2,
   );
-  assert.match(html, /data-source-index="0"/);
-  assert.match(html, /data-source-index="3"/);
-  assert.doesNotMatch(html, /aria-label="上一张产品截图"/);
-  assert.doesNotMatch(html, /aria-label="下一张产品截图"/);
-  assert.match(
-    html,
-    /<div class="hero-product-carousel__progress" aria-hidden="true"><span/,
-  );
-  assert.doesNotMatch(
-    html,
-    /<div class="hero-product-carousel__progress"[^>]*><button/,
-  );
-  assert.match(html, /aria-label="暂停自动播放"/);
-  assert.match(html, /场景化专项练习/);
+  assert.doesNotMatch(html, /hero-product-carousel/);
+  assert.doesNotMatch(html, /aria-roledescription="轮播图"/);
+  assert.doesNotMatch(html, /暂停自动播放|继续自动播放/);
+  assert.doesNotMatch(html, /interview-entry\.webp|interview-chat\.webp/);
+  assert.doesNotMatch(html, /ielts-review\.webp|practice-progress\.webp/);
   assert.doesNotMatch(html, /portal-interview-practice\.png/);
   assert.match(html, /speak-up-wordmark-black\.png/);
   assert.match(html, /speakup-mark\.svg/);
@@ -94,6 +86,28 @@ test("renders an honest Android download preparing state", async () => {
   assert.match(html, /安装未知应用/);
   assert.doesNotMatch(html, /\.apk(?:"|\?)/);
   assert.doesNotMatch(html, /versionName:\s*\d/);
+});
+
+test("renders an explicit Staging candidate preparing state on the Staging host", async () => {
+  const homeResponse = await render("/", "staging.speak-up.top");
+  assert.equal(homeResponse.status, 200);
+  const homeHtml = await homeResponse.text();
+  assert.match(homeHtml, /Staging 候选 APK 准备中/);
+  assert.match(homeHtml, /Staging 候选环境 · 制品就绪后开放下载/);
+  assert.doesNotMatch(homeHtml, /正式 APK 就绪后开放下载/);
+
+  const downloadResponse = await render(
+    "/download/android",
+    "staging.speak-up.top",
+  );
+  assert.equal(downloadResponse.status, 200);
+  const downloadHtml = await downloadResponse.text();
+  assert.match(downloadHtml, /Staging 候选环境/);
+  assert.match(downloadHtml, /Staging 候选 APK 正在准备/);
+  assert.match(downloadHtml, /候选制品就绪后公开/);
+  assert.doesNotMatch(downloadHtml, /Android 官方版/);
+  assert.doesNotMatch(downloadHtml, /首个公开版本正在准备/);
+  assert.doesNotMatch(downloadHtml, /\/downloads\/android\/release\.json/);
 });
 
 test("renders the user-facing changelog without guessing a release", async () => {

@@ -23,7 +23,17 @@ test("Production deploy is gated by the successful official Staging workflow", (
   assert.match(workflow, /1024XEngineer\/XE3-ESL/);
   assert.match(workflow, /receipt_version == 2/);
   assert.match(workflow, /deployment_run_id == \$run_id/);
-  assert.match(workflow, /deployment_run_attempt == \$run_attempt/);
+  assert.match(
+    workflow,
+    /deployment_run_attempt[\s\S]*<= \$run_attempt/,
+  );
+  assert.match(
+    workflow,
+    /staging-publication-\$\{\{ steps\.staging\.outputs\.run_id \}\}-\$\{\{ steps\.staging\.outputs\.run_attempt \}\}/,
+  );
+  assert.match(workflow, /keys == \[[\s\S]*"publication_receipt_sha256"/);
+  assert.match(workflow, /runtime_receipt_sha256 == \$runtime_receipt_sha256/);
+  assert.match(workflow, /publication_embedded_sha256=.*jq -cj '\.receipt'/);
 });
 
 test("Production deploy consumes one matching Candidate without rebuilding it", () => {
@@ -39,6 +49,21 @@ test("Production deploy consumes one matching Candidate without rebuilding it", 
   assert.match(workflow, /tools\/android-download\/bundle\.mjs/);
   assert.match(workflow, /production_apk_sha256/);
   assert.match(workflow, /staging_receipt_sha256/);
+  assert.match(workflow, /staging_publication_sha256/);
+  assert.match(
+    workflow,
+    /staging-publication-\$\{\{ needs\.authorize\.outputs\.staging_run_id \}\}-\$\{\{ needs\.authorize\.outputs\.staging_run_attempt \}\}/,
+  );
+  assert.match(workflow, /STAGING_PUBLICATION_SHA256/);
+  assert.match(workflow, /\$publication\[0\]\.receipt\.manifest_sha256 == \$manifest_sha256/);
+  assert.match(
+    workflow,
+    /\$publication\[0\]\.receipt\.staging_apk_sha256 == \$manifest\[0\]\.staging_apk_sha256/,
+  );
+  assert.match(
+    workflow,
+    /\$publication\[0\]\.receipt\.runtime_receipt_sha256 == \.receipt_sha256/,
+  );
   assert.doesNotMatch(workflow, /flutter build|build-android|docker\/build-push-action/);
 });
 

@@ -5,6 +5,7 @@ set -euo pipefail
 readonly staging_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly compose_file="$staging_directory/compose.yaml"
 readonly nginx_template="$staging_directory/nginx.conf.template"
+readonly staging_candidate_public_root="/var/lib/speakup/staging-apk-public"
 readonly compose_project="xe3-speakup-staging"
 readonly portal_image_repository="ghcr.io/1024xengineer/xe3-esl-portal"
 readonly server_image_repository="ghcr.io/1024xengineer/xe3-esl-server"
@@ -752,6 +753,7 @@ render_nginx() {
     -e "s|__STAGING_HTPASSWD_FILE__|$STAGING_HTPASSWD_FILE|g" \
     -e "s|__STAGING_ACME_ROOT__|$STAGING_ACME_ROOT|g" \
     -e "s|__STAGING_PUBLIC_ROOT__|$STAGING_PUBLIC_ROOT|g" \
+    -e "s|__STAGING_CANDIDATE_PUBLIC_ROOT__|$staging_candidate_public_root|g" \
     "$nginx_template" >"$temporary"; then
     rm -f "$temporary"
     fail "failed to render Nginx template"

@@ -416,6 +416,12 @@ jobs:
             quay.io/prometheus/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893 \
             check config /etc/prometheus/prometheus.yml
           docker run --rm \
+            --volume "$PWD/deploy/experiments/cn-backend/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
+            --volume "$PWD/deploy/experiments/cn-backend/observability/rules.yml:/etc/prometheus/rules.yml:ro" \
+            --entrypoint promtool \
+            quay.io/prometheus/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893 \
+            check config /etc/prometheus/prometheus.yml
+          docker run --rm \
             --volume "$PWD/deploy/observability/alertmanager.example.yml:/etc/alertmanager/alertmanager.yml:ro" \
             --entrypoint amtool \
             quay.io/prometheus/alertmanager:v0.34.0@sha256:690c7b525f4367aa91f73e2f91c632206d32e97c6384bdbf2fb7a861b420340d \
@@ -431,12 +437,17 @@ jobs:
           sudo install -D -m 0755 \
             deploy/observability/xe3-speakup-export-metrics \
             /usr/local/sbin/xe3-speakup-export-metrics
+          sudo install -D -m 0755 \
+            deploy/experiments/cn-backend/observability/export-host-metrics.sh \
+            /usr/local/sbin/xe3-speakup-cn-experiment-export-metrics
           sudo install -D -m 0600 \
             deploy/observability/observability-metrics.env.example \
             /etc/speakup/observability-metrics.env
           systemd-analyze verify \
             deploy/observability/xe3-speakup-observability-metrics.service \
-            deploy/observability/xe3-speakup-observability-metrics.timer
+            deploy/observability/xe3-speakup-observability-metrics.timer \
+            deploy/experiments/cn-backend/observability/xe3-speakup-cn-experiment-metrics.service \
+            deploy/experiments/cn-backend/observability/xe3-speakup-cn-experiment-metrics.timer
           sudo logrotate --debug \
             deploy/observability/xe3-speakup-nginx.logrotate
 
@@ -445,6 +456,9 @@ jobs:
 
       - name: Validate Production deployment contract
         run: make check-production-deploy
+
+      - name: Validate China backend experiment contract
+        run: make check-cn-backend-experiment
 
       - name: Validate Production PostgreSQL systemd units
         run: |

@@ -42,8 +42,8 @@ server {
         return 404;
     }
 
-    location = /downloads/android/release.json {
-        root __STAGING_PUBLIC_ROOT__;
+    location = /downloads/android/staging-candidate.json {
+        root __STAGING_CANDIDATE_PUBLIC_ROOT__;
         try_files $uri =404;
         default_type application/json;
         add_header X-Content-Type-Options nosniff always;
@@ -51,8 +51,8 @@ server {
         add_header Cache-Control "no-store" always;
     }
 
-    location ~ "^/downloads/android/v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)/release\.json$" {
-        root __STAGING_PUBLIC_ROOT__;
+    location ~ "^/downloads/android/candidates/[1-9][0-9]*/candidate\.json$" {
+        root __STAGING_CANDIDATE_PUBLIC_ROOT__;
         try_files $uri =404;
         default_type application/json;
         add_header X-Content-Type-Options nosniff always;
@@ -60,11 +60,8 @@ server {
         add_header Cache-Control "public, max-age=31536000, immutable" always;
     }
 
-    location ~ "^/downloads/android/v(?<staging_checksum_dir_version>(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))/speakup-v(?<staging_checksum_file_version>(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))-production-arm64\.apk\.sha256$" {
-        if ($staging_checksum_dir_version != $staging_checksum_file_version) {
-            return 404;
-        }
-        root __STAGING_PUBLIC_ROOT__;
+    location ~ "^/downloads/android/candidates/[1-9][0-9]*/speakup-v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)-staging-arm64\.apk\.sha256$" {
+        root __STAGING_CANDIDATE_PUBLIC_ROOT__;
         try_files $uri =404;
         default_type text/plain;
         add_header X-Content-Type-Options nosniff always;
@@ -72,11 +69,8 @@ server {
         add_header Cache-Control "public, max-age=31536000, immutable" always;
     }
 
-    location ~ "^/downloads/android/v(?<staging_apk_directory_version>(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))/speakup-v(?<staging_apk_file_version>(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))-production-arm64\.apk$" {
-        if ($staging_apk_directory_version != $staging_apk_file_version) {
-            return 404;
-        }
-        root __STAGING_PUBLIC_ROOT__;
+    location ~ "^/downloads/android/candidates/[1-9][0-9]*/speakup-v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)-staging-arm64\.apk$" {
+        root __STAGING_CANDIDATE_PUBLIC_ROOT__;
         try_files $uri =404;
         default_type application/vnd.android.package-archive;
         add_header X-Content-Type-Options nosniff always;

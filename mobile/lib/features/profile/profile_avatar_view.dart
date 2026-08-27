@@ -60,6 +60,7 @@ class ProfileAvatarView extends StatelessWidget {
     if (!editable) {
       return avatar;
     }
+    final badgeSize = (size * 0.32).clamp(28.0, 36.0).toDouble();
     return Semantics(
       button: true,
       label: '修改头像',
@@ -75,12 +76,12 @@ class ProfileAvatarView extends StatelessWidget {
               right: 2,
               bottom: 2,
               child: Container(
-                width: 36,
-                height: 36,
+                width: badgeSize,
+                height: badgeSize,
                 decoration: BoxDecoration(
                   color: SpeakUpDesign.primary,
                   shape: BoxShape.circle,
-                  border: Border.all(color: SpeakUpDesign.surface, width: 3),
+                  border: Border.all(color: SpeakUpDesign.surface, width: 2),
                 ),
                 child: saving
                     ? const Padding(
@@ -93,7 +94,7 @@ class ProfileAvatarView extends StatelessWidget {
                     : const Icon(
                         Icons.photo_camera_rounded,
                         color: SpeakUpDesign.canvas,
-                        size: 18,
+                        size: 17,
                       ),
               ),
             ),

@@ -7,9 +7,9 @@ export function homeAndroidReleaseView(state) {
         kind: "download",
         href: release.download_path,
         download: release.file_name,
-        label: "下载 Android APK",
+        label: "下载客户端",
       },
-      supportLine: `Android 7.0 及以上 · 当前版本 v${release.version}`,
+      supportLine: "当前支持 Android 7.0 及以上",
     };
   }
 
@@ -24,8 +24,8 @@ export function homeAndroidReleaseView(state) {
   if (state.status === "preparing") {
     return {
       status: "preparing",
-      action: { kind: "disabled", label: "Android 版本准备中" },
-      supportLine: "正式 APK 就绪后开放下载",
+      action: { kind: "disabled", label: "客户端准备中" },
+      supportLine: "正式版本就绪后开放下载",
     };
   }
 

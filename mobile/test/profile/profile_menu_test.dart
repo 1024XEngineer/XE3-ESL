@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/design/speak_up_theme.dart';
 import 'package:speakup/features/coaching/profile/coaching_profile.dart';
 import 'package:speakup/features/profile/profile_page.dart';
@@ -29,10 +30,22 @@ void main() {
       find.byKey(const Key('profile-ielts-ability-button')),
       findsOneWidget,
     );
+    expect(find.byKey(const Key('profile-about-button')), findsOneWidget);
     expect(find.byKey(const Key('profile-logout-button')), findsOneWidget);
-    expect(find.byIcon(Icons.auto_awesome_rounded), findsOneWidget);
-    expect(find.byIcon(Icons.workspace_premium_rounded), findsOneWidget);
-    expect(find.byIcon(Icons.power_settings_new_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.tune_rounded), findsNothing);
+    expect(find.byIcon(Icons.insights_outlined), findsNothing);
+    expect(find.byIcon(Icons.info_outline_rounded), findsNothing);
+    expect(find.byIcon(Icons.logout_rounded), findsNothing);
+    for (final key in const [
+      Key('profile-coaching-memory-button'),
+      Key('profile-ielts-ability-button'),
+      Key('profile-about-button'),
+    ]) {
+      final tile = tester.widget<ListTile>(
+        find.descendant(of: find.byKey(key), matching: find.byType(ListTile)),
+      );
+      expect(tile.leading, isNull);
+    }
 
     await tester.tap(find.byKey(const Key('profile-coaching-memory-button')));
     await tester.pumpAndSettle();
@@ -59,13 +72,57 @@ void main() {
     var loggedOut = false;
     await tester.pumpWidget(_app(onLogout: () => loggedOut = true));
 
-    final logoutIcon = tester.widget<Icon>(
-      find.byIcon(Icons.power_settings_new_rounded),
+    final logoutText = tester.widget<Text>(find.text('退出登录'));
+    expect(logoutText.style?.color, SpeakUpDesign.error);
+    expect(find.byIcon(Icons.logout_rounded), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('profile-logout-button')),
+        matching: find.byIcon(Icons.chevron_right_rounded),
+      ),
+      findsNothing,
     );
-    expect(logoutIcon.color, Colors.white);
     await tester.tap(find.byKey(const Key('profile-logout-button')));
     await tester.pumpAndSettle();
     expect(loggedOut, isTrue);
+  });
+
+  testWidgets('About SpeakUp opens from its own compact group', (tester) async {
+    await tester.pumpWidget(_app(onLogout: () {}));
+
+    expect(find.byKey(const Key('profile-app-version')), findsNothing);
+    await tester.tap(find.byKey(const Key('profile-about-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('about-speak-up-page')), findsOneWidget);
+    expect(find.byKey(const Key('about-speak-up-wordmark')), findsOneWidget);
+    expect(find.text('关于 SpeakUp'), findsOneWidget);
+  });
+
+  testWidgets('profile uses a compact centered visual hierarchy', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _app(
+        controller: CoachingProfileController(client: _ProfileClient()),
+        onLogout: () {},
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final avatar = tester.getRect(find.byKey(const Key('profile-avatar')));
+    final page = tester.getRect(find.byKey(const Key('profile-page')));
+    final coachingRow = tester.getRect(
+      find.byKey(const Key('profile-coaching-memory-button')),
+    );
+    final logoutRow = tester.getRect(
+      find.byKey(const Key('profile-logout-button')),
+    );
+
+    expect(avatar.size, const Size.square(108));
+    expect(avatar.center.dx, closeTo(page.center.dx, 0.01));
+    expect(coachingRow.height, 56);
+    expect(logoutRow.height, 56);
   });
 
   testWidgets('settings remain usable on a narrow large-text screen', (
@@ -94,8 +151,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('教练记忆'), findsOneWidget);
-    expect(find.text('IELTS 能力'), findsOneWidget);
+    expect(find.text('记忆'), findsOneWidget);
+    expect(find.text('能力'), findsOneWidget);
+    expect(find.text('关于'), findsOneWidget);
     expect(find.text('退出登录'), findsOneWidget);
     expect(find.byKey(const Key('profile-account-menu')), findsNothing);
     expect(tester.takeException(), isNull);

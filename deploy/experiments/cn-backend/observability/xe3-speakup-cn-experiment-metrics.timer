@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh private host metrics for the SpeakUp China experiment
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+AccuracySec=10s
+Persistent=true
+Unit=xe3-speakup-cn-experiment-metrics.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,697 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+umask 077
+
+readonly compose_service="postgres"
+readonly production_compose_project="xe3-speakup-cn-experiment"
+readonly production_database_network="xe3-speakup-cn-experiment_database"
+readonly production_source_volume="xe3-speakup-cn-experiment_postgres_data"
+readonly production_database_name="speakup_cn_experiment"
+readonly test_mode="${EXPERIMENT_POSTGRES_BACKUP_TEST_MODE:-0}"
+readonly test_id="${EXPERIMENT_POSTGRES_BACKUP_TEST_ID:-}"
+readonly postgres_image_id="sha256:7d2695c3aa88e792e8b3b233e7e4adb296a20412c6c0ca361e3edaaacfada108"
+readonly retention_days=7
+readonly maximum_age_seconds=129600
+readonly restore_label="com.xengineer.speakup.cn-experiment-restore"
+readonly restore_backup_label="com.xengineer.speakup.cn-experiment-backup-id"
+readonly restore_run_label="com.xengineer.speakup.cn-experiment-restore-run"
+readonly identity_label="com.xengineer.speakup.cn-experiment-identity"
+readonly dump_name="database.dump"
+readonly checksum_name="database.dump.sha256"
+readonly metadata_name="metadata.json"
+
+case "$test_mode" in
+  0)
+    [[ -z "$test_id" ]] || {
+      printf 'China experiment PostgreSQL backup error: test ID requires test mode\n' >&2
+      exit 1
+    }
+    compose_project=$production_compose_project
+    database_network=$production_database_network
+    source_volume=$production_source_volume
+    database_name=$production_database_name
+    database_user=$production_database_name
+    backup_root="${EXPERIMENT_POSTGRES_BACKUP_ROOT:-/var/lib/speakup-cn-experiment/postgres-backups}"
+    ;;
+  1)
+    [[ "$test_id" =~ ^[a-f0-9]{16}$ ]] || {
+      printf 'China experiment PostgreSQL backup error: test ID must be 16 lowercase hexadecimal characters\n' >&2
+      exit 1
+    }
+    compose_project="xe3-speakup-cn-backup-test-$test_id"
+    database_network="${compose_project}_database"
+    source_volume="${compose_project}_postgres_data"
+    database_name="speakup_cn_backup_$test_id"
+    database_user=$database_name
+    backup_root="${EXPERIMENT_POSTGRES_BACKUP_ROOT:-}"
+    ;;
+  *)
+    printf 'China experiment PostgreSQL backup error: test mode must be 0 or 1\n' >&2
+    exit 1
+    ;;
+esac
+readonly compose_project database_network source_volume database_name database_user backup_root
+
+active_partial_directory=""
+restore_container_id=""
+restore_container_name=""
+restore_volume=""
+restore_backup_id=""
+restore_run_id=""
+
+usage() {
+  printf '%s\n' \
+    'Usage:' \
+    '  xe3-speakup-cn-experiment-postgres-backup backup' \
+    '  xe3-speakup-cn-experiment-postgres-backup verify [BACKUP_ID]' \
+    '  xe3-speakup-cn-experiment-postgres-backup restore-check [BACKUP_ID]' >&2
+}
+
+fail() {
+  printf 'China experiment PostgreSQL backup error: %s\n' "$*" >&2
+  exit 1
+}
+
+file_mode() {
+  local value
+  if value="$(stat -c '%a' "$1" 2>/dev/null)"; then
+    :
+  elif value="$(stat -f '%Lp' "$1" 2>/dev/null)"; then
+    :
+  else
+    fail 'cannot inspect path permissions'
+  fi
+  printf '%s\n' "$value"
+}
+
+file_owner() {
+  local value
+  if value="$(stat -c '%u' "$1" 2>/dev/null)"; then
+    :
+  elif value="$(stat -f '%u' "$1" 2>/dev/null)"; then
+    :
+  else
+    fail 'cannot inspect path ownership'
+  fi
+  printf '%s\n' "$value"
+}
+
+file_size() {
+  local value
+  if value="$(stat -c '%s' "$1" 2>/dev/null)"; then
+    :
+  elif value="$(stat -f '%z' "$1" 2>/dev/null)"; then
+    :
+  else
+    fail 'cannot inspect backup size'
+  fi
+  [[ "$value" =~ ^[1-9][0-9]*$ ]] || fail 'backup dump must not be empty'
+  printf '%s\n' "$value"
+}
+
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+valid_backup_id() {
+  [[ "$1" =~ ^[0-9]{8}T[0-9]{6}Z-daily$ ]]
+}
+
+validate_backup_root() {
+  [[ "$backup_root" =~ ^/[A-Za-z0-9._/-]+/postgres-backups$ ]] ||
+    fail 'backup root must be a safe absolute postgres-backups path'
+  [[ -d "$backup_root" && ! -L "$backup_root" ]] ||
+    fail 'backup root must already exist as a real directory'
+  [[ "$(file_mode "$backup_root")" == "700" ]] ||
+    fail 'backup root must have mode 0700'
+  [[ "$(file_owner "$backup_root")" == "$EUID" ]] ||
+    fail 'backup root must be owned by the service user'
+  if [[ "$test_mode" == "0" ]]; then
+    [[ "$backup_root" == "/var/lib/speakup-cn-experiment/postgres-backups" ]] ||
+      fail 'non-test backup root must use the fixed experiment path'
+  else
+    [[ "$backup_root" == */"$compose_project"/postgres-backups ]] ||
+      fail 'test backup root must include its unique Compose identity'
+  fi
+}
+
+cleanup_partial_directory() {
+  local entry name
+  local -a entries
+
+  [[ -n "$active_partial_directory" ]] || return 0
+  [[ "${active_partial_directory%/*}" == "$backup_root" &&
+    "${active_partial_directory##*/}" == .partial-* &&
+    -d "$active_partial_directory" && ! -L "$active_partial_directory" ]] || return 1
+  shopt -s nullglob dotglob
+  entries=("$active_partial_directory"/*)
+  shopt -u nullglob dotglob
+  for entry in "${entries[@]}"; do
+    name=${entry##*/}
+    case "$name" in
+      "$dump_name" | "$checksum_name" | "$metadata_name") ;;
+      *) return 1 ;;
+    esac
+    [[ -f "$entry" && ! -L "$entry" ]] || return 1
+  done
+  for entry in "${entries[@]}"; do
+    rm -- "$entry" || return 1
+  done
+  rmdir -- "$active_partial_directory" || return 1
+  active_partial_directory=""
+}
+
+container_confirmed_absent() {
+  local id=$1 name=$2 listing
+
+  listing="$(docker container ls --all --no-trunc --format '{{.ID}}\t{{.Names}}')" || return 1
+  if [[ -n "$id" ]]; then
+    ! awk -v expected="$id" '$1 == expected { found = 1 } END { exit(found ? 0 : 1) }' \
+      <<<"$listing"
+  else
+    ! awk -v expected="$name" '$2 == expected { found = 1 } END { exit(found ? 0 : 1) }' \
+      <<<"$listing"
+  fi
+}
+
+volume_confirmed_absent() {
+  local name=$1 listing
+
+  listing="$(docker volume ls --format '{{.Name}}')" || return 1
+  ! grep -Fqx -- "$name" <<<"$listing"
+}
+
+cleanup_restore_resources() {
+  local inspect_json target
+  local failed=0
+
+  if [[ -n "$restore_container_id" || -n "$restore_container_name" ]]; then
+    target=${restore_container_id:-$restore_container_name}
+    if inspect_json="$(docker container inspect "$target" 2>/dev/null)"; then
+      if jq --exit-status \
+        --arg id "$restore_container_id" \
+        --arg name "/$restore_container_name" \
+        --arg identity "$compose_project" \
+        --arg backup_id "$restore_backup_id" \
+        --arg run_id "$restore_run_id" \
+        --arg identity_label "$identity_label" \
+        --arg restore_label "$restore_label" \
+        --arg backup_label "$restore_backup_label" \
+        --arg run_label "$restore_run_label" '
+          length == 1 and
+          ($id == "" or .[0].Id == $id) and
+          .[0].Name == $name and
+          .[0].Config.Labels[$identity_label] == $identity and
+          .[0].Config.Labels[$restore_label] == "true" and
+          .[0].Config.Labels[$backup_label] == $backup_id and
+          .[0].Config.Labels[$run_label] == $run_id
+        ' <<<"$inspect_json" >/dev/null &&
+        docker container rm --force "$target" >/dev/null; then
+        restore_container_id=""
+        restore_container_name=""
+      else
+        failed=1
+      fi
+    elif container_confirmed_absent "$restore_container_id" "$restore_container_name"; then
+      restore_container_id=""
+      restore_container_name=""
+    else
+      failed=1
+    fi
+  fi
+
+  if [[ -n "$restore_volume" ]]; then
+    if [[ "$restore_volume" == "$source_volume" ]]; then
+      failed=1
+    elif inspect_json="$(docker volume inspect "$restore_volume" 2>/dev/null)"; then
+      if jq --exit-status \
+        --arg volume "$restore_volume" \
+        --arg identity "$compose_project" \
+        --arg backup_id "$restore_backup_id" \
+        --arg run_id "$restore_run_id" \
+        --arg identity_label "$identity_label" \
+        --arg restore_label "$restore_label" \
+        --arg backup_label "$restore_backup_label" \
+        --arg run_label "$restore_run_label" '
+          length == 1 and
+          .[0].Name == $volume and
+          .[0].Labels[$identity_label] == $identity and
+          .[0].Labels[$restore_label] == "true" and
+          .[0].Labels[$backup_label] == $backup_id and
+          .[0].Labels[$run_label] == $run_id
+        ' <<<"$inspect_json" >/dev/null &&
+        docker volume rm "$restore_volume" >/dev/null; then
+        restore_volume=""
+      else
+        failed=1
+      fi
+    elif volume_confirmed_absent "$restore_volume"; then
+      restore_volume=""
+    else
+      failed=1
+    fi
+  fi
+
+  if [[ -z "$restore_container_id" && -z "$restore_container_name" && -z "$restore_volume" ]]; then
+    restore_backup_id=""
+    restore_run_id=""
+  fi
+  ((failed == 0))
+}
+
+cleanup_on_exit() {
+  local status=$?
+  trap - EXIT
+  set +e
+  cleanup_restore_resources || status=1
+  cleanup_partial_directory || status=1
+  exit "$status"
+}
+
+trap cleanup_on_exit EXIT
+trap 'exit 130' INT HUP TERM
+
+source_container() {
+  local ids count
+  ids="$(docker container ls --quiet \
+    --filter "label=com.docker.compose.project=$compose_project" \
+    --filter "label=com.docker.compose.service=$compose_service")" ||
+    fail 'cannot inspect the experiment PostgreSQL container'
+  count="$(awk 'NF { count += 1 } END { print count + 0 }' <<<"$ids")"
+  [[ "$count" == "1" ]] || fail 'exactly one experiment PostgreSQL container is required'
+  printf '%s\n' "$ids"
+}
+
+validate_source_container() {
+  local container=$1
+  local state
+  state="$(docker container inspect --format \
+    '{{.State.Running}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}|{{.Image}}' \
+    "$container")" || fail 'cannot inspect the experiment PostgreSQL state'
+  [[ "$state" == "true|healthy|$postgres_image_id" ]] ||
+    fail 'experiment PostgreSQL must be healthy and use the audited image ID'
+  docker volume inspect "$source_volume" >/dev/null || fail 'source volume does not exist'
+  docker network inspect "$database_network" | jq --exit-status '
+    length == 1 and .[0].Internal == true
+  ' >/dev/null || fail 'database network must remain internal'
+  docker container inspect "$container" | jq --exit-status \
+    --arg network "$database_network" \
+    --arg volume "$source_volume" '
+      length == 1 and
+      ((.[0].HostConfig.PortBindings // {}) == {}) and
+      ((.[0].NetworkSettings.Networks | keys) == [$network]) and
+      ([.[0].Mounts[] |
+        select(.Type == "volume" and
+               .Name == $volume and
+               .Destination == "/var/lib/postgresql" and
+               .RW == true)] | length) == 1
+    ' >/dev/null || fail 'source PostgreSQL isolation or volume identity is invalid'
+  if [[ "$test_mode" == "1" ]]; then
+    docker container inspect "$container" | jq --exit-status \
+      --arg label "$identity_label" \
+      --arg test_id "$test_id" '
+        length == 1 and .[0].Config.Labels[$label] == $test_id
+      ' >/dev/null || fail 'test source container does not carry its unique identity label'
+  fi
+}
+
+database_query() {
+  docker container exec --user postgres "$1" psql \
+    --no-psqlrc \
+    --set ON_ERROR_STOP=1 \
+    --tuples-only \
+    --no-align \
+    --quiet \
+    --username "$database_user" \
+    --dbname "$database_name" \
+    --command "$2"
+}
+
+schema_state() {
+  local value
+  value="$(database_query "$1" \
+    "SELECT version::text || '|' || dirty::text FROM public.schema_migrations;")" ||
+    fail 'cannot read database schema state'
+  [[ "$value" =~ ^([1-9][0-9]*)\|false$ ]] ||
+    fail 'database schema must contain one clean positive version'
+  printf '%s\n' "${BASH_REMATCH[1]}"
+}
+
+user_count() {
+  local value
+  value="$(database_query "$1" 'SELECT count(*)::text FROM public.users;')" ||
+    fail 'cannot read database user count'
+  [[ "$value" =~ ^[0-9]+$ ]] || fail 'database user count is invalid'
+  printf '%s\n' "$value"
+}
+
+postgres_version() {
+  local value
+  value="$(database_query "$1" 'SHOW server_version;')" ||
+    fail 'cannot read PostgreSQL version'
+  [[ "$value" =~ ^[1-9][0-9]*\. && ${#value} -le 128 ]] ||
+    fail 'PostgreSQL version is invalid'
+  [[ "$value" != *$'\n'* && "$value" != *$'\r'* && "$value" != *$'\t'* ]] ||
+    fail 'PostgreSQL version contains control characters'
+  printf '%s\n' "$value"
+}
+
+write_metadata() {
+  local file=$1 backup_id=$2 created_at=$3 version=$4 schema_version=$5 users=$6 size=$7 checksum=$8
+  jq --null-input --sort-keys \
+    --arg backup_id "$backup_id" \
+    --arg created_at "$created_at" \
+    --arg database_name "$database_name" \
+    --arg database_user "$database_user" \
+    --arg postgres_image_id "$postgres_image_id" \
+    --arg postgres_version "$version" \
+    --arg sha256 "$checksum" \
+    --arg source_compose_project "$compose_project" \
+    --arg source_compose_service "$compose_service" \
+    --arg source_volume "$source_volume" \
+    --argjson retention_days "$retention_days" \
+    --argjson schema_version "$schema_version" \
+    --argjson size_bytes "$size" \
+    --argjson user_count "$users" '
+      {
+        format_version: 1,
+        backup_id: $backup_id,
+        backup_type: "daily",
+        created_at: $created_at,
+        retention_days: $retention_days,
+        source_compose_project: $source_compose_project,
+        source_compose_service: $source_compose_service,
+        source_volume: $source_volume,
+        postgres_image_id: $postgres_image_id,
+        postgres_version: $postgres_version,
+        database_name: $database_name,
+        database_user: $database_user,
+        schema_version: $schema_version,
+        schema_dirty: false,
+        user_count: $user_count,
+        size_bytes: $size_bytes,
+        sha256: $sha256
+      }
+    ' >"$file"
+}
+
+validate_metadata() {
+  local metadata=$1 backup_id=$2
+  jq --exit-status \
+    --arg backup_id "$backup_id" \
+    --arg database_name "$database_name" \
+    --arg database_user "$database_user" \
+    --arg postgres_image_id "$postgres_image_id" \
+    --arg source_compose_project "$compose_project" \
+    --arg source_compose_service "$compose_service" \
+    --arg source_volume "$source_volume" \
+    --argjson retention_days "$retention_days" '
+      type == "object" and
+      keys == [
+        "backup_id", "backup_type", "created_at", "database_name", "database_user",
+        "format_version", "postgres_image_id", "postgres_version", "retention_days",
+        "schema_dirty", "schema_version", "sha256", "size_bytes",
+        "source_compose_project", "source_compose_service", "source_volume", "user_count"
+      ] and
+      .format_version == 1 and
+      .backup_id == $backup_id and
+      .backup_type == "daily" and
+      (.created_at | type == "string" and
+        test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$") and
+        (fromdateiso8601 | type == "number")) and
+      ((.created_at | gsub("[-:]"; "")) + "-daily" == .backup_id) and
+      .retention_days == $retention_days and
+      .source_compose_project == $source_compose_project and
+      .source_compose_service == $source_compose_service and
+      .source_volume == $source_volume and
+      .postgres_image_id == $postgres_image_id and
+      (.postgres_version | type == "string" and test("^[1-9][0-9]*\\.") and length <= 128) and
+      .database_name == $database_name and
+      .database_user == $database_user and
+      (.schema_version | type == "number" and floor == . and . > 0) and
+      .schema_dirty == false and
+      (.user_count | type == "number" and floor == . and . >= 0) and
+      (.size_bytes | type == "number" and floor == . and . > 0) and
+      (.sha256 | type == "string" and test("^[a-f0-9]{64}$"))
+    ' "$metadata" >/dev/null || fail 'backup metadata is invalid'
+}
+
+verify_backup_files() {
+  local directory=$1 backup_id=$2 require_freshness=$3
+  local metadata="$directory/$metadata_name" dump="$directory/$dump_name"
+  local checksum_file="$directory/$checksum_name" expected_sha expected_size
+  local actual_sha actual_size entry name
+  local -a entries
+
+  valid_backup_id "$backup_id" || fail 'backup ID is invalid'
+  [[ -d "$directory" && ! -L "$directory" ]] || fail 'backup directory is unsafe'
+  shopt -s nullglob dotglob
+  entries=("$directory"/*)
+  shopt -u nullglob dotglob
+  [[ ${#entries[@]} == 3 ]] || fail 'backup directory must contain exactly three files'
+  for entry in "${entries[@]}"; do
+    name=${entry##*/}
+    case "$name" in
+      "$dump_name" | "$checksum_name" | "$metadata_name") ;;
+      *) fail 'backup directory contains an unexpected file' ;;
+    esac
+    [[ -f "$entry" && ! -L "$entry" ]] || fail 'backup entries must be regular files'
+    [[ "$(file_mode "$entry")" == "600" ]] || fail 'backup files must have mode 0600'
+  done
+  [[ "$(file_mode "$directory")" == "700" ]] || fail 'backup directory must have mode 0700'
+  validate_metadata "$metadata" "$backup_id"
+  expected_sha="$(jq --raw-output '.sha256' "$metadata")"
+  expected_size="$(jq --raw-output '.size_bytes' "$metadata")"
+  actual_sha="$(sha256_file "$dump")"
+  actual_size="$(file_size "$dump")"
+  [[ "$actual_sha" == "$expected_sha" ]] || fail 'backup SHA-256 does not match metadata'
+  [[ "$actual_size" == "$expected_size" ]] || fail 'backup size does not match metadata'
+  printf '%s  %s\n' "$expected_sha" "$dump_name" |
+    cmp -s - "$checksum_file" || fail 'checksum file does not match metadata'
+  if [[ "$require_freshness" == "true" ]]; then
+    jq --exit-status --argjson maximum_age "$maximum_age_seconds" '
+      (.created_at | fromdateiso8601) as $created |
+      now as $current |
+      $created <= $current and ($current - $created) <= $maximum_age
+    ' "$metadata" >/dev/null || fail 'latest backup is stale or from the future'
+  fi
+}
+
+backup_entries() {
+  local -a entries
+  shopt -s nullglob dotglob
+  entries=("$backup_root"/*)
+  shopt -u nullglob dotglob
+  printf '%s\n' "${entries[@]}"
+}
+
+latest_backup_id() {
+  local entry name latest=""
+  while IFS= read -r entry; do
+    [[ -n "$entry" ]] || continue
+    name=${entry##*/}
+    if [[ "$name" == .partial-* ]]; then
+      [[ -d "$entry" && ! -L "$entry" ]] || fail 'partial backup entry is unsafe'
+      continue
+    fi
+    valid_backup_id "$name" || fail 'backup root contains an unexpected entry'
+    [[ -d "$entry" && ! -L "$entry" ]] || fail 'final backup entry is unsafe'
+    [[ -z "$latest" || "$name" > "$latest" ]] && latest=$name
+  done < <(backup_entries)
+  [[ -n "$latest" ]] || fail 'no finalized backup exists'
+  printf '%s\n' "$latest"
+}
+
+prune_expired_backups() {
+  local keep=$1 entry name
+  while IFS= read -r entry; do
+    [[ -n "$entry" ]] || continue
+    name=${entry##*/}
+    [[ "$name" == .partial-* || "$name" == "$keep" ]] && continue
+    valid_backup_id "$name" || fail 'backup root contains an unexpected entry'
+    verify_backup_files "$entry" "$name" false
+    if jq --exit-status --argjson days "$retention_days" '
+      (now - (.created_at | fromdateiso8601)) > ($days * 86400)
+    ' "$entry/$metadata_name" >/dev/null; then
+      [[ "${entry%/*}" == "$backup_root" ]] || fail 'refusing to prune outside backup root'
+      rm -- "$entry/$dump_name" "$entry/$checksum_name" "$entry/$metadata_name" ||
+        fail 'cannot remove expired backup files'
+      rmdir -- "$entry" || fail 'cannot remove expired backup directory'
+    fi
+  done < <(backup_entries)
+}
+
+run_backup() {
+  local container schema_before schema_after users_before users_after version
+  local timestamp backup_id created_at partial final dump size checksum
+
+  validate_backup_root
+  container="$(source_container)"
+  validate_source_container "$container"
+  schema_before="$(schema_state "$container")"
+  users_before="$(user_count "$container")"
+  version="$(postgres_version "$container")"
+  timestamp="$(date -u '+%Y%m%dT%H%M%SZ')"
+  backup_id="$timestamp-daily"
+  created_at="${timestamp:0:4}-${timestamp:4:2}-${timestamp:6:2}T${timestamp:9:2}:${timestamp:11:2}:${timestamp:13:2}Z"
+  partial="$backup_root/.partial-$backup_id-$$-$RANDOM"
+  final="$backup_root/$backup_id"
+  [[ ! -e "$partial" && ! -e "$final" ]] || fail 'backup ID already exists'
+  mkdir -m 700 "$partial"
+  active_partial_directory=$partial
+  dump="$partial/$dump_name"
+  docker container exec --user postgres "$container" pg_dump \
+    --format=custom \
+    --lock-wait-timeout=30s \
+    --no-owner \
+    --no-privileges \
+    --username "$database_user" \
+    --dbname "$database_name" >"$dump" || fail 'pg_dump failed'
+  docker container exec --interactive --user postgres "$container" pg_restore --list <"$dump" >/dev/null ||
+    fail 'pg_dump output is not a valid custom-format archive'
+  schema_after="$(schema_state "$container")"
+  users_after="$(user_count "$container")"
+  [[ "$schema_after" == "$schema_before" && "$users_after" == "$users_before" ]] ||
+    fail 'source schema or user count changed during backup'
+  chmod 600 "$dump"
+  size="$(file_size "$dump")"
+  checksum="$(sha256_file "$dump")"
+  [[ "$checksum" =~ ^[a-f0-9]{64}$ ]] || fail 'cannot calculate backup SHA-256'
+  printf '%s  %s\n' "$checksum" "$dump_name" >"$partial/$checksum_name"
+  write_metadata "$partial/$metadata_name" "$backup_id" "$created_at" \
+    "$version" "$schema_before" "$users_before" "$size" "$checksum"
+  chmod 600 "$partial/$checksum_name" "$partial/$metadata_name"
+  verify_backup_files "$partial" "$backup_id" true
+  sync
+  mv "$partial" "$final" || fail 'cannot atomically finalize backup'
+  active_partial_directory=""
+  sync
+  verify_backup_files "$final" "$backup_id" true
+  prune_expired_backups "$backup_id"
+  printf 'backup_id=%s checksum=verified\n' "$backup_id"
+}
+
+wait_for_restore() {
+  local attempt process
+  for ((attempt = 1; attempt <= 60; attempt += 1)); do
+    process="$(docker container exec "$restore_container_id" cat /proc/1/comm 2>/dev/null || true)"
+    if [[ "$process" == "postgres" ]] &&
+      docker container exec --user postgres "$restore_container_id" pg_isready \
+        --username "$database_user" --dbname "$database_name" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  fail 'isolated restore database did not become ready'
+}
+
+run_isolated_restore() {
+  local backup_id=$1 directory="$backup_root/$1" suffix expected_schema expected_users expected_version
+  local actual_schema actual_users actual_version container_name
+
+  verify_backup_files "$directory" "$backup_id" true
+  expected_schema="$(jq --raw-output '.schema_version' "$directory/$metadata_name")"
+  expected_users="$(jq --raw-output '.user_count' "$directory/$metadata_name")"
+  expected_version="$(jq --raw-output '.postgres_version' "$directory/$metadata_name")"
+  suffix="${backup_id//[^A-Za-z0-9_.-]/-}-$$-$RANDOM"
+  container_name="$compose_project-restore-$suffix"
+  restore_container_name=$container_name
+  restore_volume="$compose_project-restore-$suffix"
+  restore_backup_id=$backup_id
+  restore_run_id="$$-$RANDOM-$RANDOM"
+  [[ "$restore_volume" != "$source_volume" ]] || fail 'restore volume must differ from source volume'
+  ! docker volume inspect "$restore_volume" >/dev/null 2>&1 || fail 'restore volume already exists'
+  ! docker container inspect "$container_name" >/dev/null 2>&1 || fail 'restore container already exists'
+  [[ "$(docker volume create \
+    --label "$identity_label=$compose_project" \
+    --label "$restore_label=true" \
+    --label "$restore_backup_label=$backup_id" \
+    --label "$restore_run_label=$restore_run_id" \
+    "$restore_volume")" == "$restore_volume" ]] || fail 'cannot create isolated restore volume'
+  restore_container_id="$(docker container run \
+    --detach \
+    --pull never \
+    --name "$container_name" \
+    --network none \
+    --memory 2g \
+    --cpus 1 \
+    --pids-limit 128 \
+    --log-driver none \
+    --label "$identity_label=$compose_project" \
+    --label "$restore_label=true" \
+    --label "$restore_backup_label=$backup_id" \
+    --label "$restore_run_label=$restore_run_id" \
+    --mount "type=volume,src=$restore_volume,dst=/var/lib/postgresql,volume-nocopy" \
+    --env "POSTGRES_DB=$database_name" \
+    --env "POSTGRES_USER=$database_user" \
+    --env POSTGRES_HOST_AUTH_METHOD=trust \
+    "$postgres_image_id")" || fail 'cannot start isolated restore database'
+  [[ "$restore_container_id" =~ ^[a-f0-9]{64}$ ]] || fail 'restore container ID is invalid'
+  wait_for_restore
+  docker container exec --interactive --user postgres "$restore_container_id" pg_restore \
+    --single-transaction \
+    --exit-on-error \
+    --no-owner \
+    --no-privileges \
+    --username "$database_user" \
+    --dbname "$database_name" <"$directory/$dump_name" || fail 'isolated pg_restore failed'
+  actual_schema="$(schema_state "$restore_container_id")"
+  actual_users="$(user_count "$restore_container_id")"
+  actual_version="$(postgres_version "$restore_container_id")"
+  [[ "$actual_schema" == "$expected_schema" ]] || fail 'restored schema does not match metadata'
+  [[ "$actual_users" == "$expected_users" ]] || fail 'restored user count does not match metadata'
+  [[ "$actual_version" == "$expected_version" ]] || fail 'restored PostgreSQL version does not match metadata'
+  cleanup_restore_resources || fail 'cannot remove isolated restore resources'
+  printf 'backup_id=%s restore=verified\n' "$backup_id"
+}
+
+selected_backup_id() {
+  local requested=${1:-}
+  if [[ -n "$requested" ]]; then
+    valid_backup_id "$requested" || fail 'requested backup ID is invalid'
+    printf '%s\n' "$requested"
+  else
+    latest_backup_id
+  fi
+}
+
+main() {
+  local command_name=${1:-} backup_id
+  for command_name_required in docker jq awk cmp date stat sync; do
+    command -v "$command_name_required" >/dev/null 2>&1 ||
+      fail "$command_name_required is required"
+  done
+  if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
+    fail 'sha256sum or shasum is required'
+  fi
+  case "$command_name" in
+    backup)
+      [[ $# == 1 ]] || { usage; exit 1; }
+      run_backup
+      ;;
+    verify)
+      [[ $# == 1 || $# == 2 ]] || { usage; exit 1; }
+      validate_backup_root
+      backup_id="$(selected_backup_id "${2:-}")"
+      verify_backup_files "$backup_root/$backup_id" "$backup_id" true
+      printf 'backup_id=%s checksum=verified\n' "$backup_id"
+      ;;
+    restore-check)
+      [[ $# == 1 || $# == 2 ]] || { usage; exit 1; }
+      validate_backup_root
+      backup_id="$(selected_backup_id "${2:-}")"
+      run_isolated_restore "$backup_id"
+      ;;
+    *)
+      usage
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"

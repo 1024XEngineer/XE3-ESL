@@ -1,0 +1,73 @@
+name: xe3-speakup-cn-experiment
+
+x-observability-security: &observability-security
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "5m"
+      max-file: "3"
+
+services:
+  prometheus:
+    <<: *observability-security
+    image: quay.io/prometheus/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893
+    pull_policy: never
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --storage.tsdb.retention.size=512MB
+    ports:
+      - "127.0.0.1:29091:9090"
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/rules.yml:/etc/prometheus/rules.yml:ro
+      - prometheus_data:/prometheus
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    networks:
+      - monitor
+      - monitor_ui
+    mem_limit: 256m
+    cpus: 0.25
+    pids_limit: 64
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9090/-/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  node-exporter:
+    <<: *observability-security
+    image: quay.io/prometheus/node-exporter:v1.12.1@sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0
+    pull_policy: never
+    command:
+      - --collector.disable-defaults
+      - --collector.textfile
+      - --collector.textfile.directory=/textfile
+    volumes:
+      - /var/lib/speakup-cn-experiment/metrics:/textfile:ro
+    networks:
+      - monitor
+    mem_limit: 64m
+    cpus: 0.10
+    pids_limit: 32
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9100/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  prometheus_data:
+
+networks:
+  monitor_ui:
