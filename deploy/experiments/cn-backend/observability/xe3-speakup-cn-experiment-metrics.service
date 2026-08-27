@@ -1,0 +1,20 @@
+[Unit]
+Description=Export private host metrics for the SpeakUp China experiment
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+UMask=0022
+StateDirectory=speakup-cn-experiment/metrics
+StateDirectoryMode=0755
+ExecStart=/usr/local/sbin/xe3-speakup-cn-experiment-export-metrics
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+NoNewPrivileges=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+LockPersonality=true
+MemoryDenyWriteExecute=true
