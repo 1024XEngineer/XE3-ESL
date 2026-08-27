@@ -44,6 +44,7 @@ type PracticeInteractionConfiguration struct {
 	Recognizer          practiceinteraction.SpeechRecognizer
 	RecordedRecognizer  practiceinteraction.SpeechRecognizer
 	Synthesizer         practiceinteraction.SpeechSynthesizer
+	RealtimeSynthesizer practiceinteraction.StreamingSpeechSynthesizer
 	QuestionGenerator   practiceinteraction.QuestionGenerator
 	QuestionTranslator  sharedtranslation.Translator
 	AnswerTipGenerator  practiceinteraction.AnswerTipGenerator

@@ -93,7 +93,7 @@ INSERT INTO practice_plans (
 INSERT INTO practice_sessions (
     session_id, user_id, plan_id, plan_version, practice_experience,
     scene_category, practice_mode, evaluation_policy_ref, status,
-    effective_turns, plan_snapshot, participants, initial_client_request_id,
+    effective_turns, plan_snapshot, participants, presentation_snapshot, initial_client_request_id,
     initial_request_fingerprint, started_at, ended_at, end_reason,
     created_at, updated_at
 ) VALUES
@@ -101,7 +101,7 @@ INSERT INTO practice_sessions (
     $3, $1, $2, 1, 'conversation', 'general', 'voice',
     'general.evaluation.v1', 'completed', 2,
     '{"session_policy":{"speech_feedback_allowed":true}}'::jsonb,
-    '[{}]'::jsonb, 'request-product-health-completed',
+    '[{}]'::jsonb, '{"schema_version":1,"avatar":{"option_id":"avatar_lisa","provider":"spatialreal","provider_profile":"spatialreal_default","provider_avatar_id":"avatar","binding_version":1},"voice":{"option_id":"voice_ava","provider":"qianwen","provider_profile":"qianwen_default","provider_model":"model","provider_voice_id":"voice","locale":"en-US","binding_version":1}}'::jsonb, 'request-product-health-completed',
     decode(repeat('12', 32), 'hex'),
     '2026-08-23 00:10:00+00', '2026-08-23 01:00:00+00', 'completed',
     '2026-08-23 00:00:00+00', '2026-08-23 01:00:00+00'
@@ -109,7 +109,7 @@ INSERT INTO practice_sessions (
 (
     $4, $1, $2, 1, 'conversation', 'general', 'voice',
     'general.evaluation.v1', 'ended_early', 1, '{}'::jsonb,
-    '[{}]'::jsonb, 'request-product-health-ended',
+    '[{}]'::jsonb, '{"schema_version":1,"avatar":{"option_id":"avatar_lisa","provider":"spatialreal","provider_profile":"spatialreal_default","provider_avatar_id":"avatar","binding_version":1},"voice":{"option_id":"voice_ava","provider":"qianwen","provider_profile":"qianwen_default","provider_model":"model","provider_voice_id":"voice","locale":"en-US","binding_version":1}}'::jsonb, 'request-product-health-ended',
     decode(repeat('13', 32), 'hex'),
     '2026-08-23 02:10:00+00', '2026-08-23 02:30:00+00', 'user_ended',
     '2026-08-23 02:00:00+00', '2026-08-23 02:30:00+00'

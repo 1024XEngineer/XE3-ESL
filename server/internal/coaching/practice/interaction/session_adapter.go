@@ -200,6 +200,16 @@ func mapPracticeSession(
 		Completed: session.Status ==
 			practice.SessionCompleted,
 		Status: string(session.Status),
+		SynthesisProfile: SynthesisProfile{
+			Provider:        snapshot.Presentation.Voice.Provider,
+			ProviderProfile: snapshot.Presentation.Voice.ProviderProfile,
+			Model:           snapshot.Presentation.Voice.ProviderModel,
+			VoiceID:         snapshot.Presentation.Voice.ProviderVoiceID,
+			Locale:          snapshot.Presentation.Voice.Locale,
+		},
+	}
+	if !snapshot.Presentation.Valid() || !result.SynthesisProfile.Valid() {
+		return Session{}, ErrInvalidContext
 	}
 	if snapshot.Experience == practice.PracticeExperienceInterview {
 		roles, err := selection.SelectedRoles()

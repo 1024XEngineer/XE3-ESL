@@ -78,26 +78,32 @@ type Application interface {
 	) (practiceinteraction.QuestionTipResult, error)
 }
 
-type questionTextApplication interface {
-	QuestionText(context.Context, requestcontext.Actor, string) (string, error)
+type questionSynthesisApplication interface {
+	QuestionSynthesis(context.Context, requestcontext.Actor, string) (practiceinteraction.QuestionSynthesisInput, error)
+}
+
+type sessionSynthesisApplication interface {
+	SessionSynthesisProfile(context.Context, requestcontext.Actor, string) (practiceinteraction.SynthesisProfile, error)
 }
 
 type Options struct {
-	RealtimeReadTimeout time.Duration
-	RecordedReadTimeout time.Duration
-	SameQuestionRetry   *practiceinteraction.SameQuestionRetryApplication
-	Recordings          RecordingHTTPService
-	RealtimeSpeech      agentconversation.AssistantSpeechSynthesizer
+	RealtimeReadTimeout  time.Duration
+	RecordedReadTimeout  time.Duration
+	SameQuestionRetry    *practiceinteraction.SameQuestionRetryApplication
+	Recordings           RecordingHTTPService
+	RealtimeSpeech       practiceinteraction.StreamingSpeechSynthesizer
+	LegacyRealtimeSpeech agentconversation.AssistantSpeechSynthesizer
 }
 
 type Handler struct {
-	application         Application
-	retry               *practiceinteraction.SameQuestionRetryApplication
-	recordings          RecordingHTTPService
-	realtimeSpeech      agentconversation.AssistantSpeechSynthesizer
-	realtimeReadTimeout time.Duration
-	recordedReadTimeout time.Duration
-	errors              *httpresponse.Renderer
+	application          Application
+	retry                *practiceinteraction.SameQuestionRetryApplication
+	recordings           RecordingHTTPService
+	realtimeSpeech       practiceinteraction.StreamingSpeechSynthesizer
+	legacyRealtimeSpeech agentconversation.AssistantSpeechSynthesizer
+	realtimeReadTimeout  time.Duration
+	recordedReadTimeout  time.Duration
+	errors               *httpresponse.Renderer
 }
 
 func NewHandler(
@@ -119,13 +125,14 @@ func NewHandler(
 		errorRenderer = httpresponse.NewRenderer(nil)
 	}
 	return &Handler{
-		application:         application,
-		retry:               options.SameQuestionRetry,
-		recordings:          options.Recordings,
-		realtimeSpeech:      options.RealtimeSpeech,
-		realtimeReadTimeout: options.RealtimeReadTimeout,
-		recordedReadTimeout: options.RecordedReadTimeout,
-		errors:              errorRenderer,
+		application:          application,
+		retry:                options.SameQuestionRetry,
+		recordings:           options.Recordings,
+		realtimeSpeech:       options.RealtimeSpeech,
+		legacyRealtimeSpeech: options.LegacyRealtimeSpeech,
+		realtimeReadTimeout:  options.RealtimeReadTimeout,
+		recordedReadTimeout:  options.RecordedReadTimeout,
+		errors:               errorRenderer,
 	}, nil
 }
 
@@ -164,7 +171,19 @@ func (handler *Handler) RegisterRoutes(routes gin.IRoutes) {
 			"/v1/practice-questions/:question_id/speech/realtime",
 			handler.questionSpeechRealtime,
 		)
-		routes.GET("/v1/practice-speech/realtime", handler.promptSpeechRealtime)
+		routes.GET(
+			"/v1/practice-sessions/:practice_session_id/speech/realtime",
+			handler.promptSpeechRealtime,
+		)
+	}
+	if handler.legacyRealtimeSpeech != nil {
+		if handler.realtimeSpeech == nil {
+			routes.GET(
+				"/v1/practice-questions/:question_id/speech/realtime",
+				handler.questionSpeechRealtime,
+			)
+		}
+		routes.GET("/v1/practice-speech/realtime", handler.promptSpeechRealtimeLegacy)
 	}
 	routes.GET(
 		"/v1/practice-questions/:question_id/translation",

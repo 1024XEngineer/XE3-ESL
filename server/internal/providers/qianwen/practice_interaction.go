@@ -169,7 +169,9 @@ func (synthesizer *PracticeVoiceSynthesizer) Synthesize(
 	ctx context.Context,
 	request practiceinteraction.SynthesisRequest,
 ) (practiceinteraction.SynthesisResult, error) {
-	if synthesizer == nil || synthesizer.synthesizer == nil {
+	if synthesizer == nil || synthesizer.synthesizer == nil ||
+		!request.Profile.Valid() || request.Profile.Provider != "qianwen" ||
+		request.Profile.ProviderProfile != "qianwen_default" {
 		return practiceinteraction.SynthesisResult{},
 			practiceinteraction.NewProviderError(
 				practiceinteraction.ProviderOperationSynthesis,
@@ -181,7 +183,12 @@ func (synthesizer *PracticeVoiceSynthesizer) Synthesize(
 	startedAt := time.Now()
 	result, err := synthesizer.synthesizer.Synthesize(
 		ctx,
-		protocol.SynthesisRequest{Text: request.Text},
+		protocol.SynthesisRequest{
+			Text:         request.Text,
+			Model:        request.Profile.Model,
+			Voice:        request.Profile.VoiceID,
+			LanguageHint: request.Profile.Locale,
+		},
 	)
 	characters := observedSynthesisCharacters(request.Text, err)
 	recordSpeechCall(
@@ -207,6 +214,29 @@ func (synthesizer *PracticeVoiceSynthesizer) Synthesize(
 		Audio:     result.Audio,
 		Usage:     mapPracticeVoiceUsage(result.Usage),
 	}, nil
+}
+
+func (synthesizer *PracticeVoiceSynthesizer) OpenPracticeSpeech(
+	ctx context.Context,
+	profile practiceinteraction.SynthesisProfile,
+	consume func([]byte) error,
+) (practiceinteraction.StreamingSpeechSession, error) {
+	if synthesizer == nil || synthesizer.synthesizer == nil ||
+		!profile.Valid() || profile.Provider != "qianwen" ||
+		profile.ProviderProfile != "qianwen_default" {
+		return nil, errors.New("qianwen: Practice streaming speech profile is invalid")
+	}
+	settings, err := synthesizer.synthesizer.settings(protocol.SynthesisRequest{
+		Model: profile.Model, Voice: profile.VoiceID, LanguageHint: profile.Locale,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return synthesizer.synthesizer.openRealtimeSpeechWithSettings(
+		ctx,
+		settings,
+		downstreamSpeechConsumer(consume),
+	)
 }
 
 type PracticeQuestionGenerator struct {
@@ -368,8 +398,9 @@ func mapPracticeInteractionErrorKind(kind protocol.ErrorKind) practiceinteractio
 }
 
 var (
-	_ practiceinteraction.StreamingSpeechRecognizer = (*PracticeVoiceRecognizer)(nil)
-	_ practiceinteraction.SpeechSynthesizer         = (*PracticeVoiceSynthesizer)(nil)
-	_ practiceinteraction.QuestionGenerator         = (*PracticeQuestionGenerator)(nil)
-	_ practiceinteraction.AnswerTipGenerator        = (*PracticeAnswerTipGenerator)(nil)
+	_ practiceinteraction.StreamingSpeechRecognizer  = (*PracticeVoiceRecognizer)(nil)
+	_ practiceinteraction.SpeechSynthesizer          = (*PracticeVoiceSynthesizer)(nil)
+	_ practiceinteraction.StreamingSpeechSynthesizer = (*PracticeVoiceSynthesizer)(nil)
+	_ practiceinteraction.QuestionGenerator          = (*PracticeQuestionGenerator)(nil)
+	_ practiceinteraction.AnswerTipGenerator         = (*PracticeAnswerTipGenerator)(nil)
 )

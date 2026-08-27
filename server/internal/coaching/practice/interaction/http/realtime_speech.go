@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	agentconversation "github.com/1024XEngineer/XE3-ESL/server/internal/agent/conversation"
+	practiceinteraction "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/practice/interaction"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -31,12 +32,12 @@ func (handler *Handler) questionSpeechRealtime(c *gin.Context) {
 		handler.write(c, authenticationRequired())
 		return
 	}
-	textApplication, ok := handler.application.(questionTextApplication)
+	synthesisApplication, ok := handler.application.(questionSynthesisApplication)
 	if !ok {
 		handler.write(c, providerUnavailable(nil))
 		return
 	}
-	text, err := textApplication.QuestionText(
+	input, err := synthesisApplication.QuestionSynthesis(
 		c.Request.Context(), actor, c.Param("question_id"),
 	)
 	if err != nil {
@@ -58,12 +59,25 @@ func (handler *Handler) questionSpeechRealtime(c *gin.Context) {
 	if writePracticeSpeechReady(connection) != nil {
 		return
 	}
-	handler.streamPracticeSpeech(c.Request.Context(), connection, text)
+	handler.streamPracticeSpeech(c.Request.Context(), connection, input.Text, input.Profile)
 }
 
 func (handler *Handler) promptSpeechRealtime(c *gin.Context) {
-	if _, ok := requestcontext.ActorFromContext(c.Request.Context()); !ok {
+	actor, ok := requestcontext.ActorFromContext(c.Request.Context())
+	if !ok {
 		handler.write(c, authenticationRequired())
+		return
+	}
+	profileApplication, ok := handler.application.(sessionSynthesisApplication)
+	if !ok {
+		handler.write(c, providerUnavailable(nil))
+		return
+	}
+	profile, err := profileApplication.SessionSynthesisProfile(
+		c.Request.Context(), actor, c.Param("practice_session_id"),
+	)
+	if err != nil {
+		handler.write(c, mapError(err))
 		return
 	}
 	if !containsWebSocketProtocol(
@@ -95,7 +109,7 @@ func (handler *Handler) promptSpeechRealtime(c *gin.Context) {
 		writePracticeSpeechFailure(connection, false)
 		return
 	}
-	handler.streamPracticeSpeech(c.Request.Context(), connection, text)
+	handler.streamPracticeSpeech(c.Request.Context(), connection, text, profile)
 }
 
 func upgradePracticeSpeech(c *gin.Context) (*websocket.Conn, error) {
@@ -139,14 +153,20 @@ func (handler *Handler) streamPracticeSpeech(
 	requestContext context.Context,
 	connection *websocket.Conn,
 	text string,
+	profile practiceinteraction.SynthesisProfile,
 ) {
+	if handler.realtimeSpeech == nil && handler.legacyRealtimeSpeech != nil {
+		handler.streamLegacyPracticeSpeech(requestContext, connection, text)
+		return
+	}
 
 	streamContext, cancel := context.WithCancel(requestContext)
 	defer cancel()
 	var firstAudio sync.Once
 	chunks, bytes := 0, 0
-	speech, err := handler.realtimeSpeech.OpenAssistantSpeech(
+	speech, err := handler.realtimeSpeech.OpenPracticeSpeech(
 		streamContext,
+		profile,
 		func(audio []byte) error {
 			firstAudio.Do(func() {
 				slog.InfoContext(streamContext, "practice.question_speech.first_audio")
@@ -175,6 +195,64 @@ func (handler *Handler) streamPracticeSpeech(
 		slog.Int("audio_chunks", chunks),
 		slog.Int("audio_bytes", bytes),
 	)
+	_ = connection.WriteJSON(gin.H{"type": "stream.completed", "data": gin.H{}})
+}
+
+func (handler *Handler) promptSpeechRealtimeLegacy(c *gin.Context) {
+	if _, ok := requestcontext.ActorFromContext(c.Request.Context()); !ok {
+		handler.write(c, authenticationRequired())
+		return
+	}
+	if !containsWebSocketProtocol(websocket.Subprotocols(c.Request), practiceQuestionSpeechWebSocketProtocol) {
+		handler.write(c, invalidRequest(nil))
+		return
+	}
+	connection, err := upgradePracticeSpeech(c)
+	if err != nil {
+		return
+	}
+	defer connection.Close()
+	connection.SetReadLimit(16 * 1024)
+	if writePracticeSpeechReady(connection) != nil {
+		return
+	}
+	messageType, payload, err := connection.ReadMessage()
+	if err != nil || messageType != websocket.TextMessage {
+		writePracticeSpeechFailure(connection, false)
+		return
+	}
+	text, err := decodePracticePromptSpeech(payload)
+	if err != nil {
+		writePracticeSpeechFailure(connection, false)
+		return
+	}
+	handler.streamLegacyPracticeSpeech(c.Request.Context(), connection, text)
+}
+
+func (handler *Handler) streamLegacyPracticeSpeech(
+	requestContext context.Context,
+	connection *websocket.Conn,
+	text string,
+) {
+	streamContext, cancel := context.WithCancel(requestContext)
+	defer cancel()
+	chunks := 0
+	speech, err := handler.legacyRealtimeSpeech.OpenAssistantSpeech(
+		streamContext,
+		func(audio []byte) error {
+			chunks++
+			return connection.WriteMessage(websocket.BinaryMessage, audio)
+		},
+	)
+	if err != nil {
+		writePracticeSpeechFailure(connection, true)
+		return
+	}
+	defer speech.Close()
+	if speech.AppendText(text) != nil || speech.Finish() != nil || chunks == 0 {
+		writePracticeSpeechFailure(connection, true)
+		return
+	}
 	_ = connection.WriteJSON(gin.H{"type": "stream.completed", "data": gin.H{}})
 }
 

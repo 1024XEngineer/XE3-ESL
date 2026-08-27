@@ -66,6 +66,7 @@ SELECT
     description,
     preview_asset_key,
     provider,
+    provider_profile,
     provider_avatar_id,
     binding_version,
     sort_order,
@@ -86,6 +87,7 @@ ORDER BY sort_order ASC, id ASC`)
 			&option.Description,
 			&option.PreviewAssetKey,
 			&option.Provider,
+			&option.ProviderProfile,
 			&option.ProviderAvatarID,
 			&option.BindingVersion,
 			&option.SortOrder,
@@ -115,6 +117,7 @@ SELECT
     locale,
     gender,
     provider,
+    provider_profile,
     provider_model,
     provider_voice_id,
     binding_version,
@@ -137,6 +140,7 @@ ORDER BY sort_order ASC, id ASC`)
 			&option.Locale,
 			&option.Gender,
 			&option.Provider,
+			&option.ProviderProfile,
 			&option.ProviderModel,
 			&option.ProviderVoiceID,
 			&option.BindingVersion,
@@ -154,6 +158,45 @@ ORDER BY sort_order ASC, id ASC`)
 		return nil, mapError(err)
 	}
 	return options, nil
+}
+
+// ResolveSelection returns the current enabled provider binding for a user.
+// When Repository is backed by pgx.Tx, callers can freeze the result in the
+// same transaction that creates the owning Practice Session.
+func (repository *Repository) ResolveSelection(
+	ctx context.Context,
+	userID string,
+) (presentation.ResolvedSelection, error) {
+	if repository == nil || repository.database == nil || userID == "" {
+		return presentation.ResolvedSelection{}, presentation.ErrInvalidRequest
+	}
+	catalog, err := repository.Catalog(ctx)
+	if err != nil {
+		return presentation.ResolvedSelection{}, err
+	}
+	preference, err := repository.FindPreference(ctx, userID)
+	if errors.Is(err, presentation.ErrNotFound) {
+		preference = presentation.DefaultPreference(userID, catalog)
+	} else if err != nil {
+		return presentation.ResolvedSelection{}, err
+	}
+	var resolved presentation.ResolvedSelection
+	for _, option := range catalog.Avatars {
+		if option.ID == preference.AvatarOptionID {
+			resolved.Avatar = option
+			break
+		}
+	}
+	for _, option := range catalog.Voices {
+		if option.ID == preference.VoiceOptionID {
+			resolved.Voice = option
+			break
+		}
+	}
+	if !resolved.Valid() {
+		return presentation.ResolvedSelection{}, presentation.ErrInvalidRequest
+	}
+	return resolved, nil
 }
 
 func (repository *Repository) FindPreference(

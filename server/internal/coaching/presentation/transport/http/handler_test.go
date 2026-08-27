@@ -132,6 +132,7 @@ func httpCatalog() presentation.Catalog {
 		Avatars: []presentation.AvatarOption{{
 			ID: "avatar_lisa", DisplayName: "莉萨", Description: "亲切、开朗",
 			PreviewAssetKey: "coach-avatar-lisa", Provider: "spatialreal",
+			ProviderProfile:  "spatialreal_default",
 			ProviderAvatarID: "native-avatar-id", BindingVersion: 1,
 			SortOrder: 10, Default: true,
 		}},
@@ -139,7 +140,8 @@ func httpCatalog() presentation.Catalog {
 			ID: "voice_ava", DisplayName: "艾娃",
 			Description: "清晰自然 · 美式英语 · 女声", Locale: "en-US",
 			Gender: "female", Provider: "qianwen",
-			ProviderModel: "native-model", ProviderVoiceID: "native-voice-id",
+			ProviderProfile: "qianwen_default",
+			ProviderModel:   "native-model", ProviderVoiceID: "native-voice-id",
 			BindingVersion: 1, SortOrder: 10, Default: true,
 		}},
 		DefaultAvatarOptionID: "avatar_lisa",

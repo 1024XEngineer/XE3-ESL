@@ -51,6 +51,7 @@ func realtimeTTSEndpoint(baseURL string) (string, error) {
 func (synthesizer *speechSynthesizer) synthesizeRealtimeWAV(
 	ctx context.Context,
 	text string,
+	settings synthesisSettings,
 ) (protocol.SynthesisResult, error) {
 	var pcm bytes.Buffer
 	defer func() { clear(pcm.Bytes()) }()
@@ -65,6 +66,7 @@ func (synthesizer *speechSynthesizer) synthesizeRealtimeWAV(
 			_, _ = pcm.Write(chunk)
 			return nil
 		},
+		settings,
 	)
 	if err != nil {
 		return protocol.SynthesisResult{}, realtimeSynthesisError(ctx, taskID, err)
@@ -95,7 +97,7 @@ func (synthesizer *speechSynthesizer) synthesizeRealtimeWAV(
 	return protocol.SynthesisResult{
 		RequestID: taskID,
 		Provider:  providerName,
-		Model:     synthesizer.model,
+		Model:     settings.model,
 		AudioID:   taskID,
 		Audio:     audio,
 	}, nil
@@ -105,8 +107,19 @@ func (synthesizer *speechSynthesizer) streamRealtimePCM(
 	ctx context.Context,
 	text string,
 	consume func([]byte) error,
+	overrides ...synthesisSettings,
 ) (string, error) {
-	session, err := synthesizer.openRealtimeSpeech(ctx, consume)
+	settings := synthesisSettings{
+		model:        synthesizer.model,
+		voice:        synthesizer.voice,
+		languageHint: synthesizer.languageHint,
+	}
+	if len(overrides) == 1 {
+		settings = overrides[0]
+	} else if len(overrides) > 1 {
+		return "", errors.New("Qianwen realtime TTS settings are invalid")
+	}
+	session, err := synthesizer.openRealtimeSpeechWithSettings(ctx, settings, consume)
 	if err != nil {
 		return "", err
 	}
@@ -190,6 +203,22 @@ func (synthesizer *speechSynthesizer) openRealtimeSpeech(
 	ctx context.Context,
 	consume func([]byte) error,
 ) (*speechRealtimeSession, error) {
+	return synthesizer.openRealtimeSpeechWithSettings(
+		ctx,
+		synthesisSettings{
+			model:        synthesizer.model,
+			voice:        synthesizer.voice,
+			languageHint: synthesizer.languageHint,
+		},
+		consume,
+	)
+}
+
+func (synthesizer *speechSynthesizer) openRealtimeSpeechWithSettings(
+	ctx context.Context,
+	settings synthesisSettings,
+	consume func([]byte) error,
+) (*speechRealtimeSession, error) {
 	if synthesizer == nil || ctx == nil || consume == nil {
 		return nil, errors.New("Qianwen realtime TTS is unavailable")
 	}
@@ -231,9 +260,9 @@ func (synthesizer *speechSynthesizer) openRealtimeSpeech(
 		},
 		"payload": map[string]any{
 			"task_group": "audio", "task": "tts",
-			"function": "SpeechSynthesizer", "model": synthesizer.model,
+			"function": "SpeechSynthesizer", "model": settings.model,
 			"parameters": map[string]any{
-				"text_type": "PlainText", "voice": synthesizer.voice,
+				"text_type": "PlainText", "voice": settings.voice,
 				"format": "pcm", "sample_rate": agentconversation.AssistantSpeechSampleRate,
 				"volume": 50, "rate": 1, "pitch": 1, "enable_ssml": false,
 			},

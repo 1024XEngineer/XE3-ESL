@@ -56,6 +56,15 @@ func TestCreateSessionReplaysOnlyTheSameIdempotencyIntent(t *testing.T) {
 	if err != nil || replayed || first.Session.ID != contextTestSessionA {
 		t.Fatalf("first CreateSession = %#v, replayed=%t, err=%v", first, replayed, err)
 	}
+	if first.Snapshot.Presentation.Avatar.OptionID != "avatar_lisa" ||
+		first.Snapshot.Presentation.Voice.OptionID != "voice_ava" {
+		t.Fatalf("default presentation snapshot = %#v", first.Snapshot.Presentation)
+	}
+	if _, err := pool.Exec(context.Background(), `INSERT INTO user_coach_presentation_preferences
+(user_id,avatar_option_id,voice_option_id,version)
+VALUES ($1,'avatar_nathan','voice_john',1)`, contextTestUserID); err != nil {
+		t.Fatalf("save changed presentation preference: %v", err)
+	}
 
 	replayCommand := contextCreateSessionCommand(
 		contextTestSessionReplay,
@@ -67,6 +76,9 @@ func TestCreateSessionReplaysOnlyTheSameIdempotencyIntent(t *testing.T) {
 	)
 	if err != nil || !replayed || replay.Session.ID != contextTestSessionA {
 		t.Fatalf("replayed CreateSession = %#v, replayed=%t, err=%v", replay, replayed, err)
+	}
+	if replay.Snapshot.Presentation != first.Snapshot.Presentation {
+		t.Fatalf("replayed presentation changed: first=%#v replay=%#v", first.Snapshot.Presentation, replay.Snapshot.Presentation)
 	}
 
 	changedFingerprint := sha256.Sum256([]byte("expected-plan-version:2"))
@@ -91,6 +103,10 @@ func TestCreateSessionReplaysOnlyTheSameIdempotencyIntent(t *testing.T) {
 	)
 	if err != nil || replayed || second.Session.ID != contextTestSessionB {
 		t.Fatalf("second CreateSession = %#v, replayed=%t, err=%v", second, replayed, err)
+	}
+	if second.Snapshot.Presentation.Avatar.OptionID != "avatar_nathan" ||
+		second.Snapshot.Presentation.Voice.OptionID != "voice_john" {
+		t.Fatalf("changed presentation snapshot = %#v", second.Snapshot.Presentation)
 	}
 	if second.Session.PlanID != first.Session.PlanID {
 		t.Fatalf("same Plan created Sessions for different Plans: %#v, %#v", first.Session, second.Session)

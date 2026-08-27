@@ -139,6 +139,7 @@ func (c *roundVoice) Confirm(
 func (c *roundVoice) SynthesizeQuestion(
 	context.Context,
 	string,
+	SynthesisProfile,
 ) (QuestionSpeech, error) {
 	return QuestionSpeech{}, nil
 }

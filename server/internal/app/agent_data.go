@@ -524,11 +524,12 @@ func buildIdentityAgentComposition(
 		practiceHTTP, practiceHTTPErr := practiceinteractionhttp.NewHandler(
 			voiceApplication,
 			practiceinteractionhttp.Options{
-				RealtimeReadTimeout: voiceConfigurations[0].PracticeInteraction.RealtimeReadTimeout,
-				RecordedReadTimeout: voiceConfigurations[0].PracticeInteraction.RecordedReadTimeout,
-				SameQuestionRetry:   sameQuestionRetry,
-				Recordings:          practiceRecordings,
-				RealtimeSpeech:      voiceConfigurations[0].AgentVoice.AssistantSpeech,
+				RealtimeReadTimeout:  voiceConfigurations[0].PracticeInteraction.RealtimeReadTimeout,
+				RecordedReadTimeout:  voiceConfigurations[0].PracticeInteraction.RecordedReadTimeout,
+				SameQuestionRetry:    sameQuestionRetry,
+				Recordings:           practiceRecordings,
+				RealtimeSpeech:       voiceConfigurations[0].PracticeInteraction.RealtimeSynthesizer,
+				LegacyRealtimeSpeech: voiceConfigurations[0].AgentVoice.AssistantSpeech,
 			},
 			errorRenderer,
 		)

@@ -35,6 +35,7 @@ type AvatarOption struct {
 	Description      string `json:"description"`
 	PreviewAssetKey  string `json:"preview_asset_key"`
 	Provider         string `json:"-"`
+	ProviderProfile  string `json:"-"`
 	ProviderAvatarID string `json:"-"`
 	BindingVersion   int64  `json:"-"`
 	SortOrder        int    `json:"-"`
@@ -47,6 +48,7 @@ func (option AvatarOption) Valid() bool {
 		validText(option.Description, MaxDescriptionRunes) &&
 		validToken(option.PreviewAssetKey, MaxPreviewAssetKeyRunes) &&
 		validToken(option.Provider, MaxProviderValueRunes) &&
+		validToken(option.ProviderProfile, MaxProviderValueRunes) &&
 		validToken(option.ProviderAvatarID, MaxProviderValueRunes) &&
 		option.BindingVersion > 0 && option.SortOrder >= 0
 }
@@ -58,6 +60,7 @@ type VoiceOption struct {
 	Locale          string `json:"locale"`
 	Gender          string `json:"gender"`
 	Provider        string `json:"-"`
+	ProviderProfile string `json:"-"`
 	ProviderModel   string `json:"-"`
 	ProviderVoiceID string `json:"-"`
 	BindingVersion  int64  `json:"-"`
@@ -72,9 +75,19 @@ func (option VoiceOption) Valid() bool {
 		validToken(option.Locale, MaxLocaleRunes) &&
 		(option.Gender == "female" || option.Gender == "male") &&
 		validToken(option.Provider, MaxProviderValueRunes) &&
+		validToken(option.ProviderProfile, MaxProviderValueRunes) &&
 		validToken(option.ProviderModel, MaxProviderValueRunes) &&
 		validToken(option.ProviderVoiceID, MaxProviderValueRunes) &&
 		option.BindingVersion > 0 && option.SortOrder >= 0
+}
+
+type ResolvedSelection struct {
+	Avatar AvatarOption
+	Voice  VoiceOption
+}
+
+func (selection ResolvedSelection) Valid() bool {
+	return selection.Avatar.Valid() && selection.Voice.Valid()
 }
 
 type Catalog struct {

@@ -937,6 +937,7 @@ func TestVoiceRoundTTSFailurePreservesQuestionText(t *testing.T) {
 	result, err := service.SynthesizeQuestion(
 		context.Background(),
 		"Tell me about a difficult project.",
+		SynthesisProfile{Provider: "qianwen", ProviderProfile: "qianwen_default", Model: "model", VoiceID: "voice", Locale: "en-US"},
 	)
 	if err != nil {
 		t.Fatalf("synthesize question: %v", err)
@@ -963,6 +964,7 @@ func TestVoiceRoundTTSGenericFailureUsesSynthesisAuditOperation(t *testing.T) {
 	result, err := service.SynthesizeQuestion(
 		context.Background(),
 		"Tell me about a difficult project.",
+		SynthesisProfile{Provider: "qianwen", ProviderProfile: "qianwen_default", Model: "model", VoiceID: "voice", Locale: "en-US"},
 	)
 	if err != nil {
 		t.Fatalf("synthesize question: %v", err)
@@ -999,6 +1001,7 @@ func TestVoiceRoundClosesInvalidTTSProviderAudio(t *testing.T) {
 	result, err := service.SynthesizeQuestion(
 		context.Background(),
 		"Tell me about a difficult project.",
+		SynthesisProfile{Provider: "qianwen", ProviderProfile: "qianwen_default", Model: "model", VoiceID: "voice", Locale: "en-US"},
 	)
 	if err != nil ||
 		result.Audio != nil ||
