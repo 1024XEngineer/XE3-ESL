@@ -15,6 +15,7 @@ import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_message_bubble.dart';
 import 'package:speakup/features/coaching/practice/practice_recordings.dart';
 import 'package:speakup/features/coaching/practice/practice_completion_sheet.dart';
+import 'package:speakup/features/coaching/practice/practice_conversation_scroll.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
 
@@ -390,23 +391,13 @@ class _InterviewPracticePageState extends State<InterviewPracticePage>
   }
 
   void _scheduleScrollToLatest({bool animated = true}) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_messageScrollController.hasClients) {
-        return;
-      }
-      final target = _messageScrollController.position.maxScrollExtent;
-      if (animated) {
-        unawaited(
-          _messageScrollController.animateTo(
-            target,
-            duration: const Duration(milliseconds: 180),
-            curve: Curves.easeOut,
-          ),
-        );
-      } else {
-        _messageScrollController.jumpTo(target);
-      }
-    });
+    schedulePracticeConversationScrollToBottom(
+      controller: _messageScrollController,
+      isMounted: () => mounted,
+      animated: animated,
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
+    );
   }
 
   void _syncRecordingTimer() {
