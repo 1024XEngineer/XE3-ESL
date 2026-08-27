@@ -242,7 +242,7 @@ check-oss-live-go:
 
 check-kodo-live:
 	@set -euo pipefail; \
-	required=(OSS_ENABLED OBJECT_STORAGE_PROVIDER QINIU_KODO_S3_REGION QINIU_KODO_S3_ENDPOINT QINIU_KODO_S3_BUCKET QINIU_KODO_SERVER_SIDE_ENCRYPTION QINIU_ACCESS_KEY QINIU_SECRET_KEY KODO_LIVE_TEST); \
+	required=(OSS_ENABLED OBJECT_STORAGE_PROVIDER QINIU_KODO_S3_REGION QINIU_KODO_S3_ENDPOINT QINIU_KODO_S3_BUCKET QINIU_ACCESS_KEY QINIU_SECRET_KEY KODO_LIVE_TEST); \
 	missing=(); \
 	for name in "$${required[@]}"; do \
 		if [[ -z "$${!name:-}" ]]; then missing+=("$$name"); fi; \
@@ -260,10 +260,6 @@ check-kodo-live:
 	fi; \
 	if [[ "$${OBJECT_STORAGE_PROVIDER}" != "qiniu_kodo" ]]; then \
 		printf '%s\n' 'Set and export OBJECT_STORAGE_PROVIDER=qiniu_kodo.'; \
-		exit 1; \
-	fi; \
-	if [[ "$${QINIU_KODO_SERVER_SIDE_ENCRYPTION}" != "1" && "$${QINIU_KODO_SERVER_SIDE_ENCRYPTION}" != "true" ]]; then \
-		printf '%s\n' 'Enable Kodo server-side encryption, then attest it with QINIU_KODO_SERVER_SIDE_ENCRYPTION=1.'; \
 		exit 1; \
 	fi; \
 	if [[ "$${KODO_LIVE_TEST}" != "1" ]]; then \

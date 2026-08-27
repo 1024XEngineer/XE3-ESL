@@ -357,7 +357,7 @@ func TestNewRejectsMissingCredentialsBeforeNetwork(t *testing.T) {
 		Region: "cn-east-1", Endpoint: "https://s3.cn-east-1.qiniucs.com",
 		Bucket:      "private-bucket",
 		AudioPrefix: "audio/v1", ImagePrefix: "image/v1", ResumePrefix: "resume/v1",
-		SignedURLTTL: 2 * time.Minute, ServerSideEncryption: true,
+		SignedURLTTL: 2 * time.Minute,
 	})
 	if client != nil || !errors.Is(err, objectstore.ErrCredentials) {
 		t.Fatalf("New() = %#v, %v", client, err)
