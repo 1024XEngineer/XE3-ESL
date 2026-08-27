@@ -582,6 +582,108 @@ separate reviewed disaster-recovery runbook, an explicit outage, a named backup
 ID, and operator approval. Image rollback must never silently restore this
 database.
 
+## Approved Production deployment
+
+`Production Deploy` starts only after the official repository's
+`Deploy Staging Candidate` run succeeds. The authorization job verifies the
+official `main` commit, successful Release Candidate run, immutable Candidate
+manifest and Android artifact, and the exact Staging deployment receipt. It
+does not rebuild an image or APK. The deploy job then enters the GitHub
+`production` Environment; its Secrets are unavailable until a required
+reviewer approves the deployment.
+
+Configure that Environment with a required reviewer and allow only `main`.
+The current single-operator setup permits the named reviewer to approve their
+own initiated deployment, but an explicit approval is still mandatory; enable
+GitHub's prevent-self-review option when a second release owner is available.
+Add these Environment values:
+
+| Kind | Name | Value |
+| --- | --- | --- |
+| Variable | `PRODUCTION_DEPLOY_HOST` | Production SSH host or IP |
+| Variable | `PRODUCTION_DEPLOY_PORT` | Production SSH port, normally `22` |
+| Variable | `PRODUCTION_DEPLOY_USER` | Exactly `speakup-production-ci` |
+| Secret | `PRODUCTION_DEPLOY_KNOWN_HOSTS` | Verified ED25519 host-key line |
+| Secret | `PRODUCTION_DEPLOY_SSH_PRIVATE_KEY` | Private half of the dedicated CI key |
+
+The private key is used only after Environment approval. The matching public
+key is installed with `restrict`, an sshd `ForceCommand`, and an exact sudoers
+rule. It cannot request a shell, command, TTY, tunnel, `scp`, or `sftp`. The
+root broker accepts only a bounded tar protocol on standard input and invokes
+the fixed Production `manage.sh deploy` argument contract. Request fields
+cannot override the environment file, control checkout, state directory,
+receipt location, Docker access, backup programs, Nginx path, or public root.
+
+Build and install the reviewed host contract once from the commit being
+deployed. The bootstrap does not create a key or copy a private key:
+
+```sh
+cd server
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath \
+  -o /tmp/speakup-production-broker ./cmd/production-broker
+cd ..
+sudo ./deploy/production/host/bootstrap.sh \
+  --broker-binary /tmp/speakup-production-broker \
+  --contract-directory "$PWD" \
+  --contract-revision "$(git rev-parse HEAD)" \
+  --ssh-public-key-file /root/speakup-production-ci.pub
+```
+
+Before the first automated deployment, establish the current live release as
+the broker baseline. Use its already-audited `release-manifest.json` and current
+immutable Production receipt. If that receipt does not yet exist, create it
+once with `manage.sh baseline`; `baseline` verifies the live containers, Nginx,
+backup configuration, volumes, schema, and digest identity without redeploying
+them:
+
+```sh
+sudo install -d -o root -g root -m 0700 /var/lib/speakup/production-bootstrap
+sudo /opt/xe3-speakup-production-control/current/deploy/production/manage.sh \
+  baseline \
+  --manifest /var/lib/speakup/production-bootstrap/release-manifest.json \
+  --env-file /etc/speakup/production.env \
+  --receipt /var/lib/speakup/production-bootstrap/baseline-receipt.json
+sudo /usr/local/libexec/speakup-production-broker initialize \
+  --manifest /var/lib/speakup/production-bootstrap/release-manifest.json \
+  --receipt /var/lib/speakup/production-bootstrap/baseline-receipt.json
+sudo ./deploy/production/host/validate.sh
+```
+
+Each approved run streams only `request.json`, the Candidate manifest, the
+Staging receipt, and the versioned Android download bundle. The broker checks
+their hashes and cross-links before `manage.sh` performs its existing backup
+gates and digest-only deployment. Success stores content-addressed engine and
+audit receipts, atomically advances the current pointer, and verifies the
+public Portal and API. The workflow then creates or reuses a GitHub Release
+draft for the exact Candidate SHA and uploads the signed APK, checksum, release
+manifest, Production receipt, public metadata, and Chinese release notes. Only
+after all draft assets match does the broker atomically activate the public APK
+pointer. The workflow verifies the public metadata, APK digest, release notes,
+and changelog before publishing the `vX.Y.Z` Release. Repository immutable
+releases and Tag rulesets then prevent the published Release or stable Tag from
+being changed.
+
+If a later step fails after deployment, rerun the **same** Production workflow
+run. A higher run attempt with the same Candidate, Staging receipt, manifest,
+bundle, and deployment run ID performs `manage.sh verify` and reuses the prior
+immutable receipt; it does not repeat backups, migrations, or container
+restarts. A different workflow run or Candidate cannot claim that deployment.
+Draft asset preparation and APK activation are idempotent. A fully published
+immutable Release is verified, never rewritten.
+
+The deploy job needs job-scoped `actions: read` and `contents: write`. Those
+permissions and all Production Secrets remain behind the `production`
+Environment approval. Enable repository immutable releases before the first
+real run. Protect `v*.*.*` tags from update and deletion. The Production job's
+Environment-gated `contents: write` permission creates the new stable tag when
+the Release is published; it cannot move or delete a published tag.
+
+If `manage.sh` fails, the broker leaves the previous current pointer unchanged
+and retains `pending.json` plus any engine receipt as recovery evidence. Later
+deployments fail with `recovery_required`; inspect the live state and evidence,
+then use the existing reviewed rollback procedure. Do not delete pending state
+merely to make CI green.
+
 ## Reproducible checks
 
 ```sh
@@ -589,6 +691,8 @@ make check-production-backup
 make check-production-rehearsal
 make check-android-download
 make check-production-deploy
+./deploy/production/test-host-access.sh
+cd server && go test -count=1 ./cmd/production-broker
 make check-production-nginx
 make check-offline-release
 ```
@@ -608,6 +712,8 @@ the four pull policies, and fail-closed behavior without contacting Production.
 - [Linux `flock`](https://man7.org/linux/man-pages/man1/flock.1.html)
 - [GitHub workflow API](https://docs.github.com/en/rest/actions/workflows#get-a-workflow)
 - [GitHub workflow run API](https://docs.github.com/en/rest/actions/workflow-runs#get-a-workflow-run)
+- [GitHub deployment environments](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments)
+- [GitHub immutable releases](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/establish-provenance-and-integrity/prevent-release-changes)
 - [Nginx command-line parameters](https://nginx.org/en/docs/switches.html)
 - [Nginx proxy module](https://nginx.org/en/docs/http/ngx_http_proxy_module.html)
 - [PostgreSQL SQL dump backup](https://www.postgresql.org/docs/18/backup-dump.html)

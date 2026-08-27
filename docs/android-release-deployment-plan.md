@@ -1,7 +1,7 @@
 # SpeakUp Android 发布与服务器部署方案
 
-> 状态：实施基线（PR Review 前）
-> 更新时间：2026-08-21
+> 状态：实施基线
+> 更新时间：2026-08-27
 > 关联 Issue：[#819](https://github.com/1024XEngineer/XE3-ESL/issues/819)
 > 目标 Milestone：MS4
 
@@ -121,9 +121,9 @@ GitHub Release 已发布；发布 GitHub Release 也不表示 Production 已完�
 
 - `dev` 是日常集成分支，功能 PR 合入 `dev`。
 - `main` 是发布分支，只通过 `dev -> main` 的 Release PR 接收候选版本。
-- Release PR 合并后，从官方仓库 `main` 的精确 commit 手动触发内部 Candidate
-  构建，不提前创建 `vX.Y.Z` Tag。不存在“合入 main 后再把全部代码额外推送
-  一次”。
+- Release PR 合并后，官方仓库 `main` 的 `push` 自动以精确 commit 触发内部
+  Candidate 构建，不提前创建 `vX.Y.Z` Tag。不存在“合入 main 后再把全部代码
+  额外推送一次”。
 - Stable Tag 只留给通过验收、准备进入正式发布流程的同一 commit 和制品。
 - `main` 上的 Release merge commit 不会自动回到 `dev`，因此 GitHub 可能显示
   `dev` 落后若干 merge commit。这是历史拓扑差异，不等于 `dev` 缺少代码。
@@ -142,19 +142,19 @@ GitHub Release 已发布；发布 GitHub Release 也不表示 Production 已完�
   -> PR Gate 与 Review
   -> 合入 dev
   -> Release PR: dev -> main
-  -> 从官方 main 精确 SHA 手动触发内部 Release Candidate
+  -> 官方 main `push` 自动以精确 SHA 触发内部 Release Candidate
   -> 全量测试并构建完整、可追溯制品
-  -> 后续独立流程部署同一 Candidate 到 Staging
+  -> 成功后由独立 Staging Workflow 自动部署同一 Candidate
   -> 自动冒烟 + 真人验收
-  -> 批准正式发布并创建不可变 vX.Y.Z Stable Tag
-  -> 基于同一制品创建 GitHub Release 草稿
   -> 等待 Production 人工批准
   -> 生产数据备份与 migration
   -> 部署同一版本的 Portal/后端制品
   -> 上传正式 APK，但暂不更新公开入口
   -> 生产冒烟
+  -> 基于同一制品创建 GitHub Release 草稿并上传完整资产
   -> 原子更新 Portal APK 下载入口
-  -> 发布 GitHub Release 与部署记录
+  -> 校验公开 APK、更新日志与同一发布时间
+  -> 发布不可变 vX.Y.Z Tag、GitHub Release 与部署记录
 ```
 
 任一自动化检查失败时流程停止。没有人工批准时，生产环境不发生变化。
@@ -196,12 +196,11 @@ Check 严格模式已暂缓，不在本阶段擅自重新启用。
 
 ### 7.2 Release Candidate
 
-Release Candidate Workflow 仅允许在官方仓库对 `refs/heads/main` 手动执行，并将
+Release Candidate Workflow 仅响应官方仓库 `refs/heads/main` 的 `push`，并将
 GitHub Actions 事件提供的精确 `github.sha` 作为 Candidate commit。Workflow 必须
 先验证：
 
-- 事件为 `workflow_dispatch`，仓库为 `1024XEngineer/XE3-ESL`，ref 为官方
-  `main`。
+- 事件为 `push`，仓库为 `1024XEngineer/XE3-ESL`，ref 为官方 `main`。
 - checkout HEAD 与完整小写 Candidate SHA 一致，且 commit 位于 `main` 的
   first-parent 历史。
 - Candidate 的 versionName 或 commit 尚未被 Stable Tag 使用。
@@ -246,15 +245,15 @@ Candidate 不创建、模拟或要求 `vX.Y.Z` Stable Tag。
 镜像可使用语义版本标签方便识别，但部署必须引用 digest，不能引用可变
 `latest`。
 
-当前 #999 对应 PR 只构建并上传上述制品，不创建 Stable Tag 或 GitHub Release，
-不部署 Staging 或 Production，也不更新公开 changelog 或 Production 当前版本
-指针。Staging 验收、正式发布和 Production 提升属于后续独立任务。
+Release Candidate 只构建并上传上述制品，不提前创建 Stable Tag 或 GitHub
+Release。独立 Staging Workflow 自动部署同一 Candidate；Production Workflow 在
+Staging 成功后进入 Environment 人工审批，批准后才取得生产凭证并继续正式发布。
 
 Android 正式签名采用以下已确认边界：
 
 - GitHub Environment 固定为 `android-release-signing`。
-- Required reviewer 为 `Lq0412`；当前单人发布阶段允许本人审核，未来增加独立
-  发布负责人后再启用禁止自审。
+- 不设置 Required reviewer，避免在 Candidate 构建阶段提前暂停；唯一人工发布
+  审批保留在后续 `production` Environment。
 - 正式签名证书 Owner 为 `Lq0412`。
 - 证书与密码均保存两份：团队密码管理器一份、离线加密备份一份，不能只保存在
   GitHub Secret。
@@ -262,9 +261,8 @@ Android 正式签名采用以下已确认边界：
   Runner；构建结束后删除，不进入 Artifact、日志或仓库。
 
 首次运行前，管理员必须先创建该 Environment，将 Deployment branches and tags
-设为 Selected branches and tags，并至少允许 Branch pattern `main`，同时配置
-Required reviewer；随后才能添加以下 Environment Secrets。后续正式 Tag 流程仍可
-保留 Tag pattern `v*.*.*`：
+设为 Selected branches and tags，并且只允许 Branch pattern `main`；随后才能添加
+以下 Environment Secrets。Candidate 的正式签名不需要 Tag pattern：
 
 - `SPEAKUP_ANDROID_KEYSTORE_BASE64`
 - `SPEAKUP_ANDROID_KEY_ALIAS`
@@ -272,10 +270,9 @@ Required reviewer；随后才能添加以下 Environment Secrets。后续正式 
 - `SPEAKUP_ANDROID_KEY_PASSWORD`
 - `SPEAKUP_ANDROID_CERT_SHA256`
 
-如果 `android-release-signing` 仍只允许 Tag pattern `v*.*.*`，从 `main` 手动触发
-的 Candidate 将无法进入签名 job 或取得 Environment Secrets。本 PR 不修改
-Environment 保护规则；实际运行前必须由管理员确认 `main` 已获准，不能通过移出
-Environment 或复制 Secrets 绕过该门禁。
+如果 `android-release-signing` 没有允许 `main`，由 `main` 的 `push` 触发的
+Candidate 将无法进入签名 job 或取得 Environment Secrets。不能通过移出
+Environment 或复制 Secrets 绕过该边界。
 
 正式 Tag 还需要单独的 Tag ruleset 禁止更新和删除。Candidate Workflow 不创建
 Tag；保留的 Stable Tag 校验会继续检查运行时本地/远端集合、Tag 格式、commit、
@@ -284,8 +281,10 @@ Tag；保留的 Stable Tag 校验会继续检查运行时本地/远端集合、T
 
 ### 7.3 Staging 与 Production Deploy
 
-本节描述后续独立阶段；当前 Release Candidate Workflow 不调用 Staging 或
-Production 部署入口。
+Release Candidate Workflow 本身不直接执行部署。独立的 Staging Workflow 仅在
+由官方 `main` 的 `push` 触发的 Candidate 成功后自动部署同一制品；成功后独立
+Production Workflow 校验 Candidate 与 Staging 回执，并停在 GitHub Environment
+等待人工批准。
 
 Deploy Workflow 接收确定的 `version` 和 `environment`，读取 Release manifest
 后部署现有制品，不重新构建。
@@ -328,10 +327,22 @@ Release manifest 指向的同一 Production APK 完成安装、启动与生产 A
 Production 使用 GitHub Environment：
 
 - 必须由指定发布负责人批准。
-- 禁止部署发起人自行批准。
+- 当前单人发布阶段允许指定负责人批准自己发起的部署，但不能跳过显式批准；增加
+  第二位发布负责人后启用禁止自审。
 - 审批前不释放生产环境 SSH 凭证和 Secret。
 - 同一时间只允许一个生产部署。
-- 只允许正式版本 Tag 部署。
+- 只允许官方 `main` 的已验证 Candidate 部署；Stable Tag 只在 Production 成功、
+  APK 公开入口校验完成后由 Workflow 创建。
+
+Production 部署成功后的发布顺序固定为：创建或复用 Release 草稿、上传并校验全部
+正式资产、通过受限 broker 激活 APK 指针、公网校验 APK 和 changelog、最后发布
+GitHub Release。仓库启用 immutable releases，`v*.*.*` Tag ruleset 禁止更新和
+删除。Production job 仅在 Environment 批准后取得 `contents: write` 并创建新
+Tag；已发布的历史 Tag 不能移动或删除。
+
+同一 Production workflow run 的后续 attempt 可以复用已成功的相同部署回执，
+只执行只读 verify，不重复备份、migration 或容器重启。不同 workflow run、不同
+Candidate、不同 Staging 回执或不同 bundle 均 fail closed。
 
 ### 7.4 备份任务
 
@@ -546,7 +557,7 @@ Portal 报名和访问事件继续使用独立 SQLite。它与产品核心业务
 - [ ] PR Gate 全绿。
 - [ ] Candidate 来自官方 `main` 精确 SHA，version、versionCode、SHA 和 run ID
       已记录。
-- [ ] 进入正式发布阶段后，Stable Tag、commit 和版本一致。
+- [ ] Production 成功后，Stable Tag、commit 和版本一致且不可修改。
 - [ ] Portal/后端镜像 digest 已记录。
 - [ ] APK 签名、版本、架构和 SHA-256 正确。
 - [ ] Staging migration、健康检查和真实供应商冒烟通过。

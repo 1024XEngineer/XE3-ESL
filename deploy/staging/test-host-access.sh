@@ -65,7 +65,9 @@ assert_line 'exec /usr/bin/sudo -n -u speakup-staging-runtime -- \' \
 assert_line '  /usr/local/libexec/speakup-staging-broker' "$host_contract/ssh-gate"
 assert_line 'ExecStart=/usr/bin/dockerd-rootless.sh --host=unix://%t/docker.sock --config-file=/var/lib/speakup/staging-runtime/.config/docker/daemon.json' \
   "$host_contract/rootless-docker.service"
-assert_line 'Environment=TMPDIR=%t' "$host_contract/rootless-docker.service"
+if grep -Fq 'Environment=TMPDIR=' "$host_contract/rootless-docker.service"; then
+  fail "rootless unit overrides TMPDIR even though RootlessKit uses host /tmp"
+fi
 if grep -Fq '/var/run/docker.sock' "$host_contract/rootless-docker.service"; then
   fail "rootless unit references the rootful Docker socket"
 fi
@@ -88,6 +90,7 @@ export MOCK_FIXTURE_GID="$fixture_gid"
 export MOCK_CI_UID="$ci_uid"
 export MOCK_CI_GID="$ci_gid"
 export MOCK_HOST_ROOT="$fixture_root"
+export MOCK_PASSWORD_SET="$temporary_directory/ci-password-set"
 
 cat >"$mock_bin/getent" <<'EOF'
 #!/usr/bin/env bash
@@ -136,7 +139,27 @@ cat >"$mock_bin/passwd" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ "$1" == -S && -n "${2:-}" ]]
-printf '%s L 2026-08-26 0 99999 7 -1\n' "$2"
+if [[ "$2" == speakup-staging-ci && -f "$MOCK_PASSWORD_SET" ]]; then
+  state=P
+else
+  state=L
+fi
+printf '%s %s 2026-08-26 0 99999 7 -1\n' "$2" "$state"
+EOF
+
+cat >"$mock_bin/openssl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == rand && "$2" == -hex && "$3" == 48 ]]
+printf '%096d\n' 0
+EOF
+
+cat >"$mock_bin/chpasswd" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+IFS=: read -r user password
+[[ "$user" == speakup-staging-ci && "$password" =~ ^[0-9a-f]{96}$ ]]
+: >"$MOCK_PASSWORD_SET"
 EOF
 
 cat >"$mock_bin/groupadd" <<'EOF'
@@ -283,11 +306,13 @@ for logical_directory in \
   /usr/sbin \
   /proc/sys/kernel \
   /proc/sys/user \
+  /tmp \
   /etc \
   /var/lib/systemd/linger \
   "/run/user/$fixture_uid"; do
   mkdir -p "$fixture_root$logical_directory"
 done
+chmod 1777 "$fixture_root/tmp"
 printf '#!/usr/bin/env sh\nexit 0\n' >"$fixture_root/bin/bash"
 printf '#!/usr/bin/env sh\nexit 1\n' >"$fixture_root/usr/sbin/nologin"
 chmod 755 "$fixture_root/bin/bash" "$fixture_root/usr/sbin/nologin"
@@ -311,10 +336,8 @@ chgrp "$fixture_gid" "$fixture_root/run/user/$fixture_uid" \
   "$fixture_root/run/user/$fixture_uid/docker.sock"
 
 broker_binary="$temporary_directory/speakup-staging-broker"
-cat >"$broker_binary" <<'EOF'
-#!/usr/bin/env sh
-exit 0
-EOF
+printf '\177ELF\002\001\001\000\000\000\000\000\000\000\000\000\002\000\076\000' \
+  >"$broker_binary"
 chmod 755 "$broker_binary"
 public_key_file="$temporary_directory/staging.pub"
 printf '%s\n' \
@@ -348,6 +371,18 @@ expect_failure "relative bootstrap input" \
   --contract-revision "$contract_revision" \
   --ssh-public-key-file "$public_key_file"
 
+cp "$broker_binary" "$temporary_directory/broker.good"
+printf '#!/usr/bin/env sh\nexit 0\n' >"$broker_binary"
+chmod 755 "$broker_binary"
+expect_failure "non-Linux-amd64 broker" \
+  "${host_environment[@]}" "${bootstrap_command[@]}"
+cp "$temporary_directory/broker.good" "$broker_binary"
+
+chmod 755 "$fixture_root/tmp"
+expect_failure "unsafe shared tmp" \
+  "${host_environment[@]}" "${bootstrap_command[@]}"
+chmod 1777 "$fixture_root/tmp"
+
 mv "$fixture_root/usr/bin/slirp4netns" "$temporary_directory/slirp4netns"
 expect_failure "missing rootless prerequisite" \
   "${host_environment[@]}" "${bootstrap_command[@]}"
@@ -355,6 +390,7 @@ mv "$temporary_directory/slirp4netns" "$fixture_root/usr/bin/slirp4netns"
 
 "${host_environment[@]}" "${bootstrap_command[@]}" \
   >"$temporary_directory/bootstrap.log"
+[[ -f "$MOCK_PASSWORD_SET" ]] || fail "bootstrap did not make the CI account usable"
 
 rootless_enablement_link="$fixture_root/var/lib/speakup/staging-runtime/.config/systemd/user/default.target.wants/speakup-staging-rootless-docker.service"
 [[ -L "$rootless_enablement_link" ]] ||
@@ -379,6 +415,9 @@ printf '%s\n' 'APP_ENV=staging-fixture' >"$server_env"
 printf '%s\n' '{"auths":{"ghcr.io":{"auth":"fixture"}}}' >"$registry_config"
 chmod 600 "$runtime_env" "$server_env" "$registry_config"
 chgrp "$fixture_gid" "$runtime_env" "$server_env" "$registry_config"
+: >"$fixture_root/run/lock/xe3-speakup-staging/deploy.lock"
+chmod 600 "$fixture_root/run/lock/xe3-speakup-staging/deploy.lock"
+chgrp "$fixture_gid" "$fixture_root/run/lock/xe3-speakup-staging/deploy.lock"
 
 "${host_environment[@]}" "$host_contract/validate.sh" \
   >"$temporary_directory/validate.log"
@@ -401,12 +440,12 @@ cp "$fixture_root/etc/ssh/authorized_keys/speakup-staging-ci" \
   "$temporary_directory/authorized-key.good"
 sed 's/^restrict //' "$temporary_directory/authorized-key.good" \
   >"$fixture_root/etc/ssh/authorized_keys/speakup-staging-ci"
-chmod 600 "$fixture_root/etc/ssh/authorized_keys/speakup-staging-ci"
+chmod 644 "$fixture_root/etc/ssh/authorized_keys/speakup-staging-ci"
 expect_failure "unrestricted SSH key" \
   "${host_environment[@]}" "$host_contract/validate.sh"
 cp "$temporary_directory/authorized-key.good" \
   "$fixture_root/etc/ssh/authorized_keys/speakup-staging-ci"
-chmod 600 "$fixture_root/etc/ssh/authorized_keys/speakup-staging-ci"
+chmod 644 "$fixture_root/etc/ssh/authorized_keys/speakup-staging-ci"
 
 chmod 644 "$runtime_env"
 expect_failure "world-readable runtime environment" \

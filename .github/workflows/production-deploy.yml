@@ -1,0 +1,809 @@
+name: Deploy Production Candidate
+
+on:
+  workflow_run:
+    workflows:
+      - Deploy Staging Candidate
+    types:
+      - completed
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: production-deployment
+  cancel-in-progress: false
+
+jobs:
+  authorize:
+    name: Authorize the successful Staging Candidate
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      android_artifact: ${{ steps.candidate.outputs.android_artifact }}
+      candidate_run_id: ${{ steps.receipt.outputs.candidate_run_id }}
+      candidate_sha: ${{ steps.receipt.outputs.candidate_sha }}
+      manifest_artifact: ${{ steps.candidate.outputs.manifest_artifact }}
+      staging_receipt_sha256: ${{ steps.receipt.outputs.sha256 }}
+      staging_run_attempt: ${{ steps.staging.outputs.run_attempt }}
+      staging_run_id: ${{ steps.staging.outputs.run_id }}
+      version: ${{ steps.receipt.outputs.version }}
+    steps:
+      - name: Require the successful official Staging workflow
+        id: staging
+        env:
+          STAGING_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          STAGING_EVENT: ${{ github.event.workflow_run.event }}
+          STAGING_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          STAGING_HEAD_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
+          STAGING_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          STAGING_PATH: ${{ github.event.workflow_run.path }}
+          STAGING_REPOSITORY: ${{ github.repository }}
+          STAGING_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          STAGING_RUN_ID: ${{ github.event.workflow_run.id }}
+          STAGING_WORKFLOW: ${{ github.event.workflow_run.name }}
+        run: |
+          set -euo pipefail
+          if [[ "$STAGING_REPOSITORY" != "1024XEngineer/XE3-ESL" ||
+                "$STAGING_HEAD_REPOSITORY" != "$STAGING_REPOSITORY" ||
+                "$STAGING_WORKFLOW" != "Deploy Staging Candidate" ||
+                "$STAGING_PATH" != ".github/workflows/staging-deploy.yml" ||
+                "$STAGING_EVENT" != "workflow_run" ||
+                "$STAGING_CONCLUSION" != "success" ||
+                "$STAGING_HEAD_BRANCH" != "main" ||
+                ! "$STAGING_HEAD_SHA" =~ ^[0-9a-f]{40}$ ||
+                ! "$STAGING_RUN_ID" =~ ^[1-9][0-9]*$ ||
+                ! "$STAGING_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Only the successful official main Staging workflow may request Production." >&2
+            exit 1
+          fi
+          printf 'run_id=%s\n' "$STAGING_RUN_ID" >> "$GITHUB_OUTPUT"
+          printf 'run_attempt=%s\n' "$STAGING_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+          printf 'sha=%s\n' "$STAGING_HEAD_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Download the exact Staging deployment receipt
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: staging-deployment-${{ steps.staging.outputs.run_id }}-${{ steps.staging.outputs.run_attempt }}
+          path: ${{ runner.temp }}/staging-receipt
+          run-id: ${{ steps.staging.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Validate the Staging deployment receipt
+        id: receipt
+        env:
+          STAGING_DIRECTORY: ${{ runner.temp }}/staging-receipt
+          STAGING_HEAD_SHA: ${{ steps.staging.outputs.sha }}
+          STAGING_RUN_ATTEMPT: ${{ steps.staging.outputs.run_attempt }}
+          STAGING_RUN_ID: ${{ steps.staging.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          mapfile -d '' files < <(
+            find "$STAGING_DIRECTORY" -mindepth 1 -maxdepth 1 -type f -print0
+          )
+          [[ "${#files[@]}" == 1 ]]
+          receipt="${files[0]}"
+          [[ ! -L "$receipt" && -s "$receipt" ]]
+          jq -e \
+            --arg git_sha "$STAGING_HEAD_SHA" \
+            --argjson run_id "$STAGING_RUN_ID" \
+            --argjson run_attempt "$STAGING_RUN_ATTEMPT" '
+              type == "object" and
+              keys == ["action", "ok", "protocol_version", "receipt", "receipt_sha256"] and
+              .protocol_version == 1 and .ok == true and .action == "deploy" and
+              (.receipt_sha256 | type == "string" and test("^[0-9a-f]{64}$") and test("[1-9a-f]")) and
+              (.receipt | type == "object" and
+                keys == [
+                  "candidate_run_id", "database_schema_version", "deployment_run_attempt",
+                  "deployment_run_id", "environment", "git_sha", "manifest_sha256",
+                  "operation", "portal_container_id", "portal_image_digest",
+                  "postgres_container_id", "previous_receipt_sha256", "receipt_version",
+                  "recorded_at_utc", "repository", "rollback_target_receipt_sha256",
+                  "server_container_id", "server_image_digest", "version", "version_code"
+                ] and
+                .receipt_version == 2 and .environment == "staging" and
+                .operation == "deploy" and .repository == "1024XEngineer/XE3-ESL" and
+                .git_sha == $git_sha and
+                .deployment_run_id == $run_id and
+                .deployment_run_attempt == $run_attempt and
+                (.candidate_run_id | type == "number" and . >= 1 and . == floor) and
+                (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$")) and
+                (.version_code | type == "number" and . >= 1 and . == floor) and
+                (.database_schema_version | type == "number" and . >= 1 and . == floor) and
+                (.manifest_sha256 | type == "string" and test("^[0-9a-f]{64}$") and test("[1-9a-f]")) and
+                (.portal_image_digest | test("^sha256:[0-9a-f]{64}$")) and
+                (.server_image_digest | test("^sha256:[0-9a-f]{64}$")) and
+                (.portal_container_id | test("^[0-9a-f]{12,64}$")) and
+                (.server_container_id | test("^[0-9a-f]{12,64}$")) and
+                (.postgres_container_id | test("^[0-9a-f]{12,64}$")) and
+                ((.previous_receipt_sha256 == null) or
+                  (.previous_receipt_sha256 | test("^[0-9a-f]{64}$"))) and
+                .rollback_target_receipt_sha256 == null)
+            ' "$receipt" >/dev/null
+          embedded_sha256="$(jq -cj '.receipt' "$receipt" | sha256sum | cut -d ' ' -f 1)"
+          [[ "$embedded_sha256" == "$(jq -er '.receipt_sha256' "$receipt")" ]]
+          printf 'candidate_run_id=%s\n' "$(jq -er '.receipt.candidate_run_id' "$receipt")" >> "$GITHUB_OUTPUT"
+          printf 'candidate_sha=%s\n' "$(jq -er '.receipt.git_sha' "$receipt")" >> "$GITHUB_OUTPUT"
+          printf 'sha256=%s\n' "$(sha256sum "$receipt" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+          printf 'version=%s\n' "$(jq -er '.receipt.version' "$receipt")" >> "$GITHUB_OUTPUT"
+
+      - name: Select the matching immutable Candidate artifacts
+        id: candidate
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          CANDIDATE_RUN_ID: ${{ steps.receipt.outputs.candidate_run_id }}
+          CANDIDATE_SHA: ${{ steps.receipt.outputs.candidate_sha }}
+          VERSION: ${{ steps.receipt.outputs.version }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const runId = Number(process.env.CANDIDATE_RUN_ID);
+            const candidate = await github.rest.actions.getWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: runId,
+            });
+            const run = candidate.data;
+            const workflow = await github.rest.actions.getWorkflow({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: run.workflow_id,
+            });
+            if (
+              run.id !== runId ||
+              run.name !== "Release Candidate" ||
+              run.path !== ".github/workflows/release-candidate.yml" ||
+              run.repository?.full_name !== "1024XEngineer/XE3-ESL" ||
+              run.head_repository?.full_name !== "1024XEngineer/XE3-ESL" ||
+              run.event !== "push" ||
+              run.head_branch !== "main" ||
+              run.head_sha !== process.env.CANDIDATE_SHA ||
+              run.status !== "completed" ||
+              run.conclusion !== "success" ||
+              workflow.data.name !== "Release Candidate" ||
+              workflow.data.path !== ".github/workflows/release-candidate.yml" ||
+              workflow.data.state !== "active"
+            ) {
+              core.setFailed(`Run ${runId} is not the matching official main Candidate.`);
+              return;
+            }
+            const artifacts = await github.paginate(
+              github.rest.actions.listWorkflowRunArtifacts,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: runId,
+                per_page: 100,
+              },
+            );
+            const manifestName = `speakup-v${process.env.VERSION}-release-manifest`;
+            const androidName = `speakup-v${process.env.VERSION}-android`;
+            const selectOne = (name) => {
+              const selected = artifacts.filter(
+                (artifact) => artifact.name === name && !artifact.expired,
+              );
+              if (selected.length !== 1) {
+                core.setFailed(`Candidate run ${runId} has ${selected.length} ${name} artifacts.`);
+                return null;
+              }
+              return selected[0].name;
+            };
+            const manifestArtifact = selectOne(manifestName);
+            const androidArtifact = selectOne(androidName);
+            if (!manifestArtifact || !androidArtifact) return;
+            core.setOutput("manifest_artifact", manifestArtifact);
+            core.setOutput("android_artifact", androidArtifact);
+
+  deploy:
+    name: Approve and deploy the immutable Candidate
+    needs: authorize
+    permissions:
+      actions: read
+      contents: write
+    environment:
+      name: production
+      url: https://speak-up.top
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out the exact Candidate commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.authorize.outputs.candidate_sha }}
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.18.0"
+
+      - name: Download the Candidate release manifest
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: ${{ needs.authorize.outputs.manifest_artifact }}
+          path: ${{ runner.temp }}/candidate-manifest
+          run-id: ${{ needs.authorize.outputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Download the already signed Android artifacts
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: ${{ needs.authorize.outputs.android_artifact }}
+          path: ${{ runner.temp }}/candidate-android
+          run-id: ${{ needs.authorize.outputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Download the approved Staging receipt
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: staging-deployment-${{ needs.authorize.outputs.staging_run_id }}-${{ needs.authorize.outputs.staging_run_attempt }}
+          path: ${{ runner.temp }}/staging-receipt
+          run-id: ${{ needs.authorize.outputs.staging_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Revalidate the bound Candidate artifacts
+        id: artifacts
+        env:
+          ANDROID_DIRECTORY: ${{ runner.temp }}/candidate-android
+          CANDIDATE_RUN_ID: ${{ needs.authorize.outputs.candidate_run_id }}
+          CANDIDATE_SHA: ${{ needs.authorize.outputs.candidate_sha }}
+          MANIFEST_DIRECTORY: ${{ runner.temp }}/candidate-manifest
+          STAGING_DIRECTORY: ${{ runner.temp }}/staging-receipt
+          STAGING_RECEIPT_SHA256: ${{ needs.authorize.outputs.staging_receipt_sha256 }}
+          STAGING_RUN_ATTEMPT: ${{ needs.authorize.outputs.staging_run_attempt }}
+          STAGING_RUN_ID: ${{ needs.authorize.outputs.staging_run_id }}
+          VERSION: ${{ needs.authorize.outputs.version }}
+        run: |
+          set -euo pipefail
+          manifest="$MANIFEST_DIRECTORY/release-manifest.json"
+          [[ ! -L "$manifest" && -s "$manifest" ]]
+          [[ "$(find "$MANIFEST_DIRECTORY" -mindepth 1 -maxdepth 1 | wc -l)" == 1 ]]
+          mapfile -d '' staging_files < <(
+            find "$STAGING_DIRECTORY" -mindepth 1 -maxdepth 1 -type f -print0
+          )
+          [[ "${#staging_files[@]}" == 1 ]]
+          staging_receipt="${staging_files[0]}"
+          [[ ! -L "$staging_receipt" && -s "$staging_receipt" ]]
+          [[ "$(sha256sum "$staging_receipt" | cut -d ' ' -f 1)" == "$STAGING_RECEIPT_SHA256" ]]
+
+          production_apk="speakup-v$VERSION-production-arm64.apk"
+          staging_apk="speakup-v$VERSION-staging-arm64.apk"
+          expected_android_files="$(printf '%s\n' \
+            SHA256SUMS \
+            apk-certificate-sha256.txt \
+            "$production_apk" \
+            "$staging_apk" | sort)"
+          actual_android_files="$(
+            find "$ANDROID_DIRECTORY" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort
+          )"
+          [[ "$actual_android_files" == "$expected_android_files" ]]
+          for file in SHA256SUMS apk-certificate-sha256.txt "$production_apk" "$staging_apk"; do
+            [[ ! -L "$ANDROID_DIRECTORY/$file" && -f "$ANDROID_DIRECTORY/$file" && -s "$ANDROID_DIRECTORY/$file" ]]
+          done
+          (cd "$ANDROID_DIRECTORY" && sha256sum --strict --check SHA256SUMS)
+
+          manifest_sha256="$(sha256sum "$manifest" | cut -d ' ' -f 1)"
+          jq -e \
+            --arg git_sha "$CANDIDATE_SHA" \
+            --arg manifest_sha256 "$manifest_sha256" \
+            --arg quality_run_url "https://github.com/1024XEngineer/XE3-ESL/actions/runs/$CANDIDATE_RUN_ID" \
+            --arg version "$VERSION" \
+            --argjson candidate_run_id "$CANDIDATE_RUN_ID" \
+            --argjson staging_run_id "$STAGING_RUN_ID" \
+            --argjson staging_run_attempt "$STAGING_RUN_ATTEMPT" \
+            --slurpfile manifest "$manifest" '
+              ($manifest | length == 1) and
+              ($manifest[0] | .git_sha == $git_sha and .version == $version and
+                .quality_run_url == $quality_run_url) and
+              .receipt.manifest_sha256 == $manifest_sha256 and
+              .receipt.git_sha == $git_sha and
+              .receipt.version == $manifest[0].version and
+              .receipt.version_code == $manifest[0].version_code and
+              .receipt.database_schema_version == $manifest[0].database_schema_version and
+              .receipt.portal_image_digest == $manifest[0].portal_image_digest and
+              .receipt.server_image_digest == $manifest[0].server_image_digest and
+              .receipt.candidate_run_id == $candidate_run_id and
+              .receipt.deployment_run_id == $staging_run_id and
+              .receipt.deployment_run_attempt == $staging_run_attempt
+            ' "$staging_receipt" >/dev/null
+          [[ "$(tr -d '[:space:]' < "$ANDROID_DIRECTORY/apk-certificate-sha256.txt")" == \
+            "$(jq -er '.apk_certificate_sha256' "$manifest")" ]]
+          [[ "$(sha256sum "$ANDROID_DIRECTORY/$staging_apk" | cut -d ' ' -f 1)" == \
+            "$(jq -er '.staging_apk_sha256' "$manifest")" ]]
+          [[ "$(sha256sum "$ANDROID_DIRECTORY/$production_apk" | cut -d ' ' -f 1)" == \
+            "$(jq -er '.production_apk_sha256' "$manifest")" ]]
+          [[ "$(stat -c '%s' "$ANDROID_DIRECTORY/$production_apk")" == \
+            "$(jq -er '.production_apk_size_bytes' "$manifest")" ]]
+          printf 'manifest=%s\n' "$manifest" >> "$GITHUB_OUTPUT"
+          printf 'manifest_sha256=%s\n' "$manifest_sha256" >> "$GITHUB_OUTPUT"
+          printf 'production_apk=%s\n' "$ANDROID_DIRECTORY/$production_apk" >> "$GITHUB_OUTPUT"
+          printf 'staging_receipt=%s\n' "$staging_receipt" >> "$GITHUB_OUTPUT"
+
+      - name: Validate and render the official release notes
+        id: notes
+        env:
+          VERSION: ${{ needs.authorize.outputs.version }}
+        run: |
+          set -euo pipefail
+          notes="portal/public/release-notes/android/v$VERSION.zh-CN.json"
+          index="portal/public/release-notes/android/index.zh-CN.json"
+          body="$RUNNER_TEMP/release-notes.md"
+          published_at="$(node tools/release-finalize/notes.mjs \
+            --version "$VERSION" \
+            --notes "$notes" \
+            --index "$index" \
+            --output "$body")"
+          [[ "$published_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
+          printf 'body=%s\n' "$body" >> "$GITHUB_OUTPUT"
+          printf 'file=%s\n' "$notes" >> "$GITHUB_OUTPUT"
+          printf 'published_at=%s\n' "$published_at" >> "$GITHUB_OUTPUT"
+
+      - name: Build the immutable Android download payload
+        id: bundle
+        env:
+          MANIFEST_FILE: ${{ steps.artifacts.outputs.manifest }}
+          PRODUCTION_APK: ${{ steps.artifacts.outputs.production_apk }}
+          PUBLISHED_AT: ${{ steps.notes.outputs.published_at }}
+          STAGING_RECEIPT: ${{ steps.artifacts.outputs.staging_receipt }}
+        run: |
+          set -euo pipefail
+          payload="$RUNNER_TEMP/production-payload"
+          install -d -m 700 "$payload"
+          node tools/android-download/bundle.mjs \
+            --manifest "$MANIFEST_FILE" \
+            --production-apk "$PRODUCTION_APK" \
+            --published-at "$PUBLISHED_AT" \
+            --output "$payload/bundle"
+          install -m 600 "$MANIFEST_FILE" "$payload/release-manifest.json"
+          install -m 600 \
+            "$STAGING_RECEIPT" \
+            "$payload/staging-receipt.json"
+          printf 'directory=%s\n' "$payload" >> "$GITHUB_OUTPUT"
+          printf 'manifest_sha256=%s\n' \
+            "$(sha256sum "$payload/bundle/bundle-manifest.json" | cut -d ' ' -f 1)" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Install the restricted Production SSH identity
+        env:
+          DEPLOY_HOST: ${{ vars.PRODUCTION_DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ vars.PRODUCTION_DEPLOY_PORT }}
+          DEPLOY_USER: ${{ vars.PRODUCTION_DEPLOY_USER }}
+          KNOWN_HOSTS: ${{ secrets.PRODUCTION_DEPLOY_KNOWN_HOSTS }}
+          SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_DEPLOY_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          [[ "$DEPLOY_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$DEPLOY_PORT" =~ ^[0-9]+$ ]] && (( DEPLOY_PORT >= 1 && DEPLOY_PORT <= 65535 ))
+          [[ "$DEPLOY_USER" == "speakup-production-ci" ]]
+          [[ -n "$KNOWN_HOSTS" && -n "$SSH_PRIVATE_KEY" ]]
+          install -d -m 700 "$RUNNER_TEMP/production-ssh"
+          printf '%s\n' "$KNOWN_HOSTS" > "$RUNNER_TEMP/production-ssh/known_hosts"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$RUNNER_TEMP/production-ssh/id_ed25519"
+          chmod 600 \
+            "$RUNNER_TEMP/production-ssh/known_hosts" \
+            "$RUNNER_TEMP/production-ssh/id_ed25519"
+
+      - name: Deploy through the restricted Production broker
+        id: deploy
+        env:
+          BUNDLE_MANIFEST_SHA256: ${{ steps.bundle.outputs.manifest_sha256 }}
+          CANDIDATE_RUN_ID: ${{ needs.authorize.outputs.candidate_run_id }}
+          CANDIDATE_SHA: ${{ needs.authorize.outputs.candidate_sha }}
+          DEPLOY_HOST: ${{ vars.PRODUCTION_DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ vars.PRODUCTION_DEPLOY_PORT }}
+          DEPLOY_USER: ${{ vars.PRODUCTION_DEPLOY_USER }}
+          MANIFEST_SHA256: ${{ steps.artifacts.outputs.manifest_sha256 }}
+          PAYLOAD_DIRECTORY: ${{ steps.bundle.outputs.directory }}
+          STAGING_RECEIPT_SHA256: ${{ needs.authorize.outputs.staging_receipt_sha256 }}
+          STAGING_RUN_ATTEMPT: ${{ needs.authorize.outputs.staging_run_attempt }}
+          STAGING_RUN_ID: ${{ needs.authorize.outputs.staging_run_id }}
+          VERSION: ${{ needs.authorize.outputs.version }}
+        run: |
+          set -euo pipefail
+          ssh_options=(
+            -i "$RUNNER_TEMP/production-ssh/id_ed25519"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=$RUNNER_TEMP/production-ssh/known_hosts"
+            -o ConnectTimeout=15
+            -p "$DEPLOY_PORT"
+          )
+          inspect_directory="$RUNNER_TEMP/production-inspect"
+          inspect_response="$RUNNER_TEMP/production-inspect-response.json"
+          install -d -m 700 "$inspect_directory"
+          jq -cn '{protocol_version:1,action:"inspect"}' > "$inspect_directory/request.json"
+          tar --format=ustar --no-recursion -C "$inspect_directory" \
+            -cf - request.json | \
+            ssh "${ssh_options[@]}" "$DEPLOY_USER@$DEPLOY_HOST" > "$inspect_response"
+          jq -e '
+            type == "object" and
+            keys == ["action", "current_receipt_sha256", "ok", "protocol_version", "receipt"] and
+            .protocol_version == 1 and .ok == true and .action == "inspect" and
+            (.current_receipt_sha256 | type == "string" and test("^[0-9a-f]{64}$") and test("[1-9a-f]")) and
+            .receipt.environment == "production" and
+            .receipt.repository == "1024XEngineer/XE3-ESL" and
+            (.receipt.operation == "baseline" or .receipt.operation == "deploy") and
+            (.receipt.production_engine_receipt_sha256 | test("^[0-9a-f]{64}$"))
+          ' "$inspect_response" >/dev/null
+          expected_current="$(jq -er '.current_receipt_sha256' "$inspect_response")"
+          expected_engine="$(jq -er '.receipt.production_engine_receipt_sha256' "$inspect_response")"
+
+          jq -cn \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --argjson candidate_run_id "$CANDIDATE_RUN_ID" \
+            --argjson staging_run_id "$STAGING_RUN_ID" \
+            --argjson staging_run_attempt "$STAGING_RUN_ATTEMPT" \
+            --argjson deployment_run_id "$GITHUB_RUN_ID" \
+            --argjson deployment_run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg expected_current_receipt_sha256 "$expected_current" \
+            --arg manifest_sha256 "$MANIFEST_SHA256" \
+            --arg staging_receipt_sha256 "$STAGING_RECEIPT_SHA256" \
+            --arg bundle_manifest_sha256 "$BUNDLE_MANIFEST_SHA256" \
+            '{
+              protocol_version: 1,
+              action: "deploy",
+              repository: $repository,
+              candidate_run_id: $candidate_run_id,
+              staging_run_id: $staging_run_id,
+              staging_run_attempt: $staging_run_attempt,
+              deployment_run_id: $deployment_run_id,
+              deployment_run_attempt: $deployment_run_attempt,
+              expected_current_receipt_sha256: $expected_current_receipt_sha256,
+              manifest_sha256: $manifest_sha256,
+              staging_receipt_sha256: $staging_receipt_sha256,
+              bundle_manifest_sha256: $bundle_manifest_sha256
+            }' > "$PAYLOAD_DIRECTORY/request.json"
+
+          apk="speakup-v$VERSION-production-arm64.apk"
+          payload_files=(
+            request.json
+            release-manifest.json
+            staging-receipt.json
+            bundle/bundle-manifest.json
+            "bundle/downloads/android/v$VERSION/release.json"
+            "bundle/downloads/android/v$VERSION/$apk"
+            "bundle/downloads/android/v$VERSION/$apk.sha256"
+          )
+          deploy_response="$RUNNER_TEMP/production-deploy-response.json"
+          tar --format=ustar --no-recursion -C "$PAYLOAD_DIRECTORY" \
+            -cf - "${payload_files[@]}" | \
+            ssh "${ssh_options[@]}" "$DEPLOY_USER@$DEPLOY_HOST" > "$deploy_response"
+          jq -e \
+            --arg bundle_manifest_sha256 "$BUNDLE_MANIFEST_SHA256" \
+            --arg expected_current "$expected_current" \
+            --arg expected_engine "$expected_engine" \
+            --arg git_sha "$CANDIDATE_SHA" \
+            --arg manifest_sha256 "$MANIFEST_SHA256" \
+            --arg staging_receipt_sha256 "$STAGING_RECEIPT_SHA256" \
+            --arg version "$VERSION" \
+            --argjson candidate_run_id "$CANDIDATE_RUN_ID" \
+            --argjson staging_run_id "$STAGING_RUN_ID" \
+            --argjson staging_run_attempt "$STAGING_RUN_ATTEMPT" \
+            --argjson deployment_run_id "$GITHUB_RUN_ID" \
+            --argjson deployment_run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --slurpfile manifest "$PAYLOAD_DIRECTORY/release-manifest.json" '
+              type == "object" and
+              keys == ["action", "current_receipt_sha256", "ok", "protocol_version", "receipt"] and
+              .protocol_version == 1 and .ok == true and .action == "deploy" and
+              (.current_receipt_sha256 | type == "string" and test("^[0-9a-f]{64}$") and test("[1-9a-f]")) and
+              .receipt.receipt_version == 1 and
+              .receipt.environment == "production" and .receipt.operation == "deploy" and
+              .receipt.repository == "1024XEngineer/XE3-ESL" and
+              .receipt.manifest_sha256 == $manifest_sha256 and
+              .receipt.version == $version and .receipt.version_code == $manifest[0].version_code and
+              .receipt.git_sha == $git_sha and
+              .receipt.database_schema_version == $manifest[0].database_schema_version and
+              .receipt.portal_image_digest == $manifest[0].portal_image_digest and
+              .receipt.server_image_digest == $manifest[0].server_image_digest and
+              .receipt.production_apk_file == $manifest[0].production_apk_file and
+              .receipt.production_apk_sha256 == $manifest[0].production_apk_sha256 and
+              .receipt.apk_certificate_sha256 == $manifest[0].apk_certificate_sha256 and
+              .receipt.android_bundle_manifest_sha256 == $bundle_manifest_sha256 and
+              .receipt.candidate_run_id == $candidate_run_id and
+              .receipt.staging_run_id == $staging_run_id and
+              .receipt.staging_run_attempt == $staging_run_attempt and
+              .receipt.staging_receipt_sha256 == $staging_receipt_sha256 and
+              .receipt.deployment_run_id == $deployment_run_id and
+              (.receipt.deployment_run_attempt | type == "number" and . >= 1 and
+                . <= $deployment_run_attempt and . == floor) and
+              ((.current_receipt_sha256 == $expected_current and
+                  .receipt.production_engine_receipt_sha256 == $expected_engine) or
+                (.current_receipt_sha256 != $expected_current and
+                  .receipt.deployment_run_attempt == $deployment_run_attempt and
+                  .receipt.previous_receipt_sha256 == $expected_current and
+                  .receipt.production_engine_previous_receipt_sha256 == $expected_engine)) and
+              (.receipt.production_engine_receipt_sha256 | test("^[0-9a-f]{64}$")) and
+              (.receipt.portal_container_id | test("^[0-9a-f]{12,64}$")) and
+              (.receipt.server_container_id | test("^[0-9a-f]{12,64}$")) and
+              (.receipt.postgres_container_id | test("^[0-9a-f]{12,64}$")) and
+              (.receipt.postgres_backup_id | type == "string" and length > 0) and
+              (.receipt.portal_backup_id | type == "string" and length > 0)
+            ' "$deploy_response" >/dev/null
+          embedded_sha256="$(jq -cj '.receipt' "$deploy_response" | sha256sum | cut -d ' ' -f 1)"
+          [[ "$embedded_sha256" == "$(jq -er '.current_receipt_sha256' "$deploy_response")" ]]
+          printf 'response=%s\n' "$deploy_response" >> "$GITHUB_OUTPUT"
+          printf 'receipt_sha256=%s\n' "$embedded_sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Verify the public Production edge
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --max-time 20 \
+            https://speak-up.top/ >/dev/null
+          curl --fail --silent --show-error --max-time 20 \
+            https://api.speak-up.top/health >/dev/null
+
+      - name: Upload the Production deployment receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: production-deployment-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.deploy.outputs.response }}
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Prepare the complete GitHub Release draft
+        id: release
+        env:
+          CANDIDATE_SHA: ${{ needs.authorize.outputs.candidate_sha }}
+          DEPLOY_RESPONSE: ${{ steps.deploy.outputs.response }}
+          GH_TOKEN: ${{ github.token }}
+          MANIFEST_FILE: ${{ steps.artifacts.outputs.manifest }}
+          NOTES_BODY: ${{ steps.notes.outputs.body }}
+          NOTES_FILE: ${{ steps.notes.outputs.file }}
+          PAYLOAD_DIRECTORY: ${{ steps.bundle.outputs.directory }}
+          PRODUCTION_APK: ${{ steps.artifacts.outputs.production_apk }}
+          VERSION: ${{ needs.authorize.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          title="SpeakUp Android v$VERSION"
+          assets="$RUNNER_TEMP/release-assets"
+          install -d -m 700 "$assets"
+          apk="speakup-v$VERSION-production-arm64.apk"
+          install -m 600 "$PRODUCTION_APK" "$assets/$apk"
+          install -m 600 \
+            "$PAYLOAD_DIRECTORY/bundle/downloads/android/v$VERSION/$apk.sha256" \
+            "$assets/$apk.sha256"
+          install -m 600 "$MANIFEST_FILE" "$assets/release-manifest.json"
+          install -m 600 "$DEPLOY_RESPONSE" "$assets/production-deployment-receipt.json"
+          install -m 600 "$NOTES_FILE" "$assets/release-notes.zh-CN.json"
+          install -m 600 \
+            "$PAYLOAD_DIRECTORY/bundle/downloads/android/v$VERSION/release.json" \
+            "$assets/android-release.json"
+
+          releases="$(gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/releases?per_page=100")"
+          matches="$(jq -c --arg tag "$tag" '[.[][] | select(.tag_name == $tag)]' <<<"$releases")"
+          [[ "$(jq 'length' <<<"$matches")" -le 1 ]]
+          if [[ "$(jq 'length' <<<"$matches")" == 0 ]]; then
+            if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" >/dev/null 2>&1; then
+              echo "Stable tag already exists without the expected Release." >&2
+              exit 1
+            fi
+            body="$(<"$NOTES_BODY")"
+            release="$(jq -cn \
+              --arg tag "$tag" \
+              --arg target "$CANDIDATE_SHA" \
+              --arg name "$title" \
+              --arg body "$body" \
+              '{tag_name:$tag,target_commitish:$target,name:$name,body:$body,draft:true,prerelease:false,make_latest:"false"}' | \
+              gh api --method POST "repos/$GITHUB_REPOSITORY/releases" --input -)"
+          else
+            release="$(jq -c '.[0]' <<<"$matches")"
+          fi
+
+          body="$(<"$NOTES_BODY")"
+          jq -e \
+            --arg tag "$tag" \
+            --arg target "$CANDIDATE_SHA" \
+            --arg name "$title" \
+            --arg body "$body" '
+              .tag_name == $tag and .target_commitish == $target and
+              .name == $name and .body == $body and .prerelease == false and
+              ((.draft == true and .immutable == false) or
+                (.draft == false and .immutable == true)) and
+              (.id | type == "number" and . >= 1)
+            ' <<<"$release" >/dev/null
+          release_id="$(jq -er '.id' <<<"$release")"
+          already_published="$(jq -er '(.draft | not)' <<<"$release")"
+          upload_url="$(jq -er '.upload_url | sub("\\{\\?name,label\\}$"; "")' <<<"$release")"
+          [[ "$upload_url" == \
+            "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$release_id/assets" ]]
+
+          expected_assets="$(printf '%s\n' \
+            android-release.json \
+            "$apk" \
+            "$apk.sha256" \
+            production-deployment-receipt.json \
+            release-manifest.json \
+            release-notes.zh-CN.json | sort)"
+          if [[ "$already_published" == false ]]; then
+            while read -r asset_id; do
+              [[ -z "$asset_id" ]] || gh api --method DELETE \
+                "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
+            done < <(gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" \
+              --jq '.[].id')
+            for file in "$assets"/*; do
+              name="$(basename "$file")"
+              curl \
+                --fail \
+                --silent \
+                --show-error \
+                --request POST \
+                --header "Accept: application/vnd.github+json" \
+                --header "Authorization: Bearer $GH_TOKEN" \
+                --header "Content-Type: application/octet-stream" \
+                --header "X-GitHub-Api-Version: 2022-11-28" \
+                --data-binary "@$file" \
+                "$upload_url?name=$name" >/dev/null
+            done
+          fi
+          actual_assets="$(gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" \
+            --jq '.[].name' | sort)"
+          [[ "$actual_assets" == "$expected_assets" ]]
+          asset_metadata="$RUNNER_TEMP/release-asset-metadata.json"
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" \
+            > "$asset_metadata"
+          for file in "$assets"/*; do
+            name="$(basename "$file")"
+            size="$(stat -c '%s' "$file")"
+            digest="sha256:$(sha256sum "$file" | cut -d ' ' -f 1)"
+            jq -e \
+              --arg name "$name" \
+              --arg digest "$digest" \
+              --argjson size "$size" '
+                [.[][] | select(.name == $name and .size == $size and .digest == $digest)] |
+                length == 1
+              ' "$asset_metadata" >/dev/null
+          done
+          printf 'already_published=%s\n' "$already_published" >> "$GITHUB_OUTPUT"
+          printf 'assets=%s\n' "$assets" >> "$GITHUB_OUTPUT"
+          printf 'id=%s\n' "$release_id" >> "$GITHUB_OUTPUT"
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Activate the approved APK through the restricted broker
+        env:
+          BUNDLE_MANIFEST_SHA256: ${{ steps.bundle.outputs.manifest_sha256 }}
+          DEPLOY_HOST: ${{ vars.PRODUCTION_DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ vars.PRODUCTION_DEPLOY_PORT }}
+          DEPLOY_RESPONSE: ${{ steps.deploy.outputs.response }}
+          DEPLOY_USER: ${{ vars.PRODUCTION_DEPLOY_USER }}
+          MANIFEST_SHA256: ${{ steps.artifacts.outputs.manifest_sha256 }}
+          VERSION: ${{ needs.authorize.outputs.version }}
+        run: |
+          set -euo pipefail
+          ssh_options=(
+            -i "$RUNNER_TEMP/production-ssh/id_ed25519"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=$RUNNER_TEMP/production-ssh/known_hosts"
+            -o ConnectTimeout=15
+            -p "$DEPLOY_PORT"
+          )
+          request_directory="$RUNNER_TEMP/production-release"
+          response="$RUNNER_TEMP/production-release-response.json"
+          install -d -m 700 "$request_directory"
+          current_receipt="$(jq -er '.current_receipt_sha256' "$DEPLOY_RESPONSE")"
+          jq -cn \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --argjson deployment_run_id "$GITHUB_RUN_ID" \
+            --argjson deployment_run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg expected_current_receipt_sha256 "$current_receipt" \
+            --arg manifest_sha256 "$MANIFEST_SHA256" \
+            --arg bundle_manifest_sha256 "$BUNDLE_MANIFEST_SHA256" \
+            --arg version "$VERSION" \
+            '{
+              protocol_version: 1,
+              action: "release",
+              repository: $repository,
+              deployment_run_id: $deployment_run_id,
+              deployment_run_attempt: $deployment_run_attempt,
+              expected_current_receipt_sha256: $expected_current_receipt_sha256,
+              manifest_sha256: $manifest_sha256,
+              bundle_manifest_sha256: $bundle_manifest_sha256,
+              version: $version
+            }' > "$request_directory/request.json"
+          tar --format=ustar --no-recursion -C "$request_directory" \
+            -cf - request.json | \
+            ssh "${ssh_options[@]}" "$DEPLOY_USER@$DEPLOY_HOST" > "$response"
+          jq -e \
+            --arg current_receipt "$current_receipt" \
+            --arg manifest_sha256 "$MANIFEST_SHA256" \
+            --arg version "$VERSION" '
+              type == "object" and
+              keys == ["action", "current_receipt_sha256", "ok", "protocol_version", "receipt"] and
+              .protocol_version == 1 and .ok == true and .action == "release" and
+              .current_receipt_sha256 == $current_receipt and
+              .receipt.operation == "deploy" and
+              .receipt.manifest_sha256 == $manifest_sha256 and
+              .receipt.version == $version
+            ' "$response" >/dev/null
+
+      - name: Verify the public APK and changelog contract
+        env:
+          NOTES_FILE: ${{ steps.notes.outputs.file }}
+          PAYLOAD_DIRECTORY: ${{ steps.bundle.outputs.directory }}
+          VERSION: ${{ needs.authorize.outputs.version }}
+        run: |
+          set -euo pipefail
+          apk="speakup-v$VERSION-production-arm64.apk"
+          expected="$PAYLOAD_DIRECTORY/bundle/downloads/android/v$VERSION/release.json"
+          actual="$RUNNER_TEMP/public-android-release.json"
+          downloaded="$RUNNER_TEMP/$apk"
+          curl --fail --silent --show-error --max-time 20 \
+            https://speak-up.top/downloads/android/release.json -o "$actual"
+          cmp --silent "$expected" "$actual"
+          curl --fail --silent --show-error --location --max-time 120 \
+            "https://speak-up.top/downloads/android/v$VERSION/$apk" -o "$downloaded"
+          [[ "$(sha256sum "$downloaded" | cut -d ' ' -f 1)" == \
+            "$(jq -er '.apk_sha256' "$actual")" ]]
+          curl --fail --silent --show-error --max-time 20 \
+            "https://speak-up.top/release-notes/android/v$VERSION.zh-CN.json" \
+            -o "$RUNNER_TEMP/public-release-notes.json"
+          cmp --silent "$NOTES_FILE" "$RUNNER_TEMP/public-release-notes.json"
+          curl --fail --silent --show-error --max-time 20 \
+            https://speak-up.top/changelog >/dev/null
+
+      - name: Publish and verify the immutable GitHub Release
+        env:
+          ALREADY_PUBLISHED: ${{ steps.release.outputs.already_published }}
+          CANDIDATE_SHA: ${{ needs.authorize.outputs.candidate_sha }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.release.outputs.id }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ "$ALREADY_PUBLISHED" == false ]]; then
+            jq -cn '{draft:false,make_latest:"true"}' | \
+              gh api --method PATCH \
+                "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --input - >/dev/null
+          fi
+          for attempt in {1..10}; do
+            release="$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID")"
+            if jq -e '.draft == false and .immutable == true' <<<"$release" >/dev/null; then
+              break
+            fi
+            if [[ "$attempt" == 10 ]]; then
+              echo "GitHub Release did not become immutable." >&2
+              exit 1
+            fi
+            sleep 3
+          done
+          jq -e --arg tag "$TAG" '
+            .tag_name == $tag and .draft == false and .prerelease == false and
+            .immutable == true
+          ' <<<"$release" >/dev/null
+          tag_ref="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG")"
+          jq -e --arg sha "$CANDIDATE_SHA" \
+            '.ref == ("refs/tags/" + env.TAG) and .object.type == "commit" and .object.sha == $sha' \
+            <<<"$tag_ref" >/dev/null
+
+      - name: Record the Production deployment
+        env:
+          CANDIDATE_SHA: ${{ needs.authorize.outputs.candidate_sha }}
+          RECEIPT_SHA256: ${{ steps.deploy.outputs.receipt_sha256 }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          VERSION: ${{ needs.authorize.outputs.version }}
+        run: |
+          {
+            printf '## Production deployment\n\n'
+            printf -- '- Version: `%s`\n' "$VERSION"
+            printf -- '- Commit: `%s`\n' "$CANDIDATE_SHA"
+            printf -- '- Receipt: `%s`\n' "$RECEIPT_SHA256"
+            printf -- '- Portal: https://speak-up.top\n'
+            printf -- '- API: https://api.speak-up.top/health\n'
+            printf -- '- Release: https://github.com/%s/releases/tag/%s\n' \
+              "$GITHUB_REPOSITORY" "$RELEASE_TAG"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove the Production SSH identity
+        if: always()
+        run: |
+          shred -u "$RUNNER_TEMP/production-ssh/id_ed25519" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/production-ssh/known_hosts"

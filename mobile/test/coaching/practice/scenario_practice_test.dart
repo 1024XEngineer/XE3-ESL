@@ -55,6 +55,65 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('requests every scenario question from the playback owner once', (
+    tester,
+  ) async {
+    final controller = await _scenarioController();
+    addTearDown(controller.dispose);
+    final playedQuestionIds = <String>[];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ScenarioPracticePage(
+          practiceController: controller,
+          onPlayQuestion: () async {
+            playedQuestionIds.add(controller.currentQuestion!.id);
+            return true;
+          },
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final firstQuestionId = controller.currentQuestion!.id;
+    expect(playedQuestionIds, <String>[firstQuestionId]);
+
+    await tester.pump();
+    expect(playedQuestionIds, <String>[firstQuestionId]);
+
+    await controller.submitPracticeText('I have a reservation under Chen.');
+    await tester.pump();
+    await tester.pump();
+
+    final secondQuestionId = controller.currentQuestion!.id;
+    expect(secondQuestionId, isNot(firstQuestionId));
+    expect(playedQuestionIds, <String>[firstQuestionId, secondQuestionId]);
+  });
+
+  testWidgets('offers question replay when owned playback fails', (
+    tester,
+  ) async {
+    final controller = await _scenarioController();
+    addTearDown(controller.dispose);
+    var playbackCalls = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ScenarioPracticePage(
+          practiceController: controller,
+          onPlayQuestion: () async {
+            playbackCalls++;
+            return false;
+          },
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(playbackCalls, 1);
+    expect(find.text('重试朗读'), findsOneWidget);
+  });
+
   testWidgets('hides round progress and lets open scenarios finish manually', (
     tester,
   ) async {

@@ -19,6 +19,58 @@ import 'avatar/avatar_test_fakes.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  testWidgets('waits for an explicit question playback request', (
+    tester,
+  ) async {
+    final media = _RealtimeQuestionMediaClient();
+    final nativePlayer = _RecordingPCMStreamPlayer();
+    final practiceController = PracticeController(
+      client: FakePracticeClient(),
+      mediaClient: media,
+      audioPlayer: _SilentPracticeAudioPlayer(),
+      questionSpeechPlayer: nativePlayer,
+      automaticQuestionSpeechEnabled: false,
+    );
+    addTearDown(practiceController.dispose);
+    await activateTestPractice(
+      controller: practiceController,
+      scene: testScenes[2],
+    );
+    final renderer = FakeAvatarRenderer();
+    final avatarController = _avatarController(renderer);
+    PracticeAvatarSessionView? sessionView;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PracticeAvatarSession(
+          practiceController: practiceController,
+          avatarControllerFactory: () => avatarController,
+          surfaceKey: const Key('explicit-playback-surface'),
+          builder: (context, avatar) {
+            sessionView = avatar;
+            return avatar.surfaceBuilder?.call(context) ??
+                const SizedBox.expand();
+          },
+        ),
+      ),
+    );
+    await _pumpUntil(tester, () => sessionView?.surfaceVisible ?? false);
+
+    expect(renderer.sends, isEmpty);
+    expect(nativePlayer.events, isEmpty);
+
+    final completed = sessionView!.onPlayQuestion!();
+    final duplicate = sessionView!.onPlayQuestion!();
+    expect(identical(completed, duplicate), isTrue);
+    media.release();
+    await tester.pumpAndSettle();
+
+    expect(await completed, isTrue);
+    expect(await duplicate, isTrue);
+    expect(renderer.sends.map((send) => send.end), <bool>[false, true]);
+    expect(nativePlayer.events, isEmpty);
+  });
+
   testWidgets('routes realtime question PCM exclusively through the avatar', (
     tester,
   ) async {
@@ -62,8 +114,10 @@ void main() {
       ),
     );
     await tester.pump();
+    final firstPlayback = sessionView!.onPlayQuestion!();
     media.release();
     await tester.pumpAndSettle();
+    expect(await firstPlayback, isTrue);
 
     expect(renderer.sends.map((send) => send.bytes), <Uint8List>[
       Uint8List.fromList(<int>[1, 2, 3, 4]),
@@ -79,7 +133,9 @@ void main() {
       isTrue,
     );
     expect(practiceController.questionId, isNot(firstQuestionId));
+    final secondPlayback = sessionView!.onPlayQuestion!();
     await tester.pumpAndSettle();
+    expect(await secondPlayback, isTrue);
     expect(
       renderer.sends.length,
       4,
@@ -162,20 +218,26 @@ void main() {
       fallbackStop: () async {},
       delay: (_) async {},
     );
+    PracticeAvatarSessionView? sessionView;
     await tester.pumpWidget(
       MaterialApp(
         home: PracticeAvatarSession(
           practiceController: practiceController,
           avatarControllerFactory: () => avatarController,
           surfaceKey: const Key('ielts-avatar-surface'),
-          builder: (context, avatar) =>
-              avatar.surfaceBuilder?.call(context) ?? const SizedBox.expand(),
+          builder: (context, avatar) {
+            sessionView = avatar;
+            return avatar.surfaceBuilder?.call(context) ??
+                const SizedBox.expand();
+          },
         ),
       ),
     );
     await tester.pump();
+    final playback = sessionView!.onPlayQuestion!();
     media.release();
     await tester.pumpAndSettle();
+    expect(await playback, isTrue);
 
     expect(renderer.sends.map((send) => send.end), <bool>[false, true]);
     expect(nativePlayer.events, isEmpty);
@@ -207,18 +269,23 @@ void main() {
         fallbackStop: () async {},
         delay: (_) async {},
       );
+      PracticeAvatarSessionView? sessionView;
       await tester.pumpWidget(
         MaterialApp(
           home: PracticeAvatarSession(
             practiceController: practiceController,
             avatarControllerFactory: () => avatarController,
             surfaceKey: const Key('disconnect-before-pcm-surface'),
-            builder: (context, avatar) =>
-                avatar.surfaceBuilder?.call(context) ?? const SizedBox.expand(),
+            builder: (context, avatar) {
+              sessionView = avatar;
+              return avatar.surfaceBuilder?.call(context) ??
+                  const SizedBox.expand();
+            },
           ),
         ),
       );
       await tester.pump();
+      final playback = sessionView!.onPlayQuestion!();
       media.release();
       await _pumpUntil(tester, () => renderer.interruptCount == 1);
 
@@ -230,6 +297,7 @@ void main() {
       );
       renderer.interruptGate!.complete();
       await tester.pumpAndSettle();
+      expect(await playback, isTrue);
 
       expect(renderer.sends, isEmpty);
       expect(nativePlayer.events, <String>[
@@ -346,7 +414,7 @@ void main() {
         ),
       ),
     );
-    await _pumpUntil(tester, () => firstRenderer.sends.length == 2);
+    await _pumpUntil(tester, () => sessionView?.surfaceVisible ?? false);
     await tester.pump();
     expect(sessionView?.surfaceVisible, isTrue);
     expect(find.byKey(const Key('static-fallback')), findsNothing);
@@ -429,7 +497,7 @@ void main() {
         ),
       ),
     );
-    await _pumpUntil(tester, () => firstRenderer.sends.length == 2);
+    await _pumpUntil(tester, () => sessionView?.surfaceVisible ?? false);
     await tester.pump();
 
     firstRenderer.emit(
@@ -495,7 +563,7 @@ void main() {
         ),
       ),
     );
-    await _pumpUntil(tester, () => firstRenderer.sends.length == 2);
+    await _pumpUntil(tester, () => sessionView?.surfaceVisible ?? false);
     await tester.pump();
 
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
@@ -552,6 +620,7 @@ void main() {
     );
     await _pumpUntil(tester, () => renderers[0].preparedGrant != null);
     await tester.pump();
+    final playback = sessionView!.onPlayQuestion!();
 
     renderers[0].emit(
       const AvatarRendererState(
@@ -604,6 +673,7 @@ void main() {
       'append:4',
       'finish',
     ]);
+    expect(await playback, isTrue);
 
     await tester.pump(const Duration(seconds: 2));
     expect(factoryCalls, 3);
@@ -784,7 +854,7 @@ void main() {
         ),
       ),
     );
-    await _pumpUntil(tester, () => firstRenderer.sends.length == 2);
+    await _pumpUntil(tester, () => sessionView?.surfaceVisible ?? false);
     await tester.pump();
     expect(sessionView?.surfaceVisible, isTrue);
     expect(find.byKey(const Key('static-fallback')), findsNothing);

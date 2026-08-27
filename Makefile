@@ -345,6 +345,10 @@ check-observability:
 	./deploy/observability/test-nginx.sh
 
 check-production-deploy:
+	node --test tools/production-deploy/*.test.mjs
+	node --test tools/release-finalize/*.test.mjs
+	cd server && go test -count=1 ./cmd/production-broker
+	./deploy/production/test-host-access.sh
 	./deploy/production/test.sh
 
 check-production-nginx:

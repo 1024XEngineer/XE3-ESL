@@ -1,6 +1,6 @@
 <div align="center">
 
-<br /><br /><br /><br />
+<br />
 
 <p>
   <img
@@ -52,7 +52,7 @@
 
 <a id="showcase"></a>
 
-## <img src="https://img.shields.io/badge/SHOWCASE-526A82?style=flat-square" alt="" height="18" /> 产品体验
+## 产品体验
 
 <p align="center">
   <img src="portal/public/assets/portal-shots/readme-practice-flow.png" alt="SpeakUp 开练流程：Agent 目标理解与 IELTS 语音练习" width="49%" />
@@ -63,7 +63,7 @@
   <sub>理解目标 → 场景实战 → 多维复盘 → 下一步训练建议</sub>
 </p>
 
-## <img src="https://img.shields.io/badge/PRODUCT%20IDEA-C96A58?style=flat-square" alt="" height="18" /> 项目在解决什么问题
+## 项目在解决什么问题
 
 许多英语学习工具已经能够自由对话、模拟场景、实时纠错和生成报告，却仍把训练路径留给用户：自己判断该练什么、怎样准备、何时进入实战，以及看完报告后如何继续。用户不应该先成为自己的英语老师，才能开始练习。
 
@@ -76,7 +76,7 @@ SpeakUp 将教学准备与真实场景关系分开，形成一个完整的训练
 
 <a id="features"></a>
 
-## <img src="https://img.shields.io/badge/FEATURES-C96A58?style=flat-square" alt="" height="18" /> 核心能力
+## 核心能力
 
 | 能力 | 说明 |
 | --- | --- |
@@ -91,7 +91,7 @@ SpeakUp 将教学准备与真实场景关系分开，形成一个完整的训练
 
 <a id="getting-started"></a>
 
-## <img src="https://img.shields.io/badge/GET%20STARTED-526A82?style=flat-square" alt="" height="18" /> 快速开始
+## 快速开始
 
 ### 环境要求
 
@@ -143,7 +143,7 @@ ANDROID_DEVICE_ID=<设备 ID> make dev-android
 
 <a id="architecture"></a>
 
-## <img src="https://img.shields.io/badge/ARCHITECTURE-526A82?style=flat-square" alt="" height="18" /> 技术架构
+## 技术架构
 
 <p align="center">
   <img src="portal/public/assets/portal-shots/readme-architecture.png" alt="SpeakUp 技术架构：Flutter 客户端经传输契约连接 Go 后端，领域端口由 PostgreSQL 与 AI 服务适配器实现" width="100%" />
@@ -160,7 +160,7 @@ SpeakUp 采用按业务能力拆分的模块化单体。业务状态由对应领
 - [当前代码模块与协作主链](https://github.com/1024XEngineer/XE3-ESL/issues/456)
 - [代码归类、状态所有权与失败边界](https://github.com/1024XEngineer/XE3-ESL/issues/461)
 
-## <img src="https://img.shields.io/badge/REPOSITORY-526A82?style=flat-square" alt="" height="18" /> 仓库结构
+## 仓库结构
 
 ```text
 XE3-ESL/
@@ -177,7 +177,7 @@ XE3-ESL/
 
 <a id="deployment"></a>
 
-## <img src="https://img.shields.io/badge/DEPLOYMENT-526A82?style=flat-square" alt="" height="18" /> 部署与交付
+## 部署与交付
 
 SpeakUp 使用同一份 `release-manifest.json` 贯穿候选版本、Staging、Production 和 Android 分发，以镜像摘要、数据库版本、健康检查与不可变回执固定每次交付结果。
 
@@ -201,7 +201,7 @@ make check-observability
 make check-android-download
 ```
 
-## <img src="https://img.shields.io/badge/QUALITY-526A82?style=flat-square" alt="" height="18" /> 质量检查
+## 质量检查
 
 SpeakUp 的测试体系围绕真实行为与关键链路组织：
 
@@ -229,7 +229,7 @@ make check-api
 
 <a id="contributing"></a>
 
-## <img src="https://img.shields.io/badge/CONTRIBUTE-7B8490?style=flat-square" alt="" height="18" /> 参与开发
+## 参与开发
 
 SpeakUp 使用短分支和 Pull Request 协作：
 
@@ -241,7 +241,7 @@ SpeakUp 使用短分支和 Pull Request 协作：
 
 正式发布通过 `dev → main` 的 Release Pull Request 完成，不直接向 `dev` 或 `main` 推送功能提交。
 
-## <img src="https://img.shields.io/badge/COMMUNITY-7B8490?style=flat-square" alt="" height="18" /> Contributors
+## Contributors
 
 感谢每一位参与产品设计、工程实现、测试与交付的贡献者。
 
@@ -249,6 +249,6 @@ SpeakUp 使用短分支和 Pull Request 协作：
   <img src="https://contrib.rocks/image?repo=1024XEngineer/XE3-ESL" alt="SpeakUp contributors" />
 </a>
 
-## <img src="https://img.shields.io/badge/LICENSE-7B8490?style=flat-square" alt="" height="18" /> License
+## License
 
 SpeakUp 基于 [MIT License](LICENSE) 开源。

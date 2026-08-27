@@ -1,0 +1,16 @@
+#!/bin/bash
+
+set -euo pipefail
+
+fail() {
+  printf 'production SSH gate: %s\n' "$*" >&2
+  exit 1
+}
+
+(( $# == 0 )) || fail "arguments are not accepted"
+[[ -z "${SSH_ORIGINAL_COMMAND:-}" ]] ||
+  fail "remote commands and subsystems are not accepted"
+
+unset SSH_ORIGINAL_COMMAND
+exec /usr/bin/sudo -n -u root -- \
+  /usr/local/libexec/speakup-production-broker

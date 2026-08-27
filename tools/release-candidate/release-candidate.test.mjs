@@ -41,6 +41,9 @@ const offlineManifestScript = fileURLToPath(
 const releaseCandidateWorkflow = fileURLToPath(
   new URL("../../.github/workflows/release-candidate.yml", import.meta.url),
 );
+const stagingDeployWorkflow = fileURLToPath(
+  new URL("../../.github/workflows/staging-deploy.yml", import.meta.url),
+);
 const officialUpstreamUrl = "https://github.com/1024XEngineer/XE3-ESL.git";
 const officialRepository = "1024XEngineer/XE3-ESL";
 const qualityWorkflowPath = ".github/workflows/quality.yml";
@@ -811,19 +814,49 @@ test("metadata and manifest CLIs require exactly one release identity", () => {
   }
 });
 
-test("Release Candidate workflow is manual, official-main-only, and Tag-free", () => {
+test("Release Candidate workflow is automatic, official-main-only, and Tag-free", () => {
   const workflow = readFileSync(releaseCandidateWorkflow, "utf8");
-  assert.match(workflow, /on:\n  workflow_dispatch:/);
+  assert.match(workflow, /on:\n  push:\n    branches:\n      - main/);
   assert.match(workflow, /CANDIDATE_REPOSITORY.*github\.repository/);
   assert.match(workflow, /1024XEngineer\/XE3-ESL/);
   assert.match(workflow, /CANDIDATE_REF.*github\.ref/);
   assert.match(workflow, /refs\/heads\/main/);
+  assert.match(workflow, /CANDIDATE_EVENT" != "push"/);
   assert.match(workflow, /--candidate-sha "\$GITHUB_SHA"/);
+  assert.doesNotMatch(workflow, /workflow_dispatch/);
   assert.doesNotMatch(workflow, /push:\n\s+tags:/);
   assert.doesNotMatch(workflow, /GITHUB_REF_NAME/);
   assert.doesNotMatch(workflow, /--tag "\$GITHUB_REF_NAME"/);
   assert.doesNotMatch(workflow, /contents:\s*write/);
   assert.doesNotMatch(workflow, /deploy\/(staging|production)\/manage\.sh/);
+});
+
+test("Staging deploy accepts only a successful official Candidate artifact", () => {
+  const workflow = readFileSync(stagingDeployWorkflow, "utf8");
+  assert.match(workflow, /workflow_run:\n\s+workflows:\n\s+- Release Candidate/);
+  assert.match(workflow, /github\.event\.workflow_run\.conclusion == 'success'/);
+  assert.match(workflow, /CANDIDATE_HEAD_REPOSITORY.*head_repository\.full_name/);
+  assert.match(workflow, /CANDIDATE_EVENT.*workflow_run\.event/);
+  assert.match(workflow, /CANDIDATE_HEAD_BRANCH.*workflow_run\.head_branch/);
+  assert.match(workflow, /CANDIDATE_EVENT" != "push"/);
+  assert.match(workflow, /CANDIDATE_HEAD_BRANCH" != "main"/);
+  assert.doesNotMatch(workflow, /workflow_dispatch/);
+  assert.match(workflow, /environment:\n\s+name: staging/);
+  assert.match(workflow, /group: staging-deployment\n\s+cancel-in-progress: false/);
+  assert.match(workflow, /listWorkflowRunArtifacts/);
+  assert.match(workflow, /manifests\.length !== 1/);
+  assert.match(workflow, /name:.*manifest_artifact/);
+  assert.match(workflow, /run-id:.*candidate_run_id/);
+  assert.match(workflow, /github-token:.*github\.token/);
+  assert.match(workflow, /StrictHostKeyChecking=yes/);
+  assert.match(workflow, /action:\s*"inspect"/);
+  assert.match(workflow, /action:\s*"deploy"/);
+  assert.match(workflow, /expected_current_receipt_sha256/);
+  assert.match(workflow, /Candidate run .* is already deployed to Staging/);
+  assert.match(workflow, /https:\/\/staging-api\.speak-up\.top\/health/);
+  assert.match(workflow, /staging-deployment-\$\{\{ github\.run_id \}\}/);
+  assert.doesNotMatch(workflow, /actions\/checkout/);
+  assert.doesNotMatch(workflow, /deploy\/production/);
 });
 
 test("rejects a release tag that is not contained in main", () => {

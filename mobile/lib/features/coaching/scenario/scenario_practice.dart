@@ -30,6 +30,7 @@ class ScenarioPracticePage extends StatefulWidget {
     this.avatarStatusLabel,
     this.onBeforeStartRecording,
     this.onBeforeSubmitText,
+    this.onPlayQuestion,
     this.onReplayQuestion,
     this.questionSpeaker,
     this.onPracticeCompleted,
@@ -48,6 +49,7 @@ class ScenarioPracticePage extends StatefulWidget {
   final String? avatarStatusLabel;
   final ScenarioAsyncAction? onBeforeStartRecording;
   final ScenarioAsyncAction? onBeforeSubmitText;
+  final Future<bool> Function()? onPlayQuestion;
   final ScenarioAsyncAction? onReplayQuestion;
   final PracticePromptSpeaker? questionSpeaker;
   final Future<bool> Function()? onPracticeCompleted;
@@ -83,6 +85,7 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
   String? _visibleTipQuestionId;
   String? _playingQuestionId;
   String? _questionNarrationErrorId;
+  String? _autoNarratedQuestionId;
   int _questionNarrationGeneration = 0;
 
   bool get _isInterview =>
@@ -98,6 +101,7 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
     _syncSpeechFeedbackSources();
     _syncRecordingTimer();
     _scheduleConversationScrollToBottom(animated: false);
+    _scheduleQuestionNarration();
   }
 
   @override
@@ -120,6 +124,7 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
       _visibleTipQuestionId = null;
       _questionTranslations.clear();
       _questionNarrationGeneration++;
+      _autoNarratedQuestionId = null;
       _playingQuestionId = null;
       _questionNarrationErrorId = null;
       unawaited(oldWidget.practiceController.stopPracticeAudio(notify: false));
@@ -130,6 +135,7 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
       }
       widget.practiceController.addListener(_handleControllerState);
       _syncRecordingTimer();
+      _scheduleQuestionNarration();
     }
     _syncSpeechFeedbackSources();
   }
@@ -270,6 +276,45 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
     }
   }
 
+  void _scheduleQuestionNarration() {
+    if (widget.onPlayQuestion == null) {
+      // Without an avatar session the PracticeController owns automatic
+      // realtime question speech.
+      return;
+    }
+    final question = widget.practiceController.currentQuestion;
+    if (question == null || _autoNarratedQuestionId == question.id) {
+      return;
+    }
+    _autoNarratedQuestionId = question.id;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          widget.practiceController.currentQuestion?.id != question.id) {
+        return;
+      }
+      unawaited(_playCurrentQuestion(question));
+    });
+  }
+
+  Future<void> _playCurrentQuestion(PracticeQuestion question) async {
+    final playWithAvatar = widget.onPlayQuestion;
+    if (playWithAvatar == null) {
+      await _playQuestion(question.presentation);
+      return;
+    }
+    final generation = ++_questionNarrationGeneration;
+    if (mounted) {
+      setState(() => _questionNarrationErrorId = null);
+    }
+    final completed = await playWithAvatar();
+    if (!completed &&
+        mounted &&
+        generation == _questionNarrationGeneration &&
+        widget.practiceController.currentQuestion?.id == question.id) {
+      setState(() => _questionNarrationErrorId = question.id);
+    }
+  }
+
   Future<void> _stopQuestionNarration() async {
     _questionNarrationGeneration++;
     await widget.practiceController.stopPracticeAudio();
@@ -313,6 +358,7 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
     _syncRecordingTimer();
     _syncSpeechFeedbackSources();
     setState(() {});
+    _scheduleQuestionNarration();
     if (shouldFollowConversation) {
       _scheduleConversationScrollToBottom();
     }

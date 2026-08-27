@@ -73,7 +73,7 @@ pass the CI public key (never its private key) explicitly:
 
 ```sh
 cd server
-CGO_ENABLED=0 go build -trimpath \
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath \
   -o /tmp/speakup-staging-broker ./cmd/staging-broker
 cd ..
 contract_revision="$(git rev-parse HEAD)"
@@ -94,8 +94,9 @@ broker is `/usr/local/libexec/speakup-staging-broker`; its state is
 `/var/lib/speakup/staging-broker`, and the shared lock directory is
 `/run/lock/xe3-speakup-staging`.
 
-The CI account has a locked password, a root-owned non-writable home, no
-supplementary groups, and `/bin/bash` only because OpenSSH evaluates
+The CI account receives a random password that is never retained, has a
+root-owned non-writable home, no supplementary groups, and `/bin/bash` only
+because OpenSSH evaluates
 `ForceCommand` through the account shell. The `Match User` policy and the
 authorized key's `restrict` option both disable passwords, keyboard-interactive
 authentication, PTY, agent, TCP/stream-local/X11 forwarding, tunnels, and user
@@ -113,6 +114,10 @@ group, and uses only `unix:///run/user/<runtime-uid>/docker.sock`. Its user
 service pins `HOME=/var/lib/speakup/staging-runtime`, the rootless socket, and
 the Docker data root. Neither identity may read or write a rootful Docker
 socket.
+
+The bootstrap rejects a non-Linux-amd64 broker and refuses to mutate the host
+unless the shared `/tmp` directory is root-owned mode `1777`. It never repairs
+that shared host path automatically.
 
 The bootstrap does not create `staging-runtime.env`, the referenced Server
 environment, a GHCR credential, an SSH private key, or any provider Secret.
@@ -438,6 +443,22 @@ Staging-scoped volumes before deleting them by name.
 `down` uses the same exclusive lock as `deploy` and fails rather than running
 unlocked or concurrently with a release.
 
+## Automated Candidate deployment
+
+When an official `Release Candidate` run from `main` succeeds,
+`.github/workflows/staging-deploy.yml` verifies the triggering run without
+environment Secrets, selects its single immutable manifest artifact, and then
+enters the `staging` GitHub Environment. It reads the current broker receipt,
+deploys with optimistic concurrency, verifies the public API and protected
+Portal edge, and stores the broker response as the deployment audit artifact.
+
+The automated path requires ports `127.0.0.1:28082` and `127.0.0.1:28083` to
+belong to the rootless `speakup-staging-runtime` stack. A legacy rootful
+Staging stack using those ports must be stopped by a trusted host operator
+during a separately reviewed one-time cutover; the CI identity cannot and must
+not control the rootful Docker daemon. The workflow fails closed on a port
+conflict and never stops the legacy stack itself.
+
 ## Security boundary and non-goals
 
 CI reaches only the Staging-scoped forced gate and no-argument broker. The
@@ -491,4 +512,6 @@ unchanged.
 - [Nginx TLS module](https://nginx.org/en/docs/http/ngx_http_ssl_module.html)
 - [Nginx Basic Auth module](https://nginx.org/en/docs/http/ngx_http_auth_basic_module.html)
 - [GitHub Actions artifact download](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/download-workflow-artifacts)
+- [GitHub Actions `workflow_run` event](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run)
+- [GitHub Actions deployment environments](https://docs.github.com/en/actions/concepts/workflows-and-actions/deployment-environments)
 - [GitHub secure use of self-hosted runners](https://docs.github.com/en/actions/reference/security/secure-use)
