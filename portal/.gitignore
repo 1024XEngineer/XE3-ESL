@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .next/
+.vinext/
 next-env.d.ts
 .wrangler/
 .DS_Store
