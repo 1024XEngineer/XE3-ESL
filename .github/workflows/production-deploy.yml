@@ -582,9 +582,25 @@ jobs:
             "bundle/downloads/android/v$VERSION/$apk.sha256"
           )
           deploy_response="$RUNNER_TEMP/production-deploy-response.json"
-          tar --format=ustar --no-recursion -C "$PAYLOAD_DIRECTORY" \
+          if ! tar --format=ustar --no-recursion -C "$PAYLOAD_DIRECTORY" \
             -cf - "${payload_files[@]}" | \
-            ssh "${ssh_options[@]}" "$DEPLOY_USER@$DEPLOY_HOST" > "$deploy_response"
+            ssh "${ssh_options[@]}" "$DEPLOY_USER@$DEPLOY_HOST" > "$deploy_response"; then
+            broker_error="$(jq -er '
+              if type == "object" and
+                keys == ["error", "ok", "protocol_version"] and
+                .protocol_version == 1 and .ok == false and
+                (.error | type == "string" and length > 0)
+              then .error
+              else empty
+              end
+            ' "$deploy_response" 2>/dev/null || true)"
+            if [[ -n "$broker_error" ]]; then
+              echo "Production broker rejected the deployment: $broker_error" >&2
+            else
+              echo "Production broker deployment failed without a valid error response." >&2
+            fi
+            exit 1
+          fi
           jq -e \
             --arg bundle_manifest_sha256 "$BUNDLE_MANIFEST_SHA256" \
             --arg expected_current "$expected_current" \

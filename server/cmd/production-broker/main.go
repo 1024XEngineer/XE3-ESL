@@ -911,7 +911,7 @@ func parseStagingReceipt(contents []byte) (stagingReceipt, error) {
 }
 
 func stagingMatches(staging stagingReceipt, manifest releaseManifest, req request) bool {
-	return staging.ManifestSHA256 == manifest.SHA256 && staging.Version == manifest.Version && staging.VersionCode == manifest.VersionCode && staging.GitSHA == manifest.GitSHA && staging.DatabaseSchemaVersion == manifest.DatabaseSchemaVersion && staging.PortalImageDigest == manifest.PortalImageDigest && staging.ServerImageDigest == manifest.ServerImageDigest && staging.CandidateRunID == req.CandidateRunID && staging.DeploymentRunID == req.StagingRunID && staging.DeploymentRunAttempt == req.StagingRunAttempt
+	return staging.ManifestSHA256 == manifest.SHA256 && staging.Version == manifest.Version && staging.VersionCode == manifest.VersionCode && staging.GitSHA == manifest.GitSHA && staging.DatabaseSchemaVersion == manifest.DatabaseSchemaVersion && staging.PortalImageDigest == manifest.PortalImageDigest && staging.ServerImageDigest == manifest.ServerImageDigest && staging.CandidateRunID == req.CandidateRunID && staging.DeploymentRunID == req.StagingRunID && staging.DeploymentRunAttempt <= req.StagingRunAttempt
 }
 
 func validateBundle(root string, files map[string]string, manifest releaseManifest, expectedManifestSHA string) error {
