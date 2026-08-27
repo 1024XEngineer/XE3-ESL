@@ -15,7 +15,10 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { buildAndroidDownloadBundle } from "./bundle.mjs";
+import {
+  buildAndroidDownloadBundle,
+  buildStagingCandidateBundle,
+} from "./bundle.mjs";
 
 const publishedAt = "2026-08-23T12:34:56Z";
 const nonzeroDigest = (character) => `sha256:${character.repeat(64)}`;
@@ -27,6 +30,10 @@ function fixture() {
   const apk = path.join(root, apkName);
   const apkBytes = Buffer.from("signed-production-apk-fixture\n");
   writeFileSync(apk, apkBytes);
+  const stagingApkName = "speakup-v0.1.0-staging-arm64.apk";
+  const stagingApk = path.join(root, stagingApkName);
+  const stagingApkBytes = Buffer.from("signed-staging-apk-fixture\n");
+  writeFileSync(stagingApk, stagingApkBytes);
   const manifest = {
     manifest_version: 1,
     version: "0.1.0",
@@ -36,8 +43,8 @@ function fixture() {
     portal_image_digest: nonzeroDigest("a"),
     server_image: "ghcr.io/1024xengineer/xe3-esl-server",
     server_image_digest: nonzeroDigest("b"),
-    staging_apk_file: "speakup-v0.1.0-staging-arm64.apk",
-    staging_apk_sha256: "d".repeat(64),
+    staging_apk_file: stagingApkName,
+    staging_apk_sha256: sha256(stagingApkBytes),
     production_apk_file: apkName,
     production_apk_size_bytes: apkBytes.length,
     production_apk_sha256: sha256(apkBytes),
@@ -51,7 +58,15 @@ function fixture() {
   };
   const manifestPath = path.join(root, "release-manifest.json");
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-  return { apk, apkBytes, manifest, manifestPath, root };
+  return {
+    apk,
+    apkBytes,
+    manifest,
+    manifestPath,
+    root,
+    stagingApk,
+    stagingApkBytes,
+  };
 }
 
 function build(input, outputName = "public-bundle") {
@@ -130,6 +145,89 @@ test("builds a deterministic strict public Android download bundle", () => {
     assert.equal(
       readFileSync(path.join(input.root, "bundle-one", "bundle-manifest.json"), "utf8"),
       readFileSync(path.join(input.root, "bundle-two", "bundle-manifest.json"), "utf8"),
+    );
+  } finally {
+    rmSync(input.root, { recursive: true, force: true });
+  }
+});
+
+test("builds a deterministic Staging candidate bundle bound to one Candidate run", () => {
+  const input = fixture();
+  try {
+    const result = buildStagingCandidateBundle({
+      manifestPath: input.manifestPath,
+      stagingApkPath: input.stagingApk,
+      candidateRunId: 123456789,
+      outputPath: path.join(input.root, "staging-bundle"),
+    });
+    const candidateDirectory = path.join(
+      input.root,
+      "staging-bundle",
+      "downloads",
+      "android",
+      "candidates",
+      "123456789",
+    );
+    assert.deepEqual(readdirSync(candidateDirectory).sort(), [
+      "candidate.json",
+      "speakup-v0.1.0-staging-arm64.apk",
+      "speakup-v0.1.0-staging-arm64.apk.sha256",
+    ]);
+    const metadata = JSON.parse(
+      readFileSync(path.join(candidateDirectory, "candidate.json"), "utf8"),
+    );
+    assert.deepEqual(metadata, {
+      candidate_metadata_version: 1,
+      environment: "staging",
+      version: "0.1.0",
+      version_code: 1,
+      git_sha: "c".repeat(40),
+      candidate_run_id: 123456789,
+      manifest_sha256: sha256(readFileSync(input.manifestPath)),
+      file_name: "speakup-v0.1.0-staging-arm64.apk",
+      download_path:
+        "/downloads/android/candidates/123456789/speakup-v0.1.0-staging-arm64.apk",
+      size_bytes: input.stagingApkBytes.length,
+      minimum_android_api: 24,
+      abis: ["arm64-v8a"],
+      apk_sha256: input.manifest.staging_apk_sha256,
+      apk_certificate_sha256: input.manifest.apk_certificate_sha256,
+    });
+    const bundleManifest = JSON.parse(
+      readFileSync(
+        path.join(input.root, "staging-bundle", "bundle-manifest.json"),
+        "utf8",
+      ),
+    );
+    assert.equal(bundleManifest.environment, "staging");
+    assert.equal(bundleManifest.candidate_run_id, 123456789);
+    assert.equal(bundleManifest.git_sha, input.manifest.git_sha);
+    assert.deepEqual(
+      bundleManifest.files.map((entry) => entry.path),
+      [
+        "downloads/android/candidates/123456789/speakup-v0.1.0-staging-arm64.apk",
+        "downloads/android/candidates/123456789/speakup-v0.1.0-staging-arm64.apk.sha256",
+        "downloads/android/candidates/123456789/candidate.json",
+      ],
+    );
+    assert.equal(result.candidateRunId, 123456789);
+  } finally {
+    rmSync(input.root, { recursive: true, force: true });
+  }
+});
+
+test("rejects a Staging candidate bundle for a different Candidate run", () => {
+  const input = fixture();
+  try {
+    assert.throws(
+      () =>
+        buildStagingCandidateBundle({
+          manifestPath: input.manifestPath,
+          stagingApkPath: input.stagingApk,
+          candidateRunId: 987654321,
+          outputPath: path.join(input.root, "wrong-run-bundle"),
+        }),
+      /candidate run id does not match the release manifest/,
     );
   } finally {
     rmSync(input.root, { recursive: true, force: true });

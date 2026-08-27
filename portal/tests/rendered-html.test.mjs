@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-async function render(path = "/") {
+async function render(path = "/", host = "localhost") {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);
   return worker.fetch(
-    new Request(`http://localhost${path}`, { headers: { accept: "text/html" } }),
+    new Request(`http://${host}${path}`, {
+      headers: { accept: "text/html", host },
+    }),
     {
       ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) },
     },
@@ -94,6 +96,28 @@ test("renders an honest Android download preparing state", async () => {
   assert.match(html, /安装未知应用/);
   assert.doesNotMatch(html, /\.apk(?:"|\?)/);
   assert.doesNotMatch(html, /versionName:\s*\d/);
+});
+
+test("renders an explicit Staging candidate preparing state on the Staging host", async () => {
+  const homeResponse = await render("/", "staging.speak-up.top");
+  assert.equal(homeResponse.status, 200);
+  const homeHtml = await homeResponse.text();
+  assert.match(homeHtml, /Staging 候选 APK 准备中/);
+  assert.match(homeHtml, /Staging 候选环境 · 制品就绪后开放下载/);
+  assert.doesNotMatch(homeHtml, /正式 APK 就绪后开放下载/);
+
+  const downloadResponse = await render(
+    "/download/android",
+    "staging.speak-up.top",
+  );
+  assert.equal(downloadResponse.status, 200);
+  const downloadHtml = await downloadResponse.text();
+  assert.match(downloadHtml, /Staging 候选环境/);
+  assert.match(downloadHtml, /Staging 候选 APK 正在准备/);
+  assert.match(downloadHtml, /候选制品就绪后公开/);
+  assert.doesNotMatch(downloadHtml, /Android 官方版/);
+  assert.doesNotMatch(downloadHtml, /首个公开版本正在准备/);
+  assert.doesNotMatch(downloadHtml, /\/downloads\/android\/release\.json/);
 });
 
 test("renders the user-facing changelog without guessing a release", async () => {

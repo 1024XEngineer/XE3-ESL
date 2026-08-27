@@ -4,6 +4,7 @@ import BrandMark from "./BrandMark";
 import BrandWordmark from "./BrandWordmark";
 import HeroProductCarousel from "./HeroProductCarousel";
 import { HomeAndroidDownloadAction } from "./HomeAndroidRelease";
+import { currentAndroidDownloadChannel } from "../lib/android-download-channel-server";
 
 export const metadata: Metadata = {
   title: "SpeakUp · 越用越懂你的 AI 口语老师",
@@ -29,7 +30,9 @@ const steps = [
   },
 ];
 
-export default function Home() {
+export default async function Home() {
+  const androidDownloadChannel = await currentAndroidDownloadChannel();
+
   return (
     <main className="release-site release-home" id="top">
       <nav className="site-nav release-nav release-nav-simple" aria-label="主导航">
@@ -57,7 +60,7 @@ export default function Home() {
           <p className="release-hero-subtitle">
             越用越懂你的 AI 口语老师，围绕真实任务陪你准备、开口和复盘。
           </p>
-          <HomeAndroidDownloadAction />
+          <HomeAndroidDownloadAction channel={androidDownloadChannel} />
         </div>
 
         <HeroProductCarousel />
