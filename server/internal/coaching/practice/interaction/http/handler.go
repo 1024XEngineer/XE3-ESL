@@ -335,6 +335,8 @@ func deferredTranscriptionResponse(
 		"practice_session_id": submission.SessionID,
 		"question_id":         submission.QuestionID,
 		"status":              submission.Status,
+		"attempt_count":       submission.AttemptCount,
+		"max_attempts":        submission.MaxAttempts,
 		"status_url": "/v1/practice-sessions/" + submission.SessionID +
 			"/deferred-transcriptions/" + submission.ID,
 	}

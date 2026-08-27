@@ -277,17 +277,54 @@ final class FakePracticeClient
   }) async {
     await _wait(_generation);
     final id = 'deferred-$idempotencyKey';
-    return _deferredTranscriptions.putIfAbsent(
-      id,
-      () => DeferredTranscription(
-        id: id,
-        sessionId: sessionId,
-        questionId: questionId,
-        status: DeferredTranscriptionStatus.processing,
-        statusUrl:
-            '/v1/practice-sessions/$sessionId/deferred-transcriptions/$id',
-      ),
+    final existing = _deferredTranscriptions[id];
+    if (existing != null) {
+      return existing;
+    }
+    final submission = DeferredTranscription(
+      id: id,
+      sessionId: sessionId,
+      questionId: questionId,
+      status: DeferredTranscriptionStatus.processing,
+      statusUrl: '/v1/practice-sessions/$sessionId/deferred-transcriptions/$id',
+      attemptCount: 1,
+      maxAttempts: 3,
     );
+    _deferredTranscriptions[id] = submission;
+    final snapshot = _snapshot;
+    if (snapshot == null ||
+        snapshot.sessionId != sessionId ||
+        snapshot.currentQuestion?.id != questionId) {
+      throw StateError('Unknown Fake practice question.');
+    }
+    final completedTurns = snapshot.completedTurns + 1;
+    final completed =
+        snapshot.completionMode == PracticeCompletionMode.turnLimited &&
+        completedTurns == snapshot.turnLimit;
+    _snapshot = PracticeSessionSnapshot(
+      sessionId: snapshot.sessionId,
+      planId: snapshot.planId,
+      practiceExperience: snapshot.practiceExperience,
+      sceneCategory: snapshot.sceneCategory,
+      practiceMode: snapshot.practiceMode,
+      capabilities: snapshot.capabilities,
+      sessionVersion: snapshot.sessionVersion + 1,
+      completedTurns: completedTurns,
+      turnLimit: snapshot.turnLimit,
+      completionMode: snapshot.completionMode,
+      sessionCompleted: completed,
+      currentQuestion: completed
+          ? null
+          : PracticeQuestion(
+              id: 'question-$_generation-${completedTurns + 1}',
+              sessionId: sessionId,
+              text: switch (completedTurns) {
+                1 => '第二轮：当时最困难的取舍是什么？请说明你为什么这样决定。',
+                _ => '第三轮：结果如何？如果再做一次，你会改变什么？',
+              },
+            ),
+    );
+    return submission;
   }
 
   @override
@@ -301,30 +338,14 @@ final class FakePracticeClient
       throw StateError('Unknown Fake deferred transcription.');
     }
     if (submission.status == DeferredTranscriptionStatus.processing) {
-      final candidate = await transcribe(
-        PracticeTranscriptionRequest(
-          sessionId: submission.sessionId,
-          questionId: submission.questionId,
-          clientTurnId: id,
-          audio: const RecordedPracticeAudio(
-            path: 'fake-deferred.wav',
-            contentType: 'audio/wav',
-            sizeBytes: 45,
-          ),
-        ),
-      );
-      await confirm(
-        sessionId: submission.sessionId,
-        questionId: submission.questionId,
-        candidateId: candidate.id,
-        idempotencyKey: 'confirm-$id',
-      );
       final completed = DeferredTranscription(
         id: submission.id,
         sessionId: submission.sessionId,
         questionId: submission.questionId,
         status: DeferredTranscriptionStatus.completed,
         statusUrl: submission.statusUrl,
+        attemptCount: submission.attemptCount,
+        maxAttempts: submission.maxAttempts,
       );
       _deferredTranscriptions[id] = completed;
       return completed;

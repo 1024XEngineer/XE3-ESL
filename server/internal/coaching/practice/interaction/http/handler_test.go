@@ -20,6 +20,7 @@ func TestDeferredTranscriptionHTTPStagesAndReadsStatus(t *testing.T) {
 		submission: practiceinteraction.DeferredTranscriptionSubmission{
 			ID: "transcription-1", SessionID: "session-1",
 			QuestionID: "question-1", Status: practiceinteraction.TranscriptionProcessing,
+			AttemptCount: 1, MaxAttempts: 3,
 		},
 	}
 	router := newPracticeRealtimeHTTPRouter(t, application)
@@ -124,6 +125,7 @@ func assertDeferredHTTPResponse(
 		body["practice_session_id"] != "session-1" ||
 		body["question_id"] != "question-1" ||
 		body["status"] != string(practiceinteraction.TranscriptionProcessing) ||
+		body["attempt_count"] != float64(1) || body["max_attempts"] != float64(3) ||
 		body["status_url"] != "/v1/practice-sessions/session-1/deferred-transcriptions/transcription-1" {
 		t.Fatalf("response body = %#v", body)
 	}

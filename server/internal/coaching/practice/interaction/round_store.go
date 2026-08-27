@@ -71,6 +71,7 @@ func (store *roundStoreAdapter) ReserveTranscription(
 		IdempotencyKey:          reservation.IdempotencyKey,
 		InputFingerprint:        reservation.InputFingerprint,
 		AudioAssetID:            reservation.AudioAssetID,
+		AttemptCount:            reservation.AttemptCount,
 	}
 	switch reservation.Status {
 	case StoredTranscriptionCompleted:
@@ -131,6 +132,7 @@ func (store *roundStoreAdapter) GetTranscriptionReservation(
 		IdempotencyKey:          reservation.IdempotencyKey,
 		InputFingerprint:        reservation.InputFingerprint,
 		AudioAssetID:            reservation.AudioAssetID,
+		AttemptCount:            reservation.AttemptCount,
 	}
 	switch reservation.Status {
 	case StoredTranscriptionProcessing:
@@ -161,6 +163,16 @@ func (store *roundStoreAdapter) AttachTranscriptionRecording(
 ) error {
 	return mapPersistenceError(store.repository.AttachTranscriptionRecording(
 		ctx, persistenceActor(actor), reservationID, assetID,
+	))
+}
+
+func (store *roundStoreAdapter) ProgressDeferredTranscription(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	reservationID string,
+) error {
+	return mapPersistenceError(store.repository.ProgressTranscription(
+		ctx, persistenceActor(actor), reservationID,
 	))
 }
 

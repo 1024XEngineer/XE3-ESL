@@ -333,7 +333,8 @@ func (application *SessionApplication) DeferredTranscriptionStatus(
 	}
 	if reservation.Status == TranscriptionProcessing ||
 		reservation.Status == TranscriptionCompleted ||
-		reservation.Status == TranscriptionFailed {
+		(reservation.Status == TranscriptionFailed &&
+			reservation.AttemptCount < MaxDeferredTranscriptionAttempts) {
 		_ = application.deferred.Enqueue(ctx, actor, reservation)
 	}
 	return deferredSubmission(reservation), nil
@@ -349,12 +350,18 @@ func deferredSubmission(
 	if status == TranscriptionCompleted {
 		status = TranscriptionProcessing
 	}
+	if status == TranscriptionFailed &&
+		reservation.AttemptCount < MaxDeferredTranscriptionAttempts {
+		status = TranscriptionProcessing
+	}
 	if status == TranscriptionConfirmed {
 		status = TranscriptionCompleted
 	}
 	return DeferredTranscriptionSubmission{
 		ID: reservation.ID, SessionID: reservation.SessionID,
 		QuestionID: reservation.QuestionID, Status: status,
+		AttemptCount: reservation.AttemptCount,
+		MaxAttempts:  MaxDeferredTranscriptionAttempts,
 	}
 }
 

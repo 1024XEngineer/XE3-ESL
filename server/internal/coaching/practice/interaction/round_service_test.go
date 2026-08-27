@@ -1321,6 +1321,24 @@ func (store *voiceTestStore) AttachTranscriptionRecording(
 	return ErrVoiceRoundNotFound
 }
 
+func (store *voiceTestStore) ProgressDeferredTranscription(
+	_ context.Context,
+	actor requestcontext.Actor,
+	reservationID string,
+) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if actor.UserID != "user-a" {
+		return ErrVoiceRoundNotFound
+	}
+	for _, reservation := range store.reservations {
+		if reservation.ID == reservationID && reservation.AudioAssetID != "" {
+			return nil
+		}
+	}
+	return ErrVoiceRoundNotFound
+}
+
 func (store *voiceTestStore) GetTranscriptionReservation(
 	_ context.Context,
 	actor requestcontext.Actor,

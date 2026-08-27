@@ -1478,8 +1478,17 @@ final class PracticeController extends ChangeNotifier
           !identical(_pendingPracticeAudio, pending)) {
         return null;
       }
+      final snapshot = await client.restorePractice(
+        sessionId: pending.sessionId,
+      );
+      if (!_isOperationCurrent(fence) ||
+          !identical(_pendingPracticeAudio, pending)) {
+        return null;
+      }
       _deferredTranscription = submission;
       _pendingPracticeAudio = null;
+      _applyPracticeSnapshot(snapshot, preserveKnownRecordings: true);
+      _deferredTranscription = submission;
       _recordingState = PracticeRecordingState.idle;
       _errorMessage = null;
       await recorder.discard(pending.audio);
@@ -1519,7 +1528,8 @@ final class PracticeController extends ChangeNotifier
       return null;
     }
     _deferredTranscription = result;
-    if (result.status == DeferredTranscriptionStatus.completed) {
+    if (result.status == DeferredTranscriptionStatus.completed ||
+        result.status == DeferredTranscriptionStatus.failed) {
       final snapshot = await client.restorePractice(sessionId: sessionId);
       if (!_disposed && _practiceSessionId == sessionId) {
         _applyPracticeSnapshot(snapshot, preserveKnownRecordings: true);

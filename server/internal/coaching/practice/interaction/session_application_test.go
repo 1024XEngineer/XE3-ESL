@@ -203,6 +203,17 @@ func TestSessionApplicationStagesAndRestoresDeferredTranscription(t *testing.T) 
 
 	processor.removePending(rounds.deferred.ID)
 	rounds.deferred.Status = TranscriptionFailed
+	rounds.deferred.AttemptCount = 2
+	retrying, err := application.DeferredTranscriptionStatus(
+		context.Background(), roundActor(), rounds.deferred.ID,
+	)
+	if err != nil || retrying.Status != TranscriptionProcessing ||
+		len(processor.queue) != 2 {
+		t.Fatalf("retrying = %#v, queue = %d, error = %v", retrying, len(processor.queue), err)
+	}
+
+	processor.removePending(rounds.deferred.ID)
+	rounds.deferred.AttemptCount = MaxDeferredTranscriptionAttempts
 	failed, err := application.DeferredTranscriptionStatus(
 		context.Background(), roundActor(), rounds.deferred.ID,
 	)

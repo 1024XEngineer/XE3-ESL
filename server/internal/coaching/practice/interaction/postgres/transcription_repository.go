@@ -29,6 +29,7 @@ type transcriptionRow struct {
 	FencingToken            int64
 	LeaseExpiresAt          *time.Time
 	AttemptCount            int
+	CountsTowardTurnLimit   bool
 	CandidateID             string
 	AudioAssetID            string
 	CreatedAt               time.Time
@@ -91,6 +92,57 @@ func (r *Repository) AttachTranscriptionRecording(
 		return mapRecordingMediaError(err)
 	}
 	return tx.Commit(ctx)
+}
+
+// ProgressTranscription advances the authoritative Practice session as soon
+// as the answer recording is durable. ASR and evaluation enrich the same Turn
+// later and must never hold the learner on the previous question.
+func (r *Repository) ProgressTranscription(
+	ctx context.Context,
+	actor practiceinteraction.Actor,
+	reservationID string,
+) error {
+	if r == nil || r.pool == nil || ctx == nil || !validInputActor(actor) ||
+		strings.TrimSpace(reservationID) == "" {
+		return practiceinteraction.ErrPersistenceInvalid
+	}
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return safeDatabaseError(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := ensureActorWritableForEvaluation(ctx, tx, actor.UserID); err != nil {
+		return err
+	}
+	row, err := getTranscriptionByReservation(
+		ctx, tx, actor.UserID, reservationID, true,
+	)
+	if err != nil {
+		return err
+	}
+	if row.TurnKind != practice.TurnKindEffective || row.AudioAssetID == "" ||
+		(row.Status != "transcribing" && row.Status != "transcribed" &&
+			row.Status != "confirmed" && row.Status != "failed") {
+		return practiceinteraction.ErrPersistenceConflict
+	}
+	_, err = r.Repository.AdvanceTurnInTransaction(
+		ctx,
+		tx,
+		practice.Actor{UserID: actor.UserID, SessionID: actor.SessionID},
+		practice.ConsumeTurnCommand{
+			SessionID: row.SessionID, TurnID: row.TurnID,
+			CountsTowardTurnLimit: row.CountsTowardTurnLimit,
+			DeferEvaluation:       true,
+			Payload:               []byte("practice/effective-turn/v1"),
+		},
+	)
+	if err != nil {
+		return mapPracticeError(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return safeDatabaseError(err)
+	}
+	return nil
 }
 
 func (r *Repository) ReserveTranscription(
@@ -271,6 +323,9 @@ func (r *Repository) replayOrReacquireTranscription(
 			return mapReservation(row, false), nil
 		}
 	case "failed":
+		if row.AttemptCount >= practiceinteraction.MaxDeferredTranscriptionAttempts {
+			return mapReservation(row, false), nil
+		}
 	default:
 		return practiceinteraction.StoredTranscriptionReservation{}, practiceinteraction.ErrPersistenceConflict
 	}
@@ -477,7 +532,8 @@ const transcriptionColumns = `
 	       t.respondent_participant_id, COALESCE(t.transcription_request_id, ''),
 	       COALESCE(t.transcription_client_request_id, ''),
 	       COALESCE(t.transcription_input_fingerprint, ''), t.asr_fencing_token,
-	       t.asr_lease_expires_at, t.asr_attempt_count, COALESCE(t.candidate_id::text, ''),
+	       t.asr_lease_expires_at, t.asr_attempt_count, t.counts_toward_turn_limit,
+	       COALESCE(t.candidate_id::text, ''),
 	       COALESCE(t.audio_asset_id::text, ''),
 	       t.created_at, t.updated_at
 	FROM practice_turns t
@@ -546,7 +602,8 @@ func scanTranscription(row rowScanner) (transcriptionRow, error) {
 		&value.TurnID, &value.TurnKind, &value.Status, &value.SessionID,
 		&value.QuestionID, &value.RespondentParticipantID,
 		&value.ReservationID, &value.ClientRequestID, &value.InputFingerprint,
-		&value.FencingToken, &lease, &value.AttemptCount, &value.CandidateID,
+		&value.FencingToken, &lease, &value.AttemptCount,
+		&value.CountsTowardTurnLimit, &value.CandidateID,
 		&value.AudioAssetID,
 		&value.CreatedAt, &value.UpdatedAt,
 	)
@@ -596,6 +653,7 @@ func mapReservation(
 		CandidateID:             row.CandidateID,
 		AudioAssetID:            row.AudioAssetID,
 		CurrentAttemptID:        fmt.Sprintf("%s:%d", row.TurnID, row.FencingToken),
+		AttemptCount:            row.AttemptCount,
 		CreatedAt:               row.CreatedAt,
 		UpdatedAt:               row.UpdatedAt,
 	}

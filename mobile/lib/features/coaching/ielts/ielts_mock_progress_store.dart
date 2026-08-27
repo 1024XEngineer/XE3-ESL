@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -26,6 +27,7 @@ final class IeltsMockProgress {
     this.part2SpokenSeconds = 0,
     this.notes = '',
     this.deferredTranscriptionStatusUrl,
+    this.part2TranscriptionFailed = false,
   });
 
   final String sessionId;
@@ -37,6 +39,7 @@ final class IeltsMockProgress {
   final int part2SpokenSeconds;
   final String notes;
   final String? deferredTranscriptionStatusUrl;
+  final bool part2TranscriptionFailed;
 
   IeltsMockProgress copyWith({
     IeltsMockPhase? phase,
@@ -50,6 +53,7 @@ final class IeltsMockProgress {
     String? notes,
     String? deferredTranscriptionStatusUrl,
     bool clearDeferredTranscriptionStatusUrl = false,
+    bool? part2TranscriptionFailed,
   }) {
     return IeltsMockProgress(
       sessionId: sessionId,
@@ -70,6 +74,8 @@ final class IeltsMockProgress {
           ? null
           : deferredTranscriptionStatusUrl ??
                 this.deferredTranscriptionStatusUrl,
+      part2TranscriptionFailed:
+          part2TranscriptionFailed ?? this.part2TranscriptionFailed,
     );
   }
 
@@ -87,6 +93,7 @@ final class IeltsMockProgress {
     'notes': notes,
     if (deferredTranscriptionStatusUrl != null)
       'deferred_transcription_status_url': deferredTranscriptionStatusUrl,
+    'part_2_transcription_failed': part2TranscriptionFailed,
   };
 
   static IeltsMockProgress? tryDecode(
@@ -102,6 +109,8 @@ final class IeltsMockProgress {
     final part2SpokenSeconds = value['part_2_spoken_seconds'];
     final notes = value['notes'];
     final deferredStatusUrl = value['deferred_transcription_status_url'];
+    final part2TranscriptionFailed =
+        value['part_2_transcription_failed'] ?? false;
     IeltsMockPhase? phase;
     if (phaseName == 'part3Intro') {
       // Migrate checkpoints written before the redundant Part 3 ready page
@@ -122,7 +131,8 @@ final class IeltsMockProgress {
         part2SpokenSeconds < 0 ||
         part2SpokenSeconds > 120 ||
         notes is! String ||
-        notes.length > 4000) {
+        notes.length > 4000 ||
+        part2TranscriptionFailed is! bool) {
       return null;
     }
     if (deferredStatusUrl != null &&
@@ -141,6 +151,7 @@ final class IeltsMockProgress {
       part2SpokenSeconds: part2SpokenSeconds,
       notes: notes,
       deferredTranscriptionStatusUrl: deferredStatusUrl as String?,
+      part2TranscriptionFailed: part2TranscriptionFailed,
     );
   }
 }
@@ -159,9 +170,22 @@ final class FileIeltsMockProgressStore implements IeltsMockProgressStore {
 
   static const _fileName = 'ielts-mock-progress-v1.json';
   final Future<Directory> Function() _supportDirectory;
+  Future<void> _operations = Future<void>.value();
+
+  Future<T> _serialized<T>(Future<T> Function() action) {
+    final result = Completer<T>();
+    _operations = _operations.catchError((Object _) {}).then((_) async {
+      try {
+        result.complete(await action());
+      } catch (error, stackTrace) {
+        result.completeError(error, stackTrace);
+      }
+    });
+    return result.future;
+  }
 
   @override
-  Future<IeltsMockProgress?> read(String sessionId) async {
+  Future<IeltsMockProgress?> read(String sessionId) => _serialized(() async {
     if (!_validSessionId(sessionId)) {
       return null;
     }
@@ -174,10 +198,10 @@ final class FileIeltsMockProgressStore implements IeltsMockProgressStore {
       sessions[sessionId],
       expectedSessionId: sessionId,
     );
-  }
+  });
 
   @override
-  Future<void> write(IeltsMockProgress progress) async {
+  Future<void> write(IeltsMockProgress progress) => _serialized(() async {
     if (!_validSessionId(progress.sessionId)) {
       throw ArgumentError.value(progress.sessionId, 'progress.sessionId');
     }
@@ -188,10 +212,10 @@ final class FileIeltsMockProgressStore implements IeltsMockProgressStore {
         : <String, Object?>{};
     sessions[progress.sessionId] = progress.toJson();
     await _writeDocument(<String, Object?>{'version': 1, 'sessions': sessions});
-  }
+  });
 
   @override
-  Future<void> delete(String sessionId) async {
+  Future<void> delete(String sessionId) => _serialized(() async {
     if (!_validSessionId(sessionId)) {
       return;
     }
@@ -202,7 +226,7 @@ final class FileIeltsMockProgressStore implements IeltsMockProgressStore {
     }
     final sessions = Map<String, Object?>.from(stored)..remove(sessionId);
     await _writeDocument(<String, Object?>{'version': 1, 'sessions': sessions});
-  }
+  });
 
   Future<Map<String, Object?>> _readDocument() async {
     final file = await _file();

@@ -750,7 +750,7 @@ void main() {
       find.byKey(const Key('ielts-part2-background-processing')),
       findsOneWidget,
     );
-    expect(find.byKey(const Key('ielts-mock-record')), findsNothing);
+    expect(find.byKey(const Key('ielts-mock-record')), findsOneWidget);
   });
 
   testWidgets('standalone Part 2 keeps polling its durable transcription', (
@@ -802,9 +802,9 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
 
-    expect(progressStore.value?.phase, IeltsMockPhase.part2Complete);
+    expect(progressStore.value?.phase, IeltsMockPhase.complete);
     expect(practice.statusCalls, 1);
-    expect(controller.completedTurns, 0);
+    expect(controller.completedTurns, 1);
 
     now = now.add(const Duration(seconds: 3));
     await tester.pump(const Duration(seconds: 1));
@@ -815,6 +815,59 @@ void main() {
     expect(progressStore.value?.deferredTranscriptionStatusUrl, isNull);
     expect(find.text('Part 2 已完成'), findsOneWidget);
     expect(find.text('查看复盘报告'), findsOneWidget);
+  });
+
+  testWidgets('final Part 2 ASR failure does not block Part 3', (tester) async {
+    final base = _IeltsPracticeClient(initialCompleted: 8, turnLimit: 14)
+      ..activeScene = _ieltsScene
+      ..activeMode = PracticeMode.fullMock;
+    final practice = _DeferredIeltsPracticeClient(base)
+      ..failAfterStatusCalls = 1;
+    final controller = PracticeController(
+      client: practice,
+      recorder: _Recorder(),
+    );
+    addTearDown(controller.dispose);
+    await controller.activateCreatedPractice(
+      scene: _ieltsScene,
+      sessionId: _sessionId,
+      planId: _planId,
+      practiceMode: PracticeMode.fullMock,
+      turnLimit: 14,
+      clientOperationId: 'activate-final-asr-failure-test',
+    );
+    final now = DateTime.utc(2026, 8, 26, 8);
+    final progressStore = _MemoryProgressStore(
+      IeltsMockProgress(
+        sessionId: _sessionId,
+        phase: IeltsMockPhase.part2Preparation,
+        startedAt: now,
+        preparationDeadline: now.add(const Duration(seconds: 60)),
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: IeltsSpeakingMockPage(
+          controller: controller,
+          progressStore: progressStore,
+          examinerSpeaker: _ImmediateExaminerSpeaker(),
+          now: () => now,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-start-speaking')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ielts-mock-finish-speaking')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(progressStore.value?.phase, IeltsMockPhase.part3);
+    expect(progressStore.value?.deferredTranscriptionStatusUrl, isNull);
+    expect(progressStore.value?.part2TranscriptionFailed, isTrue);
+    expect(find.byKey(const Key('ielts-mock-record')), findsOneWidget);
+    expect(find.textContaining('已停止重试，不影响继续回答 Part 3'), findsOneWidget);
   });
 
   testWidgets('Part 2 can exit while transcription is still in flight', (
@@ -2483,6 +2536,7 @@ final class _DeferredIeltsPracticeClient
   int stageCalls = 0;
   int statusCalls = 0;
   int? completeAfterStatusCalls;
+  int? failAfterStatusCalls;
   DeferredTranscription? submission;
 
   @override
@@ -2541,7 +2595,11 @@ final class _DeferredIeltsPracticeClient
     required RecordedPracticeAudio audio,
   }) async {
     stageCalls++;
-    return submission ??= DeferredTranscription(
+    if (submission != null) {
+      return submission!;
+    }
+    delegate.completed++;
+    return submission = DeferredTranscription(
       id: 'deferred-part-2',
       sessionId: sessionId,
       questionId: questionId,
@@ -2549,6 +2607,8 @@ final class _DeferredIeltsPracticeClient
       statusUrl:
           '/v1/practice-sessions/$sessionId/deferred-transcriptions/'
           'deferred-part-2',
+      attemptCount: 1,
+      maxAttempts: 3,
     );
   }
 
@@ -2557,9 +2617,21 @@ final class _DeferredIeltsPracticeClient
     required String statusUrl,
   }) async {
     statusCalls++;
+    final failureThreshold = failAfterStatusCalls;
+    if (failureThreshold != null && statusCalls >= failureThreshold) {
+      final current = submission!;
+      return submission = DeferredTranscription(
+        id: current.id,
+        sessionId: current.sessionId,
+        questionId: current.questionId,
+        status: DeferredTranscriptionStatus.failed,
+        statusUrl: current.statusUrl,
+        attemptCount: 3,
+        maxAttempts: 3,
+      );
+    }
     final threshold = completeAfterStatusCalls;
     if (threshold != null && statusCalls >= threshold) {
-      delegate.completed = delegate.turnLimit;
       final current = submission!;
       submission = DeferredTranscription(
         id: current.id,
@@ -2567,6 +2639,8 @@ final class _DeferredIeltsPracticeClient
         questionId: current.questionId,
         status: DeferredTranscriptionStatus.completed,
         statusUrl: current.statusUrl,
+        attemptCount: current.attemptCount,
+        maxAttempts: current.maxAttempts,
       );
     }
     return submission!;

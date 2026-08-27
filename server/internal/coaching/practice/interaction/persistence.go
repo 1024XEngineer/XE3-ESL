@@ -73,6 +73,7 @@ type StoredTranscriptionReservation struct {
 	CandidateID             string
 	AudioAssetID            string
 	CurrentAttemptID        string
+	AttemptCount            int
 	CreatedAt               time.Time
 	UpdatedAt               time.Time
 }
@@ -157,6 +158,7 @@ type PersistenceStore interface {
 	GetQuestion(context.Context, Actor, string) (practice.Question, error)
 	ReserveTranscription(context.Context, Actor, StoreReserveTranscriptionCommand) (StoredTranscriptionReservation, error)
 	AttachTranscriptionRecording(context.Context, Actor, string, string) error
+	ProgressTranscription(context.Context, Actor, string) error
 	CompleteTranscription(context.Context, JobContext, StoreCompleteTranscriptionCommand) (StoredTranscriptCandidate, error)
 	FailTranscription(context.Context, JobContext, ProcessingFailure) error
 	GetReservation(context.Context, Actor, string) (StoredTranscriptionReservation, error)

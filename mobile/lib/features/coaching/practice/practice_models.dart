@@ -41,6 +41,8 @@ final class DeferredTranscription {
     required this.questionId,
     required this.status,
     required this.statusUrl,
+    required this.attemptCount,
+    required this.maxAttempts,
   });
 
   final String id;
@@ -48,6 +50,8 @@ final class DeferredTranscription {
   final String questionId;
   final DeferredTranscriptionStatus status;
   final String statusUrl;
+  final int attemptCount;
+  final int maxAttempts;
 }
 
 enum PracticeCompletionMode {

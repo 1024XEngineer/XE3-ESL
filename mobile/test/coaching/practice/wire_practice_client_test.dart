@@ -453,6 +453,8 @@ void main() {
       'question_id': _questionId,
       'status': 'processing',
       'status_url': statusUrl,
+      'attempt_count': 1,
+      'max_attempts': 3,
     };
     final transport = _Transport([
       _Step(

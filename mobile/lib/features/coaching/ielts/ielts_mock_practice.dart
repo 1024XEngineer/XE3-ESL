@@ -974,9 +974,9 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     final phase = _progress?.phase;
     final hasDeferredPart2 =
         _progress?.deferredTranscriptionStatusUrl != null &&
-        !_part2TurnConfirmed &&
         (phase == IeltsMockPhase.part2Complete ||
-            phase == IeltsMockPhase.part3);
+            phase == IeltsMockPhase.part3 ||
+            (_mode == PracticeMode.part2 && phase == IeltsMockPhase.complete));
     final needsTicker =
         phase == IeltsMockPhase.part2Preparation ||
         phase == IeltsMockPhase.part2Speaking ||
@@ -1006,10 +1006,11 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
     final now = widget.now().toUtc();
     final canPollPart2 =
         progress?.phase == IeltsMockPhase.part2Complete ||
-        progress?.phase == IeltsMockPhase.part3;
+        progress?.phase == IeltsMockPhase.part3 ||
+        (_mode == PracticeMode.part2 &&
+            progress?.phase == IeltsMockPhase.complete);
     if (!mounted ||
         !canPollPart2 ||
-        _part2TurnConfirmed ||
         statusUrl == null ||
         _pollingDeferredTranscription ||
         (_lastDeferredTranscriptionPoll != null &&
@@ -1024,11 +1025,16 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
         statusUrl: statusUrl,
       );
       if (!mounted) return;
-      if (result?.status == DeferredTranscriptionStatus.completed) {
+      if (result?.status == DeferredTranscriptionStatus.completed ||
+          result?.status == DeferredTranscriptionStatus.failed) {
         final current = _progress;
         if (current != null) {
           await _setProgress(
-            current.copyWith(clearDeferredTranscriptionStatusUrl: true),
+            current.copyWith(
+              clearDeferredTranscriptionStatusUrl: true,
+              part2TranscriptionFailed:
+                  result?.status == DeferredTranscriptionStatus.failed,
+            ),
           );
         }
       }
@@ -1263,6 +1269,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
               ? IeltsMockPhase.part3
               : IeltsMockPhase.part2Complete,
           deferredTranscriptionStatusUrl: deferred.statusUrl,
+          part2TranscriptionFailed: false,
           clearSpeakingStartedAt: true,
           clearSpeakingDeadline: true,
         ),
@@ -1375,6 +1382,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
             clearSpeakingStartedAt: true,
             clearSpeakingDeadline: true,
             deferredTranscriptionStatusUrl: deferred.statusUrl,
+            part2TranscriptionFailed: false,
           ),
         );
         unawaited(_pollDeferredTranscription());
@@ -2138,14 +2146,19 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       IeltsMockPhase.part3 => Column(
         key: const Key('ielts-mock-part-3'),
         children: [
-          if (!_part2TurnConfirmed)
+          if (progress.deferredTranscriptionStatusUrl != null ||
+              progress.part2TranscriptionFailed)
             Container(
               key: const Key('ielts-part2-background-processing'),
               width: double.infinity,
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              color: const Color(0xFFE8F5F7),
-              child: const Text(
-                'Part 2 录音已保存，正在后台识别。完成后即可开始回答 Part 3。',
+              color: progress.part2TranscriptionFailed
+                  ? const Color(0xFFFFF3E0)
+                  : const Color(0xFFE8F5F7),
+              child: Text(
+                progress.part2TranscriptionFailed
+                    ? 'Part 2 录音识别失败，已停止重试，不影响继续回答 Part 3。'
+                    : 'Part 2 录音已保存，正在后台识别，不影响继续回答 Part 3。',
                 textAlign: TextAlign.center,
               ),
             ),

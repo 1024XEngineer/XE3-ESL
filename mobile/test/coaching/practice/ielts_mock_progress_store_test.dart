@@ -34,6 +34,7 @@ void main() {
       notes: 'skill · reason · learning plan',
       deferredTranscriptionStatusUrl:
           '/v1/practice-sessions/session-ielts-1/deferred-transcriptions/task-1',
+      part2TranscriptionFailed: true,
     );
 
     await store.write(progress);
@@ -52,7 +53,33 @@ void main() {
       restored.deferredTranscriptionStatusUrl,
       progress.deferredTranscriptionStatusUrl,
     );
+    expect(restored.part2TranscriptionFailed, isTrue);
   });
+
+  test(
+    'serializes concurrent checkpoint updates without losing files',
+    () async {
+      final startedAt = DateTime.utc(2026, 7, 29, 8);
+
+      await Future.wait(
+        List.generate(
+          20,
+          (index) => store.write(
+            IeltsMockProgress(
+              sessionId: 'session-$index',
+              phase: IeltsMockPhase.part3,
+              startedAt: startedAt,
+            ),
+          ),
+        ),
+      );
+
+      final restored = await Future.wait(
+        List.generate(20, (index) => store.read('session-$index')),
+      );
+      expect(restored, everyElement(isNotNull));
+    },
+  );
 
   test('isolates sessions and deletes only the selected checkpoint', () async {
     final startedAt = DateTime.utc(2026, 7, 29, 8);

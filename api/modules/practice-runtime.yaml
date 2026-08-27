@@ -1079,6 +1079,8 @@ components:
         - question_id
         - status
         - status_url
+        - attempt_count
+        - max_attempts
       properties:
         transcription_id: {$ref: '#/components/schemas/AggregateId'}
         practice_session_id: {$ref: '#/components/schemas/AggregateId'}
@@ -1089,6 +1091,13 @@ components:
         status_url:
           type: string
           pattern: '^/v1/practice-sessions/.+/deferred-transcriptions/.+$'
+        attempt_count:
+          type: integer
+          minimum: 0
+          maximum: 3
+        max_attempts:
+          type: integer
+          enum: [3]
     RetryTranscriptionCandidate:
       type: object
       additionalProperties: false

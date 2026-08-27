@@ -63,6 +63,8 @@ const (
 	TranscriptionFailed     TranscriptionReservationStatus = "failed"
 )
 
+const MaxDeferredTranscriptionAttempts = 3
+
 type TranscriptionReservation struct {
 	ID                      string
 	LeaseToken              string
@@ -74,13 +76,16 @@ type TranscriptionReservation struct {
 	InputFingerprint        string
 	AudioAssetID            string
 	Candidate               TranscriptionCandidate
+	AttemptCount            int
 }
 
 type DeferredTranscriptionSubmission struct {
-	ID         string
-	SessionID  string
-	QuestionID string
-	Status     TranscriptionReservationStatus
+	ID           string
+	SessionID    string
+	QuestionID   string
+	Status       TranscriptionReservationStatus
+	AttemptCount int
+	MaxAttempts  int
 }
 
 type ReserveTranscriptionCommand struct {
@@ -178,6 +183,11 @@ type DeferredRoundStore interface {
 		context.Context,
 		requestcontext.Actor,
 		string,
+		string,
+	) error
+	ProgressDeferredTranscription(
+		context.Context,
+		requestcontext.Actor,
 		string,
 	) error
 }
@@ -348,18 +358,25 @@ func (service *RoundService) StageTranscription(
 		reservation.Status == TranscriptionConfirmed {
 		return reservation, nil
 	}
-	assetID, err := service.stageRecording(
-		ctx, actor, reservation.ID, source,
-	)
-	if err != nil {
-		return TranscriptionReservation{}, err
+	if reservation.AudioAssetID == "" {
+		assetID, err := service.stageRecording(
+			ctx, actor, reservation.ID, source,
+		)
+		if err != nil {
+			return TranscriptionReservation{}, err
+		}
+		if err := deferredStore.AttachTranscriptionRecording(
+			ctx, actor, reservation.ID, assetID,
+		); err != nil {
+			return TranscriptionReservation{}, err
+		}
+		reservation.AudioAssetID = assetID
 	}
-	if err := deferredStore.AttachTranscriptionRecording(
-		ctx, actor, reservation.ID, assetID,
+	if err := deferredStore.ProgressDeferredTranscription(
+		ctx, actor, reservation.ID,
 	); err != nil {
 		return TranscriptionReservation{}, err
 	}
-	reservation.AudioAssetID = assetID
 	return reservation, nil
 }
 

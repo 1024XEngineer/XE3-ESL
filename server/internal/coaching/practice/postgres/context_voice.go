@@ -73,7 +73,15 @@ func (r *Repository) advanceTurnInTransaction(ctx context.Context, tx pgx.Tx, ac
 			storedEffective == nil || storedVersion == nil {
 			return practice.TurnResult{}, practice.ErrIdempotencyConflict
 		}
-		return practice.TurnResult{SessionID: command.SessionID, TurnID: command.TurnID, Round: *storedEffective, EffectiveTurns: *storedEffective, SessionVersion: *storedVersion, TurnLimit: turnLimit, Completed: status == practice.SessionCompleted, CreatedAt: progressedAt.UTC()}, nil
+		result := practice.TurnResult{SessionID: command.SessionID, TurnID: command.TurnID, Round: *storedEffective, EffectiveTurns: *storedEffective, SessionVersion: *storedVersion, TurnLimit: turnLimit, Completed: status == practice.SessionCompleted, CreatedAt: progressedAt.UTC()}
+		if !command.DeferEvaluation {
+			if err := r.scheduleTurnBoundaries(
+				ctx, tx, actor.UserID, command.SessionID, snapshot, result,
+			); err != nil {
+				return practice.TurnResult{}, err
+			}
+		}
+		return result, nil
 	}
 	if status != practice.SessionStarting && status != practice.SessionInProgress {
 		return practice.TurnResult{}, practice.ErrConflict
@@ -112,30 +120,49 @@ func (r *Repository) advanceTurnInTransaction(ctx context.Context, tx pgx.Tx, ac
 	if tag.RowsAffected() != 1 {
 		return practice.TurnResult{}, practice.ErrConflict
 	}
+	result := practice.TurnResult{SessionID: command.SessionID, TurnID: command.TurnID, Round: nextEffective, EffectiveTurns: nextEffective, SessionVersion: version + 1, TurnLimit: turnLimit, Completed: completed, CreatedAt: progressed.UTC()}
+	if !command.DeferEvaluation {
+		if err := r.scheduleTurnBoundaries(
+			ctx, tx, actor.UserID, command.SessionID, snapshot, result,
+		); err != nil {
+			return practice.TurnResult{}, err
+		}
+	}
+	return result, nil
+}
+
+func (r *Repository) scheduleTurnBoundaries(
+	ctx context.Context,
+	tx pgx.Tx,
+	ownerUserID string,
+	sessionID string,
+	snapshot practice.SessionSnapshot,
+	result practice.TurnResult,
+) error {
 	if stage, part1Boundary, part2Boundary, ok := ieltsProfileBoundary(
-		snapshot, nextEffective,
+		snapshot, result.EffectiveTurns,
 	); ok {
 		evidence, err := r.ReadIELTSPartProfileEvidence(
-			ctx, tx, actor.UserID, command.SessionID,
+			ctx, tx, ownerUserID, sessionID,
 			stage, part1Boundary, part2Boundary,
 		)
 		if err != nil {
-			return practice.TurnResult{}, err
+			return err
 		}
 		if err := r.profile.ScheduleCompletedPart(ctx, tx, evidence); err != nil {
-			return practice.TurnResult{}, err
+			return err
 		}
 	}
-	if completed {
-		evidence, err := r.ReadSessionEvidence(ctx, tx, actor.UserID, command.SessionID)
+	if result.Completed {
+		evidence, err := r.ReadSessionEvidence(ctx, tx, ownerUserID, sessionID)
 		if err != nil {
-			return practice.TurnResult{}, err
+			return err
 		}
 		if err := r.completion.ScheduleCompletedSession(ctx, tx, evidence); err != nil {
-			return practice.TurnResult{}, err
+			return err
 		}
 	}
-	return practice.TurnResult{SessionID: command.SessionID, TurnID: command.TurnID, Round: nextEffective, EffectiveTurns: nextEffective, SessionVersion: version + 1, TurnLimit: turnLimit, Completed: completed, CreatedAt: progressed.UTC()}, nil
+	return nil
 }
 
 func ieltsProfileBoundary(

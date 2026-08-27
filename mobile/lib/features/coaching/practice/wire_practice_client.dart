@@ -1292,6 +1292,8 @@ DeferredTranscription _decodeDeferredTranscription(
       'question_id',
       'status',
       'status_url',
+      'attempt_count',
+      'max_attempts',
     },
   );
   final status = switch (_string(root, 'status')) {
@@ -1306,6 +1308,8 @@ DeferredTranscription _decodeDeferredTranscription(
     questionId: _string(root, 'question_id'),
     status: status,
     statusUrl: _string(root, 'status_url'),
+    attemptCount: _integer(root, 'attempt_count'),
+    maxAttempts: _integer(root, 'max_attempts'),
   );
   final canonicalStatusUrl =
       '/v1/practice-sessions/${result.sessionId}/deferred-transcriptions/'
@@ -1314,7 +1318,10 @@ DeferredTranscription _decodeDeferredTranscription(
       (expectedQuestionId != null && result.questionId != expectedQuestionId) ||
       (expectedTranscriptionId != null &&
           result.id != expectedTranscriptionId) ||
-      result.statusUrl != canonicalStatusUrl) {
+      result.statusUrl != canonicalStatusUrl ||
+      result.maxAttempts != 3 ||
+      result.attemptCount < 0 ||
+      result.attemptCount > result.maxAttempts) {
     throw _invalidResponse();
   }
   return result;
