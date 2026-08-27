@@ -329,10 +329,15 @@ class _SpeakUpShellState extends State<SpeakUpShell>
       ..showSnackBar(SnackBar(content: Text(message)));
   }
 
-  Future<void> _checkForUpdate({required bool automatic}) async {
+  Future<AppUpdateCheckResult?> _checkForUpdate({
+    required bool automatic,
+  }) async {
     final service = widget.appUpdateService;
-    if (service == null || _updateCheckInFlight) {
-      return;
+    if (service == null) {
+      return null;
+    }
+    if (_updateCheckInFlight) {
+      return const AppUpdateCheckResult.skipped();
     }
     if (!automatic) {
       _pendingAutomaticUpdate = null;
@@ -347,7 +352,7 @@ class _SpeakUpShellState extends State<SpeakUpShell>
       }
     }
     if (!mounted) {
-      return;
+      return null;
     }
     switch (result.status) {
       case AppUpdateCheckStatus.available:
@@ -373,6 +378,7 @@ class _SpeakUpShellState extends State<SpeakUpShell>
       case AppUpdateCheckStatus.skipped:
         break;
     }
+    return result;
   }
 
   void _schedulePendingUpdatePresentation() {
@@ -775,7 +781,6 @@ class _SpeakUpShellState extends State<SpeakUpShell>
         reviewHistoryController: widget.reviewHistoryController,
         coachingProfileController: widget.coachingProfileController,
         appUpdateService: widget.appUpdateService,
-        updateCheckInProgress: _updateCheckInFlight,
         onCheckForUpdate: widget.appUpdateService == null
             ? null
             : () => _checkForUpdate(automatic: false),
