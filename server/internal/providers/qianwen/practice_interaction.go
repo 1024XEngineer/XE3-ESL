@@ -33,9 +33,9 @@ func NewPracticeRecordedVoiceRecognizer(
 	if err != nil {
 		return nil, err
 	}
-	if model != "fun-asr-flash-2026-06-15" {
+	if model != recordedASRModel {
 		return nil, errors.New(
-			"Qianwen recorded Practice Voice requires fun-asr-flash-2026-06-15",
+			"Qianwen recorded Practice Voice requires " + recordedASRModel,
 		)
 	}
 	configuration.Model = model
@@ -90,7 +90,7 @@ func (recognizer *PracticeVoiceRecognizer) TranscribeStream(
 	observer practiceinteraction.TranscriptionObserver,
 ) (practiceinteraction.TranscriptionResult, error) {
 	if recognizer == nil || recognizer.recognizer == nil || observer == nil ||
-		recognizer.recognizer.model != "fun-asr-realtime" {
+		!isRealtimeASRModel(recognizer.recognizer.model) {
 		return practiceinteraction.TranscriptionResult{},
 			practiceinteraction.NewProviderError(
 				practiceinteraction.ProviderOperationTranscription,
