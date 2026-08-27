@@ -133,6 +133,26 @@ func TestProgressTranscriptionAdvancesBeforeASRAndCapsRetries(t *testing.T) {
 	if effectiveTurns != 1 || version != 2 || !progressed {
 		t.Fatalf("progress = turns %d, version %d, progressed %t", effectiveTurns, version, progressed)
 	}
+	checkpoint, found, err := repository.LatestSessionProgress(ctx, actor, sessionID)
+	if err != nil {
+		t.Fatalf("latest session progress: %v", err)
+	}
+	if !found || checkpoint.TurnID != turnID || checkpoint.QuestionID != questionID ||
+		checkpoint.Sequence != 1 || checkpoint.EffectiveTurns != 1 ||
+		!checkpoint.CountsTowardTurnLimit || checkpoint.SessionCompleted {
+		t.Fatalf("latest session progress = %#v, found %t", checkpoint, found)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO practice_turns (
+			turn_id,session_id,question_id,respondent_participant_id,sequence,
+			turn_kind,status,counts_toward_turn_limit,progress_fingerprint,
+			effective_turns_after,session_version_after,progressed_at
+		) VALUES ('79999999-9999-4999-8999-999999999999',$1,$2,'learner',2,
+			'EFFECTIVE','failed',true,decode(repeat('ab',32),'hex'),2,3,
+			transaction_timestamp())
+	`, sessionID, questionID); err == nil {
+		t.Fatal("duplicate progressed effective turn was accepted")
+	}
 
 	if _, err := pool.Exec(ctx, `
 		UPDATE practice_turns

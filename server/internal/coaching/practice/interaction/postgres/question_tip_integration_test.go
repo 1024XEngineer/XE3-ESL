@@ -166,6 +166,12 @@ func questionTipTestDatabase(t *testing.T) *pgxpool.Pool {
 		"000002_agent_run_domain_completion.up.sql",
 		"000003_archive_practice_plans.up.sql",
 		"000004_question_tip_translation.up.sql",
+		"000005_scene_selection_source.up.sql",
+		"000006_user_profile_avatar.up.sql",
+		"000007_pending_practice_actions.up.sql",
+		"000008_product_health_views.up.sql",
+		"000009_ielts_incremental_profile.up.sql",
+		"000010_unique_progressed_practice_turn.up.sql",
 	} {
 		migration, err := migrations.Files.ReadFile(name)
 		if err != nil {

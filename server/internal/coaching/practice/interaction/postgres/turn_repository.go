@@ -303,6 +303,53 @@ func (r *Repository) ListSessionTurns(
 	return turns, nil
 }
 
+func (r *Repository) LatestSessionProgress(
+	ctx context.Context,
+	actor practiceinteraction.Actor,
+	sessionID string,
+) (practiceinteraction.StoredTurnProgress, bool, error) {
+	if r == nil || r.pool == nil || ctx == nil || !validInputActor(actor) ||
+		strings.TrimSpace(sessionID) == "" {
+		return practiceinteraction.StoredTurnProgress{}, false,
+			practiceinteraction.ErrPersistenceInvalid
+	}
+	tx, err := r.beginActorRead(ctx, actor)
+	if err != nil {
+		return practiceinteraction.StoredTurnProgress{}, false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var progress practiceinteraction.StoredTurnProgress
+	err = tx.QueryRow(ctx, `
+		SELECT t.turn_id,t.session_id,t.question_id,t.sequence,
+		       t.effective_turns_after,t.counts_toward_turn_limit,
+		       s.status = 'completed'
+		FROM practice_turns t
+		JOIN practice_sessions s ON s.session_id=t.session_id
+		WHERE s.user_id=$1 AND t.session_id=$2
+		  AND t.turn_kind='EFFECTIVE' AND t.progressed_at IS NOT NULL
+		ORDER BY t.effective_turns_after DESC,t.sequence DESC,t.turn_id DESC
+		LIMIT 1
+	`, actor.UserID, sessionID).Scan(
+		&progress.TurnID,
+		&progress.SessionID,
+		&progress.QuestionID,
+		&progress.Sequence,
+		&progress.EffectiveTurns,
+		&progress.CountsTowardTurnLimit,
+		&progress.SessionCompleted,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return practiceinteraction.StoredTurnProgress{}, false, nil
+	}
+	if err != nil {
+		return practiceinteraction.StoredTurnProgress{}, false, safeDatabaseError(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return practiceinteraction.StoredTurnProgress{}, false, safeDatabaseError(err)
+	}
+	return progress, true, nil
+}
+
 const turnColumns = `
 	SELECT t.turn_id, t.session_id, t.question_id,
 	       q.speaker_participant_id, q.addressee_participant_ids,
@@ -313,7 +360,9 @@ const turnColumns = `
 	       COALESCE(t.client_request_id, ''), COALESCE(t.original_turn_id::text, ''),
 	       t.counts_toward_turn_limit,
 	       COALESCE(t.effective_turns_after, s.effective_turns),
-	       s.status = 'completed' AND t.turn_id = (
+	       s.status = 'completed'
+	       AND COALESCE(t.effective_turns_after, s.effective_turns) = s.effective_turns
+	       AND t.turn_id = (
 	           SELECT final_turn.turn_id
 	           FROM practice_turns AS final_turn
 	           WHERE final_turn.session_id = t.session_id

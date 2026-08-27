@@ -93,6 +93,21 @@ type CheckpointPort interface {
 		requestcontext.Actor,
 		string,
 	) ([]TurnExchange, error)
+	LatestProgress(
+		context.Context,
+		requestcontext.Actor,
+		string,
+	) (TurnProgress, bool, error)
+}
+
+type TurnProgress struct {
+	TurnID                string
+	SessionID             string
+	QuestionID            string
+	Sequence              int
+	EffectiveTurns        int
+	CountsTowardTurnLimit bool
+	SessionCompleted      bool
 }
 
 type TurnExchange struct {
@@ -484,6 +499,24 @@ func (application *SessionApplication) state(
 		return SessionState{}, ErrInvalidContext
 	}
 	state := SessionState{Session: session}
+	progress, progressed, err := application.checkpoints.LatestProgress(
+		ctx,
+		actor,
+		session.ID,
+	)
+	if err != nil {
+		return SessionState{}, err
+	}
+	if (session.EffectiveTurns > 0) != progressed ||
+		(progressed &&
+			(progress.SessionID != session.ID ||
+				progress.TurnID == "" ||
+				progress.QuestionID == "" ||
+				progress.Sequence < 1 ||
+				progress.EffectiveTurns != session.EffectiveTurns ||
+				progress.SessionCompleted != session.Completed)) {
+		return SessionState{}, ErrInvalidContext
+	}
 	if session.Status == "paused" || session.Status == "ended_early" {
 		history, err := application.restoreTurnHistory(
 			ctx,
@@ -544,14 +577,11 @@ func (application *SessionApplication) state(
 		state.Turn = &enriched
 	}
 	if state.Turn != nil &&
-		(state.Turn.EffectiveTurns != state.Session.EffectiveTurns ||
-			state.Turn.SessionCompleted != state.Session.Completed) {
+		(state.Turn.EffectiveTurns > state.Session.EffectiveTurns ||
+			(state.Turn.SessionCompleted && !state.Session.Completed)) {
 		return SessionState{}, ErrInvalidContext
 	}
 	if state.Session.Completed {
-		if state.Turn == nil {
-			return SessionState{}, ErrInvalidContext
-		}
 		return state, nil
 	}
 	if state.Turn != nil {
@@ -560,9 +590,25 @@ func (application *SessionApplication) state(
 			state.Session.PreviousQuestion = history[len(history)-1].Question.Content
 		}
 	}
-	nextQuestionSequence := len(history) + 1
-	if len(history) == 0 && state.Session.EffectiveTurns > 0 {
-		nextQuestionSequence = state.Session.EffectiveTurns + 1
+	nextQuestionSequence := 1
+	if len(history) > 0 {
+		nextQuestionSequence = history[len(history)-1].Question.Sequence + 1
+	}
+	if progressed && progress.Sequence >= nextQuestionSequence {
+		nextQuestionSequence = progress.Sequence + 1
+		progressedQuestion, questionErr := application.questions.GetQuestion(
+			ctx,
+			actor,
+			progress.QuestionID,
+		)
+		if questionErr != nil {
+			return SessionState{}, questionErr
+		}
+		if progressedQuestion.SessionID != session.ID ||
+			progressedQuestion.Sequence != progress.Sequence {
+			return SessionState{}, ErrInvalidContext
+		}
+		state.Session.PreviousQuestion = progressedQuestion.Content
 	}
 	question, err := application.questions.EnsureQuestion(
 		ctx,
@@ -603,13 +649,18 @@ func (application *SessionApplication) restoreTurnHistory(
 	effectiveTurns := 0
 	primaryQuestionIDs := make(map[string]struct{})
 	for index, exchange := range history {
+		previousEffectiveTurns := effectiveTurns
 		if exchange.Turn.CountsTowardTurnLimit {
-			effectiveTurns++
+			effectiveTurns = exchange.Turn.EffectiveTurns
 		}
 		if exchange.Question.SessionID != session.ID ||
 			exchange.Turn.SessionID != session.ID ||
 			exchange.Question.ID != exchange.Turn.QuestionID ||
-			exchange.Turn.EffectiveTurns != effectiveTurns ||
+			(exchange.Turn.CountsTowardTurnLimit &&
+				exchange.Turn.EffectiveTurns <= previousEffectiveTurns) ||
+			(!exchange.Turn.CountsTowardTurnLimit &&
+				exchange.Turn.EffectiveTurns != effectiveTurns) ||
+			exchange.Turn.EffectiveTurns > session.EffectiveTurns ||
 			(exchange.Question.Type == "PRIMARY") !=
 				exchange.Turn.CountsTowardTurnLimit ||
 			(exchange.Question.Type == "PRIMARY" &&
@@ -631,9 +682,6 @@ func (application *SessionApplication) restoreTurnHistory(
 		} else {
 			primaryQuestionIDs[exchange.Question.ID] = struct{}{}
 		}
-	}
-	if effectiveTurns != session.EffectiveTurns {
-		return nil, ErrInvalidContext
 	}
 	return history, nil
 }

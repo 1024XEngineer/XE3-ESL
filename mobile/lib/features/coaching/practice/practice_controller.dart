@@ -1478,21 +1478,18 @@ final class PracticeController extends ChangeNotifier
           !identical(_pendingPracticeAudio, pending)) {
         return null;
       }
-      final snapshot = await client.restorePractice(
-        sessionId: pending.sessionId,
-      );
-      if (!_isOperationCurrent(fence) ||
-          !identical(_pendingPracticeAudio, pending)) {
-        return null;
-      }
       _deferredTranscription = submission;
       _pendingPracticeAudio = null;
-      _applyPracticeSnapshot(snapshot, preserveKnownRecordings: true);
-      _deferredTranscription = submission;
       _recordingState = PracticeRecordingState.idle;
       _errorMessage = null;
-      await recorder.discard(pending.audio);
       notifyListeners();
+      unawaited(_restoreAfterDeferredSubmission(submission, fence));
+      try {
+        await recorder.discard(pending.audio);
+      } catch (_) {
+        // The server already owns the durable recording. Local cleanup must not
+        // turn an accepted submission back into an upload failure.
+      }
       return submission;
     } catch (error) {
       if (_isOperationCurrent(fence) &&
@@ -1502,6 +1499,34 @@ final class PracticeController extends ChangeNotifier
         notifyListeners();
       }
       return null;
+    }
+  }
+
+  Future<void> _restoreAfterDeferredSubmission(
+    DeferredTranscription submission,
+    _PracticeOperationFence fence,
+  ) async {
+    for (var attempt = 0; attempt < 3; attempt++) {
+      if (!_isOperationCurrent(fence) || _disposed) {
+        return;
+      }
+      try {
+        final snapshot = await client.restorePractice(
+          sessionId: submission.sessionId,
+        );
+        if (!_isOperationCurrent(fence) || _disposed) {
+          return;
+        }
+        _applyPracticeSnapshot(snapshot, preserveKnownRecordings: true);
+        _deferredTranscription = submission;
+        _errorMessage = null;
+        notifyListeners();
+        return;
+      } catch (_) {
+        if (attempt < 2) {
+          await Future<void>.delayed(Duration(seconds: attempt + 1));
+        }
+      }
     }
   }
 

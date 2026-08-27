@@ -139,6 +139,19 @@ type ConfirmTurnCommand struct {
 	RetryTurnID string
 }
 
+// StoredTurnProgress is the authoritative progression checkpoint written when
+// Practice consumes a Turn. It deliberately does not require a transcript or
+// confirmation: those enrichments may complete after the learner has moved on.
+type StoredTurnProgress struct {
+	TurnID                string
+	SessionID             string
+	QuestionID            string
+	Sequence              int
+	EffectiveTurns        int
+	CountsTowardTurnLimit bool
+	SessionCompleted      bool
+}
+
 // RecordingConfirmationStore creates or replays a Turn and binds its shared
 // media recording in one transaction. A replay after explicit recording
 // deletion returns the same Turn with an empty AudioAssetID.
@@ -166,6 +179,7 @@ type PersistenceStore interface {
 	ConfirmTurn(context.Context, Actor, ConfirmTurnCommand) (practice.Turn, error)
 	GetTurn(context.Context, Actor, string) (practice.Turn, error)
 	ListSessionTurns(context.Context, Actor, string) ([]practice.Turn, error)
+	LatestSessionProgress(context.Context, Actor, string) (StoredTurnProgress, bool, error)
 }
 
 type QuestionTipStatus string

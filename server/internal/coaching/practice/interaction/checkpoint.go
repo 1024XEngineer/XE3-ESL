@@ -104,6 +104,33 @@ func (adapter *checkpointAdapter) LatestTurn(
 	return turn, true, nil
 }
 
+func (adapter *checkpointAdapter) LatestProgress(
+	ctx context.Context,
+	actor requestcontext.Actor,
+	sessionID string,
+) (TurnProgress, bool, error) {
+	progress, found, err := adapter.repository.LatestSessionProgress(
+		ctx,
+		persistenceActor(actor),
+		sessionID,
+	)
+	if err != nil {
+		return TurnProgress{}, false, mapPersistenceError(err)
+	}
+	if !found {
+		return TurnProgress{}, false, nil
+	}
+	return TurnProgress{
+		TurnID:                progress.TurnID,
+		SessionID:             progress.SessionID,
+		QuestionID:            progress.QuestionID,
+		Sequence:              progress.Sequence,
+		EffectiveTurns:        progress.EffectiveTurns,
+		CountsTowardTurnLimit: progress.CountsTowardTurnLimit,
+		SessionCompleted:      progress.SessionCompleted,
+	}, true, nil
+}
+
 func (adapter *checkpointAdapter) withSpeechFeedback(
 	ctx context.Context,
 	actor requestcontext.Actor,

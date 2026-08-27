@@ -971,12 +971,18 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   }
 
   void _syncTicker() {
+    if (_disposing || !mounted) {
+      _ticker?.cancel();
+      _ticker = null;
+      return;
+    }
     final phase = _progress?.phase;
+    final mode = widget.controller.practiceMode;
     final hasDeferredPart2 =
         _progress?.deferredTranscriptionStatusUrl != null &&
         (phase == IeltsMockPhase.part2Complete ||
             phase == IeltsMockPhase.part3 ||
-            (_mode == PracticeMode.part2 && phase == IeltsMockPhase.complete));
+            (mode == PracticeMode.part2 && phase == IeltsMockPhase.complete));
     final needsTicker =
         phase == IeltsMockPhase.part2Preparation ||
         phase == IeltsMockPhase.part2Speaking ||
@@ -990,7 +996,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       return;
     }
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!mounted) {
+      if (!mounted || _disposing) {
         return;
       }
       setState(() => _now = widget.now().toUtc());
@@ -1001,16 +1007,19 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   }
 
   Future<void> _pollDeferredTranscription() async {
+    if (!mounted || _disposing) {
+      return;
+    }
     final progress = _progress;
     final statusUrl = progress?.deferredTranscriptionStatusUrl;
     final now = widget.now().toUtc();
+    final mode = widget.controller.practiceMode;
     final canPollPart2 =
         progress?.phase == IeltsMockPhase.part2Complete ||
         progress?.phase == IeltsMockPhase.part3 ||
-        (_mode == PracticeMode.part2 &&
+        (mode == PracticeMode.part2 &&
             progress?.phase == IeltsMockPhase.complete);
-    if (!mounted ||
-        !canPollPart2 ||
+    if (!canPollPart2 ||
         statusUrl == null ||
         _pollingDeferredTranscription ||
         (_lastDeferredTranscriptionPoll != null &&

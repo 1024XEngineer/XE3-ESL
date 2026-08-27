@@ -223,6 +223,47 @@ func TestSessionApplicationStagesAndRestoresDeferredTranscription(t *testing.T) 
 	}
 }
 
+func TestSessionResumeUsesProgressedUnconfirmedTurnForNextQuestion(t *testing.T) {
+	session := sessionFixture()
+	session.SessionVersion = 2
+	session.EffectiveTurns = 1
+	questions := &progressQuestionPortStub{}
+	checkpoints := progressedCheckpointPortStub{
+		progress: TurnProgress{
+			TurnID: "turn-1", SessionID: session.ID, QuestionID: "question-1",
+			Sequence: 1, EffectiveTurns: 1, CountsTowardTurnLimit: true,
+		},
+	}
+	candidate := roundCandidate()
+	orchestrator, err := NewRoundOrchestrator(
+		&roundVoice{candidate: candidate, turn: roundTurn(candidate)},
+		roundPractice{},
+	)
+	if err != nil {
+		t.Fatalf("NewRoundOrchestrator: %v", err)
+	}
+	application, err := NewSessionApplication(
+		sessionPortStub{session: session},
+		questions,
+		checkpoints,
+		orchestrator,
+	)
+	if err != nil {
+		t.Fatalf("NewSessionApplication: %v", err)
+	}
+
+	state, err := application.Resume(context.Background(), roundActor(), session.ID)
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if state.Question == nil || state.Question.Sequence != 2 ||
+		questions.ensuredSequence != 2 ||
+		state.Session.PreviousQuestion != "Part 2 question" ||
+		len(state.TurnHistory) != 0 {
+		t.Fatalf("restored state = %#v, questions = %#v", state, questions)
+	}
+}
+
 type sessionPortStub struct{ session Session }
 
 func (p sessionPortStub) Start(
@@ -286,6 +327,57 @@ func (checkpointPortStub) ListTurnHistory(
 	string,
 ) ([]TurnExchange, error) {
 	return nil, nil
+}
+
+func (checkpointPortStub) LatestProgress(
+	context.Context,
+	requestcontext.Actor,
+	string,
+) (TurnProgress, bool, error) {
+	return TurnProgress{}, false, nil
+}
+
+type progressedCheckpointPortStub struct {
+	checkpointPortStub
+	progress TurnProgress
+}
+
+func (stub progressedCheckpointPortStub) LatestProgress(
+	context.Context,
+	requestcontext.Actor,
+	string,
+) (TurnProgress, bool, error) {
+	return stub.progress, true, nil
+}
+
+type progressQuestionPortStub struct {
+	ensuredSequence int
+}
+
+func (stub *progressQuestionPortStub) EnsureQuestion(
+	_ context.Context,
+	_ requestcontext.Actor,
+	session Session,
+	sequence int,
+) (practice.Question, error) {
+	stub.ensuredSequence = sequence
+	return practice.Question{
+		ID: "question-2", SessionID: session.ID, Sequence: sequence,
+		SpeakerParticipantID:    session.FacilitatorParticipantID,
+		AddresseeParticipantIDs: []string{session.LearnerParticipantID},
+		ObjectiveID:             "objective-1", Type: "PRIMARY", Content: "Part 3 question",
+	}, nil
+}
+
+func (*progressQuestionPortStub) GetQuestion(
+	_ context.Context,
+	_ requestcontext.Actor,
+	questionID string,
+) (practice.Question, error) {
+	return practice.Question{
+		ID: questionID, SessionID: "session-1", Sequence: 1,
+		Content: "Part 2 question",
+	}, nil
 }
 
 func sessionFixture() Session {

@@ -701,7 +701,8 @@ void main() {
   ) async {
     final base = _IeltsPracticeClient(initialCompleted: 8);
     base.activeScene = _ieltsScene;
-    final practice = _DeferredIeltsPracticeClient(base);
+    final practice = _DeferredIeltsPracticeClient(base)
+      ..restoreFailuresRemaining = 1;
     final controller = PracticeController(
       client: practice,
       recorder: _Recorder(),
@@ -744,12 +745,20 @@ void main() {
 
     expect(practice.stageCalls, 1);
     expect(progressStore.value?.phase, IeltsMockPhase.part3);
+    expect(controller.hasPendingPracticeAudio, isFalse);
+    expect(controller.errorMessage, isNull);
     expect(find.byKey(const Key('ielts-mock-part-2-transition')), findsNothing);
     expect(find.byKey(const Key('ielts-mock-part-3')), findsOneWidget);
     expect(
       find.byKey(const Key('ielts-part2-background-processing')),
       findsOneWidget,
     );
+    expect(find.byKey(const Key('ielts-mock-record')), findsNothing);
+
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+    expect(practice.restoreCalls, greaterThanOrEqualTo(2));
+    expect(controller.completedTurns, 9);
     expect(find.byKey(const Key('ielts-mock-record')), findsOneWidget);
   });
 
@@ -2537,6 +2546,8 @@ final class _DeferredIeltsPracticeClient
   int statusCalls = 0;
   int? completeAfterStatusCalls;
   int? failAfterStatusCalls;
+  int restoreFailuresRemaining = 0;
+  int restoreCalls = 0;
   DeferredTranscription? submission;
 
   @override
@@ -2545,7 +2556,14 @@ final class _DeferredIeltsPracticeClient
   @override
   Future<PracticeSessionSnapshot> restorePractice({
     required String sessionId,
-  }) => delegate.restorePractice(sessionId: sessionId);
+  }) async {
+    restoreCalls++;
+    if (restoreFailuresRemaining > 0) {
+      restoreFailuresRemaining--;
+      throw StateError('temporary restore failure');
+    }
+    return delegate.restorePractice(sessionId: sessionId);
+  }
 
   @override
   Future<PracticeSessionSnapshot> activatePractice({
