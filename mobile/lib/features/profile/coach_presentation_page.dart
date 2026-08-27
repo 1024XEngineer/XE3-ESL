@@ -344,104 +344,92 @@ class _AvatarCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Semantics(
-    label: '${option.name}，${option.description}的数字人',
-    image: true,
-    child: ClipRRect(
-      borderRadius: BorderRadius.circular(24),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          Image.asset(
-            option.previewAsset,
-            fit: BoxFit.cover,
-            alignment: Alignment.topCenter,
-          ),
-          const DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.center,
-                end: Alignment.bottomCenter,
-                colors: [Colors.transparent, Color(0xC9000000)],
-                stops: [0.55, 1],
+    label: '${option.name}，${option.description}的数字人，点击选择',
+    button: true,
+    selected: selected,
+    child: GestureDetector(
+      key: selectButtonKey,
+      behavior: HitTestBehavior.opaque,
+      onTap: onSelect,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Image.asset(
+              option.previewAsset,
+              fit: BoxFit.cover,
+              alignment: Alignment.topCenter,
+            ),
+            const DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.center,
+                  end: Alignment.bottomCenter,
+                  colors: [Colors.transparent, Color(0xC9000000)],
+                  stops: [0.55, 1],
+                ),
               ),
             ),
-          ),
-          Positioned(
-            left: 22,
-            right: 22,
-            bottom: 20,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  option.name,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 28,
-                    fontWeight: FontWeight.w700,
-                    height: 1.1,
-                  ),
-                ),
-                const SizedBox(height: 5),
-                Text(
-                  option.description,
-                  style: const TextStyle(
-                    color: Color(0xFFE5E7EB),
-                    fontSize: 16,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Positioned(
-            top: SpeakUpDesign.space12,
-            right: SpeakUpDesign.space12,
-            child: Tooltip(
-              message: selected ? '${option.name}已选中' : '选择${option.name}',
-              child: Semantics(
-                button: true,
-                selected: selected,
-                label: selected ? '${option.name}已选中' : '选择${option.name}',
-                child: GestureDetector(
-                  key: selectButtonKey,
-                  behavior: HitTestBehavior.opaque,
-                  onTap: onSelect,
-                  child: SizedBox.square(
-                    dimension: SpeakUpDesign.minTapTarget,
-                    child: Center(
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 160),
-                        width: 28,
-                        height: 28,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: selected
-                              ? SpeakUpDesign.ink
-                              : Colors.white.withValues(alpha: 0.92),
-                          border: Border.all(
-                            color: selected
-                                ? SpeakUpDesign.ink
-                                : SpeakUpDesign.tertiary,
-                            width: 1.5,
-                          ),
-                        ),
-                        child: selected
-                            ? const Icon(
-                                Icons.check_rounded,
-                                color: Colors.white,
-                                size: 18,
-                              )
-                            : null,
-                      ),
+            Positioned(
+              left: 22,
+              right: 22,
+              bottom: 20,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    option.name,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 28,
+                      fontWeight: FontWeight.w700,
+                      height: 1.1,
                     ),
                   ),
-                ),
+                  const SizedBox(height: 5),
+                  Text(
+                    option.description,
+                    style: const TextStyle(
+                      color: Color(0xFFE5E7EB),
+                      fontSize: 16,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
               ),
             ),
-          ),
-        ],
+            Positioned(
+              top: SpeakUpDesign.space20,
+              right: SpeakUpDesign.space20,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 160),
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: selected
+                      ? SpeakUpDesign.ink
+                      : Colors.white.withValues(alpha: 0.92),
+                  border: Border.all(
+                    color: selected
+                        ? SpeakUpDesign.ink
+                        : SpeakUpDesign.tertiary,
+                    width: 1.5,
+                  ),
+                ),
+                child: selected
+                    ? const Icon(
+                        Icons.check_rounded,
+                        color: Colors.white,
+                        size: 18,
+                      )
+                    : null,
+              ),
+            ),
+          ],
+        ),
       ),
     ),
   );
