@@ -76,7 +76,13 @@ test("Production finalization is ordered, complete, immutable, and retryable", (
   assert.match(workflow, /tools\/release-finalize\/notes\.mjs/);
   assert.match(workflow, /--published-at "\$PUBLISHED_AT"/);
   assert.match(workflow, /Prepare the complete GitHub Release draft/);
-  assert.match(workflow, /gh release upload "\$tag"/);
+  assert.match(workflow, /\.upload_url \| sub/);
+  assert.match(
+    workflow,
+    /https:\/\/uploads\.github\.com\/repos\/\$GITHUB_REPOSITORY\/releases\/\$release_id\/assets/,
+  );
+  assert.match(workflow, /--data-binary "@\$file"/);
+  assert.doesNotMatch(workflow, /gh release upload/);
   assert.match(workflow, /Activate the approved APK through the restricted broker/);
   assert.match(workflow, /Verify the public APK and changelog contract/);
   assert.match(workflow, /Publish and verify the immutable GitHub Release/);
