@@ -211,6 +211,7 @@ func presentationTestDatabase(t *testing.T) *pgxpool.Pool {
 	for _, name := range []string{
 		"000001_clean_baseline.up.sql",
 		"000010_coach_presentation_preferences.up.sql",
+		"000011_coach_presentation_runtime.up.sql",
 	} {
 		migration, err := migrations.Files.ReadFile(name)
 		if err != nil {
