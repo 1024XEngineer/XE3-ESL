@@ -30,6 +30,12 @@ test("CN ACR mirror is manual, Candidate-bound, immutable, and isolated", () => 
   assert.doesNotMatch(workflow, /--prefer-index=false/);
   assert.match(workflow, /mirror_tag "\$VERSION"/);
   assert.match(workflow, /mirror_tag "\$CANDIDATE_SHA"/);
+  const versionPreflight = workflow.indexOf('preflight_tag "$VERSION"');
+  const shaPreflight = workflow.indexOf('preflight_tag "$CANDIDATE_SHA"');
+  const firstMirror = workflow.indexOf('mirror_tag "$VERSION"');
+  assert.ok(versionPreflight >= 0);
+  assert.ok(shaPreflight > versionPreflight);
+  assert.ok(firstMirror > shaPreflight);
   assert.match(workflow, /Refusing to overwrite/);
   assert.match(workflow, /"\$mirrored_platform_digest" != "\$platform_digest"/);
   assert.match(workflow, /version_index_digest.*sha_index_digest/);

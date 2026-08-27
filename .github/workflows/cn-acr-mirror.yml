@@ -273,7 +273,7 @@ jobs:
             return 2
           }
 
-          mirror_tag() {
+          preflight_tag() {
             local tag=$1
             local reference="$CN_ACR_SERVER_IMAGE:$tag"
             local safe_tag="${tag//[^A-Za-z0-9_.-]/_}"
@@ -292,16 +292,27 @@ jobs:
                     "$reference" "$existing_platform_digest" "$platform_digest" >&2
                   return 1
                 fi
+                printf 'existing\n'
                 ;;
               1)
-                docker buildx imagetools create \
-                  --tag "$reference" \
-                  "$SOURCE_IMAGE@$platform_digest" >&2
+                printf 'missing\n'
                 ;;
               *)
                 return "$status"
                 ;;
             esac
+          }
+
+          mirror_tag() {
+            local tag=$1
+            local state=$2
+            local reference="$CN_ACR_SERVER_IMAGE:$tag"
+            local safe_tag="${tag//[^A-Za-z0-9_.-]/_}"
+            if [[ "$state" == "missing" ]]; then
+              docker buildx imagetools create \
+                --tag "$reference" \
+                "$SOURCE_IMAGE@$platform_digest" >&2
+            fi
             local verified_identity
             verified_identity="$(
               inspect_index \
@@ -319,8 +330,10 @@ jobs:
             printf '%s\n' "$mirrored_index_digest"
           }
 
-          version_index_digest="$(mirror_tag "$VERSION")"
-          sha_index_digest="$(mirror_tag "$CANDIDATE_SHA")"
+          version_state="$(preflight_tag "$VERSION")"
+          sha_state="$(preflight_tag "$CANDIDATE_SHA")"
+          version_index_digest="$(mirror_tag "$VERSION" "$version_state")"
+          sha_index_digest="$(mirror_tag "$CANDIDATE_SHA" "$sha_state")"
           if [[ "$version_index_digest" != "$sha_index_digest" ]]; then
             printf 'ACR tags resolve to different indexes (%s != %s).\n' \
               "$version_index_digest" "$sha_index_digest" >&2
