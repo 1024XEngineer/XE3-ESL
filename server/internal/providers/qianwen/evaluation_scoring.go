@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/textgeneration"
 	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
@@ -73,18 +74,16 @@ func evaluationReportSchema(
 	for index, key := range contract.DimensionKeys {
 		dimensionKeys[index] = key
 	}
-	requiredDimensionOrder := strings.Join(contract.DimensionKeys, ", ")
 	evidence := map[string]any{
 		"type":                 "object",
 		"additionalProperties": false,
 		"required":             []any{"turn_id", "quote", "occurrence"},
 		"properties": map[string]any{
 			"turn_id": map[string]any{
-				"type": "string", "minLength": 36, "maxLength": 36,
+				"type":    "string",
+				"pattern": `^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`,
 			},
-			"quote": map[string]any{
-				"type": "string", "minLength": 1, "maxLength": 16 * 1024,
-			},
+			"quote":      utf8ByteBoundedStringSchema(16*1024, true),
 			"occurrence": map[string]any{"type": "integer", "minimum": 1},
 		},
 	}
@@ -93,12 +92,8 @@ func evaluationReportSchema(
 		"additionalProperties": false,
 		"required":             []any{"message", "suggestion", "evidence"},
 		"properties": map[string]any{
-			"message": map[string]any{
-				"type": "string", "minLength": 1, "maxLength": 2048,
-			},
-			"suggestion": map[string]any{
-				"type": "string", "maxLength": 2048,
-			},
+			"message":    utf8ByteBoundedStringSchema(2048, true),
+			"suggestion": utf8ByteBoundedStringSchema(2048, false),
 			"evidence": map[string]any{
 				"type": "array", "maxItems": 8, "items": evidence,
 			},
@@ -109,44 +104,51 @@ func evaluationReportSchema(
 			"type": "array", "maxItems": 5, "items": finding,
 		}
 	}
-	dimension := map[string]any{
-		"type":                 "object",
-		"additionalProperties": false,
-		"required": []any{
-			"key", "score", "coverage", "confidence", "reason_codes",
-			"strengths", "improvements", "recommended_examples",
-		},
-		"properties": map[string]any{
-			"key": map[string]any{
-				"type": "string", "enum": dimensionKeys,
-				"description": "Use each requested dimension key exactly once in the requested order.",
+	dimensionSlots := make(map[string]any, len(contract.DimensionKeys))
+	requiredDimensionSlots := make([]any, len(contract.DimensionKeys))
+	dimensionSlotOrder := make([]string, len(contract.DimensionKeys))
+	for index, key := range contract.DimensionKeys {
+		slot := fmt.Sprintf("dimension_%d", index+1)
+		requiredDimensionSlots[index] = slot
+		dimensionSlotOrder[index] = slot + "=" + key
+		dimensionSlots[slot] = map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"required": []any{
+				"key", "score", "coverage", "confidence", "reason_codes",
+				"strengths", "improvements", "recommended_examples",
 			},
-			"score": map[string]any{
-				"anyOf": []any{
-					map[string]any{
-						"type": "number", "minimum": 0,
-						"maximum": contract.ScoreMaximum,
+			"properties": map[string]any{
+				"key": map[string]any{
+					"type": "string", "enum": []any{key},
+				},
+				"score": map[string]any{
+					"anyOf": []any{
+						map[string]any{
+							"type": "number", "minimum": 0,
+							"maximum": contract.ScoreMaximum,
+						},
+						map[string]any{"type": "null"},
 					},
-					map[string]any{"type": "null"},
 				},
-			},
-			"coverage": map[string]any{
-				"type": "number", "minimum": 0, "maximum": 1,
-			},
-			"confidence": map[string]any{
-				"type": "number", "minimum": 0, "maximum": 1,
-			},
-			"reason_codes": map[string]any{
-				"type": "array", "maxItems": 8,
-				"items": map[string]any{
-					"type": "string", "minLength": 1, "maxLength": 128,
-					"pattern": `^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`,
+				"coverage": map[string]any{
+					"type": "number", "minimum": 0, "maximum": 1,
 				},
+				"confidence": map[string]any{
+					"type": "number", "minimum": 0, "maximum": 1,
+				},
+				"reason_codes": map[string]any{
+					"type": "array", "maxItems": 8,
+					"items": map[string]any{
+						"type": "string", "minLength": 1, "maxLength": 128,
+						"pattern": `^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`,
+					},
+				},
+				"strengths":            findings(),
+				"improvements":         findings(),
+				"recommended_examples": findings(),
 			},
-			"strengths":            findings(),
-			"improvements":         findings(),
-			"recommended_examples": findings(),
-		},
+		}
 	}
 	priorityAction := map[string]any{
 		"type":                 "object",
@@ -161,10 +163,6 @@ func evaluationReportSchema(
 			},
 		},
 	}
-	// discipline: the provider's strict-schema subset has no positional-array
-	// keyword. Exact cardinality + the dynamic enum + this ordered instruction
-	// guide generation; normalizeProviderReport remains the fail-closed authority
-	// for cross-item uniqueness and order.
 	return map[string]any{
 		"type":                 "object",
 		"additionalProperties": false,
@@ -175,15 +173,13 @@ func evaluationReportSchema(
 			"scoreability_status": map[string]any{
 				"type": "string", "enum": []any{"PROVISIONAL", "INSUFFICIENT"},
 			},
-			"summary": map[string]any{
-				"type": "string", "minLength": 1, "maxLength": 2048,
-			},
+			"summary": utf8ByteBoundedStringSchema(2048, true),
 			"dimensions": map[string]any{
-				"type": "array", "minItems": len(contract.DimensionKeys),
-				"maxItems": len(contract.DimensionKeys), "items": dimension,
+				"type": "object", "additionalProperties": false,
+				"required": requiredDimensionSlots, "properties": dimensionSlots,
 				"description": fmt.Sprintf(
-					"Return each key exactly once and in this order: %s.",
-					requiredDimensionOrder,
+					"Return the ordered dimension slots exactly as follows: %s.",
+					strings.Join(dimensionSlotOrder, ", "),
 				),
 			},
 			"priority_actions": map[string]any{
@@ -191,6 +187,16 @@ func evaluationReportSchema(
 			},
 		},
 	}, nil
+}
+
+func utf8ByteBoundedStringSchema(maximumBytes int, requireNonEmpty bool) map[string]any {
+	schema := map[string]any{
+		"type": "string", "maxLength": maximumBytes / utf8.UTFMax,
+	}
+	if requireNonEmpty {
+		schema["minLength"] = 1
+	}
+	return schema
 }
 
 var _ textgeneration.Generator = (*EvaluationScoringGenerator)(nil)

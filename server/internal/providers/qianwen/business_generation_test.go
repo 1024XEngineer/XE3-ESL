@@ -223,9 +223,13 @@ func assertEvaluationFindingSchema(
 	if !ok {
 		t.Fatalf("evaluation dimensions schema = %#v", properties["dimensions"])
 	}
-	dimension, ok := dimensions["items"].(map[string]any)
+	dimensionSlots, ok := dimensions["properties"].(map[string]any)
 	if !ok {
-		t.Fatalf("evaluation dimension item = %#v", dimensions["items"])
+		t.Fatalf("evaluation dimension slots = %#v", dimensions["properties"])
+	}
+	dimension, ok := dimensionSlots["dimension_1"].(map[string]any)
+	if !ok {
+		t.Fatalf("evaluation first dimension slot = %#v", dimensionSlots["dimension_1"])
 	}
 	dimensionProperties, ok := dimension["properties"].(map[string]any)
 	if !ok {

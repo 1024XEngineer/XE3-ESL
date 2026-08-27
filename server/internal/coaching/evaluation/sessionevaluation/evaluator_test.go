@@ -35,9 +35,9 @@ func TestInsufficientProviderReportClearsScoresAndPriorityActions(t *testing.T) 
 	generated := mustProviderResult(t, providerReport{
 		ScoreabilityStatus: report.ReportScoreabilityInsufficient,
 		Summary:            "The available evidence is insufficient.",
-		Dimensions: []providerDimension{
+		Dimensions: providerDimensions(
 			providerDimensionFixture("FLUENCY_COHERENCE", &score),
-		},
+		),
 		PriorityActions: []providerPriorityAction{{
 			DimensionKey: "UNKNOWN", ImprovementIndex: 99,
 		}},
@@ -61,6 +61,29 @@ func TestInsufficientProviderReportClearsScoresAndPriorityActions(t *testing.T) 
 	}
 }
 
+func TestProviderReportRejectsDimensionKeyInWrongStructuralSlot(t *testing.T) {
+	score := 7.0
+	snapshot := sessionSnapshotFixture()
+	_, err := normalizeProviderReport(
+		mustProviderResult(t, providerReport{
+			ScoreabilityStatus: report.ReportScoreabilityProvisional,
+			Summary:            "Provisional report.",
+			Dimensions: map[string]providerDimension{
+				"dimension_1": providerDimensionFixture("LEXICAL_RESOURCE", &score),
+				"dimension_2": providerDimensionFixture("LEXICAL_RESOURCE", &score),
+			},
+			PriorityActions: []providerPriorityAction{},
+		}),
+		snapshot, evaluation.SceneIELTSSpeaking,
+		[]string{"FLUENCY_COHERENCE", "LEXICAL_RESOURCE"}, report.ReportScaleIELTSBand,
+		"qianwen", "qwen-plus", fullRawProviderEvidencePolicy(snapshot),
+	)
+	if !errors.Is(err, ErrProviderResponse) ||
+		normalizeReasonFromError(err) != normalizeReasonDimensionOrderInvalid {
+		t.Fatalf("wrong structural slot error = %v, reason = %q", err, normalizeReasonFromError(err))
+	}
+}
+
 func TestInsufficientProviderReportDoesNotFabricateInvalidEvidence(t *testing.T) {
 	score := 7.0
 	snapshot := sessionSnapshotFixture()
@@ -75,7 +98,7 @@ func TestInsufficientProviderReportDoesNotFabricateInvalidEvidence(t *testing.T)
 	_, err := normalizeProviderReport(
 		mustProviderResult(t, providerReport{
 			ScoreabilityStatus: report.ReportScoreabilityInsufficient,
-			Summary:            "The available evidence is insufficient.", Dimensions: []providerDimension{dimension},
+			Summary:            "The available evidence is insufficient.", Dimensions: providerDimensions(dimension),
 			PriorityActions: []providerPriorityAction{},
 		}),
 		snapshot, evaluation.SceneIELTSSpeaking,
@@ -101,9 +124,9 @@ func TestProvisionalProviderReportRemainsFailClosed(t *testing.T) {
 				return providerReport{
 					ScoreabilityStatus: report.ReportScoreabilityProvisional,
 					Summary:            "Provisional report.",
-					Dimensions: []providerDimension{
+					Dimensions: providerDimensions(
 						providerDimensionFixture("FLUENCY_COHERENCE", &score),
-					},
+					),
 					PriorityActions: []providerPriorityAction{},
 				}
 			}(),
@@ -116,9 +139,9 @@ func TestProvisionalProviderReportRemainsFailClosed(t *testing.T) {
 				return providerReport{
 					ScoreabilityStatus: report.ReportScoreabilityProvisional,
 					Summary:            "Provisional report.",
-					Dimensions: []providerDimension{
+					Dimensions: providerDimensions(
 						providerDimensionFixture("FLUENCY_COHERENCE", &score),
-					},
+					),
 					PriorityActions: []providerPriorityAction{{
 						DimensionKey: "FLUENCY_COHERENCE", ImprovementIndex: 1,
 					}},
@@ -279,9 +302,11 @@ func TestIELTSEvaluatorUsesCumulativeProfileAndOnlyPart3RawEvidence(t *testing.T
 	); err != nil {
 		t.Fatalf("decode resolved v4 payload: %v: %s", err, generator.last.UserPrompt)
 	}
-	if lineages.IELTS.PromptVersion != ieltsPromptVersionV4 ||
+	if lineages.IELTS.PromptVersion != ieltsPromptVersionV5 ||
 		payload.SchemaVersion != ieltsInputSchemaVersionV4 ||
 		payload.EvidenceMode != ieltsInputCumulativeParts12PlusPart3 ||
+		payload.EvaluatedParticipantRole != "LEARNER" ||
+		!payload.EffectiveTurnsAreConfirmedEvaluatedResponses ||
 		len(payload.CumulativeProfile.CompletedParts) != 2 ||
 		len(payload.Questions) != 1 || len(payload.Turns) != 1 ||
 		payload.Turns[0].Transcript != "PART_THREE_RAW_TRANSCRIPT" ||
@@ -717,6 +742,22 @@ func TestGeneralEvaluatorPassesExactReportContract(t *testing.T) {
 		generator.last.Report.ScoreMaximum != 100 {
 		t.Fatalf("report contract = %#v", generator.last.Report)
 	}
+	var input providerInput
+	if err := json.Unmarshal([]byte(generator.last.UserPrompt), &input); err != nil {
+		t.Fatal(err)
+	}
+	if input.EvaluatedParticipantRole != "LEARNER" ||
+		!input.EffectiveTurnsAreConfirmedEvaluatedResponses {
+		t.Fatalf("learner evidence semantics = %#v", input)
+	}
+	for _, requirement := range []string{
+		"confirmed response by the LEARNER being evaluated",
+		"never use question speaker metadata to reassign response authorship",
+	} {
+		if !strings.Contains(generator.last.SystemPrompt, requirement) {
+			t.Fatalf("system prompt omitted learner evidence rule %q", requirement)
+		}
+	}
 }
 
 func TestSessionEvaluationPromptsRequireChineseFeedbackAndOriginalEvidence(t *testing.T) {
@@ -725,9 +766,9 @@ func TestSessionEvaluationPromptsRequireChineseFeedbackAndOriginalEvidence(t *te
 		prompt  string
 		version string
 	}{
-		{name: "interview", prompt: interviewSystemPromptV2, version: interviewPromptVersionV2},
-		{name: "IELTS", prompt: ieltsSystemPromptV4, version: ieltsPromptVersionV4},
-		{name: "general", prompt: generalSystemPromptV2, version: generalPromptVersionV2},
+		{name: "interview", prompt: interviewSystemPromptV3, version: interviewPromptVersionV3},
+		{name: "IELTS", prompt: ieltsSystemPromptV5, version: ieltsPromptVersionV5},
+		{name: "general", prompt: generalSystemPromptV3, version: generalPromptVersionV3},
 	}
 	lineages, err := Lineages("qianwen", "qwen-plus")
 	if err != nil {
@@ -745,6 +786,8 @@ func TestSessionEvaluationPromptsRequireChineseFeedbackAndOriginalEvidence(t *te
 				"suggestions for strengths and improvements in Simplified Chinese",
 				"directly reusable English expression in suggestion",
 				"question, answer, and evidence quote in its original language",
+				"confirmed response by the LEARNER being evaluated",
+				"never use question speaker metadata to reassign response authorship",
 			} {
 				if !strings.Contains(test.prompt, requirement) {
 					t.Fatalf("prompt omitted language requirement %q: %s", requirement, test.prompt)
@@ -923,9 +966,9 @@ func (generator *repairReportGeneratorFake) Generate(
 		dimensionKeys = repair.Input.DimensionKeys
 	}
 	score := 7.0
-	dimensions := make([]providerDimension, len(dimensionKeys))
+	dimensions := make(map[string]providerDimension, len(dimensionKeys))
 	for index, key := range dimensionKeys {
-		dimensions[index] = providerDimensionFixture(key, &score)
+		dimensions[providerDimensionSlot(index)] = providerDimensionFixture(key, &score)
 	}
 	actions := []providerPriorityAction{}
 	if len(generator.requests) == 1 {
@@ -956,6 +999,14 @@ func providerDimensionFixture(key string, score *float64) providerDimension {
 	}
 }
 
+func providerDimensions(values ...providerDimension) map[string]providerDimension {
+	dimensions := make(map[string]providerDimension, len(values))
+	for index, value := range values {
+		dimensions[providerDimensionSlot(index)] = value
+	}
+	return dimensions
+}
+
 func mustProviderResult(t *testing.T, value providerReport) textgeneration.Result {
 	t.Helper()
 	content, err := json.Marshal(value)
@@ -980,7 +1031,7 @@ func (generator *reportGeneratorFake) Generate(
 	if err := json.Unmarshal([]byte(request.UserPrompt), &input); err != nil {
 		return textgeneration.Result{}, err
 	}
-	dimensions := make([]map[string]any, len(input.DimensionKeys))
+	dimensions := make(map[string]any, len(input.DimensionKeys))
 	for index, key := range input.DimensionKeys {
 		strengths := []any{}
 		if index == 0 && generator.evidence != nil {
@@ -989,7 +1040,7 @@ func (generator *reportGeneratorFake) Generate(
 				"evidence": []providerEvidence{*generator.evidence},
 			}}
 		}
-		dimensions[index] = map[string]any{
+		dimensions[providerDimensionSlot(index)] = map[string]any{
 			"key": key, "score": 7.0, "coverage": 1.0, "confidence": 0.8,
 			"reason_codes": []string{}, "strengths": strengths,
 			"improvements": []any{}, "recommended_examples": []any{},

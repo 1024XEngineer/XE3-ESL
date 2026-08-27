@@ -27,12 +27,15 @@ const minimumPronunciationCoverage = 0.6
 const (
 	interviewPromptVersionV1 = "interview-report/v1"
 	interviewPromptVersionV2 = "interview-report/v2"
+	interviewPromptVersionV3 = "interview-report/v3"
 	ieltsPromptVersionV1     = "ielts-report/v1"
 	ieltsPromptVersionV2     = "ielts-report/v2"
 	ieltsPromptVersionV3     = "ielts-report/v3"
 	ieltsPromptVersionV4     = "ielts-report/v4"
+	ieltsPromptVersionV5     = "ielts-report/v5"
 	generalPromptVersionV1   = "general-report/v1"
 	generalPromptVersionV2   = "general-report/v2"
+	generalPromptVersionV3   = "general-report/v3"
 
 	ieltsInputSchemaVersionV4            = "ielts-report-input/v4"
 	ieltsInputCumulativeParts12PlusPart3 = "CUMULATIVE_PARTS_1_2_PLUS_PART_3"
@@ -48,7 +51,7 @@ func Lineages(
 			SchemaVersion:   evaluation.ConfigLineageSchemaVersion,
 			StrategyRef:     evaluation.InterviewStrategyRef,
 			PipelineVersion: pipelineVersion,
-			PromptVersion:   interviewPromptVersionV2,
+			PromptVersion:   interviewPromptVersionV3,
 			ResultSchema:    report.FormalReportSchemaVersion,
 			Provider:        provider,
 			Model:           model,
@@ -57,7 +60,7 @@ func Lineages(
 			SchemaVersion:   evaluation.ConfigLineageSchemaVersion,
 			StrategyRef:     evaluation.IELTSStrategyRef,
 			PipelineVersion: pipelineVersion,
-			PromptVersion:   ieltsPromptVersionV4,
+			PromptVersion:   ieltsPromptVersionV5,
 			ResultSchema:    report.FormalReportSchemaVersion,
 			Provider:        provider,
 			Model:           model,
@@ -75,7 +78,7 @@ func Lineages(
 			SchemaVersion:   evaluation.ConfigLineageSchemaVersion,
 			StrategyRef:     evaluation.GeneralStrategyRef,
 			PipelineVersion: pipelineVersion,
-			PromptVersion:   generalPromptVersionV2,
+			PromptVersion:   generalPromptVersionV3,
 			ResultSchema:    report.FormalReportSchemaVersion,
 			Provider:        provider,
 			Model:           model,
@@ -160,6 +163,13 @@ func (evaluator *InterviewEvaluator) Evaluate(
 		interviewPromptVersionV2,
 		interviewSystemPromptV2,
 	)
+	if lineage.PromptVersion == interviewPromptVersionV3 {
+		prompt = reportPrompt{
+			system:              interviewSystemPromptV3,
+			insufficientSummary: "本次练习的有效证据不足，暂时无法形成可靠的评估结论。",
+		}
+		err = nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -201,6 +211,13 @@ func (evaluator *IELTSEvaluator) Evaluate(
 		}
 		err = nil
 	}
+	if lineage.PromptVersion == ieltsPromptVersionV5 {
+		prompt = reportPrompt{
+			system:              ieltsSystemPromptV5,
+			insufficientSummary: "本次练习的有效证据不足，暂时无法形成可靠的评估结论。",
+		}
+		err = nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +232,8 @@ func (evaluator *IELTSEvaluator) Evaluate(
 	}
 	var payloadOverride any
 	var evidencePolicy *providerEvidencePolicy
-	if lineage.PromptVersion == ieltsPromptVersionV4 {
+	if lineage.PromptVersion == ieltsPromptVersionV4 ||
+		lineage.PromptVersion == ieltsPromptVersionV5 {
 		payloadOverride, evidencePolicy, err = ieltsV4Payload(snapshot, dimensions)
 		if err != nil {
 			return nil, err
@@ -244,6 +262,13 @@ func (evaluator *GeneralEvaluator) Evaluate(
 		generalPromptVersionV2,
 		generalSystemPromptV2,
 	)
+	if lineage.PromptVersion == generalPromptVersionV3 {
+		prompt = reportPrompt{
+			system:              generalSystemPromptV3,
+			insufficientSummary: "本次练习的有效证据不足，暂时无法形成可靠的评估结论。",
+		}
+		err = nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -310,6 +335,8 @@ func evaluate(
 	payloadSource := payloadOverride
 	if payloadSource == nil {
 		payloadSource = providerInput{
+			EvaluatedParticipantRole:                     "LEARNER",
+			EffectiveTurnsAreConfirmedEvaluatedResponses: true,
 			SceneType: sceneType, PracticeMode: snapshot.PracticeMode,
 			DimensionKeys: dimensionKeys, Questions: snapshot.Questions,
 			Turns: effectiveTurns,
@@ -388,41 +415,49 @@ func evaluate(
 }
 
 type providerInput struct {
-	SceneType     evaluation.SceneType                 `json:"scene_type"`
-	PracticeMode  string                               `json:"practice_mode"`
-	DimensionKeys []string                             `json:"dimension_keys"`
-	Questions     []evaluation.SessionEvidenceQuestion `json:"questions"`
-	Turns         []evaluation.SessionEvidenceTurn     `json:"effective_turns"`
+	EvaluatedParticipantRole                     string                               `json:"evaluated_participant_role"`
+	EffectiveTurnsAreConfirmedEvaluatedResponses bool                                 `json:"effective_turns_are_confirmed_evaluated_responses"`
+	SceneType                                    evaluation.SceneType                 `json:"scene_type"`
+	PracticeMode                                 string                               `json:"practice_mode"`
+	DimensionKeys                                []string                             `json:"dimension_keys"`
+	Questions                                    []evaluation.SessionEvidenceQuestion `json:"questions"`
+	Turns                                        []evaluation.SessionEvidenceTurn     `json:"effective_turns"`
 }
 
 type incrementalIELTSProviderInput struct {
-	SceneType         evaluation.SceneType                 `json:"scene_type"`
-	PracticeMode      string                               `json:"practice_mode"`
-	DimensionKeys     []string                             `json:"dimension_keys"`
-	CumulativeProfile evaluation.IELTSCumulativeProfile    `json:"cumulative_profile"`
-	Questions         []evaluation.SessionEvidenceQuestion `json:"part_3_questions"`
-	Turns             []evaluation.SessionEvidenceTurn     `json:"part_3_effective_turns"`
+	EvaluatedParticipantRole                     string                               `json:"evaluated_participant_role"`
+	EffectiveTurnsAreConfirmedEvaluatedResponses bool                                 `json:"effective_turns_are_confirmed_evaluated_responses"`
+	SceneType                                    evaluation.SceneType                 `json:"scene_type"`
+	PracticeMode                                 string                               `json:"practice_mode"`
+	DimensionKeys                                []string                             `json:"dimension_keys"`
+	CumulativeProfile                            evaluation.IELTSCumulativeProfile    `json:"cumulative_profile"`
+	Questions                                    []evaluation.SessionEvidenceQuestion `json:"part_3_questions"`
+	Turns                                        []evaluation.SessionEvidenceTurn     `json:"part_3_effective_turns"`
 }
 
 type resolvedIELTSProviderInputV4 struct {
-	SchemaVersion     string                               `json:"schema_version"`
-	EvidenceMode      string                               `json:"evidence_mode"`
-	SceneType         evaluation.SceneType                 `json:"scene_type"`
-	PracticeMode      string                               `json:"practice_mode"`
-	DimensionKeys     []string                             `json:"dimension_keys"`
-	CumulativeProfile evaluation.IELTSCumulativeProfile    `json:"cumulative_profile"`
-	Questions         []evaluation.SessionEvidenceQuestion `json:"part_3_questions"`
-	Turns             []evaluation.SessionEvidenceTurn     `json:"part_3_effective_turns"`
+	EvaluatedParticipantRole                     string                               `json:"evaluated_participant_role"`
+	EffectiveTurnsAreConfirmedEvaluatedResponses bool                                 `json:"effective_turns_are_confirmed_evaluated_responses"`
+	SchemaVersion                                string                               `json:"schema_version"`
+	EvidenceMode                                 string                               `json:"evidence_mode"`
+	SceneType                                    evaluation.SceneType                 `json:"scene_type"`
+	PracticeMode                                 string                               `json:"practice_mode"`
+	DimensionKeys                                []string                             `json:"dimension_keys"`
+	CumulativeProfile                            evaluation.IELTSCumulativeProfile    `json:"cumulative_profile"`
+	Questions                                    []evaluation.SessionEvidenceQuestion `json:"part_3_questions"`
+	Turns                                        []evaluation.SessionEvidenceTurn     `json:"part_3_effective_turns"`
 }
 
 type fallbackIELTSProviderInputV4 struct {
-	SchemaVersion string                               `json:"schema_version"`
-	EvidenceMode  string                               `json:"evidence_mode"`
-	SceneType     evaluation.SceneType                 `json:"scene_type"`
-	PracticeMode  string                               `json:"practice_mode"`
-	DimensionKeys []string                             `json:"dimension_keys"`
-	Questions     []evaluation.SessionEvidenceQuestion `json:"questions"`
-	Turns         []evaluation.SessionEvidenceTurn     `json:"effective_turns"`
+	EvaluatedParticipantRole                     string                               `json:"evaluated_participant_role"`
+	EffectiveTurnsAreConfirmedEvaluatedResponses bool                                 `json:"effective_turns_are_confirmed_evaluated_responses"`
+	SchemaVersion                                string                               `json:"schema_version"`
+	EvidenceMode                                 string                               `json:"evidence_mode"`
+	SceneType                                    evaluation.SceneType                 `json:"scene_type"`
+	PracticeMode                                 string                               `json:"practice_mode"`
+	DimensionKeys                                []string                             `json:"dimension_keys"`
+	Questions                                    []evaluation.SessionEvidenceQuestion `json:"questions"`
+	Turns                                        []evaluation.SessionEvidenceTurn     `json:"effective_turns"`
 }
 
 func ieltsV4Payload(
@@ -437,9 +472,11 @@ func ieltsV4Payload(
 		}
 		policy := resolvedIELTSProviderEvidencePolicy(snapshot, incremental)
 		return resolvedIELTSProviderInputV4{
-			SchemaVersion: ieltsInputSchemaVersionV4,
-			EvidenceMode:  ieltsInputCumulativeParts12PlusPart3,
-			SceneType:     incremental.SceneType, PracticeMode: incremental.PracticeMode,
+			EvaluatedParticipantRole:                     "LEARNER",
+			EffectiveTurnsAreConfirmedEvaluatedResponses: true,
+			SchemaVersion:                                ieltsInputSchemaVersionV4,
+			EvidenceMode:                                 ieltsInputCumulativeParts12PlusPart3,
+			SceneType:                                    incremental.SceneType, PracticeMode: incremental.PracticeMode,
 			DimensionKeys:     incremental.DimensionKeys,
 			CumulativeProfile: incremental.CumulativeProfile,
 			Questions:         incremental.Questions, Turns: incremental.Turns,
@@ -452,10 +489,12 @@ func ieltsV4Payload(
 			}
 		}
 		return fallbackIELTSProviderInputV4{
-			SchemaVersion: ieltsInputSchemaVersionV4,
-			EvidenceMode:  ieltsInputFullRawFallback,
-			SceneType:     evaluation.SceneIELTSSpeaking,
-			PracticeMode:  snapshot.PracticeMode, DimensionKeys: dimensionKeys,
+			EvaluatedParticipantRole:                     "LEARNER",
+			EffectiveTurnsAreConfirmedEvaluatedResponses: true,
+			SchemaVersion:                                ieltsInputSchemaVersionV4,
+			EvidenceMode:                                 ieltsInputFullRawFallback,
+			SceneType:                                    evaluation.SceneIELTSSpeaking,
+			PracticeMode:                                 snapshot.PracticeMode, DimensionKeys: dimensionKeys,
 			Questions: snapshot.Questions, Turns: effectiveTurns,
 		}, nil, nil
 	default:
@@ -508,6 +547,8 @@ func incrementalIELTSPayload(
 		}
 	}
 	return incrementalIELTSProviderInput{
+		EvaluatedParticipantRole:                     "LEARNER",
+		EffectiveTurnsAreConfirmedEvaluatedResponses: true,
 		SceneType:         evaluation.SceneIELTSSpeaking,
 		PracticeMode:      snapshot.PracticeMode,
 		DimensionKeys:     dimensionKeys,
@@ -517,10 +558,10 @@ func incrementalIELTSPayload(
 }
 
 type providerReport struct {
-	ScoreabilityStatus report.ReportScoreability `json:"scoreability_status"`
-	Summary            string                    `json:"summary"`
-	Dimensions         []providerDimension       `json:"dimensions"`
-	PriorityActions    []providerPriorityAction  `json:"priority_actions"`
+	ScoreabilityStatus report.ReportScoreability    `json:"scoreability_status"`
+	Summary            string                       `json:"summary"`
+	Dimensions         map[string]providerDimension `json:"dimensions"`
+	PriorityActions    []providerPriorityAction     `json:"priority_actions"`
 }
 
 type providerDimension struct {
@@ -677,8 +718,8 @@ func normalizeProviderReport(
 	}
 	improvementIDs := make(map[string][]string, len(dimensionKeys))
 	for index, expectedKey := range dimensionKeys {
-		providedDimension := provided.Dimensions[index]
-		if providedDimension.Key != expectedKey {
+		providedDimension, exists := provided.Dimensions[providerDimensionSlot(index)]
+		if !exists || providedDimension.Key != expectedKey {
 			return report.FormalReport{}, providerResponseError(
 				normalizeReasonDimensionOrderInvalid,
 			)
@@ -805,6 +846,10 @@ func normalizeProviderReport(
 		)
 	}
 	return formal, nil
+}
+
+func providerDimensionSlot(index int) string {
+	return fmt.Sprintf("dimension_%d", index+1)
 }
 
 func reportQuestions(
@@ -1011,6 +1056,10 @@ const interviewSystemPromptV1 = `You are an evidence-bound job interview English
 
 const interviewSystemPromptV2 = `You are an evidence-bound job interview English evaluator. Score only the requested interview dimensions on PERCENTAGE_100. Return one JSON object only, with exactly: scoreability_status, summary, dimensions, priority_actions. Use dimension_keys in the input in the same order. Each dimension must contain key, score, coverage, confidence, reason_codes, strengths, improvements, recommended_examples. Each finding must contain message, suggestion, evidence. Each evidence item must contain turn_id, an exact quote copied from that turn, and its 1-based occurrence. priority_actions contains dimension_key and 1-based improvement_index. Arrays must be present even when empty. Write summary and every finding message in Simplified Chinese. Write suggestions for strengths and improvements in Simplified Chinese. For each recommended_examples finding, write its message in Simplified Chinese and put only the directly reusable English expression in suggestion. Keep every question, answer, and evidence quote in its original language; never translate or rewrite them. Do not infer voice qualities from text.`
 
+const evaluatedLearnerEvidenceInstruction = ` Every item in effective_turns or part_3_effective_turns is a confirmed response by the LEARNER being evaluated. Treat its transcript as the learner's answer. Questions are prompts; never use question speaker metadata to reassign response authorship or conclude that learner responses are absent.`
+
+const interviewSystemPromptV3 = interviewSystemPromptV2 + evaluatedLearnerEvidenceInstruction
+
 const ieltsSystemPromptV1 = `You are an evidence-bound IELTS Speaking practice evaluator. Score every requested dimension on IELTS_BAND_9 using half-band increments. Return one JSON object only, with exactly: scoreability_status, summary, dimensions, priority_actions. Use dimension_keys in the input in the same order. Each dimension must contain key, score, coverage, confidence, reason_codes, strengths, improvements, recommended_examples. Each finding must contain message, suggestion, evidence. Each evidence item must contain turn_id, an exact quote copied from that turn, and its 1-based occurrence. priority_actions contains dimension_key and 1-based improvement_index. Arrays must be present even when empty. PRONUNCIATION is requested only when assessed acoustic checkpoints are present on effective turns; base that dimension on those checkpoints and their coverage, never on transcript spelling.`
 
 const ieltsSystemPromptV2 = `You are an evidence-bound IELTS Speaking practice evaluator. Score every requested dimension on IELTS_BAND_9 using half-band increments. Return one JSON object only, with exactly: scoreability_status, summary, dimensions, priority_actions. Use dimension_keys in the input in the same order. Each dimension must contain key, score, coverage, confidence, reason_codes, strengths, improvements, recommended_examples. Each finding must contain message, suggestion, evidence. Each evidence item must contain turn_id, an exact quote copied from that turn, and its 1-based occurrence. priority_actions contains dimension_key and 1-based improvement_index. Arrays must be present even when empty. Write summary and every finding message in Simplified Chinese. Write suggestions for strengths and improvements in Simplified Chinese. For each recommended_examples finding, write its message in Simplified Chinese and put only the directly reusable English expression in suggestion. Keep every question, answer, and evidence quote in its original language; never translate or rewrite them. PRONUNCIATION is requested only when assessed acoustic checkpoints are present on effective turns; base that dimension on those checkpoints and their coverage, never on transcript spelling.`
@@ -1019,9 +1068,13 @@ const ieltsSystemPromptV3 = `You are an evidence-bound IELTS Speaking practice e
 
 const ieltsSystemPromptV4 = `You are an evidence-bound IELTS Speaking practice evaluator. The input schema_version is ielts-report-input/v4 and evidence_mode is exactly one of CUMULATIVE_PARTS_1_2_PLUS_PART_3 or FULL_RAW_FALLBACK. For CUMULATIVE_PARTS_1_2_PLUS_PART_3, score the candidate's average performance across the whole test using the provisional cumulative_profile for Parts 1 and 2 plus only part_3_questions and part_3_effective_turns as raw evidence. Preserve exact profile quotes, then recalibrate every requested dimension using Part 3; never mechanically average Parts or copy provisional bands without reconsideration. For FULL_RAW_FALLBACK, use only questions and effective_turns as the complete raw evidence for all Parts. Never infer or combine fields from the other evidence mode. Score every requested dimension on IELTS_BAND_9 using half-band increments. Return one JSON object only, with exactly: scoreability_status, summary, dimensions, priority_actions. Use dimension_keys in the input in the same order. Each dimension must contain key, score, coverage, confidence, reason_codes, strengths, improvements, recommended_examples. Each finding must contain message, suggestion, evidence. Each evidence item must contain turn_id, an exact quote present in the evidence allowed by evidence_mode, and its 1-based occurrence. priority_actions contains dimension_key and 1-based improvement_index. Arrays must be present even when empty. Write summary and every finding message in Simplified Chinese. Write suggestions for strengths and improvements in Simplified Chinese. For each recommended_examples finding, write its message in Simplified Chinese and put only the directly reusable English expression in suggestion. Keep every question, answer, and evidence quote in its original language; never translate or rewrite them. Base PRONUNCIATION only on acoustic checkpoints and, in CUMULATIVE_PARTS_1_2_PLUS_PART_3 mode, the provisional pronunciation profile; never on transcript spelling.`
 
+const ieltsSystemPromptV5 = ieltsSystemPromptV4 + evaluatedLearnerEvidenceInstruction
+
 const generalSystemPromptV1 = `You are an evidence-bound everyday or workplace English evaluator. Score only the requested communication dimensions on PERCENTAGE_100. Return one JSON object only, with exactly: scoreability_status, summary, dimensions, priority_actions. Use dimension_keys in the input in the same order. Each dimension must contain key, score, coverage, confidence, reason_codes, strengths, improvements, recommended_examples. Each finding must contain message, suggestion, evidence. Each evidence item must contain turn_id, an exact quote copied from that turn, and its 1-based occurrence. priority_actions contains dimension_key and 1-based improvement_index. Arrays must be present even when empty. Do not infer voice qualities from text.`
 
 const generalSystemPromptV2 = `You are an evidence-bound everyday or workplace English evaluator. Score only the requested communication dimensions on PERCENTAGE_100. Return one JSON object only, with exactly: scoreability_status, summary, dimensions, priority_actions. Use dimension_keys in the input in the same order. Each dimension must contain key, score, coverage, confidence, reason_codes, strengths, improvements, recommended_examples. Each finding must contain message, suggestion, evidence. Each evidence item must contain turn_id, an exact quote copied from that turn, and its 1-based occurrence. priority_actions contains dimension_key and 1-based improvement_index. Arrays must be present even when empty. Write summary and every finding message in Simplified Chinese. Write suggestions for strengths and improvements in Simplified Chinese. For each recommended_examples finding, write its message in Simplified Chinese and put only the directly reusable English expression in suggestion. Keep every question, answer, and evidence quote in its original language; never translate or rewrite them. Do not infer voice qualities from text.`
+
+const generalSystemPromptV3 = generalSystemPromptV2 + evaluatedLearnerEvidenceInstruction
 
 type normalizeReason string
 
