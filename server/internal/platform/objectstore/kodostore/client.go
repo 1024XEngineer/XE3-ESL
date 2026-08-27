@@ -69,8 +69,7 @@ func NewForPrefix(
 	if !storageConfig.Enabled {
 		return nil, objectstore.ErrDisabled
 	}
-	if storageConfig.Provider != config.ObjectStorageProviderQiniuKodo ||
-		!storageConfig.ServerSideEncryption {
+	if storageConfig.Provider != config.ObjectStorageProviderQiniuKodo {
 		return nil, objectstore.ErrOperationFailed
 	}
 	if prefix == "" ||
