@@ -76,6 +76,7 @@ void main() {
     for (final model in <String>[
       'qwen//qwen3.7-plus',
       'qwen/../qwen3.7-plus',
+      'qwen/model..variant',
       '/qwen3.7-plus',
     ]) {
       final invalid = _failedRun('internal_error')..['requested_model'] = model;

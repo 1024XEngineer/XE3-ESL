@@ -683,8 +683,17 @@ String _strictClientIdentity(Object? value) => _strictPatternString(
   maxLength: 128,
 );
 
-String _strictModelIdentity(Object? value) =>
-    _strictPatternString(value, pattern: _modelIdentityPattern, maxLength: 128);
+String _strictModelIdentity(Object? value) {
+  final result = _strictPatternString(
+    value,
+    pattern: _modelIdentityPattern,
+    maxLength: 128,
+  );
+  if (result.contains('..')) {
+    throw const AgentWireCodecException();
+  }
+  return result;
+}
 
 int _strictInt(Object? value, {required int minimum, int? maximum}) {
   if (value is! int ||

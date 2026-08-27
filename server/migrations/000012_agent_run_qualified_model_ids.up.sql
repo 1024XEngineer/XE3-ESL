@@ -12,6 +12,7 @@ ALTER TABLE agent_runs
         ] = '{}'::jsonb
         AND model_configuration->>'provider' ~ '^[a-z][a-z0-9_-]{0,63}$'
         AND octet_length(model_configuration->>'model') <= 128
+        AND position('..' IN model_configuration->>'model') = 0
         AND model_configuration->>'model'
             ~ '^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._:-]*)*$'
         AND (model_configuration->>'max_output_tokens')::integer BETWEEN 1 AND 1000000
@@ -33,6 +34,7 @@ ALTER TABLE agent_runs
                 AND model_result->>'completion_id' ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
                 AND model_result->>'provider' ~ '^[a-z][a-z0-9_-]{0,63}$'
                 AND octet_length(model_result->>'model') <= 128
+                AND position('..' IN model_result->>'model') = 0
                 AND model_result->>'model'
                     ~ '^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._:-]*)*$'
                 AND model_result->>'finish_reason' IN ('stop', 'length')

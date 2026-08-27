@@ -1,5 +1,18 @@
 BEGIN;
 
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM agent_runs
+        WHERE position('/' IN model_configuration->>'model') > 0
+           OR position('/' IN model_result->>'model') > 0
+    ) THEN
+        RAISE EXCEPTION 'cannot roll back qualified Agent model IDs while qualified values exist';
+    END IF;
+END
+$$;
+
 ALTER TABLE agent_runs
     DROP CONSTRAINT agent_runs_model_configuration_check,
     ADD CONSTRAINT agent_runs_model_configuration_check CHECK (

@@ -107,11 +107,20 @@ func TestAgentRunQualifiedModelMigrationMatchesDomainValidation(t *testing.T) {
 	for _, required := range []string{
 		"octet_length(model_configuration->>'model') <= 128",
 		"octet_length(model_result->>'model') <= 128",
+		"position('..' IN model_configuration->>'model') = 0",
+		"position('..' IN model_result->>'model') = 0",
 		"*(/[A-Za-z0-9][A-Za-z0-9._:-]*)*",
 	} {
 		if !strings.Contains(up, required) {
 			t.Errorf("qualified model migration is missing %q", required)
 		}
+	}
+	down := readMigration(t, "000012_agent_run_qualified_model_ids.down.sql")
+	if !strings.Contains(
+		down,
+		"cannot roll back qualified Agent model IDs while qualified values exist",
+	) {
+		t.Error("qualified model rollback must fail closed while incompatible rows exist")
 	}
 }
 
