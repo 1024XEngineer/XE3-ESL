@@ -30,6 +30,10 @@ void main() {
       find.byKey(const Key('profile-ielts-ability-button')),
       findsOneWidget,
     );
+    expect(
+      find.byKey(const Key('profile-coach-presentation-button')),
+      findsOneWidget,
+    );
     expect(find.byKey(const Key('profile-about-button')), findsOneWidget);
     expect(find.byKey(const Key('profile-logout-button')), findsOneWidget);
     expect(find.byIcon(Icons.tune_rounded), findsNothing);
@@ -39,6 +43,7 @@ void main() {
     for (final key in const [
       Key('profile-coaching-memory-button'),
       Key('profile-ielts-ability-button'),
+      Key('profile-coach-presentation-button'),
       Key('profile-about-button'),
     ]) {
       final tile = tester.widget<ListTile>(
@@ -66,6 +71,21 @@ void main() {
     expect(find.text('IELTS 能力'), findsOneWidget);
     expect(find.text('当前 IELTS 能力'), findsOneWidget);
     expect(find.byKey(const Key('review-ability-empty')), findsOneWidget);
+  });
+
+  testWidgets('coach presentation opens from the profile settings card', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_app(onLogout: () {}));
+
+    await tester.tap(
+      find.byKey(const Key('profile-coach-presentation-button')),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(find.byKey(const Key('coach-presentation-page')), findsOneWidget);
+    expect(find.text('数字人与音色'), findsWidgets);
   });
 
   testWidgets('logout remains a distinct settings action', (tester) async {
@@ -153,6 +173,7 @@ void main() {
 
     expect(find.text('记忆'), findsOneWidget);
     expect(find.text('能力'), findsOneWidget);
+    expect(find.text('数字人与音色'), findsOneWidget);
     expect(find.text('关于'), findsOneWidget);
     expect(find.text('退出登录'), findsOneWidget);
     expect(find.byKey(const Key('profile-account-menu')), findsNothing);

@@ -7,6 +7,7 @@ import 'package:speakup/features/coaching/profile/coaching_profile.dart';
 import 'package:speakup/features/coaching/review/review.dart';
 import 'package:speakup/features/coaching/review/review_history_controller.dart';
 import 'package:speakup/features/profile/about_speak_up_page.dart';
+import 'package:speakup/features/profile/coach_presentation_page.dart';
 import 'package:speakup/features/profile/profile_avatar_picker.dart';
 import 'package:speakup/features/profile/profile_avatar_view.dart';
 import 'package:speakup/features/update/app_update.dart';
@@ -320,6 +321,12 @@ class _ProfileSettingsSectionState extends State<_ProfileSettingsSection> {
               title: '能力',
               onTap: _openIeltsAbility,
             ),
+            const _ProfileDivider(),
+            _ProfileSettingsRow(
+              key: const Key('profile-coach-presentation-button'),
+              title: '数字人与音色',
+              onTap: _openCoachPresentation,
+            ),
           ],
         ),
         const SizedBox(height: SpeakUpDesign.space16),
@@ -351,6 +358,14 @@ class _ProfileSettingsSectionState extends State<_ProfileSettingsSection> {
             historyController: widget.historyController,
           ),
         ),
+      ),
+    );
+  }
+
+  void _openCoachPresentation() {
+    unawaited(
+      Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(builder: (_) => const CoachPresentationPage()),
       ),
     );
   }
