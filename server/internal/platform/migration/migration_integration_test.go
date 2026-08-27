@@ -40,6 +40,8 @@ var cleanBaselineTables = []string{
 	"agent_threads",
 	"agent_voice_drafts",
 	"auth_sessions",
+	"coach_avatar_options",
+	"coach_voice_options",
 	"coaching_user_profiles",
 	"credentials",
 	"evaluation_feedback_items",
@@ -51,6 +53,7 @@ var cleanBaselineTables = []string{
 	"practice_questions",
 	"practice_sessions",
 	"practice_turns",
+	"user_coach_presentation_preferences",
 	"users",
 }
 
@@ -74,51 +77,57 @@ func TestMigrationHistoryFreshUpDownUp(t *testing.T) {
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
+		t.Fatalf("DownOne to v9 IELTS profiles = %t, %v", changed, err)
+	}
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-3)
+
+	changed, err = runner.DownOne()
+	if err != nil || !changed {
 		t.Fatalf("DownOne to v8 Product health views = %t, %v", changed, err)
 	}
-	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables))
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-3)
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
 		t.Fatalf("DownOne to v7 Pending Practice actions = %t, %v", changed, err)
 	}
-	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables))
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-3)
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
 		t.Fatalf("DownOne to v6 User profile avatar = %t, %v", changed, err)
 	}
-	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-1)
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-4)
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
 		t.Fatalf("DownOne to v5 Scene selection source = %t, %v", changed, err)
 	}
-	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-1)
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-4)
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
 		t.Fatalf("DownOne to v4 Question Tip translation = %t, %v", changed, err)
 	}
-	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-1)
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-4)
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
 		t.Fatalf("DownOne to v3 Practice Plan archive = %t, %v", changed, err)
 	}
-	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-1)
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-4)
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
 		t.Fatalf("DownOne to v2 Agent domain completion = %t, %v", changed, err)
 	}
-	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-1)
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-4)
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
 		t.Fatalf("DownOne to v1 baseline = %t, %v", changed, err)
 	}
-	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-1)
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-4)
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
@@ -144,6 +153,9 @@ func TestSceneSelectionSourceMigrationTransformsPlansAndPreservesSessions(
 	t.Cleanup(func() { _ = runner.Close() })
 	if changed, upErr := runner.Up(); upErr != nil || !changed {
 		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v9 IELTS profiles = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("DownOne to v8 Product health views = %t, %v", changed, downErr)
@@ -285,6 +297,9 @@ FROM practice_sessions WHERE session_id = $1
 	}
 
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("roll back v10 = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("roll back v9 = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
@@ -328,6 +343,9 @@ func TestMigratedLegacyCatalogPlanCompletesThroughFormalReport(t *testing.T) {
 	t.Cleanup(func() { _ = runner.Close() })
 	if changed, upErr := runner.Up(); upErr != nil || !changed {
 		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v9 IELTS profiles = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("DownOne to v8 Product health views = %t, %v", changed, downErr)
@@ -593,6 +611,9 @@ func TestSceneSelectionSourceMigrationRejectsDownWithCustomPlan(t *testing.T) {
 	t.Cleanup(func() { _ = runner.Close() })
 	if changed, upErr := runner.Up(); upErr != nil || !changed {
 		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v9 IELTS profiles = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("DownOne to v8 Product health views = %t, %v", changed, downErr)

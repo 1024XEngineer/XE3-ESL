@@ -1,0 +1,244 @@
+paths:
+  /v1/coach-presentation-catalog:
+    get:
+      tags:
+        - Coach Presentation
+      summary: Get the selectable coach avatars and voices
+      description: |
+        Returns the currently enabled presentation options and their logical
+        defaults. Provider bindings are intentionally not exposed.
+      operationId: getCoachPresentationCatalog
+      responses:
+        '200':
+          description: The current selectable coach presentation catalog.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+            Pragma:
+              schema:
+                type: string
+                const: no-cache
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CoachPresentationCatalog'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/me/coach-presentation:
+    get:
+      tags:
+        - Coach Presentation
+      summary: Get the current user's coach presentation preference
+      description: |
+        Returns the authenticated user's selected internal option IDs. When no
+        row exists, the logical catalog defaults are returned with version 0.
+      operationId: getCurrentCoachPresentation
+      responses:
+        '200':
+          description: The current logical coach presentation preference.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+            Pragma:
+              schema:
+                type: string
+                const: no-cache
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CoachPresentationPreference'
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+    patch:
+      tags:
+        - Coach Presentation
+      summary: Update the current user's coach presentation preference
+      description: |
+        Atomically replaces both selected internal option IDs using optimistic
+        concurrency. Provider-native avatar and voice IDs are never accepted.
+      operationId: updateCurrentCoachPresentation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCoachPresentationRequest'
+      responses:
+        '200':
+          description: The committed coach presentation preference.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+            Pragma:
+              schema:
+                type: string
+                const: no-cache
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CoachPresentationPreference'
+        '400':
+          $ref: ../common/errors.yaml#/components/responses/BadRequest
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '409':
+          $ref: '#/components/responses/CoachPresentationVersionConflict'
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
+components:
+  responses:
+    CoachPresentationVersionConflict:
+      description: The expected coach presentation version is stale.
+      content:
+        application/json:
+          schema:
+            $ref: ../common/errors.yaml#/components/schemas/ErrorResponse
+          example:
+            error:
+              code: coach_presentation_version_conflict
+              message: Coach presentation version conflicts with this update.
+              retryable: false
+              correlation_id: corr_coach_presentation_conflict
+  schemas:
+    CoachPresentationOptionID:
+      type: string
+      minLength: 1
+      maxLength: 64
+      pattern: '^[a-z][a-z0-9_]{0,63}$'
+    CoachAvatarOption:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - display_name
+        - description
+        - preview_asset_key
+      properties:
+        id:
+          $ref: '#/components/schemas/CoachPresentationOptionID'
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 64
+        description:
+          type: string
+          minLength: 1
+          maxLength: 200
+        preview_asset_key:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^\S+$'
+    CoachVoiceOption:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - display_name
+        - description
+        - locale
+        - gender
+      properties:
+        id:
+          $ref: '#/components/schemas/CoachPresentationOptionID'
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 64
+        description:
+          type: string
+          minLength: 1
+          maxLength: 200
+        locale:
+          type: string
+          minLength: 1
+          maxLength: 32
+          pattern: '^\S+$'
+        gender:
+          type: string
+          enum:
+            - female
+            - male
+    CoachPresentationDefaults:
+      type: object
+      additionalProperties: false
+      required:
+        - avatar_option_id
+        - voice_option_id
+      properties:
+        avatar_option_id:
+          $ref: '#/components/schemas/CoachPresentationOptionID'
+        voice_option_id:
+          $ref: '#/components/schemas/CoachPresentationOptionID'
+    CoachPresentationCatalog:
+      type: object
+      additionalProperties: false
+      required:
+        - avatars
+        - voices
+        - defaults
+      properties:
+        avatars:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/CoachAvatarOption'
+        voices:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/CoachVoiceOption'
+        defaults:
+          $ref: '#/components/schemas/CoachPresentationDefaults'
+    CoachPresentationPreference:
+      type: object
+      additionalProperties: false
+      required:
+        - avatar_option_id
+        - voice_option_id
+        - version
+      properties:
+        avatar_option_id:
+          $ref: '#/components/schemas/CoachPresentationOptionID'
+        voice_option_id:
+          $ref: '#/components/schemas/CoachPresentationOptionID'
+        version:
+          type: integer
+          format: int64
+          minimum: 0
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+    UpdateCoachPresentationRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - avatar_option_id
+        - voice_option_id
+        - expected_version
+      properties:
+        avatar_option_id:
+          $ref: '#/components/schemas/CoachPresentationOptionID'
+        voice_option_id:
+          $ref: '#/components/schemas/CoachPresentationOptionID'
+        expected_version:
+          type: integer
+          format: int64
+          minimum: 0

@@ -43,6 +43,10 @@ func TestProductHealthViewsAreAnonymousAccurateAndReadOnly(t *testing.T) {
 	assertProductHealthReaderPrivileges(t, admin, database, schema)
 
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("coach presentation DownOne = %t, %v", changed, downErr)
+	}
+	assertProductHealthViewSet(t, admin, schema)
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("IELTS profile DownOne = %t, %v", changed, downErr)
 	}
 	assertProductHealthViewSet(t, admin, schema)
