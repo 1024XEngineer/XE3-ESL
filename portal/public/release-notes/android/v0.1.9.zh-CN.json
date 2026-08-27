@@ -1,0 +1,20 @@
+{
+  "release_notes_version": 1,
+  "locale": "zh-CN",
+  "version": "0.1.9",
+  "published_at": "2026-08-27T05:35:51Z",
+  "changes": [
+    {
+      "type": "feature",
+      "text": "新增“关于 SpeakUp”页面，可查看当前安装版本、检查更新、访问产品官网和开源许可。"
+    },
+    {
+      "type": "improvement",
+      "text": "精简个人页入口与视觉层级，让记忆、能力、关于和退出登录更容易辨认。"
+    },
+    {
+      "type": "improvement",
+      "text": "优化产品官网首页展示，直接呈现练习与复盘流程，并简化客户端下载入口。"
+    }
+  ]
+}
