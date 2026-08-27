@@ -39,6 +39,38 @@ func TestCatalogReturnsEnabledSeedsWithoutLosingBindings(t *testing.T) {
 	}
 }
 
+func TestResolveSelectionUsesDefaultsThenSavedPreference(t *testing.T) {
+	pool := presentationTestDatabase(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+INSERT INTO users (id, canonical_email)
+VALUES ($1, 'presentation-resolve@example.test')`, repositoryUserA); err != nil {
+		t.Fatal(err)
+	}
+	repository, err := New(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defaults, err := repository.ResolveSelection(ctx, repositoryUserA)
+	if err != nil || defaults.Avatar.ID != "avatar_lisa" ||
+		defaults.Voice.ID != "voice_ava" || !defaults.Valid() {
+		t.Fatalf("defaults=%#v err=%v", defaults, err)
+	}
+	if _, err := repository.SavePreference(ctx, presentation.Preference{
+		UserID: repositoryUserA, AvatarOptionID: "avatar_nathan",
+		VoiceOptionID: "voice_john", Version: 1,
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	saved, err := repository.ResolveSelection(ctx, repositoryUserA)
+	if err != nil || saved.Avatar.ID != "avatar_nathan" ||
+		saved.Voice.ID != "voice_john" || !saved.Valid() {
+		t.Fatalf("saved=%#v err=%v", saved, err)
+	}
+}
+
 func TestPreferencesAreUserIsolatedAndOptimisticallyLocked(t *testing.T) {
 	pool := presentationTestDatabase(t)
 	ctx := context.Background()
