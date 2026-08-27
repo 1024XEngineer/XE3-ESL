@@ -437,10 +437,13 @@ func (generator *textClient) providerRequest(
 		disabled := false
 		payload.EnableThinking = &disabled
 	case qiniuProviderName:
-		// Qiniu fronts heterogeneous upstream APIs. Kimi needs Qiniu's generic
-		// thinking control, while existing Gemini configurations must omit it.
+		// Qiniu fronts heterogeneous upstream APIs. Kimi uses Qiniu's generic
+		// thinking control, Qwen uses enable_thinking, and other upstreams omit both.
 		if generator.model == qiniuKimiK26Model {
 			payload.Thinking = &chatThinking{Type: "disabled"}
+		} else if strings.HasPrefix(strings.ToLower(generator.model), "qwen") {
+			disabled := false
+			payload.EnableThinking = &disabled
 		}
 	}
 	if request.ResponseFormat == protocol.TextResponseFormatJSON {
@@ -827,6 +830,11 @@ func decodeCompletionStream(
 	}
 	if !sawDone || !sawUsage || finishReason == "" {
 		return protocol.TextResult{}, errors.New("Qianwen stream ended before completion")
+	}
+	if provider == qiniuProviderName &&
+		(mode == streamModeTools || mode == streamModeMixed) &&
+		finishReason == "stop" && len(tools) > 0 {
+		finishReason = "tool_calls"
 	}
 	result := protocol.TextResult{
 		ID: completionID, Provider: provider, Model: model,

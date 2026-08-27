@@ -28,7 +28,7 @@ func ValidProviderID(value string) bool {
 }
 
 func ValidModelID(value string) bool {
-	return run.ValidOpaqueID(value)
+	return run.ValidModelID(value)
 }
 
 func validConfiguration(configuration run.Configuration) bool {

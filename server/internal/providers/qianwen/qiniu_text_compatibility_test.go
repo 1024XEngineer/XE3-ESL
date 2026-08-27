@@ -137,6 +137,35 @@ func TestQiniuGeminiRequestOmitsKimiThinkingControl(t *testing.T) {
 	}
 }
 
+func TestQiniuQwenRequestDisablesThinking(t *testing.T) {
+	var payload map[string]json.RawMessage
+	generator := mustQiniuGeneratorForModel(
+		t,
+		"qwen/qwen3.7-plus",
+		doerFunc(func(request *http.Request) (*http.Response, error) {
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			return jsonResponse(http.StatusOK, `{
+				"id":"chatcmpl-qiniu-qwen",
+				"model":"qwen/qwen3.7-plus",
+				"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"Hello"}}],
+				"usage":{"prompt_tokens":4,"completion_tokens":1,"total_tokens":5}
+			}`), nil
+		}),
+		"qiniu-test-key",
+	)
+	if _, err := generator.Generate(context.Background(), validRequest()); err != nil {
+		t.Fatalf("Qiniu Qwen Generate() error = %v", err)
+	}
+	if string(payload["enable_thinking"]) != "false" {
+		t.Fatalf("Qiniu Qwen enable_thinking = %s", payload["enable_thinking"])
+	}
+	if _, exists := payload["thinking"]; exists {
+		t.Fatal("Qiniu Qwen request included the Kimi thinking field")
+	}
+}
+
 func TestQiniuGenerateStreamRequiresUsageAndReportsLineage(t *testing.T) {
 	var payload map[string]json.RawMessage
 	generator := mustQiniuGenerator(t, doerFunc(func(request *http.Request) (*http.Response, error) {
@@ -173,6 +202,30 @@ func TestQiniuGenerateStreamRequiresUsageAndReportsLineage(t *testing.T) {
 	}
 	if string(payload["stream_options"]) != `{"include_usage":true}` {
 		t.Fatalf("Qiniu stream_options = %s", payload["stream_options"])
+	}
+}
+
+func TestQiniuQwenToolStreamNormalizesStopFinishReason(t *testing.T) {
+	const model = "qwen/qwen3.7-plus"
+	generator := mustQiniuGeneratorForModel(t, model, doerFunc(func(*http.Request) (*http.Response, error) {
+		return streamResponse(
+			`data: {"id":"chatcmpl-qiniu-tool-stream","model":"qwen/qwen3.7-plus","choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_qiniu_1","type":"function","function":{"name":"review_search_v1","arguments":"{\"query\":\"IELTS\"}"}}]}}]}` + "\n\n" +
+				`data: {"id":"chatcmpl-qiniu-tool-stream","model":"qwen/qwen3.7-plus","choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":9,"completion_tokens":3,"total_tokens":12}}` + "\n\n" +
+				"data: [DONE]\n\n",
+		), nil
+	}), "qiniu-test-key")
+
+	result, err := generator.GenerateStream(
+		context.Background(),
+		toolRequest(),
+		protocol.TextDeltaObserverFunc(func(context.Context, string) error { return nil }),
+	)
+	if err != nil {
+		t.Fatalf("Qiniu Qwen tool GenerateStream() error = %v", err)
+	}
+	if result.FinishReason != "tool_calls" || len(result.ToolCalls) != 1 ||
+		result.ToolCalls[0].Name != "review.search.v1" {
+		t.Fatalf("Qiniu Qwen tool stream result = %#v", result)
 	}
 }
 
