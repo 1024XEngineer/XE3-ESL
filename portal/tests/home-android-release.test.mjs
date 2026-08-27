@@ -18,9 +18,13 @@ test("ready homepage exposes one exact validated versioned APK action", () => {
     kind: "download",
     href: release.download_path,
     download: release.file_name,
-    label: "下载 Android APK",
+    label: "下载客户端",
   });
-  assert.equal(view.supportLine, "Android 7.0 及以上 · 当前版本 v0.1.2");
+  assert.equal(view.supportLine, "当前支持 Android 7.0 及以上");
+  assert.doesNotMatch(
+    `${view.action.label} ${view.supportLine}`,
+    /APK|v0\.1\.2/,
+  );
 });
 
 test("preparing homepage keeps the APK action disabled", () => {
@@ -29,9 +33,9 @@ test("preparing homepage keeps the APK action disabled", () => {
   assert.equal(view.status, "preparing");
   assert.deepEqual(view.action, {
     kind: "disabled",
-    label: "Android 版本准备中",
+    label: "客户端准备中",
   });
-  assert.match(view.supportLine, /正式 APK 就绪后开放下载/);
+  assert.match(view.supportLine, /正式版本就绪后开放下载/);
   assert.doesNotMatch(JSON.stringify(view), /\.apk(?:"|\\)/i);
 });
 

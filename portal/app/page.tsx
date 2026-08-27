@@ -2,14 +2,14 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import BrandMark from "./BrandMark";
 import BrandWordmark from "./BrandWordmark";
-import HeroProductCarousel from "./HeroProductCarousel";
+import HeroProductShowcase from "./HeroProductShowcase";
 import { HomeAndroidDownloadAction } from "./HomeAndroidRelease";
 import { currentAndroidDownloadChannel } from "../lib/android-download-channel-server";
 
 export const metadata: Metadata = {
   title: "SpeakUp · 越用越懂你的 AI 口语老师",
   description:
-    "围绕真实沟通场景练习、反馈和复盘，下载 SpeakUp Android APK。",
+    "围绕真实沟通场景练习、反馈和复盘，让每一次开口更有准备。",
 };
 
 const steps = [
@@ -56,14 +56,20 @@ export default async function Home() {
 
       <header className="release-hero" id="download">
         <div className="release-hero-copy">
-          <h1>下一场重要的英文沟通，先练一遍。</h1>
+          <h1>
+            <span className="release-hero-heading-line">
+              下一场重要的<span className="release-hero-nowrap">英文沟通</span>，
+            </span>
+            <span className="release-hero-heading-line">先练一遍。</span>
+          </h1>
           <p className="release-hero-subtitle">
-            越用越懂你的 AI 口语老师，围绕真实任务陪你准备、开口和复盘。
+            <span>越用越懂你的 AI 口语老师，</span>
+            <span>围绕真实任务陪你准备、开口和复盘。</span>
           </p>
           <HomeAndroidDownloadAction channel={androidDownloadChannel} />
         </div>
 
-        <HeroProductCarousel />
+        <HeroProductShowcase />
       </header>
 
       <section className="release-method" id="method" aria-labelledby="method-title">
