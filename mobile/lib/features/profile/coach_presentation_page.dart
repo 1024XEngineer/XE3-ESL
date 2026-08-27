@@ -2,89 +2,20 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:speakup/design/speak_up_design.dart';
+import 'package:speakup/features/profile/coach_presentation_settings.dart';
 import 'package:speakup/features/profile/coach_voice_selection_page.dart';
 
-const _femaleAvatarId = '94a60c13-e835-4bde-aa93-00a1cf178dcd';
-const _maleAvatarId = '1843ff9f-db3a-45de-be28-9c2b9d6412a3';
-const _femaleVoiceId = 'loongeva_v3.6';
-const _maleVoiceId = 'loongjohn';
 const _avatarCarouselInitialPage = 1000;
-
-const _avatarOptions = <_CoachAvatarOption>[
-  _CoachAvatarOption(
-    id: _femaleAvatarId,
-    name: '莉萨',
-    description: '亲切、开朗',
-    previewAsset: 'assets/images/avatars/coach-avatar-lisa.webp',
-  ),
-  _CoachAvatarOption(
-    id: _maleAvatarId,
-    name: '内森',
-    description: '温暖、沉稳',
-    previewAsset: 'assets/images/avatars/coach-avatar-nathan.webp',
-  ),
-];
-
-const _voiceOptions = <CoachVoiceOption>[
-  CoachVoiceOption(
-    id: _femaleVoiceId,
-    name: '艾娃',
-    description: '清晰自然 · 美式英语 · 女声',
-  ),
-  CoachVoiceOption(
-    id: _maleVoiceId,
-    name: '约翰',
-    description: '温暖沉稳 · 美式英语 · 男声',
-  ),
-];
-
-abstract interface class CoachPresentationSettingsStore {
-  Future<({String avatarId, String voiceId})> load();
-
-  Future<void> save({required String avatarId, required String voiceId});
-}
-
-final class SecureCoachPresentationSettingsStore
-    implements CoachPresentationSettingsStore {
-  const SecureCoachPresentationSettingsStore()
-    : _storage = const FlutterSecureStorage();
-
-  static const _avatarKey = 'coach_avatar_id';
-  static const _voiceKey = 'coach_voice_id';
-  final FlutterSecureStorage _storage;
-
-  @override
-  Future<({String avatarId, String voiceId})> load() async {
-    final values = await Future.wait<String?>([
-      _storage.read(key: _avatarKey),
-      _storage.read(key: _voiceKey),
-    ]);
-    return (
-      avatarId: _validAvatar(values[0]) ? values[0]! : _femaleAvatarId,
-      voiceId: _validVoice(values[1]) ? values[1]! : _femaleVoiceId,
-    );
-  }
-
-  @override
-  Future<void> save({required String avatarId, required String voiceId}) async {
-    if (!_validAvatar(avatarId) || !_validVoice(voiceId)) {
-      throw ArgumentError('Unsupported coach presentation.');
-    }
-    await Future.wait<void>([
-      _storage.write(key: _avatarKey, value: avatarId),
-      _storage.write(key: _voiceKey, value: voiceId),
-    ]);
-  }
-}
 
 class CoachPresentationPage extends StatefulWidget {
   const CoachPresentationPage({
-    this.store = const SecureCoachPresentationSettingsStore(),
+    this.accountId = 'preview',
+    this.store = const PreviewCoachPresentationSettingsStore(),
     super.key,
   });
 
+  final String accountId;
   final CoachPresentationSettingsStore store;
 
   @override
@@ -96,19 +27,45 @@ class _CoachPresentationPageState extends State<CoachPresentationPage> {
     initialPage: _avatarCarouselInitialPage,
     viewportFraction: 0.84,
   );
-  String _avatarId = _femaleAvatarId;
-  String _voiceId = _femaleVoiceId;
-  String _savedAvatarId = _femaleAvatarId;
-  String _savedVoiceId = _femaleVoiceId;
+  CoachPresentationCatalog? _catalog;
+  String _avatarId = '';
+  String _voiceId = '';
+  String _savedAvatarId = '';
+  String _savedVoiceId = '';
+  int _version = 0;
   bool _loading = true;
   bool _saving = false;
   String? _error;
   int _visibleAvatarIndex = 0;
+  Future<void>? _saveOperation;
 
   bool get _changed => _avatarId != _savedAvatarId || _voiceId != _savedVoiceId;
 
-  int get _selectedAvatarIndex =>
-      _avatarOptions.indexWhere((option) => option.id == _avatarId);
+  List<_CoachAvatarOption> get _avatarOptions => _catalog!.avatars
+      .map(
+        (option) => _CoachAvatarOption(
+          id: option.id,
+          name: option.displayName,
+          description: option.description,
+          previewAsset: _previewAsset(option.previewAssetKey),
+        ),
+      )
+      .toList(growable: false);
+
+  List<CoachVoiceOption> get _voiceOptions => _catalog!.voices
+      .map(
+        (option) => CoachVoiceOption(
+          id: option.id,
+          name: option.displayName,
+          description: option.description,
+        ),
+      )
+      .toList(growable: false);
+
+  int get _selectedAvatarIndex {
+    final index = _avatarOptions.indexWhere((option) => option.id == _avatarId);
+    return index < 0 ? 0 : index;
+  }
 
   CoachVoiceOption get _selectedVoice =>
       _voiceOptions.firstWhere((option) => option.id == _voiceId);
@@ -127,22 +84,14 @@ class _CoachPresentationPageState extends State<CoachPresentationPage> {
 
   Future<void> _load() async {
     try {
-      final value = await widget.store.load();
+      final value = await widget.store.load(accountId: widget.accountId);
       if (!mounted) return;
       setState(() {
-        _avatarId = value.avatarId;
-        _voiceId = value.voiceId;
-        _savedAvatarId = value.avatarId;
-        _savedVoiceId = value.voiceId;
+        _applyAuthoritativeSettings(value, preserveDesired: false);
         _visibleAvatarIndex = _selectedAvatarIndex;
         _loading = false;
       });
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || !_avatarPageController.hasClients) return;
-        _avatarPageController.jumpToPage(
-          _avatarCarouselInitialPage + _selectedAvatarIndex,
-        );
-      });
+      _jumpToSelectedAvatar();
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -152,33 +101,73 @@ class _CoachPresentationPageState extends State<CoachPresentationPage> {
     }
   }
 
-  Future<void> _save() async {
-    if (_saving || !_changed) return;
+  Future<void> _save() {
+    final active = _saveOperation;
+    if (active != null) return active;
+    if (!_changed) return Future<void>.value();
+    late final Future<void> operation;
+    operation = _drainSaves().whenComplete(() {
+      if (identical(_saveOperation, operation)) {
+        _saveOperation = null;
+      }
+      if (mounted && _changed) unawaited(_save());
+    });
+    _saveOperation = operation;
+    return operation;
+  }
+
+  Future<void> _drainSaves() async {
     setState(() {
       _saving = true;
       _error = null;
     });
+    var conflictRetried = false;
     try {
-      await widget.store.save(avatarId: _avatarId, voiceId: _voiceId);
-      if (!mounted) return;
-      setState(() {
-        _savedAvatarId = _avatarId;
-        _savedVoiceId = _voiceId;
-        _saving = false;
-      });
+      while (mounted && _changed) {
+        final desiredAvatarId = _avatarId;
+        final desiredVoiceId = _voiceId;
+        try {
+          final saved = await widget.store.save(
+            accountId: widget.accountId,
+            avatarOptionId: desiredAvatarId,
+            voiceOptionId: desiredVoiceId,
+            expectedVersion: _version,
+          );
+          if (!mounted) return;
+          setState(() {
+            _savedAvatarId = saved.avatarOptionId;
+            _savedVoiceId = saved.voiceOptionId;
+            _version = saved.version;
+          });
+          conflictRetried = false;
+        } on CoachPresentationVersionConflict {
+          if (conflictRetried) rethrow;
+          final refreshed = await widget.store.refresh(
+            accountId: widget.accountId,
+          );
+          if (!mounted) return;
+          setState(() {
+            _applyAuthoritativeSettings(refreshed, preserveDesired: true);
+          });
+          conflictRetried = true;
+        }
+      }
     } catch (_) {
       if (!mounted) return;
       setState(() {
         _avatarId = _savedAvatarId;
         _voiceId = _savedVoiceId;
-        _saving = false;
         _error = '保存失败，请稍后重试。';
+        _visibleAvatarIndex = _selectedAvatarIndex;
       });
+      _jumpToSelectedAvatar();
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 
   Future<void> _selectAvatar(_CoachAvatarOption option) async {
-    if (_saving || option.id == _avatarId) return;
+    if (option.id == _avatarId) return;
     setState(() {
       _avatarId = option.id;
       _error = null;
@@ -217,6 +206,36 @@ class _CoachPresentationPageState extends State<CoachPresentationPage> {
       body: SafeArea(
         child: _loading
             ? const Center(child: CircularProgressIndicator())
+            : _catalog == null
+            ? Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(SpeakUpDesign.space20),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        _error ?? '暂时无法读取设置，请重试。',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                      const SizedBox(height: SpeakUpDesign.space12),
+                      FilledButton(
+                        key: const Key('coach-presentation-retry'),
+                        onPressed: () {
+                          setState(() {
+                            _loading = true;
+                            _error = null;
+                          });
+                          unawaited(_load());
+                        },
+                        child: const Text('重试'),
+                      ),
+                    ],
+                  ),
+                ),
+              )
             : ListView(
                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
                 children: [
@@ -224,6 +243,7 @@ class _CoachPresentationPageState extends State<CoachPresentationPage> {
                   const SizedBox(height: 12),
                   _AvatarCarousel(
                     controller: _avatarPageController,
+                    options: _avatarOptions,
                     visibleIndex: _visibleAvatarIndex,
                     selectedAvatarId: _avatarId,
                     onPageChanged: (page) {
@@ -239,8 +259,14 @@ class _CoachPresentationPageState extends State<CoachPresentationPage> {
                   const SizedBox(height: 12),
                   _VoiceSelectionEntry(
                     option: _selectedVoice,
-                    onTap: _saving ? null : _selectVoice,
+                    onTap: _selectVoice,
                   ),
+                  if (_saving) ...[
+                    const SizedBox(height: 16),
+                    const LinearProgressIndicator(
+                      key: Key('coach-presentation-saving'),
+                    ),
+                  ],
                   if (_error != null) ...[
                     const SizedBox(height: 16),
                     Text(
@@ -255,11 +281,43 @@ class _CoachPresentationPageState extends State<CoachPresentationPage> {
       ),
     );
   }
+
+  void _applyAuthoritativeSettings(
+    CoachPresentationSettings settings, {
+    required bool preserveDesired,
+  }) {
+    final desiredAvatarId = _avatarId;
+    final desiredVoiceId = _voiceId;
+    _catalog = settings.catalog;
+    _savedAvatarId = settings.preference.avatarOptionId;
+    _savedVoiceId = settings.preference.voiceOptionId;
+    _version = settings.preference.version;
+    if (preserveDesired &&
+        settings.catalog.contains(desiredAvatarId, desiredVoiceId)) {
+      _avatarId = desiredAvatarId;
+      _voiceId = desiredVoiceId;
+    } else {
+      _avatarId = _savedAvatarId;
+      _voiceId = _savedVoiceId;
+    }
+  }
+
+  void _jumpToSelectedAvatar() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_avatarPageController.hasClients || _catalog == null) {
+        return;
+      }
+      _avatarPageController.jumpToPage(
+        _avatarCarouselInitialPage + _selectedAvatarIndex,
+      );
+    });
+  }
 }
 
 class _AvatarCarousel extends StatelessWidget {
   const _AvatarCarousel({
     required this.controller,
+    required this.options,
     required this.visibleIndex,
     required this.selectedAvatarId,
     required this.onPageChanged,
@@ -267,6 +325,7 @@ class _AvatarCarousel extends StatelessWidget {
   });
 
   final PageController controller;
+  final List<_CoachAvatarOption> options;
   final int visibleIndex;
   final String selectedAvatarId;
   final ValueChanged<int> onPageChanged;
@@ -282,15 +341,15 @@ class _AvatarCarousel extends StatelessWidget {
           controller: controller,
           onPageChanged: onPageChanged,
           itemBuilder: (context, page) {
-            final index = page % _avatarOptions.length;
+            final index = page % options.length;
             return Padding(
               padding: const EdgeInsets.symmetric(horizontal: 7),
               child: _AvatarCard(
                 key: Key('coach-avatar-card-$page'),
-                option: _avatarOptions[index],
-                selected: _avatarOptions[index].id == selectedAvatarId,
+                option: options[index],
+                selected: options[index].id == selectedAvatarId,
                 selectButtonKey: Key('coach-avatar-select-$page'),
-                onSelect: () => onSelect(_avatarOptions[index]),
+                onSelect: () => onSelect(options[index]),
               ),
             );
           },
@@ -300,7 +359,7 @@ class _AvatarCarousel extends StatelessWidget {
       Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: List.generate(
-          _avatarOptions.length,
+          options.length,
           (index) => AnimatedContainer(
             key: Key('coach-avatar-page-$index'),
             duration: const Duration(milliseconds: 180),
@@ -474,11 +533,11 @@ class _VoiceSelectionEntry extends StatelessWidget {
   }
 }
 
-bool _validAvatar(String? value) =>
-    value == _femaleAvatarId || value == _maleAvatarId;
-
-bool _validVoice(String? value) =>
-    value == _femaleVoiceId || value == _maleVoiceId;
+String _previewAsset(String assetKey) => switch (assetKey) {
+  'coach-avatar-lisa' => 'assets/images/avatars/coach-avatar-lisa.webp',
+  'coach-avatar-nathan' => 'assets/images/avatars/coach-avatar-nathan.webp',
+  _ => throw StateError('Unsupported coach avatar preview asset.'),
+};
 
 final class _CoachAvatarOption {
   const _CoachAvatarOption({

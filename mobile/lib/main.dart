@@ -45,6 +45,7 @@ import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.da
 import 'package:speakup/features/coaching/review/wire_review_history_client.dart';
 import 'package:speakup/features/coaching/evaluation/wire_turn_feedback_client.dart';
 import 'package:speakup/features/coaching/profile/coaching_profile.dart';
+import 'package:speakup/features/profile/coach_presentation_settings.dart';
 import 'package:speakup/features/coaching/practice/avatar/avatar.dart';
 import 'package:speakup/features/coaching/scenario/scenario_practice_session.dart';
 import 'package:speakup/features/update/app_update.dart';
@@ -84,6 +85,8 @@ void main() {
       sessionEvaluationController: dependencies.sessionEvaluationController,
       speechFeedbackController: dependencies.speechFeedbackController,
       coachingProfileController: dependencies.coachingProfileController,
+      coachPresentationSettingsStore:
+          dependencies.coachPresentationSettingsStore,
       appUpdateService: defaultTargetPlatform == TargetPlatform.android
           ? dependencies.appUpdateService
           : null,
@@ -111,6 +114,7 @@ final class ProductionAppDependencies {
     required this.sessionEvaluationController,
     required this.speechFeedbackController,
     required this.coachingProfileController,
+    required this.coachPresentationSettingsStore,
     required this.appUpdateService,
     required this.avatarControllerFactory,
   });
@@ -130,6 +134,7 @@ final class ProductionAppDependencies {
   final SessionEvaluationController sessionEvaluationController;
   final SpeechFeedbackController speechFeedbackController;
   final CoachingProfileController coachingProfileController;
+  final CoachPresentationSettingsStore coachPresentationSettingsStore;
   final AppUpdateService appUpdateService;
   final AvatarControllerFactory avatarControllerFactory;
 }
@@ -150,6 +155,7 @@ ProductionAppDependencies createProductionAppDependencies({
   IdentityHttpTransport? speechFeedbackTransport,
   IdentityHttpTransport? ieltsAnswerTransport,
   IdentityHttpTransport? coachingProfileTransport,
+  IdentityHttpTransport? coachPresentationTransport,
   PracticeWireTransport? practiceTransport,
   PracticeMediaWireTransport? practiceMediaTransport,
   PracticeMediaWireTransport? signedAudioTransport,
@@ -464,6 +470,18 @@ ProductionAppDependencies createProductionAppDependencies({
       transport: coachingProfileTransport,
     ),
   );
+  final coachPresentationSettingsStore = WireCoachPresentationSettingsStore(
+    baseUri: baseUri,
+    credentialProvider: () => authController.currentCredential,
+    invalidateSession:
+        ({required expectedSessionToken, required expectedGeneration}) {
+          return authController.invalidateSession(
+            expectedSessionToken: expectedSessionToken,
+            expectedGeneration: expectedGeneration,
+          );
+        },
+    transport: coachPresentationTransport,
+  );
   final resolvedAppUpdateService =
       appUpdateService ??
       AppUpdateService(
@@ -509,6 +527,7 @@ ProductionAppDependencies createProductionAppDependencies({
     sessionEvaluationController: sessionEvaluationController,
     speechFeedbackController: speechFeedbackController,
     coachingProfileController: coachingProfileController,
+    coachPresentationSettingsStore: coachPresentationSettingsStore,
     appUpdateService: resolvedAppUpdateService,
     avatarControllerFactory: createAvatarController,
   );

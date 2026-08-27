@@ -31,7 +31,10 @@ abstract interface class PracticeQuestionSpeechClient {
 }
 
 abstract interface class PracticeTextSpeechClient {
-  Stream<Uint8List> streamTextSpeech(String text);
+  Stream<Uint8List> streamTextSpeech({
+    required String practiceSessionId,
+    required String text,
+  });
 }
 
 final class PracticeMediaWireRequest {
@@ -185,16 +188,20 @@ final class WirePracticeMediaClient
   }
 
   @override
-  Stream<Uint8List> streamTextSpeech(String text) async* {
+  Stream<Uint8List> streamTextSpeech({
+    required String practiceSessionId,
+    required String text,
+  }) async* {
+    final sessionId = _requireResourceId(practiceSessionId);
     final value = text.trim();
     if (value.isEmpty || value.runes.length > 4096) {
       throw const PracticeClientException(
         kind: PracticeClientFailureKind.invalidRequest,
       );
     }
-    final uri = _practiceWebSocketBaseUri(
-      _baseUri,
-    ).resolve('/v1/practice-speech/realtime');
+    final uri = _practiceWebSocketBaseUri(_baseUri).resolve(
+      '/v1/practice-sessions/${Uri.encodeComponent(sessionId)}/speech/realtime',
+    );
     yield* _streamSpeech(
       uri,
       initialMessage: jsonEncode(<String, String>{

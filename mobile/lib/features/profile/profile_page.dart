@@ -8,6 +8,7 @@ import 'package:speakup/features/coaching/review/review.dart';
 import 'package:speakup/features/coaching/review/review_history_controller.dart';
 import 'package:speakup/features/profile/about_speak_up_page.dart';
 import 'package:speakup/features/profile/coach_presentation_page.dart';
+import 'package:speakup/features/profile/coach_presentation_settings.dart';
 import 'package:speakup/features/profile/profile_avatar_picker.dart';
 import 'package:speakup/features/profile/profile_avatar_view.dart';
 import 'package:speakup/features/update/app_update.dart';
@@ -29,6 +30,7 @@ class ProfilePage extends StatelessWidget {
     required this.onLogout,
     required this.reviewHistoryController,
     required this.coachingProfileController,
+    this.coachPresentationSettingsStore,
     this.appUpdateService,
     this.onCheckForUpdate,
     this.avatarPicker,
@@ -48,6 +50,7 @@ class ProfilePage extends StatelessWidget {
   final VoidCallback? onLogout;
   final ReviewHistoryController? reviewHistoryController;
   final CoachingProfileController? coachingProfileController;
+  final CoachPresentationSettingsStore? coachPresentationSettingsStore;
   final AppUpdateService? appUpdateService;
   final Future<AppUpdateCheckResult?> Function()? onCheckForUpdate;
   final ProfileAvatarPicker? avatarPicker;
@@ -153,6 +156,8 @@ class ProfilePage extends StatelessWidget {
             ],
             const SizedBox(height: SpeakUpDesign.space24),
             _ProfileSettingsSection(
+              accountId: user?.id ?? 'preview',
+              coachPresentationSettingsStore: coachPresentationSettingsStore,
               coachingProfileController: coachingProfileController,
               historyController: reviewHistoryController,
               onLogout: onLogout,
@@ -265,12 +270,16 @@ class ProfilePage extends StatelessWidget {
 
 class _ProfileSettingsSection extends StatefulWidget {
   const _ProfileSettingsSection({
+    required this.accountId,
+    required this.coachPresentationSettingsStore,
     required this.coachingProfileController,
     required this.historyController,
     required this.onLogout,
     required this.onOpenAbout,
   });
 
+  final String accountId;
+  final CoachPresentationSettingsStore? coachPresentationSettingsStore;
   final CoachingProfileController? coachingProfileController;
   final ReviewHistoryController? historyController;
   final VoidCallback? onLogout;
@@ -363,9 +372,15 @@ class _ProfileSettingsSectionState extends State<_ProfileSettingsSection> {
   }
 
   void _openCoachPresentation() {
+    final store = widget.coachPresentationSettingsStore;
     unawaited(
       Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(builder: (_) => const CoachPresentationPage()),
+        MaterialPageRoute<void>(
+          builder: (_) => CoachPresentationPage(
+            accountId: widget.accountId,
+            store: store ?? const PreviewCoachPresentationSettingsStore(),
+          ),
+        ),
       ),
     );
   }
