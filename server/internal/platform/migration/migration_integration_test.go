@@ -77,6 +77,12 @@ func TestMigrationHistoryFreshUpDownUp(t *testing.T) {
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
+		t.Fatalf("DownOne to v11 presentation runtime = %t, %v", changed, err)
+	}
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables))
+
+	changed, err = runner.DownOne()
+	if err != nil || !changed {
 		t.Fatalf("DownOne to v10 presentation preferences = %t, %v", changed, err)
 	}
 	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables))
@@ -148,6 +154,125 @@ func TestMigrationHistoryFreshUpDownUp(t *testing.T) {
 	assertCleanBaselineSchema(t, admin, schema)
 }
 
+func TestAgentRunQualifiedModelMigrationEnforcesDomainAndRollbackGuard(
+	t *testing.T,
+) {
+	config, _, _ := isolatedMigrationConfig(t)
+	runner, err := openConfig(config)
+	if err != nil {
+		t.Fatalf("open migration runner: %v", err)
+	}
+	t.Cleanup(func() { _ = runner.Close() })
+	if changed, upErr := runner.Up(); upErr != nil || !changed {
+		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v11 presentation runtime = %t, %v", changed, downErr)
+	}
+
+	database, err := pgx.ConnectConfig(context.Background(), config)
+	if err != nil {
+		t.Fatalf("connect qualified model migration database: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close(context.Background()) })
+	const (
+		userID    = "10000000-0000-4000-8000-000000000021"
+		threadID  = "20000000-0000-4000-8000-000000000021"
+		messageID = "30000000-0000-4000-8000-000000000021"
+		runID     = "40000000-0000-4000-8000-000000000021"
+	)
+	if _, err := database.Exec(context.Background(), `
+INSERT INTO users (id, canonical_email)
+VALUES ($1, 'qualified-model-migration@example.com')
+`, userID); err != nil {
+		t.Fatalf("seed qualified model migration owner: %v", err)
+	}
+	if _, err := database.Exec(context.Background(), `
+INSERT INTO agent_threads (id, user_id) VALUES ($1, $2)
+`, threadID, userID); err != nil {
+		t.Fatalf("seed qualified model migration thread: %v", err)
+	}
+	if _, err := database.Exec(context.Background(), `
+INSERT INTO agent_messages (
+    id, thread_id, sequence_no, role, client_message_id, content
+) VALUES ($1, $2, 1, 'user', 'qualified-model-message', 'Hello')
+`, messageID, threadID); err != nil {
+		t.Fatalf("seed qualified model migration message: %v", err)
+	}
+	if _, err := database.Exec(context.Background(), `
+INSERT INTO agent_runs (
+    id, thread_id, input_message_id, attempt_no, status, phase,
+    model_configuration, model_result, usage, started_at, completed_at
+) VALUES (
+    $1, $2, $3, 1, 'completed', 'completed',
+    '{"provider":"qiniu","model":"qwen3.7-plus","max_output_tokens":1024,"max_input_characters":5000}'::jsonb,
+    '{"completion_id":"completion-1","provider":"qiniu","model":"qwen3.7-plus","finish_reason":"stop"}'::jsonb,
+    '{"input_tokens":1,"output_tokens":1,"total_tokens":2}'::jsonb,
+    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+)
+`, runID, threadID, messageID); err != nil {
+		t.Fatalf("seed plain model Agent Run: %v", err)
+	}
+
+	updateModel := func(configurationModel, resultModel string) error {
+		t.Helper()
+		_, updateErr := database.Exec(context.Background(), `
+UPDATE agent_runs
+SET model_configuration = jsonb_set(
+        model_configuration, '{model}', to_jsonb($2::text)
+    ),
+    model_result = jsonb_set(model_result, '{model}', to_jsonb($3::text))
+WHERE id = $1
+`, runID, configurationModel, resultModel)
+		return updateErr
+	}
+
+	expectPostgresCode(
+		t,
+		updateModel("qwen/qwen3.7-plus", "qwen/qwen3.7-plus"),
+		"23514",
+	)
+	if changed, upErr := runner.Up(); upErr != nil || !changed {
+		t.Fatalf("apply qualified model migration = %t, %v", changed, upErr)
+	}
+	if err := updateModel("qwen/qwen3.7-plus", "qwen/qwen3.7-plus"); err != nil {
+		t.Fatalf("store qualified model IDs: %v", err)
+	}
+	expectPostgresCode(
+		t,
+		updateModel("qwen/a..b", "qwen/qwen3.7-plus"),
+		"23514",
+	)
+	expectPostgresCode(
+		t,
+		updateModel("qwen/qwen3.7-plus", "qwen/a..b"),
+		"23514",
+	)
+
+	changed, downErr := runner.DownOne()
+	if downErr == nil || changed || !strings.Contains(
+		downErr.Error(),
+		"cannot roll back qualified Agent model IDs while qualified values exist",
+	) {
+		t.Fatalf("DownOne with qualified model IDs = %t, %v", changed, downErr)
+	}
+	var configurationModel, resultModel string
+	if err := database.QueryRow(context.Background(), `
+SELECT model_configuration->>'model', model_result->>'model'
+FROM agent_runs WHERE id = $1
+`, runID).Scan(&configurationModel, &resultModel); err != nil {
+		t.Fatalf("read Agent Run after rejected DownOne: %v", err)
+	}
+	if configurationModel != "qwen/qwen3.7-plus" ||
+		resultModel != "qwen/qwen3.7-plus" {
+		t.Fatalf(
+			"qualified model IDs after rejected DownOne = %q, %q",
+			configurationModel,
+			resultModel,
+		)
+	}
+}
+
 func TestSceneSelectionSourceMigrationTransformsPlansAndPreservesSessions(
 	t *testing.T,
 ) {
@@ -159,6 +284,9 @@ func TestSceneSelectionSourceMigrationTransformsPlansAndPreservesSessions(
 	t.Cleanup(func() { _ = runner.Close() })
 	if changed, upErr := runner.Up(); upErr != nil || !changed {
 		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v11 presentation runtime = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("DownOne to v10 presentation preferences = %t, %v", changed, downErr)
@@ -306,6 +434,9 @@ FROM practice_sessions WHERE session_id = $1
 	}
 
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("roll back v12 = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("roll back v11 = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
@@ -355,6 +486,9 @@ func TestMigratedLegacyCatalogPlanCompletesThroughFormalReport(t *testing.T) {
 	t.Cleanup(func() { _ = runner.Close() })
 	if changed, upErr := runner.Up(); upErr != nil || !changed {
 		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v11 presentation runtime = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("DownOne to v10 presentation preferences = %t, %v", changed, downErr)
@@ -626,6 +760,9 @@ func TestSceneSelectionSourceMigrationRejectsDownWithCustomPlan(t *testing.T) {
 	t.Cleanup(func() { _ = runner.Close() })
 	if changed, upErr := runner.Up(); upErr != nil || !changed {
 		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v11 presentation runtime = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("DownOne to v10 presentation preferences = %t, %v", changed, downErr)

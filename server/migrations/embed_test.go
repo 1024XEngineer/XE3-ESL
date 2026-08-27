@@ -56,6 +56,8 @@ func TestEveryMigrationPairIsEmbedded(t *testing.T) {
 		"000010_coach_presentation_preferences.up.sql",
 		"000011_coach_presentation_runtime.down.sql",
 		"000011_coach_presentation_runtime.up.sql",
+		"000012_agent_run_qualified_model_ids.down.sql",
+		"000012_agent_run_qualified_model_ids.up.sql",
 	}
 	slices.Sort(files)
 	if !slices.Equal(files, want) {
@@ -87,6 +89,8 @@ func TestMigrationsAreTransactional(t *testing.T) {
 		"000010_coach_presentation_preferences.down.sql",
 		"000011_coach_presentation_runtime.up.sql",
 		"000011_coach_presentation_runtime.down.sql",
+		"000012_agent_run_qualified_model_ids.up.sql",
+		"000012_agent_run_qualified_model_ids.down.sql",
 	} {
 		sql := readMigration(t, name)
 		if !strings.HasPrefix(sql, "BEGIN;") {
@@ -95,6 +99,28 @@ func TestMigrationsAreTransactional(t *testing.T) {
 		if !strings.HasSuffix(sql, "COMMIT;") {
 			t.Errorf("%s must end with COMMIT", name)
 		}
+	}
+}
+
+func TestAgentRunQualifiedModelMigrationMatchesDomainValidation(t *testing.T) {
+	up := readMigration(t, "000012_agent_run_qualified_model_ids.up.sql")
+	for _, required := range []string{
+		"octet_length(model_configuration->>'model') <= 128",
+		"octet_length(model_result->>'model') <= 128",
+		"position('..' IN model_configuration->>'model') = 0",
+		"position('..' IN model_result->>'model') = 0",
+		"*(/[A-Za-z0-9][A-Za-z0-9._:-]*)*",
+	} {
+		if !strings.Contains(up, required) {
+			t.Errorf("qualified model migration is missing %q", required)
+		}
+	}
+	down := readMigration(t, "000012_agent_run_qualified_model_ids.down.sql")
+	if !strings.Contains(
+		down,
+		"cannot roll back qualified Agent model IDs while qualified values exist",
+	) {
+		t.Error("qualified model rollback must fail closed while incompatible rows exist")
 	}
 }
 

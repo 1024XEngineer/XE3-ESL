@@ -67,6 +67,26 @@ void main() {
       throwsA(isA<AgentWireCodecException>()),
     );
   });
+
+  test('accepts provider-qualified model identities only', () {
+    final qualified = _failedRun('internal_error')
+      ..['requested_model'] = 'qwen/qwen3.7-plus';
+    expect(decodeAgentWireRun(qualified).requestedModel, 'qwen/qwen3.7-plus');
+
+    for (final model in <String>[
+      'qwen//qwen3.7-plus',
+      'qwen/../qwen3.7-plus',
+      'qwen/model..variant',
+      '/qwen3.7-plus',
+    ]) {
+      final invalid = _failedRun('internal_error')..['requested_model'] = model;
+      expect(
+        () => decodeAgentWireRun(invalid),
+        throwsA(isA<AgentWireCodecException>()),
+        reason: model,
+      );
+    }
+  });
 }
 
 Map<String, Object?> _failedRun(String kind) => <String, Object?>{
