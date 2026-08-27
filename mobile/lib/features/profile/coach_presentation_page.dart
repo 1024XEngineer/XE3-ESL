@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -101,6 +103,7 @@ class _CoachPresentationPageState extends State<CoachPresentationPage> {
   bool _loading = true;
   bool _saving = false;
   String? _error;
+  int _visibleAvatarIndex = 0;
 
   bool get _changed => _avatarId != _savedAvatarId || _voiceId != _savedVoiceId;
 
@@ -131,6 +134,7 @@ class _CoachPresentationPageState extends State<CoachPresentationPage> {
         _voiceId = value.voiceId;
         _savedAvatarId = value.avatarId;
         _savedVoiceId = value.voiceId;
+        _visibleAvatarIndex = _selectedAvatarIndex;
         _loading = false;
       });
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -162,16 +166,24 @@ class _CoachPresentationPageState extends State<CoachPresentationPage> {
         _savedVoiceId = _voiceId;
         _saving = false;
       });
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('设置已保存')));
     } catch (_) {
       if (!mounted) return;
       setState(() {
+        _avatarId = _savedAvatarId;
+        _voiceId = _savedVoiceId;
         _saving = false;
         _error = '保存失败，请稍后重试。';
       });
     }
+  }
+
+  Future<void> _selectAvatar(_CoachAvatarOption option) async {
+    if (_saving || option.id == _avatarId) return;
+    setState(() {
+      _avatarId = option.id;
+      _error = null;
+    });
+    await _save();
   }
 
   Future<void> _selectVoice() async {
@@ -186,7 +198,11 @@ class _CoachPresentationPageState extends State<CoachPresentationPage> {
     if (!mounted || selectedVoiceId == null || selectedVoiceId == _voiceId) {
       return;
     }
-    setState(() => _voiceId = selectedVoiceId);
+    setState(() {
+      _voiceId = selectedVoiceId;
+      _error = null;
+    });
+    await _save();
   }
 
   @override
@@ -208,21 +224,22 @@ class _CoachPresentationPageState extends State<CoachPresentationPage> {
                   const SizedBox(height: 12),
                   _AvatarCarousel(
                     controller: _avatarPageController,
-                    selectedIndex: _selectedAvatarIndex,
+                    visibleIndex: _visibleAvatarIndex,
+                    selectedAvatarId: _avatarId,
                     onPageChanged: (page) {
-                      final option =
-                          _avatarOptions[page % _avatarOptions.length];
-                      if (option.id == _avatarId) return;
-                      setState(() => _avatarId = option.id);
+                      final index = page % _avatarOptions.length;
+                      if (index == _visibleAvatarIndex) return;
+                      setState(() => _visibleAvatarIndex = index);
                       HapticFeedback.selectionClick();
                     },
+                    onSelect: (option) => unawaited(_selectAvatar(option)),
                   ),
                   const SizedBox(height: 28),
                   Text('音色', style: SpeakUpDesign.sectionTitle),
                   const SizedBox(height: 12),
                   _VoiceSelectionEntry(
                     option: _selectedVoice,
-                    onTap: _selectVoice,
+                    onTap: _saving ? null : _selectVoice,
                   ),
                   if (_error != null) ...[
                     const SizedBox(height: 16),
@@ -233,20 +250,6 @@ class _CoachPresentationPageState extends State<CoachPresentationPage> {
                       ),
                     ),
                   ],
-                  const SizedBox(height: 28),
-                  SizedBox(
-                    height: 52,
-                    child: FilledButton(
-                      key: const Key('coach-presentation-save'),
-                      onPressed: _changed && !_saving ? _save : null,
-                      child: _saving
-                          ? const SizedBox.square(
-                              dimension: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Text('保存设置'),
-                    ),
-                  ),
                 ],
               ),
       ),
@@ -257,13 +260,17 @@ class _CoachPresentationPageState extends State<CoachPresentationPage> {
 class _AvatarCarousel extends StatelessWidget {
   const _AvatarCarousel({
     required this.controller,
-    required this.selectedIndex,
+    required this.visibleIndex,
+    required this.selectedAvatarId,
     required this.onPageChanged,
+    required this.onSelect,
   });
 
   final PageController controller;
-  final int selectedIndex;
+  final int visibleIndex;
+  final String selectedAvatarId;
   final ValueChanged<int> onPageChanged;
+  final ValueChanged<_CoachAvatarOption> onSelect;
 
   @override
   Widget build(BuildContext context) => Column(
@@ -281,6 +288,9 @@ class _AvatarCarousel extends StatelessWidget {
               child: _AvatarCard(
                 key: Key('coach-avatar-card-$page'),
                 option: _avatarOptions[index],
+                selected: _avatarOptions[index].id == selectedAvatarId,
+                selectButtonKey: Key('coach-avatar-select-$page'),
+                onSelect: () => onSelect(_avatarOptions[index]),
               ),
             );
           },
@@ -294,11 +304,11 @@ class _AvatarCarousel extends StatelessWidget {
           (index) => AnimatedContainer(
             key: Key('coach-avatar-page-$index'),
             duration: const Duration(milliseconds: 180),
-            width: index == selectedIndex ? 24 : 8,
+            width: index == visibleIndex ? 24 : 8,
             height: 8,
             margin: const EdgeInsets.symmetric(horizontal: 4),
             decoration: BoxDecoration(
-              color: index == selectedIndex
+              color: index == visibleIndex
                   ? Colors.black
                   : const Color(0xFFD9DDE1),
               borderRadius: BorderRadius.circular(99),
@@ -319,9 +329,18 @@ class _AvatarCarousel extends StatelessWidget {
 }
 
 class _AvatarCard extends StatelessWidget {
-  const _AvatarCard({required this.option, super.key});
+  const _AvatarCard({
+    required this.option,
+    required this.selected,
+    required this.selectButtonKey,
+    required this.onSelect,
+    super.key,
+  });
 
   final _CoachAvatarOption option;
+  final bool selected;
+  final Key selectButtonKey;
+  final VoidCallback onSelect;
 
   @override
   Widget build(BuildContext context) => Semantics(
@@ -376,6 +395,52 @@ class _AvatarCard extends StatelessWidget {
               ],
             ),
           ),
+          Positioned(
+            top: SpeakUpDesign.space12,
+            right: SpeakUpDesign.space12,
+            child: Tooltip(
+              message: selected ? '${option.name}已选中' : '选择${option.name}',
+              child: Semantics(
+                button: true,
+                selected: selected,
+                label: selected ? '${option.name}已选中' : '选择${option.name}',
+                child: GestureDetector(
+                  key: selectButtonKey,
+                  behavior: HitTestBehavior.opaque,
+                  onTap: onSelect,
+                  child: SizedBox.square(
+                    dimension: SpeakUpDesign.minTapTarget,
+                    child: Center(
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 160),
+                        width: 28,
+                        height: 28,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: selected
+                              ? SpeakUpDesign.ink
+                              : Colors.white.withValues(alpha: 0.92),
+                          border: Border.all(
+                            color: selected
+                                ? SpeakUpDesign.ink
+                                : SpeakUpDesign.tertiary,
+                            width: 1.5,
+                          ),
+                        ),
+                        child: selected
+                            ? const Icon(
+                                Icons.check_rounded,
+                                color: Colors.white,
+                                size: 18,
+                              )
+                            : null,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     ),
@@ -386,7 +451,7 @@ class _VoiceSelectionEntry extends StatelessWidget {
   const _VoiceSelectionEntry({required this.option, required this.onTap});
 
   final CoachVoiceOption option;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {

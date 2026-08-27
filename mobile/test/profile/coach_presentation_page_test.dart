@@ -25,6 +25,10 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('内森'), findsOneWidget);
+    expect(store.avatarId, '94a60c13-e835-4bde-aa93-00a1cf178dcd');
+    await tester.tap(find.byKey(const Key('coach-avatar-select-1001')));
+    await tester.pumpAndSettle();
+    expect(store.avatarId, '1843ff9f-db3a-45de-be28-9c2b9d6412a3');
     await tester.drag(find.byType(ListView), const Offset(0, -520));
     await tester.pumpAndSettle();
     await tester.ensureVisible(
@@ -45,16 +49,9 @@ void main() {
 
     expect(find.byKey(const Key('coach-presentation-page')), findsOneWidget);
     expect(find.text('约翰'), findsOneWidget);
-    await tester.ensureVisible(
-      find.byKey(const Key('coach-presentation-save')),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('coach-presentation-save')));
-    await tester.pumpAndSettle();
-
     expect(store.avatarId, '1843ff9f-db3a-45de-be28-9c2b9d6412a3');
     expect(store.voiceId, 'loongjohn');
-    expect(find.text('设置已保存'), findsOneWidget);
+    expect(find.byKey(const Key('coach-presentation-save')), findsNothing);
   });
 
   testWidgets('back from voice selection discards the temporary choice', (
@@ -82,10 +79,8 @@ void main() {
 
     expect(find.byKey(const Key('coach-presentation-page')), findsOneWidget);
     expect(find.text('艾娃'), findsOneWidget);
-    final saveButton = tester.widget<FilledButton>(
-      find.byKey(const Key('coach-presentation-save')),
-    );
-    expect(saveButton.onPressed, isNull);
+    expect(store.voiceId, 'loongeva_v3.6');
+    expect(find.byKey(const Key('coach-presentation-save')), findsNothing);
   });
 }
 
