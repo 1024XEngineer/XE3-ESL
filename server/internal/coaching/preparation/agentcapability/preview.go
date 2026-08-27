@@ -322,6 +322,7 @@ func (value PreviewTool) Definition() capability.Definition {
 			"For an IELTS Catalog scene, FULL_MOCK means a complete/full/完整模考 request and requires no topic choice. Use PART_1, PART_2, or PART_3 only when the current message explicitly names that Part; never infer a specialty Part from a general IELTS request. A specialty Part requires its topic choice. " +
 			"All five discriminator fields are required; non-applicable fields must use [], \"\", or NONE exactly. Structural examples: " +
 			`CATALOG={"resolution_kind":"CATALOG","catalog_scene_ids":["<one manifest scene id>"],"custom_scenario":"","custom_experience_hint":"NONE"}; ` +
+			`NEEDS_CLARIFICATION={"resolution_kind":"NEEDS_CLARIFICATION","catalog_scene_ids":["<one to three manifest scene ids>"],"custom_scenario":"","custom_experience_hint":"NONE"}; omit background_summary, IELTS fields, and role fields for this branch. ` +
 			`PENDING_REPLY={"resolution_kind":"NONE","catalog_scene_ids":[],"custom_scenario":"","custom_experience_hint":"NONE"}. ` +
 			"A successful tool result completes this turn; never call the tool repeatedly in the same turn.\n\nTrusted Catalog manifest:\n" +
 			formatPreviewCatalogManifest(value.manifest),
@@ -338,20 +339,20 @@ func (value PreviewTool) Definition() capability.Definition {
 				noCustomExperienceHint,
 				"WORKPLACE", "LIFE_AND_TRAVEL", "INTERVIEW", "IELTS_SPEAKING",
 			),
-			"user_role": capability.TextSchema(
-				"Optional user-authored learner role for CUSTOM only.",
+			"user_role": capability.OptionalTextSchema(
+				"Optional user-authored learner role for CUSTOM only. Omit it or use an empty string when it does not apply.",
 				200,
 			),
-			"ai_role": capability.TextSchema(
-				"Optional user-authored counterpart role for CUSTOM only.",
+			"ai_role": capability.OptionalTextSchema(
+				"Optional user-authored counterpart role for CUSTOM only. Omit it or use an empty string when it does not apply.",
 				200,
 			),
-			"practice_goal": capability.TextSchema(
-				"Optional user-authored practice goal for CUSTOM only.",
+			"practice_goal": capability.OptionalTextSchema(
+				"Optional user-authored practice goal for CUSTOM only. Omit it or use an empty string when it does not apply.",
 				500,
 			),
-			"background_summary": capability.TextSchema(
-				"Concise user-authored preparation facts, including target, experience, constraints, and focus.",
+			"background_summary": capability.OptionalTextSchema(
+				"Optional concise user-authored preparation facts. Omit it or use an empty string when there are no facts to preserve.",
 				6000,
 			),
 			"ielts_practice_mode": capability.StringEnumSchema(
@@ -441,10 +442,30 @@ func parseUnifiedPreviewToolInput(
 	if !hasRequiredUnifiedPreviewFields(input) {
 		return UnifiedPreviewToolInput{}, previewInputError{code: "required_fields"}
 	}
+	parsed = canonicalPreviewToolInput(parsed)
 	if code := invalidUnifiedPreviewToolInput(parsed); code != "" {
 		return UnifiedPreviewToolInput{}, previewInputError{code: code}
 	}
 	return parsed, nil
+}
+
+// canonicalPreviewToolInput discards contextual fields on the read-only
+// clarification branch. Those fields cannot influence candidate selection or
+// create a plan, and tool-calling models commonly repeat conversation context
+// there even though the branch contract asks them to omit it.
+func canonicalPreviewToolInput(
+	input UnifiedPreviewToolInput,
+) UnifiedPreviewToolInput {
+	if input.ResolutionKind != SceneResolutionKindNeedsClarification {
+		return input
+	}
+	input.UserRole = ""
+	input.AIRole = ""
+	input.PracticeGoal = ""
+	input.BackgroundSummary = ""
+	input.IELTSPracticeMode = ""
+	input.IELTSTopicChoice = ""
+	return input
 }
 
 func hasRequiredUnifiedPreviewFields(input json.RawMessage) bool {

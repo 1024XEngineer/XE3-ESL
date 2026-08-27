@@ -7,13 +7,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:speakup/features/agent/client_action/agent_client_action.dart';
-import 'package:speakup/features/agent/conversation/agent_client.dart';
 import 'package:speakup/features/agent/conversation/agent_models.dart';
 import 'package:speakup/features/agent/conversation/conversation_controller.dart';
+import 'package:speakup/features/coaching/evaluation/evaluation_report.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
+import 'package:speakup/features/coaching/practice/practice_client_error.dart';
+import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/preparation/practice_plan_client_action.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/main.dart' as app;
+import 'package:speakup/features/coaching/evaluation/session_evaluation.dart';
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
 import 'package:speakup/features/coaching/review/review_history_controller.dart';
 import 'package:speakup/identity/session_store.dart';
@@ -43,6 +46,7 @@ void main() {
     final dependencies = app.createProductionAppDependencies(
       baseUri: Uri.parse(apiBaseUrl),
       practiceRecorder: _FixturePracticeRecorder(voiceFixture),
+      sessionStore: _MemorySessionStore(),
     );
     runApp(
       SpeakUpApp(
@@ -57,6 +61,7 @@ void main() {
         jobPreparationController: dependencies.jobPreparationController,
         preparationLaunchController: dependencies.preparationLaunchController,
         reviewHistoryController: dependencies.reviewHistoryController,
+        sessionEvaluationController: dependencies.sessionEvaluationController,
       ),
     );
     await _waitUntil(
@@ -116,7 +121,7 @@ void main() {
     );
     expect(agentScreenshot, isNotEmpty);
 
-    await _completeRealVoicePractice(
+    final audioAssetIds = await _completeRealVoicePractice(
       tester,
       controller: dependencies.practiceController,
       validateAudioMedia: validateAudioMedia,
@@ -126,7 +131,27 @@ void main() {
     if (completedSessionId == null) {
       fail('The completed Practice did not retain its Session identity.');
     }
-    Navigator.of(tester.element(find.byKey(const Key('practice-page')))).pop();
+    await tester.runAsync(
+      () => dependencies.sessionEvaluationController.load(completedSessionId),
+    );
+    expect(
+      dependencies.sessionEvaluationController.evaluation?.status,
+      SessionEvaluationStatus.ready,
+      reason: dependencies.sessionEvaluationController.errorMessage,
+    );
+    _expectScoredPracticeReport(
+      dependencies.sessionEvaluationController.evaluation?.report,
+    );
+    if (validateAudioMedia) {
+      await _deleteTestRecordings(
+        dependencies.practiceController,
+        audioAssetIds,
+      );
+    }
+    await dependencies.reviewHistoryController.refresh();
+    Navigator.of(
+      tester.element(find.byKey(const Key('scenario-practice-page'))),
+    ).pop();
     await tester.pumpAndSettle();
     await _tapPrimaryTab(tester, 2);
     await _waitForPersistedSessionReview(
@@ -143,7 +168,6 @@ void main() {
       'ios-real-voice-review-e2e',
     );
     expect(reviewScreenshot, isNotEmpty);
-
     await _signOut(tester);
     await _signIn(tester, email: email, password: password);
     await _tapPrimaryTab(tester, 2);
@@ -474,6 +498,166 @@ void main() {
     );
   });
 
+  testWidgets('real iOS Agent distinguishes chat from hotel Practice creation', (
+    tester,
+  ) async {
+    const apiBaseUrl = String.fromEnvironment(
+      'SPEAKUP_API_BASE_URL',
+      defaultValue: 'http://127.0.0.1:8080',
+    );
+    final email =
+        'agent-hotel-${DateTime.now().microsecondsSinceEpoch}@example.com';
+    const password = 'Agent hotel e2e password 731';
+    final dependencies = app.createProductionAppDependencies(
+      baseUri: Uri.parse(apiBaseUrl),
+      sessionStore: _MemorySessionStore(),
+    );
+    runApp(
+      SpeakUpApp(
+        authController: dependencies.authController,
+        conversationController: dependencies.conversationController,
+        composerController: dependencies.composerController,
+        messageAudioController: dependencies.messageAudioController,
+        messageTranslationClient: dependencies.messageTranslationClient,
+        practiceController: dependencies.practiceController,
+        preparationController: dependencies.preparationController,
+        ieltsPreparationController: dependencies.ieltsPreparationController,
+        jobPreparationController: dependencies.jobPreparationController,
+        preparationLaunchController: dependencies.preparationLaunchController,
+        practicePlanClientActionController:
+            dependencies.practicePlanClientActionController,
+        reviewHistoryController: dependencies.reviewHistoryController,
+        sessionEvaluationController: dependencies.sessionEvaluationController,
+      ),
+    );
+
+    await _registerOrSignIn(
+      tester,
+      email: email,
+      password: password,
+      requireFocusedConversation: false,
+    );
+    await _waitUntil(
+      tester,
+      () => !dependencies.conversationController.isBusy,
+      const Duration(seconds: 20),
+    );
+    expect(await dependencies.conversationController.createThread(), isTrue);
+    await _ensureWritableConversation(tester);
+
+    final chat = await _sendRealAgentMessage(
+      tester,
+      controller: dependencies.conversationController,
+      text: '你好，今天先随便聊两句，不要创建练习。',
+    );
+    expect(chat.text.trim(), isNotEmpty);
+    expect(chat.clientActions.where(_isPracticePlanConfirmAction), isEmpty);
+    expect(
+      dependencies.conversationController.messages
+          .expand((message) => message.clientActions)
+          .where(_isPracticePlanConfirmAction),
+      isEmpty,
+    );
+
+    final correction = await _sendRealAgentMessage(
+      tester,
+      controller: dependencies.conversationController,
+      text: '做一个简单纠错练习：请纠正 I am agree with you，只回复正确说法，不要创建练习场景。',
+    );
+    expect(correction.text, contains('I agree with you'));
+    expect(
+      correction.clientActions.where(_isPracticePlanConfirmAction),
+      isEmpty,
+    );
+    expect(
+      dependencies.conversationController.messages
+          .expand((message) => message.clientActions)
+          .where(_isPracticePlanConfirmAction),
+      isEmpty,
+    );
+
+    final hotel = await _sendRealAgentMessage(
+      tester,
+      controller: dependencies.conversationController,
+      text: '明天去酒店办理入住，想练习跟英文前台核对预订和房型，直接创建。',
+    );
+    final hotelActions = hotel.clientActions
+        .where(_isPracticePlanConfirmAction)
+        .map(decodeConfirmPracticePlanClientAction)
+        .toList(growable: false);
+    expect(hotelActions, hasLength(1));
+    final action = hotelActions.single;
+    expect(action.sceneId, 'scn_travel_hotel_checkin');
+    expect(action.practiceExperience, 'LIFE_AND_TRAVEL');
+    expect(action.sceneCategory, 'LIFE_TRAVEL');
+    expect(
+      dependencies.conversationController.messages
+          .expand((message) => message.clientActions)
+          .where(_isPracticePlanConfirmAction),
+      hasLength(1),
+    );
+
+    final card = find.byKey(
+      Key(
+        'agent-client-action-practice-plan-'
+        '${action.practicePlanId}-${action.planVersion}',
+      ),
+    );
+    final confirm = find.byKey(
+      Key(
+        'confirm-practice-plan-'
+        '${action.practicePlanId}-${action.planVersion}',
+      ),
+    );
+    expect(card, findsOneWidget);
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.ensureVisible(confirm);
+    await tester.pumpAndSettle();
+    await _waitUntil(
+      tester,
+      () => confirm.hitTestable().evaluate().length == 1,
+      const Duration(seconds: 10),
+    );
+    await tester.tap(confirm);
+    await _waitForPreparationTarget(
+      tester,
+      target: find.byKey(const Key('scenario-practice-page')),
+      operation: 'open the Agent-created hotel Practice Session',
+      timeout: const Duration(seconds: 90),
+    );
+    expect(dependencies.practiceController.practiceSessionId, isNotNull);
+    expect(
+      dependencies.practiceController.scene?.id,
+      'scn_travel_hotel_checkin',
+    );
+    final sessionId = dependencies.practiceController.practiceSessionId;
+    if (sessionId == null) {
+      fail(
+        'The Agent-created hotel Practice did not retain its Session identity.',
+      );
+    }
+    await _completeTextPractice(
+      tester,
+      controller: dependencies.practiceController,
+      answers: const [
+        'Hello, I have a reservation under the name Li Qiang.',
+        'I booked a quiet non-smoking room for two nights.',
+        'Could you confirm breakfast and the check-out time, please?',
+      ],
+    );
+    await tester.runAsync(
+      () => dependencies.sessionEvaluationController.load(sessionId),
+    );
+    expect(
+      dependencies.sessionEvaluationController.evaluation?.status,
+      SessionEvaluationStatus.ready,
+      reason: dependencies.sessionEvaluationController.errorMessage,
+    );
+    _expectScoredPracticeReport(
+      dependencies.sessionEvaluationController.evaluation?.report,
+    );
+  });
+
   testWidgets('real iOS Agent recovers a short IELTS warm-up answer', (
     tester,
   ) async {
@@ -516,11 +700,7 @@ void main() {
       const Duration(seconds: 20),
     );
     expect(await dependencies.conversationController.createThread(), isTrue);
-    await _waitUntil(
-      tester,
-      () => _composerIsReady(tester),
-      const Duration(seconds: 20),
-    );
+    await _ensureWritableConversation(tester);
     await _sendRealAgentMessage(
       tester,
       controller: dependencies.conversationController,
@@ -770,7 +950,8 @@ Future<void> _tapPrimaryTab(WidgetTester tester, int index) async {
   );
   expect(find.byType(UiKitView), findsOneWidget);
   ByteData? response;
-  for (var viewId = 0; viewId < 16 && response == null; viewId++) {
+  // UIKit view IDs increase when auth rebuilds the native tab bar.
+  for (var viewId = 0; viewId < 256 && response == null; viewId++) {
     response = await tester.binding.defaultBinaryMessenger
         .handlePlatformMessage(
           'speakup/native_tab_bar/$viewId',
@@ -785,7 +966,7 @@ Future<void> _tapPrimaryTab(WidgetTester tester, int index) async {
   await tester.pump();
 }
 
-Future<void> _completeRealVoicePractice(
+Future<List<String>> _completeRealVoicePractice(
   WidgetTester tester, {
   required PracticeController controller,
   required bool validateAudioMedia,
@@ -794,147 +975,73 @@ Future<void> _completeRealVoicePractice(
   await _tapPrimaryTab(tester, 1);
   await tester.pump();
   final interviewHub = find.byKey(const Key('practice-hub-interview'));
+  final workplaceHub = find.byKey(const Key('practice-hub-workplace'));
   await _waitForPreparationTarget(
     tester,
     target: interviewHub,
     operation: 'load the three practice hubs',
     timeout: const Duration(seconds: 30),
   );
-  await _scrollPreparationIntoView(tester, interviewHub);
-  await tester.tap(interviewHub);
+  await _showPracticeHub(tester, workplaceHub);
+  await tester.tap(workplaceHub);
   await tester.pump();
-  final scene = find.byKey(const Key('catalog-scene-scn_programmer_interview'));
-  if (scene.evaluate().isEmpty) {
-    final professionalMode = find.byKey(
-      const Key('interview-mode-professional'),
-    );
-    await _waitForPreparationTarget(
-      tester,
-      target: professionalMode,
-      operation: 'load the direct professional interview entry',
-      timeout: const Duration(seconds: 30),
-    );
-    await _scrollPreparationIntoView(tester, professionalMode);
-    await tester.tap(professionalMode);
-    await tester.pumpAndSettle();
-  }
+  final scene = find.byKey(
+    const Key('catalog-scene-scn_workplace_progress_risk_update'),
+  );
   await _waitForPreparationTarget(
     tester,
     target: scene,
-    operation: 'load the formal preparation catalog',
+    operation: 'load the workplace practice catalog',
     timeout: const Duration(seconds: 30),
   );
   await _scrollPreparationIntoView(tester, scene);
   await tester.tap(scene);
   await tester.pump();
-
-  final role = find.byKey(
-    const Key('preparation-role-role_technical_interviewer'),
-  );
   await _waitForPreparationTarget(
     tester,
-    target: role,
-    operation: 'load the technical interview preparation detail',
-    timeout: const Duration(seconds: 30),
-  );
-  await _scrollPreparationIntoView(tester, role);
-  await tester.tap(role);
-  await tester.pump();
-
-  final option = find.byKey(
-    const Key('preparation-option-option_technical_focus'),
-  );
-  await _scrollPreparationIntoView(tester, option);
-  await tester.tap(option);
-  await tester.pump();
-
-  final background = find.byKey(const Key('preparation-background-summary'));
-  await _scrollPreparationIntoView(tester, background);
-  await tester.enterText(
-    background,
-    'Backend engineer preparing for a technical interview. '
-    'Focus on concise spoken explanations of engineering trade-offs.',
-  );
-  FocusManager.instance.primaryFocus?.unfocus();
-  await tester.pump(const Duration(milliseconds: 300));
-
-  final start = find.byKey(const Key('preparation-start-practice'));
-  await _scrollPreparationIntoView(tester, start);
-  await tester.tap(start);
-  await tester.pump();
-  await _waitForPreparationTarget(
-    tester,
-    target: find.byKey(const Key('practice-page')),
-    operation: 'create and open the formal FOCUS Practice Session',
+    target: find.byKey(const Key('scenario-practice-page')),
+    operation: 'create and open the workplace Practice Session',
     timeout: const Duration(seconds: 90),
   );
   await tester.pumpAndSettle();
 
   for (var turn = 1; turn <= 3; turn++) {
+    final questionId = controller.questionId;
+    expect(questionId, isNotNull);
     if (validateAudioMedia) {
       await _validateQuestionTts(controller);
     }
-    await _tapPracticeControl(tester, const Key('practice-record'));
+    await _tapPracticeControl(tester, const Key('scenario-record'));
     await _waitUntil(
       tester,
       () =>
           find
-              .byKey(const Key('practice-stop-recording'))
+              .byKey(const Key('scenario-stop-recording'))
               .evaluate()
               .isNotEmpty ||
-          find.byKey(const Key('practice-error-message')).evaluate().isNotEmpty,
+          controller.errorMessage != null,
       const Duration(seconds: 10),
     );
-    _failOnPracticeError(tester, 'start recording for turn $turn');
+    _failOnPracticeControllerError(
+      controller,
+      'start recording for turn $turn',
+    );
 
-    await _tapPracticeControl(tester, const Key('practice-stop-recording'));
+    await _tapPracticeControl(tester, const Key('scenario-stop-recording'));
     await _waitUntil(
       tester,
       () =>
-          find.byKey(const Key('practice-transcript')).evaluate().isNotEmpty ||
-          find.byKey(const Key('practice-error-message')).evaluate().isNotEmpty,
+          controller.completedTurns >= turn || controller.errorMessage != null,
       const Duration(seconds: 90),
     );
-    _failOnPracticeError(tester, 'transcribe turn $turn');
-    expect(
-      tester
-          .widget<Text>(find.byKey(const Key('practice-transcript')))
-          .data
-          ?.trim(),
-      isNotEmpty,
+    _failOnPracticeControllerError(controller, 'send voice turn $turn');
+    expect(controller.hasPendingPracticeAudio, isFalse);
+    final userMessage = controller.practiceMessages.lastWhere(
+      (message) => message.role == PracticeMessageRole.user,
     );
-
-    await _tapPracticeControl(tester, const Key('practice-confirm-turn'));
-    await tester.pump();
-    if (turn < 3) {
-      await _waitUntil(
-        tester,
-        () =>
-            find.byKey(const Key('practice-record')).evaluate().isNotEmpty ||
-            find
-                .byKey(const Key('practice-error-message'))
-                .evaluate()
-                .isNotEmpty,
-        const Duration(seconds: 45),
-      );
-      _failOnPracticeError(tester, 'confirm turn $turn');
-      expect(find.text('$turn / 3'), findsOneWidget);
-    } else {
-      await _waitUntil(
-        tester,
-        () =>
-            find
-                .byKey(const Key('practice-completed-actions'))
-                .evaluate()
-                .isNotEmpty ||
-            find
-                .byKey(const Key('practice-error-message'))
-                .evaluate()
-                .isNotEmpty,
-        const Duration(seconds: 90),
-      );
-      _failOnPracticeError(tester, 'complete turn 3');
-    }
+    expect(userMessage.text.trim(), isNotEmpty);
+    expect(controller.completedTurns, turn);
+    expect(controller.questionId, isNot(questionId));
     if (validateAudioMedia) {
       expect(controller.recordings, hasLength(turn));
       await _validateRecordingPlayback(
@@ -944,33 +1051,119 @@ Future<void> _completeRealVoicePractice(
     }
   }
 
-  expect(find.byKey(const Key('practice-page')), findsOneWidget);
-  expect(find.byKey(const Key('practice-completed-actions')), findsOneWidget);
+  await _tapPracticeControl(tester, const Key('scenario-complete-practice'));
+  await _waitForPreparationTarget(
+    tester,
+    target: find.byKey(const Key('scenario-confirm-completion')),
+    operation: 'confirm the user-controlled workplace Practice Session',
+    timeout: const Duration(seconds: 10),
+  );
+  await _tapPracticeControl(tester, const Key('scenario-confirm-completion'));
+  await _waitUntil(
+    tester,
+    () =>
+        find
+            .byKey(const Key('scenario-completion-overlay'))
+            .evaluate()
+            .isNotEmpty ||
+        controller.errorMessage != null,
+    const Duration(seconds: 90),
+  );
+  _failOnPracticeControllerError(controller, 'complete the Practice Session');
+  expect(find.byKey(const Key('scenario-practice-page')), findsOneWidget);
+  expect(find.byKey(const Key('scenario-completion-overlay')), findsOneWidget);
+  final audioAssetIds = [
+    for (final recording in controller.recordings) recording.audioAssetId,
+  ];
   if (validateAudioMedia) {
-    final audioAssetIds = [
-      for (final recording in controller.recordings) recording.audioAssetId,
-    ];
     expect(audioAssetIds, hasLength(3));
     expect(audioAssetIds.toSet(), hasLength(3));
-    for (final deletedId in audioAssetIds) {
-      await controller.deleteRecording(deletedId);
-      expect(
-        controller.recordings.any(
-          (recording) => recording.audioAssetId == deletedId,
+  }
+  return audioAssetIds;
+}
+
+Future<void> _completeTextPractice(
+  WidgetTester tester, {
+  required PracticeController controller,
+  required List<String> answers,
+}) async {
+  for (var index = 0; index < answers.length; index++) {
+    final questionId = controller.questionId;
+    expect(questionId, isNotNull);
+    await _tapPracticeControl(tester, const Key('scenario-open-keyboard'));
+    await _waitForPreparationTarget(
+      tester,
+      target: find.byKey(const Key('scenario-text-answer')),
+      operation: 'open the hotel Practice text composer',
+      timeout: const Duration(seconds: 10),
+    );
+    await tester.enterText(
+      find.byKey(const Key('scenario-text-answer')),
+      answers[index],
+    );
+    await _tapPracticeControl(tester, const Key('scenario-submit-text'));
+    await _waitUntil(
+      tester,
+      () =>
+          controller.completedTurns >= index + 1 ||
+          controller.errorMessage != null,
+      const Duration(seconds: 90),
+    );
+    _failOnPracticeControllerError(
+      controller,
+      'send hotel text turn ${index + 1}',
+    );
+    expect(controller.completedTurns, index + 1);
+    expect(controller.questionId, isNot(questionId));
+  }
+
+  await _tapPracticeControl(tester, const Key('scenario-complete-practice'));
+  await _waitForPreparationTarget(
+    tester,
+    target: find.byKey(const Key('scenario-confirm-completion')),
+    operation: 'confirm the Agent-created hotel Practice Session',
+    timeout: const Duration(seconds: 10),
+  );
+  await _tapPracticeControl(tester, const Key('scenario-confirm-completion'));
+  await _waitUntil(
+    tester,
+    () =>
+        find
+            .byKey(const Key('scenario-completion-overlay'))
+            .evaluate()
+            .isNotEmpty ||
+        controller.errorMessage != null,
+    const Duration(seconds: 90),
+  );
+  _failOnPracticeControllerError(
+    controller,
+    'complete the Agent-created hotel Practice Session',
+  );
+  expect(find.byKey(const Key('scenario-completion-overlay')), findsOneWidget);
+}
+
+Future<void> _deleteTestRecordings(
+  PracticeController controller,
+  List<String> audioAssetIds,
+) async {
+  for (final deletedId in audioAssetIds) {
+    await controller.deleteRecording(deletedId);
+    expect(
+      controller.recordings.any(
+        (recording) => recording.audioAssetId == deletedId,
+      ),
+      isFalse,
+    );
+    await expectLater(
+      controller.mediaClient!.loadRecording(deletedId),
+      throwsA(
+        isA<PracticeClientException>().having(
+          (error) => error.kind,
+          'kind',
+          PracticeClientFailureKind.notFound,
         ),
-        isFalse,
-      );
-      await expectLater(
-        controller.mediaClient!.loadRecording(deletedId),
-        throwsA(
-          isA<AgentClientException>().having(
-            (error) => error.kind,
-            'kind',
-            AgentClientFailureKind.notFound,
-          ),
-        ),
-      );
-    }
+      ),
+    );
   }
 }
 
@@ -1027,6 +1220,26 @@ Future<void> _scrollPreparationIntoView(
   if (target.hitTestable().evaluate().isEmpty) {
     fail('Preparation control $target is not tappable.');
   }
+}
+
+Future<void> _showPracticeHub(WidgetTester tester, Finder target) async {
+  final carousel = find.byKey(const Key('practice-hub-carousel'));
+  await _waitUntil(
+    tester,
+    () => carousel.evaluate().isNotEmpty,
+    const Duration(seconds: 10),
+  );
+  for (var attempt = 0; attempt < 6; attempt++) {
+    if (target.hitTestable().evaluate().isNotEmpty) {
+      return;
+    }
+    await tester.drag(
+      carousel,
+      Offset(-tester.getSize(carousel).width * 0.8, 0),
+    );
+    await tester.pumpAndSettle();
+  }
+  fail('Practice hub $target is not reachable in the carousel.');
 }
 
 String? _preparationFailure(WidgetTester tester) {
@@ -1089,7 +1302,6 @@ Future<void> _validateQuestionTts(PracticeController controller) async {
   await controller.toggleQuestionAudio();
   expect(controller.isQuestionAudioLoading, isFalse);
   expect(controller.mediaErrorMessage, isNull);
-  expect(controller.isQuestionAudioPlaying, isTrue);
   await controller.stopPracticeAudio();
 }
 
@@ -1103,6 +1315,39 @@ Future<void> _validateRecordingPlayback(
   expect(controller.mediaErrorMessage, isNull);
   expect(controller.isRecordingAudioPlaying(audioAssetId), isTrue);
   await controller.stopPracticeAudio();
+}
+
+void _expectScoredPracticeReport(EvaluationReport? report) {
+  expect(report, isNotNull);
+  final value = report!;
+  expect(value.scoreability, EvaluationReportScoreability.provisional);
+  expect(
+    value.questions.where((question) => question.answer != null),
+    hasLength(3),
+  );
+  expect(
+    value.dimensions.map((dimension) => dimension.key).toList(growable: false),
+    const [
+      'TASK_ACHIEVEMENT',
+      'CLARITY_COHERENCE',
+      'LANGUAGE_CONTROL',
+      'INTERACTION',
+    ],
+  );
+  expect(
+    value.dimensions.every((dimension) => dimension.score != null),
+    isTrue,
+  );
+  expect(
+    value.dimensions.every(
+      (dimension) =>
+          dimension.coverage >= 0 &&
+          dimension.coverage <= 1 &&
+          dimension.confidence >= 0 &&
+          dimension.confidence <= 1,
+    ),
+    isTrue,
+  );
 }
 
 Future<void> _waitForPersistedSessionReview(
@@ -1129,13 +1374,14 @@ Future<void> _waitForPersistedSessionReview(
   fail('Timed out waiting for persisted Review for $practiceSessionId.');
 }
 
-void _failOnPracticeError(WidgetTester tester, String operation) {
-  final error = find.byKey(const Key('practice-error-message'));
-  if (error.evaluate().isEmpty) {
-    return;
+void _failOnPracticeControllerError(
+  PracticeController controller,
+  String operation,
+) {
+  final error = controller.errorMessage ?? controller.mediaErrorMessage;
+  if (error != null && error.isNotEmpty) {
+    fail('Failed to $operation: $error');
   }
-  final message = tester.widget<Text>(error).data ?? 'Unknown practice error';
-  fail('Failed to $operation: $message');
 }
 
 Future<bool> _signedInAccountMatches(

@@ -43,7 +43,9 @@ SHELL := /bin/bash
 	build-android-release-production \
 	verify-android-release-staging \
 	verify-android-release-production \
-	test-ios-simulator-scenes
+	test-ios-simulator-scenes \
+	test-ios-simulator-agent-hotel \
+	test-ios-simulator-voice-report
 
 help:
 	@printf '%s\n' \
@@ -78,7 +80,9 @@ help:
 		'  make build-android-release-production  Build the signed production arm64 APK'
 	@printf '%s\n' \
 		'  make verify-android-release-{staging,production}  Verify a release APK' \
-		'  make test-ios-simulator-scenes  Verify real scene and IELTS launch flows on an iOS Simulator'
+		'  make test-ios-simulator-scenes  Verify real scene and IELTS launch flows on an iOS Simulator' \
+		'  make test-ios-simulator-agent-hotel  Verify Agent chat, hotel card, and scene launch on an iOS Simulator' \
+		'  make test-ios-simulator-voice-report  Verify real voice, report, and persisted Review on an iOS Simulator'
 
 check: check-flutter check-go check-api
 
@@ -409,3 +413,29 @@ test-ios-simulator-scenes:
 	./tools/ios-simulator-dev/run.sh test \
 		integration_test/real_agent_e2e_test.dart \
 		--plain-name 'real iOS IELTS Part 1 creates a Practice Session'
+
+test-ios-simulator-agent-hotel:
+	./tools/ios-simulator-dev/run.sh test \
+		integration_test/real_agent_e2e_test.dart \
+		--plain-name 'real iOS Agent distinguishes chat from hotel Practice creation'
+
+test-ios-simulator-voice-report:
+	@test -n "$${SPEAKUP_E2E_EMAIL:-}" || { \
+		echo '缺少 SPEAKUP_E2E_EMAIL：请导出一次性 E2E 账号邮箱。' >&2; \
+		exit 1; \
+	}
+	@test -n "$${SPEAKUP_E2E_PASSWORD:-}" || { \
+		echo '缺少 SPEAKUP_E2E_PASSWORD：请导出至少 8 位的 E2E 账号密码。' >&2; \
+		exit 1; \
+	}
+	@test -n "$${SPEAKUP_E2E_WAV_BASE64:-}" || { \
+		echo '缺少 SPEAKUP_E2E_WAV_BASE64：请导出私有英文 WAV 的 Base64。' >&2; \
+		exit 1; \
+	}
+	./tools/ios-simulator-dev/run.sh test \
+		integration_test/real_agent_e2e_test.dart \
+		--plain-name 'real iOS identity, Qianwen Agent, voice, and Review path' \
+		--dart-define="SPEAKUP_E2E_EMAIL=$${SPEAKUP_E2E_EMAIL}" \
+		--dart-define="SPEAKUP_E2E_PASSWORD=$${SPEAKUP_E2E_PASSWORD}" \
+		--dart-define="SPEAKUP_E2E_WAV_BASE64=$${SPEAKUP_E2E_WAV_BASE64}" \
+		--dart-define="SPEAKUP_E2E_VALIDATE_AUDIO_MEDIA=$${SPEAKUP_E2E_VALIDATE_AUDIO_MEDIA:-true}"

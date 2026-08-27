@@ -108,6 +108,61 @@ func TestQiniuGenerateMapsToolCallsAndLineage(t *testing.T) {
 	}
 }
 
+func TestQiniuToolSchemaOmitsApplicationOnlyFormats(t *testing.T) {
+	var parameters map[string]any
+	generator := mustQiniuGeneratorForModel(
+		t,
+		"qwen/qwen3.7-plus",
+		doerFunc(func(request *http.Request) (*http.Response, error) {
+			var payload chatCompletionRequest
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			parameters = payload.Tools[0].Function.Parameters
+			return jsonResponse(http.StatusOK, `{
+				"id":"chatcmpl-qiniu-tool-schema",
+				"model":"qwen/qwen3.7-plus",
+				"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"","tool_calls":[{
+					"id":"call_qiniu_1","type":"function","function":{"name":"review_search_v1","arguments":"{\"query\":\"IELTS\"}"}
+				}]}}],
+				"usage":{"prompt_tokens":9,"completion_tokens":3,"total_tokens":12}
+			}`), nil
+		}),
+		"qiniu-test-key",
+	)
+	request := toolRequest()
+	request.Tools[0].InputSchema = map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"query": map[string]any{
+				"type": "string", "format": "non-empty-text", "minLength": 1,
+			},
+			"owner_id": map[string]any{
+				"type": "string", "format": "agent-id",
+			},
+			"source": map[string]any{
+				"type": "string", "format": "uri",
+			},
+		},
+	}
+	if _, err := generator.Generate(context.Background(), request); err != nil {
+		t.Fatalf("Qiniu tool Generate() error = %v", err)
+	}
+	properties := parameters["properties"].(map[string]any)
+	if _, exists := properties["query"].(map[string]any)["format"]; exists {
+		t.Fatal("Qiniu tool schema retained application-only format")
+	}
+	if _, exists := properties["owner_id"].(map[string]any)["format"]; exists {
+		t.Fatal("Qiniu tool schema retained application-only agent ID format")
+	}
+	if properties["source"].(map[string]any)["format"] != "uri" {
+		t.Fatal("Qiniu tool schema removed a standard format")
+	}
+	if request.Tools[0].InputSchema["properties"].(map[string]any)["query"].(map[string]any)["format"] != "non-empty-text" {
+		t.Fatal("Qiniu tool schema sanitization mutated the capability contract")
+	}
+}
+
 func TestQiniuGeminiRequestOmitsKimiThinkingControl(t *testing.T) {
 	var payload map[string]json.RawMessage
 	generator := mustQiniuGeneratorForModel(
