@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { loadAndroidRelease } from "../lib/android-release-metadata.mjs";
+import { loadAndroidStagingCandidate } from "../lib/android-staging-candidate-metadata.mjs";
 import { homeAndroidReleaseView } from "../lib/home-android-release.mjs";
+import { homeAndroidStagingCandidateView } from "../lib/home-android-staging-candidate.mjs";
 
 type AndroidReleaseMetadata = {
   metadata_version: 1;
@@ -23,6 +25,28 @@ type ReleaseState =
   | { status: "unavailable" }
   | { status: "ready"; release: AndroidReleaseMetadata };
 
+type AndroidStagingCandidateMetadata = {
+  candidate_metadata_version: 1;
+  environment: "staging";
+  version: string;
+  version_code: number;
+  git_sha: string;
+  candidate_run_id: number;
+  manifest_sha256: string;
+  file_name: string;
+  download_path: string;
+  size_bytes: number;
+  minimum_android_api: 24;
+  abis: ["arm64-v8a"];
+  apk_sha256: string;
+  apk_certificate_sha256: string;
+};
+
+type StagingCandidateState =
+  | { status: "preparing" }
+  | { status: "unavailable" }
+  | { status: "ready"; release: AndroidStagingCandidateMetadata };
+
 type ReleaseAction =
   | { kind: "disabled"; label: string }
   | { kind: "download"; href: string; download: string; label: string };
@@ -33,22 +57,38 @@ type HomeReleaseView = {
   supportLine: string;
 };
 
-export function HomeAndroidDownloadAction() {
-  const [releaseState, setReleaseState] = useState<ReleaseState>({
+export function HomeAndroidDownloadAction({
+  channel,
+}: {
+  channel: "production" | "staging";
+}) {
+  const [releaseState, setReleaseState] = useState<
+    ReleaseState | StagingCandidateState
+  >({
     status: "preparing",
   });
 
   useEffect(() => {
     let active = true;
-    void loadAndroidRelease().then((nextState) => {
-      if (active) setReleaseState(nextState as ReleaseState);
+    const load =
+      channel === "staging"
+        ? loadAndroidStagingCandidate
+        : loadAndroidRelease;
+    void load().then((nextState) => {
+      if (active) {
+        setReleaseState(nextState as ReleaseState | StagingCandidateState);
+      }
     });
     return () => {
       active = false;
     };
-  }, []);
+  }, [channel]);
 
-  const view = homeAndroidReleaseView(releaseState) as HomeReleaseView;
+  const view = (
+    channel === "staging"
+      ? homeAndroidStagingCandidateView(releaseState as StagingCandidateState)
+      : homeAndroidReleaseView(releaseState as ReleaseState)
+  ) as HomeReleaseView;
 
   return (
     <div className="release-actions">

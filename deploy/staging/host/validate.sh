@@ -11,6 +11,7 @@ readonly gate_path="/usr/local/libexec/speakup-staging-ssh-gate"
 readonly control_root="/opt/xe3-speakup-staging-control"
 readonly runtime_environment="/etc/speakup/staging-runtime.env"
 readonly broker_state="/var/lib/speakup/staging-broker"
+readonly candidate_public_root="/var/lib/speakup/staging-apk-public"
 readonly lock_directory="/run/lock/xe3-speakup-staging"
 readonly sshd_drop_in="/etc/ssh/sshd_config.d/60-speakup-staging-ci.conf"
 readonly authorized_keys_file="/etc/ssh/authorized_keys/speakup-staging-ci"
@@ -396,6 +397,15 @@ require_directory "broker manifest state" "$broker_state/manifests" \
   "$runtime_uid" "$runtime_gid" 700
 require_directory "broker receipt state" "$broker_state/receipts" \
   "$runtime_uid" "$runtime_gid" 700
+require_directory "Staging candidate public root" "$candidate_public_root" \
+  "$runtime_uid" "$runtime_gid" 755
+require_directory "Staging candidate downloads" "$candidate_public_root/downloads" \
+  "$runtime_uid" "$runtime_gid" 755
+require_directory "Staging candidate Android root" \
+  "$candidate_public_root/downloads/android" "$runtime_uid" "$runtime_gid" 755
+require_directory "Staging immutable candidate root" \
+  "$candidate_public_root/downloads/android/candidates" \
+  "$runtime_uid" "$runtime_gid" 755
 require_directory "deployment lock directory" "$lock_directory" \
   "$runtime_uid" "$runtime_gid" 700
 

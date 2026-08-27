@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -40,6 +39,7 @@ type request struct {
 	ManifestSHA256               string
 	Manifest                     []byte
 	TargetReceiptSHA256          string
+	BundleManifestSHA256         string
 }
 
 type releaseManifest struct {
@@ -50,6 +50,9 @@ type releaseManifest struct {
 	DatabaseSchemaVersion int64
 	PortalImageDigest     string
 	ServerImageDigest     string
+	StagingAPKFile        string
+	StagingAPKSHA256      string
+	APKCertificateSHA256  string
 }
 
 type engineReceipt struct {
@@ -86,32 +89,6 @@ type brokerReceipt struct {
 	PreviousReceiptSHA256       *string `json:"previous_receipt_sha256"`
 	RollbackTargetReceiptSHA256 *string `json:"rollback_target_receipt_sha256"`
 	RecordedAtUTC               string  `json:"recorded_at_utc"`
-}
-
-type requestResult struct {
-	request request
-	err     error
-}
-
-func parseRequestWithContext(ctx context.Context, input io.Reader, repository string) (request, error) {
-	result := make(chan requestResult, 1)
-	go func() {
-		parsed, err := parseRequest(input, repository)
-		result <- requestResult{request: parsed, err: err}
-	}()
-
-	select {
-	case parsed := <-result:
-		if ctx.Err() != nil {
-			return request{}, failure("operation_timeout")
-		}
-		return parsed.request, parsed.err
-	case <-ctx.Done():
-		if closer, ok := input.(io.Closer); ok {
-			_ = closer.Close()
-		}
-		return request{}, failure("operation_timeout")
-	}
 }
 
 func parseRequest(input io.Reader, repository string) (request, error) {
@@ -329,6 +306,9 @@ func validateManifest(contents []byte, candidateRunID int64) (releaseManifest, e
 		DatabaseSchemaVersion: schemaVersion,
 		PortalImageDigest:     portalDigest,
 		ServerImageDigest:     serverDigest,
+		StagingAPKFile:        stagingAPKFile,
+		StagingAPKSHA256:      object["staging_apk_sha256"].(string),
+		APKCertificateSHA256:  object["apk_certificate_sha256"].(string),
 	}, nil
 }
 
