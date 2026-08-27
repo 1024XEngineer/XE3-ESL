@@ -16,6 +16,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    expect(find.text('选择你喜欢的陪练形象和声音'), findsNothing);
     expect(find.text('莉萨'), findsOneWidget);
     expect(find.byType(Image), findsWidgets);
     await tester.drag(
@@ -30,12 +31,14 @@ void main() {
       find.byKey(const Key('coach-voice-selection-entry')),
     );
     await tester.pumpAndSettle();
+    expect(find.text('清晰自然 · 美式英语 · 女声'), findsNothing);
     await tester.tap(find.byKey(const Key('coach-voice-selection-entry')));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('coach-voice-selection-page')), findsOneWidget);
     expect(find.text('艾娃'), findsOneWidget);
     expect(find.text('约翰'), findsOneWidget);
+    expect(find.text('清晰自然 · 美式英语 · 女声'), findsOneWidget);
     await tester.tap(find.byKey(const Key('coach-voice-option-loongjohn')));
     await tester.tap(find.byKey(const Key('coach-voice-selection-complete')));
     await tester.pumpAndSettle();

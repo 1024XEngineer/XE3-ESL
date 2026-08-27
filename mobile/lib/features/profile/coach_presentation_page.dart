@@ -204,13 +204,6 @@ class _CoachPresentationPageState extends State<CoachPresentationPage> {
             : ListView(
                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
                 children: [
-                  Text(
-                    '选择你喜欢的陪练形象和声音',
-                    style: SpeakUpDesign.body.copyWith(
-                      color: SpeakUpDesign.secondary,
-                    ),
-                  ),
-                  const SizedBox(height: 28),
                   Text('数字人形象', style: SpeakUpDesign.sectionTitle),
                   const SizedBox(height: 12),
                   _AvatarCarousel(
@@ -399,24 +392,23 @@ class _VoiceSelectionEntry extends StatelessWidget {
   Widget build(BuildContext context) {
     return Material(
       color: SpeakUpDesign.surface,
-      borderRadius: BorderRadius.circular(20),
+      borderRadius: BorderRadius.circular(SpeakUpDesign.radiusCard),
       clipBehavior: Clip.antiAlias,
       child: ListTile(
         key: const Key('coach-voice-selection-entry'),
-        minTileHeight: 76,
+        minTileHeight: 56,
         contentPadding: const EdgeInsets.symmetric(
           horizontal: SpeakUpDesign.space16,
-          vertical: SpeakUpDesign.space8,
         ),
         leading: const CircleAvatar(
+          radius: 18,
           backgroundColor: Color(0xFFF0F3F5),
           foregroundColor: SpeakUpDesign.ink,
-          child: Icon(Icons.graphic_eq_rounded),
+          child: Icon(Icons.graphic_eq_rounded, size: 20),
         ),
-        title: Text(option.name, style: SpeakUpDesign.cardTitle),
-        subtitle: Text(
-          option.description,
-          style: SpeakUpDesign.body.copyWith(fontSize: 13),
+        title: Text(
+          option.name,
+          style: SpeakUpDesign.cardTitle.copyWith(fontWeight: FontWeight.w600),
         ),
         trailing: const Icon(
           Icons.chevron_right_rounded,
