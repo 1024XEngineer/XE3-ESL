@@ -721,7 +721,7 @@ jobs:
               (.id | type == "number" and . >= 1)
             ' <<<"$release" >/dev/null
           release_id="$(jq -er '.id' <<<"$release")"
-          already_published="$(jq -er '(.draft | not)' <<<"$release")"
+          already_published="$(jq -r '(.draft | not)' <<<"$release")"
           upload_url="$(jq -er '.upload_url | sub("\\{\\?name,label\\}$"; "")' <<<"$release")"
           [[ "$upload_url" == \
             "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$release_id/assets" ]]

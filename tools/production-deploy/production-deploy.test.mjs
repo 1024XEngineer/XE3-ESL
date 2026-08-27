@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -108,6 +109,14 @@ test("Production finalization is ordered, complete, immutable, and retryable", (
   );
   assert.match(workflow, /--data-binary "@\$file"/);
   assert.doesNotMatch(workflow, /gh release upload/);
+  assert.match(
+    workflow,
+    /already_published="\$\(jq -r '\(\.draft \| not\)' <<<"\$release"\)"/,
+  );
+  assert.doesNotMatch(
+    workflow,
+    /already_published="\$\(jq -er '\(\.draft \| not\)'/,
+  );
   assert.match(workflow, /Activate the approved APK through the restricted broker/);
   assert.match(workflow, /Verify the public APK and changelog contract/);
   assert.match(workflow, /Publish and verify the immutable GitHub Release/);
@@ -118,6 +127,27 @@ test("Production finalization is ordered, complete, immutable, and retryable", (
   const activate = workflow.indexOf("Activate the approved APK");
   const publish = workflow.indexOf("Publish and verify the immutable GitHub Release");
   assert.ok(draft > 0 && draft < activate && activate < publish);
+});
+
+test("Draft and published Release states are both valid shell values", () => {
+  const script = String.raw`
+    set -euo pipefail
+    release=$1
+    already_published="$(jq -r '(.draft | not)' <<<"$release")"
+    printf '%s\n' "$already_published"
+  `;
+  for (const [draft, expected] of [
+    [true, "false"],
+    [false, "true"],
+  ]) {
+    const result = spawnSync(
+      "bash",
+      ["-c", script, "bash", JSON.stringify({ draft })],
+      { encoding: "utf8" },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), expected);
+  }
 });
 
 test("Every external action is pinned to a full commit", () => {
