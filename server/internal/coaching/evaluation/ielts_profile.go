@@ -3,6 +3,8 @@ package evaluation
 import (
 	"strings"
 	"time"
+
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/modelid"
 )
 
 const (
@@ -111,7 +113,7 @@ func (profile IELTSCumulativeProfile) Valid() bool {
 		profile.CompletedParts[0] != 1 ||
 		(len(profile.CompletedParts) == 2 && profile.CompletedParts[1] != 2) ||
 		len(profile.Dimensions) != 4 || !validIdentifier(profile.Provider) ||
-		!validIdentifier(profile.Model) {
+		!modelid.Valid(profile.Model) {
 		return false
 	}
 	expected := []string{
