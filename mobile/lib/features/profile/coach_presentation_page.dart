@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:speakup/design/speak_up_design.dart';
+import 'package:speakup/features/profile/coach_voice_selection_page.dart';
 
 const _femaleAvatarId = '94a60c13-e835-4bde-aa93-00a1cf178dcd';
 const _maleAvatarId = '1843ff9f-db3a-45de-be28-9c2b9d6412a3';
@@ -21,6 +22,19 @@ const _avatarOptions = <_CoachAvatarOption>[
     name: '内森',
     description: '温暖、沉稳',
     previewAsset: 'assets/images/avatars/coach-avatar-nathan.webp',
+  ),
+];
+
+const _voiceOptions = <CoachVoiceOption>[
+  CoachVoiceOption(
+    id: _femaleVoiceId,
+    name: '艾娃',
+    description: '清晰自然 · 美式英语 · 女声',
+  ),
+  CoachVoiceOption(
+    id: _maleVoiceId,
+    name: '约翰',
+    description: '温暖沉稳 · 美式英语 · 男声',
   ),
 ];
 
@@ -93,6 +107,9 @@ class _CoachPresentationPageState extends State<CoachPresentationPage> {
   int get _selectedAvatarIndex =>
       _avatarOptions.indexWhere((option) => option.id == _avatarId);
 
+  CoachVoiceOption get _selectedVoice =>
+      _voiceOptions.firstWhere((option) => option.id == _voiceId);
+
   @override
   void initState() {
     super.initState();
@@ -157,6 +174,21 @@ class _CoachPresentationPageState extends State<CoachPresentationPage> {
     }
   }
 
+  Future<void> _selectVoice() async {
+    final selectedVoiceId = await Navigator.of(context).push<String>(
+      MaterialPageRoute<String>(
+        builder: (_) => CoachVoiceSelectionPage(
+          options: _voiceOptions,
+          initialVoiceId: _voiceId,
+        ),
+      ),
+    );
+    if (!mounted || selectedVoiceId == null || selectedVoiceId == _voiceId) {
+      return;
+    }
+    setState(() => _voiceId = selectedVoiceId);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -195,30 +227,9 @@ class _CoachPresentationPageState extends State<CoachPresentationPage> {
                   const SizedBox(height: 28),
                   Text('音色', style: SpeakUpDesign.sectionTitle),
                   const SizedBox(height: 12),
-                  _SelectionCard(
-                    children: [
-                      _SelectionRow(
-                        key: const Key('coach-voice-female'),
-                        title: '艾娃',
-                        subtitle: '清晰自然 · 美式英语 · 女声',
-                        icon: Icons.graphic_eq_rounded,
-                        selected: _voiceId == _femaleVoiceId,
-                        onTap: () => setState(() {
-                          _voiceId = _femaleVoiceId;
-                        }),
-                      ),
-                      const Divider(height: 1),
-                      _SelectionRow(
-                        key: const Key('coach-voice-male'),
-                        title: '约翰',
-                        subtitle: '温暖沉稳 · 美式英语 · 男声',
-                        icon: Icons.graphic_eq_rounded,
-                        selected: _voiceId == _maleVoiceId,
-                        onTap: () => setState(() {
-                          _voiceId = _maleVoiceId;
-                        }),
-                      ),
-                    ],
+                  _VoiceSelectionEntry(
+                    option: _selectedVoice,
+                    onTap: _selectVoice,
                   ),
                   if (_error != null) ...[
                     const SizedBox(height: 16),
@@ -248,20 +259,6 @@ class _CoachPresentationPageState extends State<CoachPresentationPage> {
       ),
     );
   }
-}
-
-class _SelectionCard extends StatelessWidget {
-  const _SelectionCard({required this.children});
-
-  final List<Widget> children;
-
-  @override
-  Widget build(BuildContext context) => Material(
-    color: Colors.white,
-    borderRadius: BorderRadius.circular(20),
-    clipBehavior: Clip.antiAlias,
-    child: Column(children: children),
-  );
 }
 
 class _AvatarCarousel extends StatelessWidget {
@@ -392,38 +389,44 @@ class _AvatarCard extends StatelessWidget {
   );
 }
 
-class _SelectionRow extends StatelessWidget {
-  const _SelectionRow({
-    required this.title,
-    required this.subtitle,
-    required this.icon,
-    required this.selected,
-    required this.onTap,
-    super.key,
-  });
+class _VoiceSelectionEntry extends StatelessWidget {
+  const _VoiceSelectionEntry({required this.option, required this.onTap});
 
-  final String title;
-  final String subtitle;
-  final IconData icon;
-  final bool selected;
+  final CoachVoiceOption option;
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) => ListTile(
-    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-    leading: CircleAvatar(
-      backgroundColor: const Color(0xFFF0F3F5),
-      foregroundColor: Colors.black,
-      child: Icon(icon),
-    ),
-    title: Text(title),
-    subtitle: Text(subtitle),
-    trailing: Icon(
-      selected ? Icons.check_circle_rounded : Icons.circle_outlined,
-      color: selected ? Colors.black : SpeakUpDesign.tertiary,
-    ),
-    onTap: onTap,
-  );
+  Widget build(BuildContext context) {
+    return Material(
+      color: SpeakUpDesign.surface,
+      borderRadius: BorderRadius.circular(20),
+      clipBehavior: Clip.antiAlias,
+      child: ListTile(
+        key: const Key('coach-voice-selection-entry'),
+        minTileHeight: 76,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: SpeakUpDesign.space16,
+          vertical: SpeakUpDesign.space8,
+        ),
+        leading: const CircleAvatar(
+          backgroundColor: Color(0xFFF0F3F5),
+          foregroundColor: SpeakUpDesign.ink,
+          child: Icon(Icons.graphic_eq_rounded),
+        ),
+        title: Text(option.name, style: SpeakUpDesign.cardTitle),
+        subtitle: Text(
+          option.description,
+          style: SpeakUpDesign.body.copyWith(fontSize: 13),
+        ),
+        trailing: const Icon(
+          Icons.chevron_right_rounded,
+          color: SpeakUpDesign.tertiary,
+          size: 24,
+        ),
+        onTap: onTap,
+      ),
+    );
+  }
 }
 
 bool _validAvatar(String? value) =>

@@ -26,9 +26,22 @@ void main() {
     expect(find.text('内森'), findsOneWidget);
     await tester.drag(find.byType(ListView), const Offset(0, -520));
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.byKey(const Key('coach-voice-male')));
+    await tester.ensureVisible(
+      find.byKey(const Key('coach-voice-selection-entry')),
+    );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('coach-voice-male')));
+    await tester.tap(find.byKey(const Key('coach-voice-selection-entry')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('coach-voice-selection-page')), findsOneWidget);
+    expect(find.text('艾娃'), findsOneWidget);
+    expect(find.text('约翰'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('coach-voice-option-loongjohn')));
+    await tester.tap(find.byKey(const Key('coach-voice-selection-complete')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('coach-presentation-page')), findsOneWidget);
+    expect(find.text('约翰'), findsOneWidget);
     await tester.ensureVisible(
       find.byKey(const Key('coach-presentation-save')),
     );
@@ -39,6 +52,37 @@ void main() {
     expect(store.avatarId, '1843ff9f-db3a-45de-be28-9c2b9d6412a3');
     expect(store.voiceId, 'loongjohn');
     expect(find.text('设置已保存'), findsOneWidget);
+  });
+
+  testWidgets('back from voice selection discards the temporary choice', (
+    tester,
+  ) async {
+    final store = _Store();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: SpeakUpTheme.light,
+        home: CoachPresentationPage(store: store),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.drag(find.byType(ListView), const Offset(0, -520));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const Key('coach-voice-selection-entry')),
+    );
+    await tester.tap(find.byKey(const Key('coach-voice-selection-entry')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('coach-voice-option-loongjohn')));
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('coach-presentation-page')), findsOneWidget);
+    expect(find.text('艾娃'), findsOneWidget);
+    final saveButton = tester.widget<FilledButton>(
+      find.byKey(const Key('coach-presentation-save')),
+    );
+    expect(saveButton.onPressed, isNull);
   });
 }
 
