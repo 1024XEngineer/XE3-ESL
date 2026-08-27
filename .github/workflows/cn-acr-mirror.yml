@@ -1,0 +1,396 @@
+name: Mirror Release Candidate Server Image to CN ACR
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_run_id:
+        description: Successful official Release Candidate run ID
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  packages: read
+
+concurrency:
+  group: cn-acr-mirror
+  cancel-in-progress: false
+
+env:
+  OFFICIAL_REPOSITORY: 1024XEngineer/XE3-ESL
+  OFFICIAL_SERVER_IMAGE: ghcr.io/1024xengineer/xe3-esl-server
+  EXPECTED_CN_ACR_REGISTRY: crpi-uzndbvgv3nza56mp.cn-beijing.personal.cr.aliyuncs.com
+  EXPECTED_CN_ACR_SERVER_REPOSITORY: speakup/xe3-esl-server
+  EXPECTED_CN_ACR_SERVER_IMAGE: crpi-uzndbvgv3nza56mp.cn-beijing.personal.cr.aliyuncs.com/speakup/xe3-esl-server
+
+jobs:
+  authorize:
+    name: Validate official Candidate and manifest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      candidate_run_id: ${{ steps.candidate.outputs.run_id }}
+      candidate_sha: ${{ steps.candidate.outputs.sha }}
+      version: ${{ steps.manifest.outputs.version }}
+      source_image: ${{ steps.manifest.outputs.source_image }}
+      source_index_digest: ${{ steps.manifest.outputs.source_index_digest }}
+      manifest_sha256: ${{ steps.manifest.outputs.manifest_sha256 }}
+    steps:
+      - name: Select one successful official Release Candidate
+        id: candidate
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          OFFICIAL_REPOSITORY: ${{ env.OFFICIAL_REPOSITORY }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const input = process.env.CANDIDATE_RUN_ID;
+            if (!/^[1-9][0-9]*$/.test(input)) {
+              core.setFailed("candidate_run_id must be a positive integer.");
+              return;
+            }
+            const runId = Number(input);
+            if (!Number.isSafeInteger(runId)) {
+              core.setFailed("candidate_run_id is outside the safe integer range.");
+              return;
+            }
+            const run = (
+              await github.rest.actions.getWorkflowRun({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: runId,
+              })
+            ).data;
+            const headRepository = run.head_repository?.full_name;
+            if (
+              context.repo.owner + "/" + context.repo.repo !==
+                process.env.OFFICIAL_REPOSITORY ||
+              run.name !== "Release Candidate" ||
+              run.path !== ".github/workflows/release-candidate.yml" ||
+              run.event !== "push" ||
+              run.head_branch !== "main" ||
+              headRepository !== process.env.OFFICIAL_REPOSITORY ||
+              run.status !== "completed" ||
+              run.conclusion !== "success" ||
+              !/^[0-9a-f]{40}$/.test(run.head_sha)
+            ) {
+              core.setFailed(
+                `Run ${runId} is not a successful official main Release Candidate.`,
+              );
+              return;
+            }
+
+            const artifacts = await github.paginate(
+              github.rest.actions.listWorkflowRunArtifacts,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: runId,
+                per_page: 100,
+              },
+            );
+            const manifests = artifacts.filter(
+              (artifact) =>
+                !artifact.expired &&
+                artifact.size_in_bytes > 0 &&
+                /^speakup-v[0-9]+\.[0-9]+\.[0-9]+-release-manifest$/.test(
+                  artifact.name,
+                ),
+            );
+            if (manifests.length !== 1) {
+              core.setFailed(
+                `Candidate run ${runId} has ${manifests.length} valid release manifest artifacts.`,
+              );
+              return;
+            }
+            core.setOutput("run_id", String(runId));
+            core.setOutput("sha", run.head_sha);
+            core.setOutput("manifest_artifact", manifests[0].name);
+
+      - name: Download only the Candidate release manifest
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: ${{ steps.candidate.outputs.manifest_artifact }}
+          path: ${{ runner.temp }}/candidate-manifest
+          run-id: ${{ steps.candidate.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Validate immutable server image identity
+        id: manifest
+        env:
+          CANDIDATE_RUN_ID: ${{ steps.candidate.outputs.run_id }}
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.sha }}
+          MANIFEST_DIRECTORY: ${{ runner.temp }}/candidate-manifest
+          OFFICIAL_SERVER_IMAGE: ${{ env.OFFICIAL_SERVER_IMAGE }}
+        run: |
+          set -euo pipefail
+          manifest="$MANIFEST_DIRECTORY/release-manifest.json"
+          [[ ! -L "$manifest" && -f "$manifest" && -s "$manifest" ]]
+          [[ "$(find "$MANIFEST_DIRECTORY" -mindepth 1 -maxdepth 1 | wc -l)" == 1 ]]
+          jq -e \
+            --arg run_url "https://github.com/1024XEngineer/XE3-ESL/actions/runs/$CANDIDATE_RUN_ID" \
+            --arg server_image "$OFFICIAL_SERVER_IMAGE" \
+            --arg sha "$CANDIDATE_SHA" '
+              .git_sha == $sha and
+              .quality_run_url == $run_url and
+              .server_image == $server_image and
+              (.server_image_digest | type == "string" and
+                test("^sha256:[0-9a-f]{64}$")) and
+              (.version | type == "string" and
+                test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
+            ' "$manifest" >/dev/null
+          printf 'version=%s\n' "$(jq -er '.version' "$manifest")" >> "$GITHUB_OUTPUT"
+          printf 'source_image=%s\n' "$(jq -er '.server_image' "$manifest")" >> "$GITHUB_OUTPUT"
+          printf 'source_index_digest=%s\n' \
+            "$(jq -er '.server_image_digest' "$manifest")" >> "$GITHUB_OUTPUT"
+          printf 'manifest_sha256=%s\n' \
+            "$(sha256sum "$manifest" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+
+  mirror:
+    name: Mirror immutable linux/amd64 Server image
+    needs: authorize
+    environment:
+      name: cn-acr-mirror
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    env:
+      CN_ACR_REGISTRY: ${{ vars.CN_ACR_REGISTRY }}
+      CN_ACR_SERVER_REPOSITORY: ${{ vars.CN_ACR_SERVER_REPOSITORY }}
+      CN_ACR_SERVER_IMAGE: ${{ format('{0}/{1}', vars.CN_ACR_REGISTRY, vars.CN_ACR_SERVER_REPOSITORY) }}
+    steps:
+      - name: Validate protected ACR identity
+        run: |
+          set -euo pipefail
+          [[ "$CN_ACR_REGISTRY" == "$EXPECTED_CN_ACR_REGISTRY" ]]
+          [[ "$CN_ACR_SERVER_REPOSITORY" == \
+            "$EXPECTED_CN_ACR_SERVER_REPOSITORY" ]]
+          [[ "$CN_ACR_SERVER_IMAGE" == "$EXPECTED_CN_ACR_SERVER_IMAGE" ]]
+          [[ "$CN_ACR_SERVER_IMAGE" == \
+            "$CN_ACR_REGISTRY/$CN_ACR_SERVER_REPOSITORY" ]]
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Sign in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Sign in to protected CN ACR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.CN_ACR_REGISTRY }}
+          username: ${{ secrets.CN_ACR_USERNAME }}
+          password: ${{ secrets.CN_ACR_PASSWORD }}
+
+      - name: Copy only the immutable linux/amd64 application manifest
+        id: mirror
+        env:
+          CANDIDATE_SHA: ${{ needs.authorize.outputs.candidate_sha }}
+          SOURCE_IMAGE: ${{ needs.authorize.outputs.source_image }}
+          SOURCE_INDEX_DIGEST: ${{ needs.authorize.outputs.source_index_digest }}
+          VERSION: ${{ needs.authorize.outputs.version }}
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/cn-acr-mirror"
+          install -d -m 700 "$work"
+          source_index="$work/source-index.json"
+          source_manifest="$work/source-manifest.json"
+          docker buildx imagetools inspect --raw \
+            "$SOURCE_IMAGE@$SOURCE_INDEX_DIGEST" > "$source_index"
+          platform_digest="$(
+            jq -er '
+              [.manifests[] |
+                select(
+                  .platform.os == "linux" and
+                  .platform.architecture == "amd64" and
+                  ((.platform.variant // "") == "")
+                ) |
+                .digest] |
+              if length == 1 then .[0]
+              else error("Candidate must contain exactly one linux/amd64 manifest")
+              end
+            ' "$source_index"
+          )"
+          [[ "$platform_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          docker buildx imagetools inspect --raw \
+            "$SOURCE_IMAGE@$platform_digest" > "$source_manifest"
+          [[ "sha256:$(sha256sum "$source_manifest" | cut -d ' ' -f 1)" == \
+            "$platform_digest" ]]
+          jq -e '
+            .schemaVersion == 2 and
+            (.config.digest | test("^sha256:[0-9a-f]{64}$")) and
+            (.layers | type == "array" and length > 0) and
+            all(.layers[]; .digest | test("^sha256:[0-9a-f]{64}$"))
+          ' "$source_manifest" >/dev/null
+
+          inspect_index() {
+            local reference=$1
+            local raw_file=$2
+            local error_file=$3
+            if docker buildx imagetools inspect --raw "$reference" \
+              > "$raw_file" 2> "$error_file"; then
+              local platform_digest
+              if ! platform_digest="$(
+                jq -er '
+                  if (.manifests | type) != "array" or
+                    (.manifests | length) != 1 then
+                    error("Destination tag must be a single-platform index")
+                  else
+                    .manifests[0] |
+                    if .platform.os == "linux" and
+                      .platform.architecture == "amd64" and
+                      ((.platform.variant // "") == "") and
+                      (.digest | test("^sha256:[0-9a-f]{64}$")) then
+                      .digest
+                    else
+                      error("Destination index must contain only linux/amd64")
+                    end
+                  end
+                ' "$raw_file"
+              )"; then
+                printf '%s must be a valid single-platform linux/amd64 index.\n' \
+                  "$reference" >&2
+                return 2
+              fi
+              printf 'sha256:%s\t%s\n' \
+                "$(sha256sum "$raw_file" | cut -d ' ' -f 1)" \
+                "$platform_digest"
+              return 0
+            fi
+            if grep -Eqi 'manifest unknown|not found|(^|[^0-9])404([^0-9]|$)' \
+              "$error_file"; then
+              return 1
+            fi
+            cat "$error_file" >&2
+            return 2
+          }
+
+          mirror_tag() {
+            local tag=$1
+            local reference="$CN_ACR_SERVER_IMAGE:$tag"
+            local safe_tag="${tag//[^A-Za-z0-9_.-]/_}"
+            local existing_raw="$work/existing-$safe_tag.json"
+            local existing_error="$work/existing-$safe_tag.err"
+            local existing_identity
+            local status=0
+            existing_identity="$(
+              inspect_index "$reference" "$existing_raw" "$existing_error"
+            )" || status=$?
+            case "$status" in
+              0)
+                local existing_platform_digest="${existing_identity#*$'\t'}"
+                if [[ "$existing_platform_digest" != "$platform_digest" ]]; then
+                  printf 'Refusing to overwrite %s (%s != %s).\n' \
+                    "$reference" "$existing_platform_digest" "$platform_digest" >&2
+                  return 1
+                fi
+                ;;
+              1)
+                docker buildx imagetools create \
+                  --tag "$reference" \
+                  "$SOURCE_IMAGE@$platform_digest" >&2
+                ;;
+              *)
+                return "$status"
+                ;;
+            esac
+            local verified_identity
+            verified_identity="$(
+              inspect_index \
+                "$reference" \
+                "$work/verified-$safe_tag.json" \
+                "$work/verified-$safe_tag.err"
+            )"
+            local mirrored_index_digest="${verified_identity%%$'\t'*}"
+            local mirrored_platform_digest="${verified_identity#*$'\t'}"
+            if [[ "$mirrored_platform_digest" != "$platform_digest" ]]; then
+              printf 'Mirrored platform digest for %s is %s, expected %s.\n' \
+                "$reference" "$mirrored_platform_digest" "$platform_digest" >&2
+              return 1
+            fi
+            printf '%s\n' "$mirrored_index_digest"
+          }
+
+          version_index_digest="$(mirror_tag "$VERSION")"
+          sha_index_digest="$(mirror_tag "$CANDIDATE_SHA")"
+          if [[ "$version_index_digest" != "$sha_index_digest" ]]; then
+            printf 'ACR tags resolve to different indexes (%s != %s).\n' \
+              "$version_index_digest" "$sha_index_digest" >&2
+            exit 1
+          fi
+          printf 'destination_index_digest=%s\n' \
+            "$version_index_digest" >> "$GITHUB_OUTPUT"
+          printf 'platform_digest=%s\n' "$platform_digest" >> "$GITHUB_OUTPUT"
+
+      - name: Write non-secret mirror receipt
+        id: receipt
+        env:
+          CANDIDATE_RUN_ID: ${{ needs.authorize.outputs.candidate_run_id }}
+          CANDIDATE_SHA: ${{ needs.authorize.outputs.candidate_sha }}
+          DESTINATION_INDEX_DIGEST: ${{ steps.mirror.outputs.destination_index_digest }}
+          MANIFEST_SHA256: ${{ needs.authorize.outputs.manifest_sha256 }}
+          PLATFORM_DIGEST: ${{ steps.mirror.outputs.platform_digest }}
+          SOURCE_IMAGE: ${{ needs.authorize.outputs.source_image }}
+          SOURCE_INDEX_DIGEST: ${{ needs.authorize.outputs.source_index_digest }}
+          VERSION: ${{ needs.authorize.outputs.version }}
+        run: |
+          set -euo pipefail
+          receipt="$RUNNER_TEMP/cn-acr-mirror-receipt.json"
+          jq -n \
+            --arg destination_image "$CN_ACR_SERVER_IMAGE" \
+            --arg destination_index_digest "$DESTINATION_INDEX_DIGEST" \
+            --arg git_sha "$CANDIDATE_SHA" \
+            --arg manifest_sha256 "$MANIFEST_SHA256" \
+            --arg platform_digest "$PLATFORM_DIGEST" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg source_image "$SOURCE_IMAGE" \
+            --arg source_index_digest "$SOURCE_INDEX_DIGEST" \
+            --arg version "$VERSION" \
+            --arg workflow_run_url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --argjson candidate_run_id "$CANDIDATE_RUN_ID" '{
+              receipt_version: 1,
+              repository: $repository,
+              candidate_run_id: $candidate_run_id,
+              version: $version,
+              git_sha: $git_sha,
+              release_manifest_sha256: $manifest_sha256,
+              platform: "linux/amd64",
+              source: {
+                image: $source_image,
+                index_digest: $source_index_digest,
+                platform_digest: $platform_digest
+              },
+              destination: {
+                image: $destination_image,
+                version_tag: $version,
+                git_sha_tag: $git_sha,
+                index_digest: $destination_index_digest,
+                platform_digest: $platform_digest
+              },
+              workflow_run_url: $workflow_run_url
+            }' > "$receipt"
+          printf 'file=%s\n' "$receipt" >> "$GITHUB_OUTPUT"
+          {
+            printf '## CN ACR mirror\n\n'
+            printf -- '- Candidate: `%s` (`%s`)\n' "$VERSION" "$CANDIDATE_SHA"
+            printf -- '- Source index: `%s@%s`\n' "$SOURCE_IMAGE" "$SOURCE_INDEX_DIGEST"
+            printf -- '- ACR index: `%s@%s`\n' \
+              "$CN_ACR_SERVER_IMAGE" "$DESTINATION_INDEX_DIGEST"
+            printf -- '- Mirrored platform: `linux/amd64@%s`\n' "$PLATFORM_DIGEST"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload mirror receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: speakup-v${{ needs.authorize.outputs.version }}-cn-acr-mirror-${{ github.run_id }}
+          path: ${{ steps.receipt.outputs.file }}
+          if-no-files-found: error
+          retention-days: 90

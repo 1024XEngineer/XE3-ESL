@@ -28,12 +28,21 @@ read_value() {
   printf '%s' "$value"
 }
 
+server_repository="$(read_value SERVER_IMAGE_REPOSITORY)"
 server_digest="$(read_value SERVER_IMAGE_DIGEST)"
 postgres_database="$(read_value EXPERIMENT_POSTGRES_DB)"
 postgres_user="$(read_value EXPERIMENT_POSTGRES_USER)"
 postgres_password="$(read_value EXPERIMENT_POSTGRES_PASSWORD)"
 server_env="$(read_value EXPERIMENT_SERVER_ENV_FILE)"
 
+case "$server_repository" in
+  ghcr.io/1024xengineer/xe3-esl-server) ;;
+  crpi-uzndbvgv3nza56mp.cn-beijing.personal.cr.aliyuncs.com/speakup/xe3-esl-server) ;;
+  *)
+    printf 'SERVER_IMAGE_REPOSITORY is not an approved Server repository\n' >&2
+    exit 1
+    ;;
+esac
 if [[ ! "$server_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
   printf 'SERVER_IMAGE_DIGEST must be a sha256 digest\n' >&2
   exit 1
