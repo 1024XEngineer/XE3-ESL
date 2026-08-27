@@ -61,6 +61,7 @@ func TestLiveSpeechRecognition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create Qianwen recognizer: %v", err)
 	}
+	startedAt := time.Now()
 	result, err := recognizer.Transcribe(
 		context.Background(),
 		protocol.TranscriptionRequest{Audio: audio},
@@ -75,7 +76,7 @@ func TestLiveSpeechRecognition(t *testing.T) {
 		"ASR success: provider=%s model=%s request_id=%s "+
 			"transcript_nonempty=%t transcript_characters=%d "+
 			"usage_audio_seconds=%d fixture_type=%s fixture_bytes=%d "+
-			"fixture_rate_hz=%d fixture_duration=%s",
+			"fixture_rate_hz=%d fixture_duration=%s total_latency=%s",
 		result.Provider,
 		result.Model,
 		result.ID,
@@ -86,6 +87,56 @@ func TestLiveSpeechRecognition(t *testing.T) {
 		audio.Size(),
 		audio.SampleRate(),
 		audio.Duration(),
+		time.Since(startedAt),
+	)
+}
+
+func TestLiveRecordedSpeechRecognition(t *testing.T) {
+	if os.Getenv("QIANWEN_ASR_LIVE_TEST") != "1" {
+		t.Skip(
+			"set QIANWEN_ASR_LIVE_TEST=1 and the ASR environment variables " +
+				"to run; the real request may incur charges",
+		)
+	}
+	audioPath := os.Getenv("QIANWEN_ASR_LIVE_TEST_AUDIO")
+	if audioPath == "" {
+		audioPath = defaultASRLiveFixture
+	}
+	audio := captureLiveASRFixture(t, audioPath)
+	defer audio.Close()
+
+	cfg, err := platformconfig.LoadSpeechRecognition()
+	if err != nil {
+		t.Fatalf("load speech recognition config: %v", err)
+	}
+	recognizer, err := newSpeechRecognizer(ASRConfig{
+		BaseURL: cfg.BaseURL,
+		Model:   cfg.RecordedModel,
+		Timeout: cfg.RecordedTimeout,
+	}, cfg.APIKey.Reveal())
+	if err != nil {
+		t.Fatalf("create recorded Qianwen recognizer: %v", err)
+	}
+	startedAt := time.Now()
+	result, err := recognizer.Transcribe(
+		context.Background(),
+		protocol.TranscriptionRequest{Audio: audio},
+	)
+	if err != nil {
+		t.Fatalf("live recorded Qianwen ASR failed: %s", safeLiveSpeechError(err))
+	}
+	if result.Transcript == "" {
+		t.Fatal("live recorded Qianwen ASR returned an empty transcript")
+	}
+	t.Logf(
+		"recorded ASR success: provider=%s model=%s request_id=%s "+
+			"transcript_characters=%d fixture_duration=%s total_latency=%s",
+		result.Provider,
+		result.Model,
+		result.ID,
+		utf8.RuneCountInString(result.Transcript),
+		audio.Duration(),
+		time.Since(startedAt),
 	)
 }
 

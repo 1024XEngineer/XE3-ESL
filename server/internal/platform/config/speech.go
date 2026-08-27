@@ -11,8 +11,8 @@ import (
 const (
 	SpeechProviderQianwen = "qianwen"
 
-	qianwenRealtimeASRModel = "fun-asr-realtime"
-	qianwenRecordedASRModel = "fun-asr-flash-2026-06-15"
+	qianwenRealtimeASRModel = "qwen-audio-3.0-asr-flash-streaming"
+	qianwenRecordedASRModel = "qwen-audio-3.0-asr-flash"
 
 	defaultASRTimeout         = 150 * time.Second
 	minimumRealtimeASRTimeout = 150 * time.Second
