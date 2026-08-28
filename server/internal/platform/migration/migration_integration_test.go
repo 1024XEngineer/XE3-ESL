@@ -77,6 +77,12 @@ func TestMigrationHistoryFreshUpDownUp(t *testing.T) {
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
+		t.Fatalf("DownOne to v12 qualified model IDs = %t, %v", changed, err)
+	}
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables))
+
+	changed, err = runner.DownOne()
+	if err != nil || !changed {
 		t.Fatalf("DownOne to v11 presentation runtime = %t, %v", changed, err)
 	}
 	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables))
@@ -154,6 +160,100 @@ func TestMigrationHistoryFreshUpDownUp(t *testing.T) {
 	assertCleanBaselineSchema(t, admin, schema)
 }
 
+func TestLisaAvatarAssetMigrationUpdatesBindingAndPreservesPreference(t *testing.T) {
+	config, _, _ := isolatedMigrationConfig(t)
+	runner, err := openConfig(config)
+	if err != nil {
+		t.Fatalf("open migration runner: %v", err)
+	}
+	t.Cleanup(func() { _ = runner.Close() })
+	if changed, upErr := runner.Up(); upErr != nil || !changed {
+		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+
+	database, err := pgx.ConnectConfig(context.Background(), config)
+	if err != nil {
+		t.Fatalf("connect Lisa avatar migration database: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close(context.Background()) })
+
+	assertAvatarBinding := func(optionID, avatarID string, bindingVersion int64) {
+		t.Helper()
+		var actualAvatarID string
+		var actualBindingVersion int64
+		if err := database.QueryRow(context.Background(), `
+SELECT provider_avatar_id, binding_version
+FROM coach_avatar_options
+WHERE id = $1
+`, optionID).Scan(&actualAvatarID, &actualBindingVersion); err != nil {
+			t.Fatalf("read %s avatar binding: %v", optionID, err)
+		}
+		if actualAvatarID != avatarID || actualBindingVersion != bindingVersion {
+			t.Fatalf(
+				"%s binding = %q v%d, want %q v%d",
+				optionID,
+				actualAvatarID,
+				actualBindingVersion,
+				avatarID,
+				bindingVersion,
+			)
+		}
+	}
+
+	assertAvatarBinding(
+		"avatar_lisa",
+		"ca9c5c22-6dba-4b59-ae3b-d26066f8c017",
+		2,
+	)
+	assertAvatarBinding(
+		"avatar_nathan",
+		"1843ff9f-db3a-45de-be28-9c2b9d6412a3",
+		1,
+	)
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v12 qualified model IDs = %t, %v", changed, downErr)
+	}
+	assertAvatarBinding(
+		"avatar_lisa",
+		"94a60c13-e835-4bde-aa93-00a1cf178dcd",
+		1,
+	)
+
+	const userID = "10000000-0000-4000-8000-000000000022"
+	if _, err := database.Exec(context.Background(), `
+INSERT INTO users (id, canonical_email)
+VALUES ($1, 'lisa-avatar-migration@example.com')
+`, userID); err != nil {
+		t.Fatalf("seed Lisa avatar preference owner: %v", err)
+	}
+	if _, err := database.Exec(context.Background(), `
+INSERT INTO user_coach_presentation_preferences (
+    user_id, avatar_option_id, voice_option_id
+) VALUES ($1, 'avatar_lisa', 'voice_ava')
+`, userID); err != nil {
+		t.Fatalf("seed Lisa avatar preference: %v", err)
+	}
+	if changed, upErr := runner.Up(); upErr != nil || !changed {
+		t.Fatalf("reapply Lisa avatar migration = %t, %v", changed, upErr)
+	}
+	assertAvatarBinding(
+		"avatar_lisa",
+		"ca9c5c22-6dba-4b59-ae3b-d26066f8c017",
+		2,
+	)
+	var preferenceAvatarID string
+	if err := database.QueryRow(context.Background(), `
+SELECT avatar_option_id
+FROM user_coach_presentation_preferences
+WHERE user_id = $1
+`, userID).Scan(&preferenceAvatarID); err != nil {
+		t.Fatalf("read preserved Lisa avatar preference: %v", err)
+	}
+	if preferenceAvatarID != "avatar_lisa" {
+		t.Fatalf("preserved avatar preference = %q", preferenceAvatarID)
+	}
+}
+
 func TestAgentRunQualifiedModelMigrationEnforcesDomainAndRollbackGuard(
 	t *testing.T,
 ) {
@@ -165,6 +265,9 @@ func TestAgentRunQualifiedModelMigrationEnforcesDomainAndRollbackGuard(
 	t.Cleanup(func() { _ = runner.Close() })
 	if changed, upErr := runner.Up(); upErr != nil || !changed {
 		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v12 qualified model IDs = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("DownOne to v11 presentation runtime = %t, %v", changed, downErr)
@@ -248,6 +351,9 @@ WHERE id = $1
 		updateModel("qwen/qwen3.7-plus", "qwen/a..b"),
 		"23514",
 	)
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v12 qualified model IDs = %t, %v", changed, downErr)
+	}
 
 	changed, downErr := runner.DownOne()
 	if downErr == nil || changed || !strings.Contains(
@@ -284,6 +390,9 @@ func TestSceneSelectionSourceMigrationTransformsPlansAndPreservesSessions(
 	t.Cleanup(func() { _ = runner.Close() })
 	if changed, upErr := runner.Up(); upErr != nil || !changed {
 		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v12 qualified model IDs = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("DownOne to v11 presentation runtime = %t, %v", changed, downErr)
@@ -434,6 +543,9 @@ FROM practice_sessions WHERE session_id = $1
 	}
 
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("roll back v13 = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("roll back v12 = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
@@ -486,6 +598,9 @@ func TestMigratedLegacyCatalogPlanCompletesThroughFormalReport(t *testing.T) {
 	t.Cleanup(func() { _ = runner.Close() })
 	if changed, upErr := runner.Up(); upErr != nil || !changed {
 		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v12 qualified model IDs = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("DownOne to v11 presentation runtime = %t, %v", changed, downErr)
@@ -760,6 +875,9 @@ func TestSceneSelectionSourceMigrationRejectsDownWithCustomPlan(t *testing.T) {
 	t.Cleanup(func() { _ = runner.Close() })
 	if changed, upErr := runner.Up(); upErr != nil || !changed {
 		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v12 qualified model IDs = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("DownOne to v11 presentation runtime = %t, %v", changed, downErr)
