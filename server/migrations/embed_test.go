@@ -58,6 +58,8 @@ func TestEveryMigrationPairIsEmbedded(t *testing.T) {
 		"000011_coach_presentation_runtime.up.sql",
 		"000012_agent_run_qualified_model_ids.down.sql",
 		"000012_agent_run_qualified_model_ids.up.sql",
+		"000013_lisa_avatar_asset.down.sql",
+		"000013_lisa_avatar_asset.up.sql",
 	}
 	slices.Sort(files)
 	if !slices.Equal(files, want) {
@@ -91,6 +93,8 @@ func TestMigrationsAreTransactional(t *testing.T) {
 		"000011_coach_presentation_runtime.down.sql",
 		"000012_agent_run_qualified_model_ids.up.sql",
 		"000012_agent_run_qualified_model_ids.down.sql",
+		"000013_lisa_avatar_asset.up.sql",
+		"000013_lisa_avatar_asset.down.sql",
 	} {
 		sql := readMigration(t, name)
 		if !strings.HasPrefix(sql, "BEGIN;") {
@@ -98,6 +102,32 @@ func TestMigrationsAreTransactional(t *testing.T) {
 		}
 		if !strings.HasSuffix(sql, "COMMIT;") {
 			t.Errorf("%s must end with COMMIT", name)
+		}
+	}
+}
+
+func TestLisaAvatarAssetMigrationChangesOnlyTheReviewedBinding(t *testing.T) {
+	up := readMigration(t, "000013_lisa_avatar_asset.up.sql")
+	for _, required := range []string{
+		"WHERE id = 'avatar_lisa'",
+		"current_provider <> 'spatialreal'",
+		"current_profile <> 'spatialreal_default'",
+		"current_avatar_id <> '94a60c13-e835-4bde-aa93-00a1cf178dcd'",
+		"provider_avatar_id = 'ca9c5c22-6dba-4b59-ae3b-d26066f8c017'",
+		"binding_version = 2",
+	} {
+		if !strings.Contains(up, required) {
+			t.Errorf("Lisa avatar up migration is missing %q", required)
+		}
+	}
+	down := readMigration(t, "000013_lisa_avatar_asset.down.sql")
+	for _, required := range []string{
+		"current_avatar_id <> 'ca9c5c22-6dba-4b59-ae3b-d26066f8c017'",
+		"provider_avatar_id = '94a60c13-e835-4bde-aa93-00a1cf178dcd'",
+		"binding_version = 1",
+	} {
+		if !strings.Contains(down, required) {
+			t.Errorf("Lisa avatar down migration is missing %q", required)
 		}
 	}
 }
