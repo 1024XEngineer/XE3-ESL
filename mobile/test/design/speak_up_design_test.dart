@@ -34,13 +34,17 @@ void main() {
   testWidgets('ambient background matches the approved product gradient', (
     tester,
   ) async {
+    final backgroundKey = UniqueKey();
     await tester.pumpWidget(
-      const Directionality(
+      Directionality(
         textDirection: TextDirection.ltr,
-        child: SizedBox.expand(child: SpeakUpAmbientBackground()),
+        child: SizedBox.expand(
+          child: SpeakUpAmbientBackground(key: backgroundKey),
+        ),
       ),
     );
 
+    expect(find.byKey(backgroundKey), findsOneWidget);
     final box = tester.widget<DecoratedBox>(find.byType(DecoratedBox));
     final decoration = box.decoration as BoxDecoration;
     final gradient = decoration.gradient! as LinearGradient;
