@@ -54,6 +54,8 @@ verify_failed_receipt() {
     .operation == "production_schema_upgrade_rehearsal" and
     .environment == "isolated" and .status == "failed" and
     .failed_step == $expected_step and
+    .server_readiness_profile == "core_database_external_integrations_disabled" and
+    .production_provider_readiness == "not_verified" and
     .checks.owned_resource_cleanup == true
   ' "$selected_receipt" >/dev/null ||
     fail "$expected_step receipt is incomplete"
@@ -71,6 +73,9 @@ assert_no_rehearsal_resources() {
     >/dev/null 2>&1 || fail "$selected_run leaked its network"
   ! docker volume inspect "xe3-speakup-prod-rehearsal-$selected_run" \
     >/dev/null 2>&1 || fail "$selected_run leaked its volume"
+  [[ -z "$(find "$temporary_directory" -maxdepth 1 -type d \
+    -name 'xe3-production-rehearsal-inputs.*' -print -quit)" ]] ||
+    fail "$selected_run leaked a private input snapshot"
 }
 
 selected_background_container=''
@@ -265,6 +270,7 @@ temporary_base=${temporary_base%/}
 temporary_directory="$(realpath \
   "$(mktemp -d "$temporary_base/xe3-production-rehearsal-test.XXXXXX")")"
 readonly temporary_directory
+export TMPDIR="$temporary_directory"
 readonly backup_directory="$temporary_directory/20260825T010203Z-predeploy"
 readonly manifest="$temporary_directory/release-manifest.json"
 readonly server_environment="$temporary_directory/server.env"
@@ -367,6 +373,15 @@ trap cleanup EXIT INT TERM
 mkdir -m 0700 "$backup_directory" "$wrapper_directory"
 write_manifest
 printf 'DASHSCOPE_API_KEY=%s\n' "$secret_value" >"$server_environment"
+printf 'OSS_ENABLED=1\n' >>"$server_environment"
+printf 'RESUME_OCR_ENABLED=1\n' >>"$server_environment"
+printf 'APPID=%s\n' "$secret_value" >>"$server_environment"
+printf 'APIKey=%s\n' "$secret_value" >>"$server_environment"
+printf 'APISecret=%s\n' "$secret_value" >>"$server_environment"
+for key in HTTP_PROXY HTTPS_PROXY FTP_PROXY ALL_PROXY NO_PROXY \
+  http_proxy https_proxy ftp_proxy all_proxy no_proxy; do
+  printf '%s=%s\n' "$key" "$secret_value" >>"$server_environment"
+done
 printf 'PGDMP synthetic dry-run fixture\n' >"$dump"
 dump_sha256=$(sha256_file "$dump")
 dump_size=$(wc -c <"$dump" | tr -d '[:space:]')
@@ -465,8 +480,11 @@ dry_run_output="$(PATH="$wrapper_directory:$PATH" "$rehearsal" \
   --receipt "$receipt" \
   --lock-timeout-seconds 3)"
 [[ "$dry_run_output" == \
-  'backup_id=20260825T010203Z-predeploy version=0.1.6 source_schema=9 target_schema=15 forward_hotfix=not_provided dry_run=true docker_touched=false' ]] ||
+  'backup_id=20260825T010203Z-predeploy version=0.1.6 source_schema=9 target_schema=15 forward_hotfix=not_provided readiness_profile=core_database_external_integrations_disabled production_provider_readiness=not_verified dry_run=true docker_touched=false' ]] ||
   fail 'dry-run returned an unexpected contract'
+[[ -z "$(find "$temporary_directory" -maxdepth 1 -type d \
+  -name 'xe3-production-rehearsal-inputs.*' -print -quit)" ]] ||
+  fail 'dry-run leaked a private input snapshot'
 [[ ! -e "$docker_marker" ]] || fail 'dry-run called Docker'
 [[ ! -e "$dump_hash_marker" ]] || fail 'dry-run read database.dump'
 [[ ! -e "$receipt" ]] || fail 'dry-run wrote a receipt'
@@ -644,6 +662,18 @@ EOF
 cat >"$fixture_directory/speakup-server" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ -n "${DATABASE_URL:-}" ]]; then
+  [[ "${OSS_ENABLED:-}" == 0 && "${RESUME_OCR_ENABLED:-}" == 0 ]] || exit 6
+  for key in OSS_ENABLED RESUME_OCR_ENABLED APPID APIKey APISecret \
+    HTTP_PROXY HTTPS_PROXY FTP_PROXY ALL_PROXY NO_PROXY \
+    http_proxy https_proxy ftp_proxy all_proxy no_proxy; do
+    [[ "$(env | grep -c "^${key}=")" == 1 ]] || exit 8
+  done
+  for key in APPID APIKey APISecret HTTP_PROXY HTTPS_PROXY FTP_PROXY \
+    ALL_PROXY NO_PROXY http_proxy https_proxy ftp_proxy all_proxy no_proxy; do
+    [[ -v "$key" && -z "${!key}" ]] || exit 7
+  done
+fi
 if [[ "${REHEARSAL_FIXTURE_FAULT:-}" == server-unready ]]; then
   sleep 300
   exit 5
@@ -937,6 +967,8 @@ observed_rehearsal_runs+=("$success_run_id")
   fail 'successful rehearsal returned an invalid contract'
 jq --exit-status '
   .status == "succeeded" and .failed_step == null and
+  .server_readiness_profile == "core_database_external_integrations_disabled" and
+  .production_provider_readiness == "not_verified" and
   .source_schema == 9 and .target_schema == 15 and
   .checks.clean_target_schema == true and
   .checks.product_health_views == true and
