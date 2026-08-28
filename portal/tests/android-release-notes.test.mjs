@@ -97,7 +97,13 @@ test("publishes an honest Android release history", () => {
   );
 
   assert.equal(parseAndroidReleaseNotesIndex(index), index);
-  assert.deepEqual(index.versions, ["0.1.9", "0.1.8", "0.1.7", "0.1.4"]);
+  assert.deepEqual(index.versions, [
+    "0.1.10",
+    "0.1.9",
+    "0.1.8",
+    "0.1.7",
+    "0.1.4",
+  ]);
   const currentRelease = {
     version: notes[0].version,
     published_at: notes[0].published_at,
@@ -107,6 +113,24 @@ test("publishes an honest Android release history", () => {
     notes,
   );
   assert.deepEqual(notes[0].changes, [
+    {
+      type: "feature",
+      text: "选择陪练音色时会自动试听并即时保存，切换后即可直接用于练习。",
+    },
+    {
+      type: "fix",
+      text: "修复录音停止后偶发卡住及语音识别异常的问题，提升连续练习的语音稳定性。",
+    },
+    {
+      type: "improvement",
+      text: "统一主导航页面的 Ambient 背景，切换首页、练习和个人页时视觉更连贯。",
+    },
+    {
+      type: "improvement",
+      text: "扩充英文陪练音色并完善音色图标、头像轮播与整卡选择体验，让陪练形象更易辨认和切换。",
+    },
+  ]);
+  assert.deepEqual(notes[1].changes, [
     {
       type: "feature",
       text: "新增“关于 SpeakUp”页面，可查看当前安装版本、检查更新、访问产品官网和开源许可。",
@@ -120,7 +144,7 @@ test("publishes an honest Android release history", () => {
       text: "优化产品官网首页展示，直接呈现练习与复盘流程，并简化客户端下载入口。",
     },
   ]);
-  assert.deepEqual(notes[1].changes, [
+  assert.deepEqual(notes[2].changes, [
     {
       type: "feature",
       text: "在日常、职场、面试和 IELTS 练习中增加逐句纠错、润色与原声播放。",
@@ -138,7 +162,7 @@ test("publishes an honest Android release history", () => {
       text: "优化 Android 底部导航选中状态、首页快捷入口布局和用户消息样式。",
     },
   ]);
-  assert.deepEqual(notes[2].changes, [
+  assert.deepEqual(notes[3].changes, [
     {
       type: "fix",
       text: "修复断网后实时语音无法再次录音的问题。",
@@ -156,7 +180,7 @@ test("publishes an honest Android release history", () => {
       text: "修复进入历史练习时可能自动触发新回复的问题。",
     },
   ]);
-  assert.deepEqual(notes[3], validLegacyNotes());
+  assert.deepEqual(notes[4], validLegacyNotes());
 });
 
 test("parses strict Android release notes and their ordered index", () => {
