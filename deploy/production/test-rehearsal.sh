@@ -174,6 +174,13 @@ remove_test_image() {
 
   for image_id in \
     "${forward_fixture_image_id:-}" \
+    "${invalid_voice_fixture_image_id:-}" \
+    "${invalid_schema_contract_fixture_image_id:-}" \
+    "${invalid_index_fixture_image_id:-}" \
+    "${public_user_grant_fixture_image_id:-}" \
+    "${migration_failure_fixture_image_id:-}" \
+    "${public_grant_fixture_image_id:-}" \
+    "${missing_barrier_fixture_image_id:-}" \
     "${negative_constraint_fixture_image_id:-}" \
     "${interrupt_fixture_image_id:-}" \
     "${invalid_constraint_fixture_image_id:-}" \
@@ -247,7 +254,7 @@ write_manifest() {
   "minimum_android_api": 24,
   "abis": ["arm64-v8a"],
   "apk_certificate_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
-  "database_schema_version": 9,
+  "database_schema_version": 15,
   "quality_run_url": "https://github.com/1024XEngineer/XE3-ESL/actions/runs/123456"
 }
 EOF
@@ -277,6 +284,13 @@ readonly fixture_smoke="$test_id-image-smoke"
 readonly previous_fixture_builder="$test_id-previous-image-builder"
 readonly forward_fixture_builder="$test_id-forward-image-builder"
 readonly missing_view_fixture_builder="$test_id-missing-view-image-builder"
+readonly missing_barrier_fixture_builder="$test_id-missing-barrier-image-builder"
+readonly public_grant_fixture_builder="$test_id-public-grant-image-builder"
+readonly public_user_grant_fixture_builder="$test_id-public-user-grant-image-builder"
+readonly invalid_index_fixture_builder="$test_id-invalid-index-image-builder"
+readonly invalid_schema_contract_fixture_builder="$test_id-invalid-schema-contract-image-builder"
+readonly invalid_voice_fixture_builder="$test_id-invalid-voice-image-builder"
+readonly migration_failure_fixture_builder="$test_id-migration-failure-image-builder"
 readonly missing_constraint_fixture_builder="$test_id-missing-constraint-image-builder"
 readonly invalid_constraint_fixture_builder="$test_id-invalid-constraint-image-builder"
 readonly negative_constraint_fixture_builder="$test_id-negative-constraint-image-builder"
@@ -285,6 +299,13 @@ readonly fixture_image="xe3-speakup-prod-rehearsal-fixture:$test_id"
 readonly previous_fixture_image="xe3-speakup-prod-rehearsal-previous-fixture:$test_id"
 readonly forward_fixture_image="xe3-speakup-prod-rehearsal-forward-fixture:$test_id"
 readonly missing_view_fixture_image="xe3-speakup-prod-rehearsal-missing-view:$test_id"
+readonly missing_barrier_fixture_image="xe3-speakup-prod-rehearsal-missing-barrier:$test_id"
+readonly public_grant_fixture_image="xe3-speakup-prod-rehearsal-public-grant:$test_id"
+readonly public_user_grant_fixture_image="xe3-speakup-prod-rehearsal-public-user-grant:$test_id"
+readonly invalid_index_fixture_image="xe3-speakup-prod-rehearsal-invalid-index:$test_id"
+readonly invalid_schema_contract_fixture_image="xe3-speakup-prod-rehearsal-invalid-schema-contract:$test_id"
+readonly invalid_voice_fixture_image="xe3-speakup-prod-rehearsal-invalid-voice:$test_id"
+readonly migration_failure_fixture_image="xe3-speakup-prod-rehearsal-migration-failure:$test_id"
 readonly missing_constraint_fixture_image="xe3-speakup-prod-rehearsal-missing-constraint:$test_id"
 readonly invalid_constraint_fixture_image="xe3-speakup-prod-rehearsal-invalid-constraint:$test_id"
 readonly negative_constraint_fixture_image="xe3-speakup-prod-rehearsal-negative-constraint:$test_id"
@@ -293,6 +314,13 @@ fixture_image_id=''
 previous_fixture_image_id=''
 forward_fixture_image_id=''
 missing_view_fixture_image_id=''
+missing_barrier_fixture_image_id=''
+public_grant_fixture_image_id=''
+public_user_grant_fixture_image_id=''
+invalid_index_fixture_image_id=''
+invalid_schema_contract_fixture_image_id=''
+invalid_voice_fixture_image_id=''
+migration_failure_fixture_image_id=''
 missing_constraint_fixture_image_id=''
 invalid_constraint_fixture_image_id=''
 negative_constraint_fixture_image_id=''
@@ -314,6 +342,13 @@ cleanup() {
   remove_test_container "$previous_fixture_builder" >/dev/null 2>&1 || status=1
   remove_test_container "$forward_fixture_builder" >/dev/null 2>&1 || status=1
   remove_test_container "$missing_view_fixture_builder" >/dev/null 2>&1 || status=1
+  remove_test_container "$missing_barrier_fixture_builder" >/dev/null 2>&1 || status=1
+  remove_test_container "$public_grant_fixture_builder" >/dev/null 2>&1 || status=1
+  remove_test_container "$public_user_grant_fixture_builder" >/dev/null 2>&1 || status=1
+  remove_test_container "$invalid_index_fixture_builder" >/dev/null 2>&1 || status=1
+  remove_test_container "$invalid_schema_contract_fixture_builder" >/dev/null 2>&1 || status=1
+  remove_test_container "$invalid_voice_fixture_builder" >/dev/null 2>&1 || status=1
+  remove_test_container "$migration_failure_fixture_builder" >/dev/null 2>&1 || status=1
   remove_test_container "$missing_constraint_fixture_builder" >/dev/null 2>&1 || status=1
   remove_test_container "$invalid_constraint_fixture_builder" >/dev/null 2>&1 || status=1
   remove_test_container "$negative_constraint_fixture_builder" >/dev/null 2>&1 || status=1
@@ -354,7 +389,7 @@ jq --null-input \
       postgres_version: "18.0",
       database_name: "speakup",
       database_user: "speakup",
-      schema_version: 7,
+      schema_version: 9,
       schema_dirty: false,
       size_bytes: $size_bytes,
       sha256: $sha256
@@ -430,7 +465,7 @@ dry_run_output="$(PATH="$wrapper_directory:$PATH" "$rehearsal" \
   --receipt "$receipt" \
   --lock-timeout-seconds 3)"
 [[ "$dry_run_output" == \
-  'backup_id=20260825T010203Z-predeploy version=0.1.6 source_schema=7 target_schema=9 forward_hotfix=not_provided dry_run=true docker_touched=false' ]] ||
+  'backup_id=20260825T010203Z-predeploy version=0.1.6 source_schema=9 target_schema=15 forward_hotfix=not_provided dry_run=true docker_touched=false' ]] ||
   fail 'dry-run returned an unexpected contract'
 [[ ! -e "$docker_marker" ]] || fail 'dry-run called Docker'
 [[ ! -e "$dump_hash_marker" ]] || fail 'dry-run read database.dump'
@@ -438,12 +473,12 @@ dry_run_output="$(PATH="$wrapper_directory:$PATH" "$rehearsal" \
 ! grep -Fq "$secret_value" <<<"$dry_run_output" ||
   fail 'dry-run exposed the server environment secret'
 
-jq '.database_schema_version = 8' "$manifest" >"$temporary_directory/schema8.json"
-chmod 0600 "$temporary_directory/schema8.json"
+jq '.database_schema_version = 14' "$manifest" >"$temporary_directory/schema14.json"
+chmod 0600 "$temporary_directory/schema14.json"
 expect_failure 'wrong target schema' env PATH="$wrapper_directory:$PATH" \
   "$rehearsal" \
     --backup "$backup_directory" \
-    --manifest "$temporary_directory/schema8.json" \
+    --manifest "$temporary_directory/schema14.json" \
     --previous-server-image "$previous_image" \
     --server-env-file "$server_environment" \
     --receipt "$receipt" \
@@ -454,7 +489,7 @@ invalid_manifest_receipt="$temporary_directory/invalid-manifest-receipt.json"
 expect_failure 'wrong target schema execute gate' env PATH="$wrapper_directory:$PATH" \
   "$rehearsal" --execute \
     --backup "$backup_directory" \
-    --manifest "$temporary_directory/schema8.json" \
+    --manifest "$temporary_directory/schema14.json" \
     --previous-server-image "$previous_image" \
     --server-env-file "$server_environment" \
     --receipt "$invalid_manifest_receipt" \
@@ -504,61 +539,87 @@ jq --exit-status '
   .environment == "isolated" and
   .status == "failed" and
   .failed_step == "backup_content_validation" and
-  .source_schema == 7 and .target_schema == 9 and
+  .source_schema == 9 and .target_schema == 15 and
   .checks.owned_resource_cleanup == true
 ' "$receipt" >/dev/null || fail 'failed execute receipt is incomplete'
 ! grep -Fq "$secret_value" "$receipt" || fail 'receipt exposed a server secret'
 ! grep -Fq "$backup_directory" "$receipt" || fail 'receipt exposed the backup path'
 
 [[ "$("$production_directory/manage.sh" validate-rollback-schema \
-  --current-schema 9 --target-schema 9)" == \
-  'current_schema=9 target_schema=9 rollback_allowed=true' ]] ||
+  --current-schema 15 --target-schema 15)" == \
+  'current_schema=15 target_schema=15 rollback_allowed=true' ]] ||
   fail 'Production rollback schema guard rejected an equal schema'
 expect_failure 'Production rollback schema guard mismatch' \
   "$production_directory/manage.sh" validate-rollback-schema \
-    --current-schema 9 --target-schema 7
+    --current-schema 15 --target-schema 9
 rm -f "$wrapper_directory/sha256sum" "$wrapper_directory/shasum"
 
 # The runtime fixture uses only the already-required PostgreSQL 18 image. Its
-# migration entrypoint applies the repository's real schema 8 and 9 SQL, while
+# migration entrypoint applies the repository's real schema 10 through 15 SQL,
+# while
 # its HTTP process exposes only a local readiness endpoint.
 fixture_directory="$temporary_directory/fixture-image"
 mkdir -m 0700 "$fixture_directory"
-cp "$production_directory/../../server/migrations/000008_product_health_views.up.sql" \
-  "$fixture_directory/000008.up.sql"
-cp "$production_directory/../../server/migrations/000009_ielts_incremental_profile.up.sql" \
-  "$fixture_directory/000009.up.sql"
+for migration in \
+  "$production_directory"/../../server/migrations/00001[0-5]*.up.sql; do
+  migration_version=${migration##*/}
+  migration_version=${migration_version%%_*}
+  cp "$migration" "$fixture_directory/$migration_version.up.sql"
+done
 cat >"$fixture_directory/speakup-migrate" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ "${1:-}" == up ]] || exit 2
+[[ "${REHEARSAL_FIXTURE_FAULT:-}" != migration-failure ]] || exit 5
 sleep 2
 version="$(psql "$DATABASE_URL" --no-psqlrc --tuples-only --no-align --quiet \
   --set ON_ERROR_STOP=1 --command 'SELECT version FROM public.schema_migrations;')"
-case "$version" in
-  7)
-    psql "$DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 \
-      --file /fixture/000008.up.sql >/dev/null
-    psql "$DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 \
-      --command 'UPDATE public.schema_migrations SET version = 8;' >/dev/null
-    ;&
-  8)
-    psql "$DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 \
-      --file /fixture/000009.up.sql >/dev/null
-    psql "$DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 \
-      --command 'UPDATE public.schema_migrations SET version = 9;' >/dev/null
-    ;;
-  9)
-    ;;
-  *)
-    exit 3
-    ;;
-esac
+[[ "$version" =~ ^[0-9]+$ ]] && ((version >= 9 && version <= 15)) || exit 3
+for ((next_version = version + 1; next_version <= 15; next_version += 1)); do
+  migration_file=$(printf '/fixture/%06d.up.sql' "$next_version")
+  psql "$DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 \
+    --file "$migration_file" >/dev/null
+  psql "$DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 \
+    --command "UPDATE public.schema_migrations SET version = $next_version;" \
+    >/dev/null
+done
 case "${REHEARSAL_FIXTURE_FAULT:-}" in
   '' | server-unready) ;;
   missing-view)
     psql "$DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 \
-      --command 'DROP VIEW public.product_health_daily_scoreability;' >/dev/null
+      --command 'DROP VIEW public.user_behavior_daily_feature_usage;' >/dev/null
+    ;;
+  missing-barrier)
+    psql "$DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 \
+      --command 'ALTER VIEW public.user_behavior_daily_feature_usage SET (security_barrier = false);' \
+      >/dev/null
+    ;;
+  public-grant)
+    psql "$DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 \
+      --command 'GRANT SELECT (day_utc) ON public.product_health_daily_artifact_coverage TO PUBLIC;' \
+      >/dev/null
+    ;;
+  public-user-grant)
+    psql "$DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 \
+      --command 'GRANT SELECT ON public.user_behavior_daily_feature_usage TO PUBLIC;' \
+      >/dev/null
+    ;;
+  invalid-index)
+    psql "$DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 \
+      --command 'DROP INDEX public.user_behavior_nonterminal_sessions_updated_idx;' \
+      --command "CREATE INDEX user_behavior_nonterminal_sessions_updated_idx ON public.practice_sessions (created_at) WHERE status IN ('starting', 'in_progress', 'paused');" \
+      >/dev/null
+    ;;
+  invalid-schema-contract)
+    psql "$DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 \
+      --command 'ALTER TABLE public.practice_sessions DROP CONSTRAINT practice_sessions_presentation_snapshot_check;' \
+      --command 'ALTER TABLE public.practice_sessions ADD CONSTRAINT practice_sessions_presentation_snapshot_check CHECK (true);' \
+      >/dev/null
+    ;;
+  invalid-voice)
+    psql "$DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 \
+      --command "UPDATE public.coach_voice_options SET provider_model = 'qwen-audio-3.0-tts-flash-bad' WHERE id = 'voice_mary';" \
+      >/dev/null
     ;;
   missing-constraint)
     psql "$DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 \
@@ -713,6 +774,24 @@ create_fixture_variant() {
 
 missing_view_fixture_image_id=$(create_fixture_variant \
   missing-view "$missing_view_fixture_builder" "$missing_view_fixture_image")
+missing_barrier_fixture_image_id=$(create_fixture_variant \
+  missing-barrier "$missing_barrier_fixture_builder" \
+  "$missing_barrier_fixture_image")
+public_grant_fixture_image_id=$(create_fixture_variant \
+  public-grant "$public_grant_fixture_builder" "$public_grant_fixture_image")
+public_user_grant_fixture_image_id=$(create_fixture_variant \
+  public-user-grant "$public_user_grant_fixture_builder" \
+  "$public_user_grant_fixture_image")
+invalid_index_fixture_image_id=$(create_fixture_variant \
+  invalid-index "$invalid_index_fixture_builder" "$invalid_index_fixture_image")
+invalid_schema_contract_fixture_image_id=$(create_fixture_variant \
+  invalid-schema-contract "$invalid_schema_contract_fixture_builder" \
+  "$invalid_schema_contract_fixture_image")
+invalid_voice_fixture_image_id=$(create_fixture_variant \
+  invalid-voice "$invalid_voice_fixture_builder" "$invalid_voice_fixture_image")
+migration_failure_fixture_image_id=$(create_fixture_variant \
+  migration-failure "$migration_failure_fixture_builder" \
+  "$migration_failure_fixture_image")
 missing_constraint_fixture_image_id=$(create_fixture_variant \
   missing-constraint "$missing_constraint_fixture_builder" \
   "$missing_constraint_fixture_image")
@@ -741,7 +820,7 @@ docker container run \
   "$postgres_image" >/dev/null
 wait_for_postgres "$source_container"
 for migration in \
-  "$production_directory"/../../server/migrations/00000[1-7]*.up.sql; do
+  "$production_directory"/../../server/migrations/00000[1-9]*.up.sql; do
   docker container exec --interactive "$source_container" \
     psql --no-psqlrc --set ON_ERROR_STOP=1 \
       --username speakup --dbname speakup <"$migration" >/dev/null
@@ -750,7 +829,7 @@ docker container exec "$source_container" \
   psql --no-psqlrc --set ON_ERROR_STOP=1 \
     --username speakup --dbname speakup \
     --command 'CREATE TABLE public.schema_migrations (version bigint NOT NULL, dirty boolean NOT NULL);' \
-    --command 'INSERT INTO public.schema_migrations (version, dirty) VALUES (7, false);' \
+    --command 'INSERT INTO public.schema_migrations (version, dirty) VALUES (9, false);' \
     >/dev/null
 docker container exec "$source_container" \
   pg_dump --format custom --no-owner --no-privileges \
@@ -820,6 +899,29 @@ export TEST_DOCKER_COMMAND_LOG="$command_log"
 export TEST_INSPECT_ERROR_TARGET_FILE="$temporary_directory/inspect-error-target"
 export TEST_INSPECT_ERROR_INJECTED_FILE="$temporary_directory/inspect-error-injected"
 
+migration_failure_receipt="$temporary_directory/migration-failure-receipt.json"
+export TEST_CANDIDATE_FIXTURE_IMAGE_ID=$migration_failure_fixture_image_id
+expect_failure 'candidate migration failure' env PATH="$wrapper_directory:$PATH" \
+  "$rehearsal" --execute \
+    --backup "$backup_directory" \
+    --manifest "$manifest" \
+    --previous-server-image "$previous_image" \
+    --server-env-file "$server_environment" \
+    --receipt "$migration_failure_receipt" \
+    --lock-timeout-seconds 2
+verify_failed_receipt "$migration_failure_receipt" migration
+jq --exit-status '
+  .source_schema == 9 and .target_schema == 15 and
+  .checks.clean_target_schema == false and
+  .checks.idempotent_migration == false
+' "$migration_failure_receipt" >/dev/null ||
+  fail 'migration failure receipt has wrong checks'
+migration_failure_run_id=$(jq --raw-output '.run_id' \
+  "$migration_failure_receipt")
+observed_rehearsal_runs+=("$migration_failure_run_id")
+assert_no_rehearsal_resources "$migration_failure_run_id"
+export TEST_CANDIDATE_FIXTURE_IMAGE_ID=$fixture_image_id
+
 success_receipt="$temporary_directory/success-receipt.json"
 success_output="$(PATH="$wrapper_directory:$PATH" "$rehearsal" --execute \
   --backup "$backup_directory" \
@@ -835,14 +937,18 @@ observed_rehearsal_runs+=("$success_run_id")
   fail 'successful rehearsal returned an invalid contract'
 jq --exit-status '
   .status == "succeeded" and .failed_step == null and
-  .source_schema == 7 and .target_schema == 9 and
+  .source_schema == 9 and .target_schema == 15 and
   .checks.clean_target_schema == true and
   .checks.product_health_views == true and
+  .checks.user_behavior_views == true and
+  .checks.view_public_privileges_revoked == true and
+  .checks.schema_10_14_contracts == true and
   .checks.ielts_evaluation_constraint == true and
   .checks.candidate_readiness == true and
   .checks.previous_image_readiness_only == true and
   .checks.previous_image_profile_processing == "not_verified" and
-  .checks.schema7_rollback_guard == true and
+  .checks.schema9_rollback_guard == true and
+  .checks.idempotent_migration == true and
   .checks.same_schema_candidate_redeploy == false and
   .checks.forward_hotfix_image == "verified" and
   .forward_server_image == "ghcr.io/1024xengineer/xe3-esl-server@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" and
@@ -882,7 +988,9 @@ while IFS= read -r create_command; do
 done < <(grep -E '^container create ' "$command_log")
 
 run_schema_fault_test() {
-  local fault=$1 fixture_id=$2 expected_views=$3
+  local fault=$1 fixture_id=$2 expected_product_views=$3
+  local expected_user_views=$4 expected_privileges=$5
+  local expected_schema_contracts=$6
   local fault_receipt="$temporary_directory/$fault-receipt.json"
   local fault_run_id
 
@@ -896,9 +1004,16 @@ run_schema_fault_test() {
       --receipt "$fault_receipt" \
       --lock-timeout-seconds 2
   verify_failed_receipt "$fault_receipt" schema_verification
-  jq --exit-status --argjson expected_views "$expected_views" '
+  jq --exit-status \
+    --argjson expected_product_views "$expected_product_views" \
+    --argjson expected_user_views "$expected_user_views" \
+    --argjson expected_privileges "$expected_privileges" \
+    --argjson expected_schema_contracts "$expected_schema_contracts" '
     .checks.clean_target_schema == true and
-    .checks.product_health_views == $expected_views and
+    .checks.product_health_views == $expected_product_views and
+    .checks.user_behavior_views == $expected_user_views and
+    .checks.view_public_privileges_revoked == $expected_privileges and
+    .checks.schema_10_14_contracts == $expected_schema_contracts and
     .checks.ielts_evaluation_constraint == false
   ' "$fault_receipt" >/dev/null || fail "$fault failure receipt has wrong checks"
   fault_run_id=$(jq --raw-output '.run_id' "$fault_receipt")
@@ -906,10 +1021,16 @@ run_schema_fault_test() {
   assert_no_rehearsal_resources "$fault_run_id"
 }
 
-run_schema_fault_test missing-view "$missing_view_fixture_image_id" false
-run_schema_fault_test missing-constraint "$missing_constraint_fixture_image_id" true
-run_schema_fault_test invalid-constraint "$invalid_constraint_fixture_image_id" true
-run_schema_fault_test negative-constraint "$negative_constraint_fixture_image_id" true
+run_schema_fault_test missing-view "$missing_view_fixture_image_id" true false false false
+run_schema_fault_test missing-barrier "$missing_barrier_fixture_image_id" true false false false
+run_schema_fault_test invalid-index "$invalid_index_fixture_image_id" true false false false
+run_schema_fault_test public-grant "$public_grant_fixture_image_id" true true false false
+run_schema_fault_test public-user-grant "$public_user_grant_fixture_image_id" true true false false
+run_schema_fault_test invalid-schema-contract "$invalid_schema_contract_fixture_image_id" true true true false
+run_schema_fault_test invalid-voice "$invalid_voice_fixture_image_id" true true true false
+run_schema_fault_test missing-constraint "$missing_constraint_fixture_image_id" true true true true
+run_schema_fault_test invalid-constraint "$invalid_constraint_fixture_image_id" true true true true
+run_schema_fault_test negative-constraint "$negative_constraint_fixture_image_id" true true true true
 export TEST_CANDIDATE_FIXTURE_IMAGE_ID=$fixture_image_id
 
 decoy_candidate_id=$(docker container run --detach --pull never \
@@ -943,21 +1064,21 @@ lock_database=$selected_background_container
 lock_run_id=$selected_background_run_id
 observed_rehearsal_runs+=("$lock_run_id")
 
-schema7_ready=false
+schema9_ready=false
 for ((attempt = 1; attempt <= 150; attempt += 1)); do
   if [[ "$(docker container exec --user postgres "$lock_database" \
     psql --no-psqlrc --tuples-only --no-align --quiet \
       --username speakup --dbname speakup \
-      --command "SELECT count(*) FROM public.schema_migrations WHERE version = 7 AND dirty = false AND to_regclass('public.evaluations') IS NOT NULL;" \
+      --command "SELECT count(*) FROM public.schema_migrations WHERE version = 9 AND dirty = false AND to_regclass('public.evaluations') IS NOT NULL;" \
       2>/dev/null || true)" == 1 ]]; then
-    schema7_ready=true
+    schema9_ready=true
     break
   fi
   sleep 0.1
 done
-[[ "$schema7_ready" == true ]] || {
+[[ "$schema9_ready" == true ]] || {
   wait "$rehearsal_pid" || true
-  fail 'lock-timeout rehearsal did not restore clean schema 7'
+  fail 'lock-timeout rehearsal did not restore clean schema 9'
 }
 
 verify_pid_rehearsal_container "$rehearsal_pid" db \

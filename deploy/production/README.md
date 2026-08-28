@@ -295,7 +295,7 @@ smoke tests remain part of the higher-level release Workflow.
 
 ## Rehearse a schema upgrade without touching Production
 
-Before promoting a Release Candidate that advances schema 7 to schema 9, run
+Before promoting a Release Candidate that advances schema 9 to schema 15, run
 the isolated rehearsal with the finalized Production backup, the reviewed
 manifest, and both immutable Server image identities. The command is a dry-run
 unless `--execute` is present. When a distinct forward-hotfix image exists, add
@@ -321,20 +321,25 @@ output, repeat the exact command with `--execute`.
 Execution restores the dump into a uniquely named, labeled volume on an
 internal Docker network with no host ports or Production network attachment. It
 runs the manifest-pinned migration image with a finite PostgreSQL lock timeout,
-then verifies clean schema 9, the five product-health views, the IELTS
-evaluation constraint, candidate readiness, the old image's readiness-only
-boundary, rollback fail-closed behavior and a same-schema redeploy of the same
-candidate image. If a distinct forward image is supplied, that final step uses
-the forward image instead and records its OCI version and revision only after
-its migration preserves clean schema 9 and its Server passes readiness.
-The old image is **not** claimed to process schema-9 profiles correctly. Success
-or failure produces a mode `0600`, redacted receipt after owned-resource cleanup;
+then verifies clean schema 15 and the critical schema 10 through 14 presentation,
+model-ID, avatar-binding and voice-catalog contracts. It also verifies the exact
+five product-health and seven user-behavior views, their security barriers, the
+four user-behavior indexes, revoked PUBLIC privileges, the IELTS evaluation
+constraint, candidate readiness, the old image's readiness-only boundary,
+schema 15 to 9 rollback rejection and an idempotent same-schema migration. If a
+distinct forward image is supplied, that final step uses the forward image
+instead and records its OCI version and revision only after its migration
+preserves clean schema 15 and its Server passes readiness. The old image is
+**not** claimed to process schema-15 application data correctly. Success or
+failure produces a mode `0600`, redacted receipt after owned-resource cleanup;
 failure or interruption never removes unlabeled or differently labeled Docker
 resources.
 
-This repository test uses a synthetic schema-7 backup and local fixture images.
-It does not replace the required runtime evidence from the selected finalized
-Production backup and the actual immutable Release Candidate and previous image.
+This repository test uses a synthetic schema-9 backup, the real schema 10
+through 15 migrations and local fixture images. It does not replace the required
+runtime evidence from the selected finalized Production backup and the actual
+immutable Release Candidate and previous image. Retain the redacted mode `0600`
+receipt from that real rehearsal as release evidence before Production approval.
 Without `--forward-server-image`, the receipt explicitly records that no forward
 image was provided. If an incident later requires a distinct hotfix image, rerun
 the rehearsal with that immutable image before promoting it; the earlier
