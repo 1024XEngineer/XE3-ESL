@@ -14,14 +14,24 @@ type Repository interface {
 }
 
 type Service struct {
-	repository Repository
+	repository              Repository
+	voicePreviewSynthesizer VoicePreviewSynthesizer
 }
 
-func NewService(repository Repository) (*Service, error) {
+func NewService(repository Repository, options ...Option) (*Service, error) {
 	if repository == nil {
 		return nil, ErrRepository
 	}
-	return &Service{repository: repository}, nil
+	service := &Service{repository: repository}
+	for _, option := range options {
+		if option == nil {
+			continue
+		}
+		if err := option(service); err != nil {
+			return nil, err
+		}
+	}
+	return service, nil
 }
 
 func (service *Service) GetCatalog(

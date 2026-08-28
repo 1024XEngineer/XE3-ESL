@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:speakup/identity/auth_state.dart';
@@ -121,6 +122,11 @@ abstract interface class CoachPresentationSettingsStore {
     required String voiceOptionId,
     required int expectedVersion,
   });
+
+  Future<Uint8List> previewVoice({
+    required String accountId,
+    required String voiceOptionId,
+  });
 }
 
 const previewCoachPresentationCatalog = CoachPresentationCatalog(
@@ -240,6 +246,16 @@ final class PreviewCoachPresentationSettingsStore
     voiceOptionId: voiceOptionId,
     version: expectedVersion + 1,
   );
+
+  @override
+  Future<Uint8List> previewVoice({
+    required String accountId,
+    required String voiceOptionId,
+  }) async {
+    _requireAccountId(accountId);
+    _optionId(voiceOptionId);
+    return Uint8List.fromList(_silentPreviewWav);
+  }
 }
 
 final class CoachPresentationVersionConflict implements Exception {
@@ -272,6 +288,7 @@ final class WireCoachPresentationSettingsStore
   );
 
   static const _maximumResponseBytes = 64 * 1024;
+  static const _maximumPreviewBytes = 2 * 1024 * 1024;
   final Uri _baseUri;
   final IdentityHttpTransport _transport;
   final CoachPresentationSettingsCache _cache;
@@ -365,6 +382,38 @@ final class WireCoachPresentationSettingsStore
     return preference;
   }
 
+  @override
+  Future<Uint8List> previewVoice({
+    required String accountId,
+    required String voiceOptionId,
+  }) async {
+    _requireAccountId(accountId);
+    final normalizedVoiceOptionId = _optionId(voiceOptionId);
+    final response = await _transport
+        .send(
+          method: 'POST',
+          uri: _baseUri.resolve(
+            '/v1/coach-presentation/voices/'
+            '${Uri.encodeComponent(normalizedVoiceOptionId)}/previews',
+          ),
+          headers: const <String, String>{
+            HttpHeaders.acceptHeader: 'audio/wav',
+          },
+        )
+        .timeout(const Duration(seconds: 20));
+    final contentType = response.headers[HttpHeaders.contentTypeHeader] ?? '';
+    final bytes = Uint8List.fromList(response.bodyBytes);
+    if (response.statusCode != HttpStatus.ok ||
+        !contentType.toLowerCase().startsWith('audio/wav') ||
+        bytes.length <= 44 ||
+        bytes.length > _maximumPreviewBytes ||
+        !_isWave(bytes)) {
+      bytes.fillRange(0, bytes.length, 0);
+      throw _CoachPresentationRequestException(response.statusCode);
+    }
+    return bytes;
+  }
+
   Future<IdentityHttpResponse> _get(String path) => _transport
       .send(
         method: 'GET',
@@ -394,6 +443,66 @@ final class WireCoachPresentationSettingsStore
     }
   }
 }
+
+bool _isWave(Uint8List bytes) =>
+    bytes.length >= 44 &&
+    bytes[0] == 0x52 &&
+    bytes[1] == 0x49 &&
+    bytes[2] == 0x46 &&
+    bytes[3] == 0x46 &&
+    bytes[8] == 0x57 &&
+    bytes[9] == 0x41 &&
+    bytes[10] == 0x56 &&
+    bytes[11] == 0x45;
+
+const _silentPreviewWav = <int>[
+  0x52,
+  0x49,
+  0x46,
+  0x46,
+  0x26,
+  0x00,
+  0x00,
+  0x00,
+  0x57,
+  0x41,
+  0x56,
+  0x45,
+  0x66,
+  0x6d,
+  0x74,
+  0x20,
+  0x10,
+  0x00,
+  0x00,
+  0x00,
+  0x01,
+  0x00,
+  0x01,
+  0x00,
+  0xc0,
+  0x5d,
+  0x00,
+  0x00,
+  0x80,
+  0xbb,
+  0x00,
+  0x00,
+  0x02,
+  0x00,
+  0x10,
+  0x00,
+  0x64,
+  0x61,
+  0x74,
+  0x61,
+  0x02,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+];
 
 final class _CoachPresentationRequestException implements Exception {
   const _CoachPresentationRequestException(this.statusCode);

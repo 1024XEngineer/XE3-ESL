@@ -1,11 +1,14 @@
 package presentation
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"testing"
 	"time"
 
+	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 )
 
@@ -88,6 +91,56 @@ func TestUpdatePreferenceCommitsBothSelections(t *testing.T) {
 	}
 }
 
+func TestCreateVoicePreviewUsesFixedTextAndPrivateBinding(t *testing.T) {
+	audio := &serviceManagedAudio{bytes: make([]byte, 128)}
+	synthesizer := &voicePreviewSynthesizerStub{
+		result: VoicePreviewSynthesisResult{Audio: audio},
+	}
+	service, err := NewService(
+		&repositoryStub{catalog: validCatalog()},
+		WithVoicePreviewSynthesizer(synthesizer),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.CreateVoicePreview(
+		context.Background(), serviceActor, "voice_john",
+	)
+	if err != nil || result != audio || synthesizer.calls != 1 ||
+		synthesizer.request.Text != VoicePreviewText ||
+		synthesizer.request.Provider != "qianwen" ||
+		synthesizer.request.ProviderProfile != "qianwen_default" ||
+		synthesizer.request.Model != "qwen-audio-3.0-tts-flash" ||
+		synthesizer.request.VoiceID != "loongjohn" ||
+		synthesizer.request.Locale != "en-US" {
+		t.Fatalf(
+			"result=%T request=%#v calls=%d err=%v",
+			result, synthesizer.request, synthesizer.calls, err,
+		)
+	}
+}
+
+func TestCreateVoicePreviewRejectsUnknownAndSanitizesProviderFailure(t *testing.T) {
+	synthesizer := &voicePreviewSynthesizerStub{err: errors.New("private provider error")}
+	service, _ := NewService(
+		&repositoryStub{catalog: validCatalog()},
+		WithVoicePreviewSynthesizer(synthesizer),
+	)
+	_, err := service.CreateVoicePreview(
+		context.Background(), serviceActor, "voice_unknown",
+	)
+	if !errors.Is(err, ErrNotFound) || synthesizer.calls != 0 {
+		t.Fatalf("unknown err=%v calls=%d", err, synthesizer.calls)
+	}
+	_, err = service.CreateVoicePreview(
+		context.Background(), serviceActor, "voice_ava",
+	)
+	if !errors.Is(err, ErrVoicePreviewUnavailable) ||
+		err.Error() == "private provider error" {
+		t.Fatalf("provider err=%v", err)
+	}
+}
+
 func validCatalog() Catalog {
 	return Catalog{
 		Avatars: []AvatarOption{
@@ -136,6 +189,43 @@ type repositoryStub struct {
 	findErr    error
 	saveErr    error
 	saveCalls  int
+}
+
+type voicePreviewSynthesizerStub struct {
+	request VoicePreviewSynthesisRequest
+	result  VoicePreviewSynthesisResult
+	err     error
+	calls   int
+}
+
+func (synthesizer *voicePreviewSynthesizerStub) SynthesizeVoicePreview(
+	_ context.Context,
+	request VoicePreviewSynthesisRequest,
+) (VoicePreviewSynthesisResult, error) {
+	synthesizer.calls++
+	synthesizer.request = request
+	return synthesizer.result, synthesizer.err
+}
+
+type serviceManagedAudio struct {
+	bytes  []byte
+	closed bool
+}
+
+func (audio *serviceManagedAudio) Open() (io.ReadCloser, error) {
+	return io.NopCloser(bytes.NewReader(audio.bytes)), nil
+}
+
+func (audio *serviceManagedAudio) MediaType() string {
+	return platformmedia.ContentTypeWAV
+}
+
+func (audio *serviceManagedAudio) Size() int64             { return int64(len(audio.bytes)) }
+func (audio *serviceManagedAudio) Duration() time.Duration { return time.Second }
+func (audio *serviceManagedAudio) SampleRate() int         { return 24000 }
+func (audio *serviceManagedAudio) Close() error {
+	audio.closed = true
+	return nil
 }
 
 func (repository *repositoryStub) Catalog(context.Context) (Catalog, error) {

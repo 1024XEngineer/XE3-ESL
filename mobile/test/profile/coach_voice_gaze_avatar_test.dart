@@ -1,9 +1,13 @@
+import 'dart:async';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/design/speak_up_theme.dart';
 import 'package:speakup/features/profile/coach_presentation_settings.dart';
 import 'package:speakup/features/profile/coach_voice_gaze_avatar.dart';
 import 'package:speakup/features/profile/coach_voice_selection_page.dart';
+import 'package:speakup/platform/audio/ephemeral_wav_audio_player.dart';
 
 void main() {
   test('current coach voices receive distinct stable Gaze variants', () {
@@ -45,6 +49,9 @@ void main() {
         home: CoachVoiceSelectionPage(
           options: options,
           initialVoiceId: 'voice_ava',
+          onSelected: (voiceOptionId) async => voiceOptionId,
+          loadPreview: (voiceOptionId) async => Uint8List(0),
+          audioPlayerFactory: _GazeTestAudioPlayer.new,
         ),
       ),
     );
@@ -92,4 +99,20 @@ void main() {
     expect(genderIcons.where((icon) => icon.gender == 'male'), isNotEmpty);
     expect(genderIcons.where((icon) => icon.gender == 'female'), isNotEmpty);
   });
+}
+
+final class _GazeTestAudioPlayer implements EphemeralWavAudioPlayer {
+  const _GazeTestAudioPlayer();
+
+  @override
+  Stream<void> get onComplete => const Stream<void>.empty();
+
+  @override
+  Future<void> dispose() async {}
+
+  @override
+  Future<void> play(Uint8List bytes) async {}
+
+  @override
+  Future<void> stop() async {}
 }

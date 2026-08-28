@@ -1,6 +1,7 @@
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/features/profile/coach_presentation_settings.dart';
@@ -88,6 +89,40 @@ void main() {
         expectedVersion: 3,
       ),
       throwsA(isA<CoachPresentationVersionConflict>()),
+    );
+  });
+
+  test('requests an authenticated WAV preview by logical voice id', () async {
+    final previewBytes = Uint8List.fromList(_previewWav);
+    final transport = _Transport(<IdentityHttpResponse>[
+      _response(_catalogJson),
+      _response(_preferenceJson),
+      IdentityHttpResponse(
+        statusCode: HttpStatus.ok,
+        body: '',
+        bodyBytes: previewBytes,
+        headers: const <String, String>{'content-type': 'audio/wav'},
+      ),
+    ]);
+    final store = _store(transport: transport, cache: _Cache());
+    await store.load(accountId: 'user_account-a');
+
+    final result = await store.previewVoice(
+      accountId: 'user_account-a',
+      voiceOptionId: 'voice_john',
+    );
+
+    expect(result, previewBytes);
+    final request = transport.requests.last;
+    expect(request.method, 'POST');
+    expect(
+      request.uri.path,
+      '/v1/coach-presentation/voices/voice_john/previews',
+    );
+    expect(request.headers[HttpHeaders.acceptHeader], 'audio/wav');
+    expect(
+      request.headers[HttpHeaders.authorizationHeader],
+      'Bearer sess_presentation',
     );
   });
 
@@ -214,3 +249,52 @@ final class _Cache implements CoachPresentationSettingsCache {
     values[accountId] = settings;
   }
 }
+
+const _previewWav = <int>[
+  0x52,
+  0x49,
+  0x46,
+  0x46,
+  0x26,
+  0,
+  0,
+  0,
+  0x57,
+  0x41,
+  0x56,
+  0x45,
+  0x66,
+  0x6d,
+  0x74,
+  0x20,
+  0x10,
+  0,
+  0,
+  0,
+  1,
+  0,
+  1,
+  0,
+  0xc0,
+  0x5d,
+  0,
+  0,
+  0x80,
+  0xbb,
+  0,
+  0,
+  2,
+  0,
+  0x10,
+  0,
+  0x64,
+  0x61,
+  0x74,
+  0x61,
+  2,
+  0,
+  0,
+  0,
+  0,
+  0,
+];

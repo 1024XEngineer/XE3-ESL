@@ -28,6 +28,46 @@ paths:
           $ref: ../common/errors.yaml#/components/responses/Unauthorized
         default:
           $ref: ../common/errors.yaml#/components/responses/DefaultError
+  /v1/coach-presentation/voices/{voice_option_id}/previews:
+    parameters:
+      - name: voice_option_id
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/CoachPresentationOptionID'
+    post:
+      tags:
+        - Coach Presentation
+      summary: Synthesize the fixed preview for one selectable coach voice
+      description: |
+        Resolves the enabled internal voice option to its private provider
+        binding and returns an ephemeral WAV of the server-owned preview text.
+        The audio is not persisted and provider-native identifiers are never
+        exposed to the client.
+      operationId: createCoachVoicePreview
+      responses:
+        '200':
+          description: Ephemeral fixed-text preview synthesized with this voice.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+            Pragma:
+              schema:
+                type: string
+                const: no-cache
+          content:
+            audio/wav:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: ../common/errors.yaml#/components/responses/Unauthorized
+        '404':
+          $ref: ../common/errors.yaml#/components/responses/NotFound
+        default:
+          $ref: ../common/errors.yaml#/components/responses/DefaultError
   /v1/me/coach-presentation:
     get:
       tags:

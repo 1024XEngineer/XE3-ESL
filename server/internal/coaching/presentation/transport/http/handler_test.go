@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	basehttp "net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/presentation"
+	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/gin-gonic/gin"
 )
@@ -28,6 +31,18 @@ func TestRoutesRequireAuthentication(t *testing.T) {
 		if response.Code != basehttp.StatusUnauthorized {
 			t.Fatalf("GET %s status=%d", path, response.Code)
 		}
+	}
+	response := httptest.NewRecorder()
+	router.ServeHTTP(
+		response,
+		httptest.NewRequest(
+			basehttp.MethodPost,
+			"/v1/coach-presentation/voices/voice_ava/previews",
+			nil,
+		),
+	)
+	if response.Code != basehttp.StatusUnauthorized {
+		t.Fatalf("POST voice preview status=%d", response.Code)
 	}
 }
 
@@ -83,6 +98,55 @@ func TestPatchMapsCommandAndVersionConflict(t *testing.T) {
 		application.command.ExpectedVersion != 4 ||
 		!bytes.Contains(response.Body.Bytes(), []byte("coach_presentation_version_conflict")) {
 		t.Fatalf("status=%d command=%#v body=%s", response.Code, application.command, response.Body.String())
+	}
+}
+
+func TestVoicePreviewStreamsPrivateWAVAndClosesAudio(t *testing.T) {
+	audio := &managedAudioStub{bytes: []byte("RIFF-preview-wav")}
+	application := &applicationStub{previewAudio: audio}
+	response := performRequest(
+		t,
+		presentationRouter(t, application, true),
+		basehttp.MethodPost,
+		"/v1/coach-presentation/voices/voice_ava/previews",
+		nil,
+	)
+	if response.Code != basehttp.StatusOK ||
+		response.Header().Get("Content-Type") != platformmedia.ContentTypeWAV ||
+		response.Header().Get("Cache-Control") != "private, no-store" ||
+		response.Body.String() != "RIFF-preview-wav" ||
+		application.previewVoiceID != "voice_ava" || !audio.closed {
+		t.Fatalf(
+			"status=%d headers=%v body=%q voice=%q closed=%t",
+			response.Code,
+			response.Header(),
+			response.Body.String(),
+			application.previewVoiceID,
+			audio.closed,
+		)
+	}
+}
+
+func TestVoicePreviewMapsMissingAndUnavailable(t *testing.T) {
+	for _, test := range []struct {
+		err        error
+		statusCode int
+		code       string
+	}{
+		{presentation.ErrNotFound, basehttp.StatusNotFound, "resource_not_found"},
+		{presentation.ErrVoicePreviewUnavailable, basehttp.StatusServiceUnavailable, "provider_unavailable"},
+	} {
+		response := performRequest(
+			t,
+			presentationRouter(t, &applicationStub{previewErr: test.err}, true),
+			basehttp.MethodPost,
+			"/v1/coach-presentation/voices/voice_ava/previews",
+			nil,
+		)
+		if response.Code != test.statusCode ||
+			!bytes.Contains(response.Body.Bytes(), []byte(test.code)) {
+			t.Fatalf("error=%v status=%d body=%s", test.err, response.Code, response.Body.String())
+		}
 	}
 }
 
@@ -150,11 +214,23 @@ func httpCatalog() presentation.Catalog {
 }
 
 type applicationStub struct {
-	catalog     presentation.Catalog
-	preference  presentation.Preference
-	updateErr   error
-	command     presentation.UpdateCommand
-	updateCalls int
+	catalog        presentation.Catalog
+	preference     presentation.Preference
+	updateErr      error
+	command        presentation.UpdateCommand
+	updateCalls    int
+	previewAudio   platformmedia.ManagedAudioSource
+	previewErr     error
+	previewVoiceID string
+}
+
+func (application *applicationStub) CreateVoicePreview(
+	_ context.Context,
+	_ requestcontext.Actor,
+	voiceOptionID string,
+) (platformmedia.ManagedAudioSource, error) {
+	application.previewVoiceID = voiceOptionID
+	return application.previewAudio, application.previewErr
 }
 
 func (application *applicationStub) GetCatalog(
@@ -162,6 +238,24 @@ func (application *applicationStub) GetCatalog(
 	requestcontext.Actor,
 ) (presentation.Catalog, error) {
 	return application.catalog, nil
+}
+
+type managedAudioStub struct {
+	bytes  []byte
+	closed bool
+}
+
+func (audio *managedAudioStub) Open() (io.ReadCloser, error) {
+	return io.NopCloser(bytes.NewReader(audio.bytes)), nil
+}
+
+func (audio *managedAudioStub) MediaType() string       { return platformmedia.ContentTypeWAV }
+func (audio *managedAudioStub) Size() int64             { return int64(len(audio.bytes)) }
+func (audio *managedAudioStub) Duration() time.Duration { return time.Second }
+func (audio *managedAudioStub) SampleRate() int         { return 24000 }
+func (audio *managedAudioStub) Close() error {
+	audio.closed = true
+	return nil
 }
 
 func (application *applicationStub) GetPreference(
