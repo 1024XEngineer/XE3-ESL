@@ -29,6 +29,39 @@ func TestInvalidProviderReportRemainsRetryableAtTheJobBoundary(t *testing.T) {
 	}
 }
 
+func TestEvaluatorsRejectMissingDependenciesAndDispatchTargets(t *testing.T) {
+	if _, err := New(nil); err != evaluation.ErrInvalidRequest {
+		t.Fatalf("New(nil) error = %v", err)
+	}
+	var evaluators *Evaluators
+	for name, evaluate := range map[string]func() error{
+		"interview": func() error {
+			_, err := evaluators.EvaluateInterview(
+				context.Background(), evaluation.Record{}, evaluation.SessionInputSnapshot{}, evaluation.ConfigLineage{},
+			)
+			return err
+		},
+		"IELTS": func() error {
+			_, err := evaluators.EvaluateIELTS(
+				context.Background(), evaluation.Record{}, evaluation.SessionInputSnapshot{}, evaluation.ConfigLineage{},
+			)
+			return err
+		},
+		"general": func() error {
+			_, err := evaluators.EvaluateGeneral(
+				context.Background(), evaluation.Record{}, evaluation.SessionInputSnapshot{}, evaluation.ConfigLineage{},
+			)
+			return err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := evaluate(); err != evaluation.ErrInvalidRequest {
+				t.Fatalf("dispatch error = %v", err)
+			}
+		})
+	}
+}
+
 func TestInsufficientProviderReportClearsScoresAndPriorityActions(t *testing.T) {
 	score := 7.0
 	snapshot := sessionSnapshotFixture()
