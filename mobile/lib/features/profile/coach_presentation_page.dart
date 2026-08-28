@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/profile/coach_presentation_settings.dart';
+import 'package:speakup/features/profile/coach_voice_gaze_avatar.dart';
 import 'package:speakup/features/profile/coach_voice_selection_page.dart';
 
 const _avatarCarouselInitialPage = 1000;
@@ -58,6 +59,7 @@ class _CoachPresentationPageState extends State<CoachPresentationPage> {
           id: option.id,
           name: option.displayName,
           description: option.description,
+          gender: option.gender,
         ),
       )
       .toList(growable: false);
@@ -512,11 +514,11 @@ class _VoiceSelectionEntry extends StatelessWidget {
         contentPadding: const EdgeInsets.symmetric(
           horizontal: SpeakUpDesign.space16,
         ),
-        leading: const CircleAvatar(
-          radius: 18,
-          backgroundColor: Color(0xFFF0F3F5),
-          foregroundColor: SpeakUpDesign.ink,
-          child: Icon(Icons.graphic_eq_rounded, size: 20),
+        leading: CoachVoiceGazeAvatar(
+          key: const Key('coach-selected-voice-gaze'),
+          voiceId: option.id,
+          gender: option.gender,
+          size: 36,
         ),
         title: Text(
           option.name,
