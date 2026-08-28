@@ -60,6 +60,8 @@ func TestEveryMigrationPairIsEmbedded(t *testing.T) {
 		"000012_agent_run_qualified_model_ids.up.sql",
 		"000013_lisa_avatar_asset.down.sql",
 		"000013_lisa_avatar_asset.up.sql",
+		"000014_expand_coach_voice_catalog.down.sql",
+		"000014_expand_coach_voice_catalog.up.sql",
 	}
 	slices.Sort(files)
 	if !slices.Equal(files, want) {
@@ -95,6 +97,8 @@ func TestMigrationsAreTransactional(t *testing.T) {
 		"000012_agent_run_qualified_model_ids.down.sql",
 		"000013_lisa_avatar_asset.up.sql",
 		"000013_lisa_avatar_asset.down.sql",
+		"000014_expand_coach_voice_catalog.up.sql",
+		"000014_expand_coach_voice_catalog.down.sql",
 	} {
 		sql := readMigration(t, name)
 		if !strings.HasPrefix(sql, "BEGIN;") {
@@ -128,6 +132,37 @@ func TestLisaAvatarAssetMigrationChangesOnlyTheReviewedBinding(t *testing.T) {
 	} {
 		if !strings.Contains(down, required) {
 			t.Errorf("Lisa avatar down migration is missing %q", required)
+		}
+	}
+}
+
+func TestExpandedCoachVoiceMigrationUsesReviewedBindingsAndSafeRollback(
+	t *testing.T,
+) {
+	up := readMigration(t, "000014_expand_coach_voice_catalog.up.sql")
+	for _, required := range []string{
+		"'voice_mary'",
+		"'loongmary'",
+		"'en-GB'",
+		"'voice_olivia'",
+		"'qwen-audio-3.0-tts-flash-loongolivialin'",
+		"'voice_ivy'",
+		"'qwen-audio-3.0-tts-flash-loongivyhu'",
+	} {
+		if !strings.Contains(up, required) {
+			t.Errorf("expanded voice up migration is missing %q", required)
+		}
+	}
+	down := readMigration(t, "000014_expand_coach_voice_catalog.down.sql")
+	for _, required := range []string{
+		"reviewed_binding_count <> 7",
+		"cannot roll back expanded coach voices: reviewed bindings have changed",
+		"SET voice_option_id = 'voice_ava'",
+		"version = version + 1",
+		"DELETE FROM coach_voice_options",
+	} {
+		if !strings.Contains(down, required) {
+			t.Errorf("expanded voice down migration is missing %q", required)
 		}
 	}
 }

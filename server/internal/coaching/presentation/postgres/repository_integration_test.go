@@ -30,11 +30,17 @@ func TestCatalogReturnsEnabledSeedsWithoutLosingBindings(t *testing.T) {
 	}
 	catalog, err := repository.Catalog(context.Background())
 	if err != nil || !catalog.Valid() || len(catalog.Avatars) != 2 ||
-		len(catalog.Voices) != 2 ||
+		len(catalog.Voices) != 9 ||
 		catalog.DefaultAvatarOptionID != "avatar_lisa" ||
 		catalog.DefaultVoiceOptionID != "voice_ava" ||
 		catalog.Avatars[0].ProviderAvatarID == "" ||
-		catalog.Voices[0].ProviderVoiceID != "loongeva_v3.6" {
+		catalog.Voices[0].ProviderVoiceID != "loongeva_v3.6" ||
+		catalog.Voices[2].ID != "voice_mary" ||
+		catalog.Voices[2].Locale != "en-GB" ||
+		catalog.Voices[2].ProviderVoiceID != "loongmary" ||
+		catalog.Voices[8].ID != "voice_ivy" ||
+		catalog.Voices[8].ProviderVoiceID !=
+			"qwen-audio-3.0-tts-flash-loongivyhu" {
 		t.Fatalf("catalog=%#v err=%v", catalog, err)
 	}
 }
@@ -212,6 +218,8 @@ func presentationTestDatabase(t *testing.T) *pgxpool.Pool {
 		"000001_clean_baseline.up.sql",
 		"000010_coach_presentation_preferences.up.sql",
 		"000011_coach_presentation_runtime.up.sql",
+		"000013_lisa_avatar_asset.up.sql",
+		"000014_expand_coach_voice_catalog.up.sql",
 	} {
 		migration, err := migrations.Files.ReadFile(name)
 		if err != nil {
