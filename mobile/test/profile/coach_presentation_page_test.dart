@@ -65,8 +65,15 @@ void main() {
       find.byKey(const Key('coach-selected-voice-gaze')),
     );
     expect(selectedVoiceAvatar.voiceId, 'voice_ivy');
-    expect(selectedVoiceAvatar.gender, 'female');
-    expect(selectedVoiceAvatar.bodyColor, CoachVoiceGazeAvatar.femaleBodyColor);
+    expect(
+      CoachVoiceGazeAvatar.bodyColors,
+      contains(selectedVoiceAvatar.bodyColor),
+    );
+    final selectedVoiceGender = tester.widget<CoachVoiceGenderIcon>(
+      find.byKey(const Key('coach-selected-voice-gender')),
+    );
+    expect(selectedVoiceGender.gender, 'female');
+    expect(selectedVoiceGender.icon, Icons.female_rounded);
     expect(find.byKey(const Key('coach-presentation-save')), findsNothing);
   });
 

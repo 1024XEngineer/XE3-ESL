@@ -9,27 +9,28 @@ import 'package:flutter/material.dart';
 class CoachVoiceGazeAvatar extends StatelessWidget {
   const CoachVoiceGazeAvatar({
     required this.voiceId,
-    required this.gender,
     this.size = 48,
     super.key,
-  }) : assert(gender == 'female' || gender == 'male');
+  });
 
-  static const femaleBodyColor = Color(0xFFEA7FA8);
-  static const femaleBackgroundColor = Color(0xFFFDECF3);
-  static const maleBodyColor = Color(0xFF5B8DEF);
-  static const maleBackgroundColor = Color(0xFFEAF2FF);
+  static const bodyColors = <Color>[
+    Color(0xFFFBABAF),
+    Color(0xFFFBB271),
+    Color(0xFF9BD78D),
+    Color(0xFF52DCD8),
+    Color(0xFF9CC8FB),
+    Color(0xFFD8B1FB),
+  ];
   static const inkColor = Color(0xFF182230);
 
   final String voiceId;
-  final String gender;
   final double size;
 
-  Color get bodyColor => gender == 'male' ? maleBodyColor : femaleBodyColor;
-
-  Color get backgroundColor =>
-      gender == 'male' ? maleBackgroundColor : femaleBackgroundColor;
-
   GazeVariant get variant => GazeVariant.fromVoiceId(voiceId);
+
+  Color get bodyColor => bodyColors[variant.colorIndex];
+
+  Color get backgroundColor => bodyColor.withValues(alpha: 0.18);
 
   @override
   Widget build(BuildContext context) {
@@ -54,6 +55,27 @@ class CoachVoiceGazeAvatar extends StatelessWidget {
       ),
     );
   }
+}
+
+class CoachVoiceGenderIcon extends StatelessWidget {
+  const CoachVoiceGenderIcon({required this.gender, this.size = 18, super.key})
+    : assert(gender == 'female' || gender == 'male');
+
+  static const femaleColor = Color(0xFFE96F9D);
+  static const maleColor = Color(0xFF4C8DFF);
+
+  final String gender;
+  final double size;
+
+  IconData get icon =>
+      gender == 'male' ? Icons.male_rounded : Icons.female_rounded;
+
+  Color get color => gender == 'male' ? maleColor : femaleColor;
+
+  @override
+  Widget build(BuildContext context) => ExcludeSemantics(
+    child: Icon(icon, size: size, color: color),
+  );
 }
 
 enum GazeShape {
@@ -92,6 +114,7 @@ final class GazeVariant {
     required this.shape,
     required this.eyes,
     required this.spacing,
+    required this.colorIndex,
     required this.rotation,
     required this.scale,
   });
@@ -106,6 +129,7 @@ final class GazeVariant {
           GazeSpacing.values[(hash ~/
                   (GazeShape.values.length * GazeEyes.values.length)) %
               GazeSpacing.values.length],
+      colorIndex: (hash ~/ 605) % CoachVoiceGazeAvatar.bodyColors.length,
       rotation: ((hash ~/ 605) % 13) - 6,
       scale: 0.96 + ((hash ~/ 7865) % 7) / 100,
     );
@@ -114,6 +138,7 @@ final class GazeVariant {
   final GazeShape shape;
   final GazeEyes eyes;
   final GazeSpacing spacing;
+  final int colorIndex;
   final int rotation;
   final double scale;
 
@@ -126,11 +151,13 @@ final class GazeVariant {
           shape == other.shape &&
           eyes == other.eyes &&
           spacing == other.spacing &&
+          colorIndex == other.colorIndex &&
           rotation == other.rotation &&
           scale == other.scale;
 
   @override
-  int get hashCode => Object.hash(shape, eyes, spacing, rotation, scale);
+  int get hashCode =>
+      Object.hash(shape, eyes, spacing, colorIndex, rotation, scale);
 }
 
 int _stableHash(String value) {

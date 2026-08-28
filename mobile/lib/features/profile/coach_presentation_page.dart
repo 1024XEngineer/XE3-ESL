@@ -517,12 +517,24 @@ class _VoiceSelectionEntry extends StatelessWidget {
         leading: CoachVoiceGazeAvatar(
           key: const Key('coach-selected-voice-gaze'),
           voiceId: option.id,
-          gender: option.gender,
           size: 36,
         ),
-        title: Text(
-          option.name,
-          style: SpeakUpDesign.cardTitle.copyWith(fontWeight: FontWeight.w600),
+        title: Row(
+          children: [
+            Flexible(
+              child: Text(
+                option.name,
+                style: SpeakUpDesign.cardTitle.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            const SizedBox(width: SpeakUpDesign.space4),
+            CoachVoiceGenderIcon(
+              key: const Key('coach-selected-voice-gender'),
+              gender: option.gender,
+            ),
+          ],
         ),
         trailing: const Icon(
           Icons.chevron_right_rounded,

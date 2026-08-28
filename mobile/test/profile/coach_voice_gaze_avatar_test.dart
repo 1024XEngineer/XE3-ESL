@@ -18,13 +18,14 @@ void main() {
         shape: GazeShape.arch,
         eyes: GazeEyes.wide,
         spacing: GazeSpacing.snug,
+        colorIndex: 5,
         rotation: -3,
         scale: 0.97,
       ),
     );
   });
 
-  testWidgets('voice list renders distinct gender-colored Gaze icons', (
+  testWidgets('voice list renders Gaze colors and explicit gender icons', (
     tester,
   ) async {
     final options = previewCoachPresentationCatalog.voices
@@ -57,27 +58,38 @@ void main() {
       avatars.map((avatar) => avatar.variant.signature).toSet(),
       hasLength(options.length),
     );
+    expect(
+      avatars.every(
+        (avatar) => CoachVoiceGazeAvatar.bodyColors.contains(avatar.bodyColor),
+      ),
+      isTrue,
+    );
 
-    final maleAvatars = avatars.where((avatar) => avatar.gender == 'male');
-    final femaleAvatars = avatars.where((avatar) => avatar.gender == 'female');
-    expect(maleAvatars, isNotEmpty);
-    expect(femaleAvatars, isNotEmpty);
+    final genderIcons = tester
+        .widgetList<CoachVoiceGenderIcon>(find.byType(CoachVoiceGenderIcon))
+        .toList(growable: false);
+    expect(genderIcons, hasLength(options.length));
     expect(
-      maleAvatars.every(
-        (avatar) =>
-            avatar.bodyColor == CoachVoiceGazeAvatar.maleBodyColor &&
-            avatar.backgroundColor == CoachVoiceGazeAvatar.maleBackgroundColor,
-      ),
+      genderIcons
+          .where((icon) => icon.gender == 'male')
+          .every(
+            (icon) =>
+                icon.icon == Icons.male_rounded &&
+                icon.color == CoachVoiceGenderIcon.maleColor,
+          ),
       isTrue,
     );
     expect(
-      femaleAvatars.every(
-        (avatar) =>
-            avatar.bodyColor == CoachVoiceGazeAvatar.femaleBodyColor &&
-            avatar.backgroundColor ==
-                CoachVoiceGazeAvatar.femaleBackgroundColor,
-      ),
+      genderIcons
+          .where((icon) => icon.gender == 'female')
+          .every(
+            (icon) =>
+                icon.icon == Icons.female_rounded &&
+                icon.color == CoachVoiceGenderIcon.femaleColor,
+          ),
       isTrue,
     );
+    expect(genderIcons.where((icon) => icon.gender == 'male'), isNotEmpty);
+    expect(genderIcons.where((icon) => icon.gender == 'female'), isNotEmpty);
   });
 }

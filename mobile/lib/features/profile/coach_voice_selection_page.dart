@@ -132,9 +132,17 @@ class _VoiceOptionRow extends StatelessWidget {
       leading: CoachVoiceGazeAvatar(
         key: Key('coach-voice-gaze-${option.id}'),
         voiceId: option.id,
-        gender: option.gender,
       ),
-      title: Text(option.name, style: SpeakUpDesign.cardTitle),
+      title: Row(
+        children: [
+          Flexible(child: Text(option.name, style: SpeakUpDesign.cardTitle)),
+          const SizedBox(width: SpeakUpDesign.space4),
+          CoachVoiceGenderIcon(
+            key: Key('coach-voice-gender-${option.id}'),
+            gender: option.gender,
+          ),
+        ],
+      ),
       subtitle: Text(
         option.description,
         style: SpeakUpDesign.body.copyWith(fontSize: 13),
