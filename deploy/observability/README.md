@@ -66,7 +66,7 @@ This follows Grafana's recommendation to use a dedicated database user with
 only `SELECT` on the necessary views and PostgreSQL's separate `USAGE`/`SELECT`
 privilege model. The PostgreSQL plugin process resolves its standard password
 file from the Grafana OS user's home, so Compose mounts the single scoped secret
-read-only at `/home/grafana/.pgpass`. The private-file validator enforces host
+read-only at `/usr/share/grafana/.pgpass`. The private-file validator enforces host
 UID `472` and mode `0600`, which the file-backed secret bind preserves. This
 does not rely on a `PGPASSFILE` environment variable crossing the plugin process
 boundary, and it does not persist the database password in Grafana
