@@ -35,9 +35,9 @@ func TestInsufficientProviderReportClearsScoresAndPriorityActions(t *testing.T) 
 	generated := mustProviderResult(t, providerReport{
 		ScoreabilityStatus: report.ReportScoreabilityInsufficient,
 		Summary:            "The available evidence is insufficient.",
-		Dimensions: []providerDimension{
+		Dimensions: providerDimensions(
 			providerDimensionFixture("FLUENCY_COHERENCE", &score),
-		},
+		),
 		PriorityActions: []providerPriorityAction{{
 			DimensionKey: "UNKNOWN", ImprovementIndex: 99,
 		}},
@@ -61,6 +61,29 @@ func TestInsufficientProviderReportClearsScoresAndPriorityActions(t *testing.T) 
 	}
 }
 
+func TestProviderReportRejectsDimensionKeyInWrongStructuralSlot(t *testing.T) {
+	score := 7.0
+	snapshot := sessionSnapshotFixture()
+	_, err := normalizeProviderReport(
+		mustProviderResult(t, providerReport{
+			ScoreabilityStatus: report.ReportScoreabilityProvisional,
+			Summary:            "Provisional report.",
+			Dimensions: map[string]providerDimension{
+				"dimension_1": providerDimensionFixture("LEXICAL_RESOURCE", &score),
+				"dimension_2": providerDimensionFixture("LEXICAL_RESOURCE", &score),
+			},
+			PriorityActions: []providerPriorityAction{},
+		}),
+		snapshot, evaluation.SceneIELTSSpeaking,
+		[]string{"FLUENCY_COHERENCE", "LEXICAL_RESOURCE"}, report.ReportScaleIELTSBand,
+		"qianwen", "qwen-plus", fullRawProviderEvidencePolicy(snapshot),
+	)
+	if !errors.Is(err, ErrProviderResponse) ||
+		normalizeReasonFromError(err) != normalizeReasonDimensionOrderInvalid {
+		t.Fatalf("wrong structural slot error = %v, reason = %q", err, normalizeReasonFromError(err))
+	}
+}
+
 func TestInsufficientProviderReportDoesNotFabricateInvalidEvidence(t *testing.T) {
 	score := 7.0
 	snapshot := sessionSnapshotFixture()
@@ -75,7 +98,7 @@ func TestInsufficientProviderReportDoesNotFabricateInvalidEvidence(t *testing.T)
 	_, err := normalizeProviderReport(
 		mustProviderResult(t, providerReport{
 			ScoreabilityStatus: report.ReportScoreabilityInsufficient,
-			Summary:            "The available evidence is insufficient.", Dimensions: []providerDimension{dimension},
+			Summary:            "The available evidence is insufficient.", Dimensions: providerDimensions(dimension),
 			PriorityActions: []providerPriorityAction{},
 		}),
 		snapshot, evaluation.SceneIELTSSpeaking,
@@ -101,9 +124,9 @@ func TestProvisionalProviderReportRemainsFailClosed(t *testing.T) {
 				return providerReport{
 					ScoreabilityStatus: report.ReportScoreabilityProvisional,
 					Summary:            "Provisional report.",
-					Dimensions: []providerDimension{
+					Dimensions: providerDimensions(
 						providerDimensionFixture("FLUENCY_COHERENCE", &score),
-					},
+					),
 					PriorityActions: []providerPriorityAction{},
 				}
 			}(),
@@ -116,9 +139,9 @@ func TestProvisionalProviderReportRemainsFailClosed(t *testing.T) {
 				return providerReport{
 					ScoreabilityStatus: report.ReportScoreabilityProvisional,
 					Summary:            "Provisional report.",
-					Dimensions: []providerDimension{
+					Dimensions: providerDimensions(
 						providerDimensionFixture("FLUENCY_COHERENCE", &score),
-					},
+					),
 					PriorityActions: []providerPriorityAction{{
 						DimensionKey: "FLUENCY_COHERENCE", ImprovementIndex: 1,
 					}},
@@ -273,21 +296,23 @@ func TestIELTSEvaluatorUsesCumulativeProfileAndOnlyPart3RawEvidence(t *testing.T
 	); err != nil {
 		t.Fatalf("EvaluateIELTS() error = %v", err)
 	}
-	var payload resolvedIELTSProviderInputV4
+	var payload resolvedIELTSProviderInputV5
 	if err := evaluation.DecodeStrict(
 		json.RawMessage(generator.last.UserPrompt), &payload,
 	); err != nil {
-		t.Fatalf("decode resolved v4 payload: %v: %s", err, generator.last.UserPrompt)
+		t.Fatalf("decode resolved v5 payload: %v: %s", err, generator.last.UserPrompt)
 	}
-	if lineages.IELTS.PromptVersion != ieltsPromptVersionV4 ||
+	if lineages.IELTS.PromptVersion != ieltsPromptVersionV5 ||
 		payload.SchemaVersion != ieltsInputSchemaVersionV4 ||
 		payload.EvidenceMode != ieltsInputCumulativeParts12PlusPart3 ||
+		payload.EvaluatedParticipantRole != "LEARNER" ||
+		!payload.EffectiveTurnsAreConfirmedEvaluatedResponses ||
 		len(payload.CumulativeProfile.CompletedParts) != 2 ||
 		len(payload.Questions) != 1 || len(payload.Turns) != 1 ||
 		payload.Turns[0].Transcript != "PART_THREE_RAW_TRANSCRIPT" ||
 		strings.Contains(generator.last.UserPrompt, "PART_ONE_HIDDEN_RAW") ||
 		strings.Contains(generator.last.UserPrompt, "PART_TWO_RAW_TRANSCRIPT") {
-		t.Fatalf("resolved v4 payload = %#v: %s", payload, generator.last.UserPrompt)
+		t.Fatalf("resolved v5 payload = %#v: %s", payload, generator.last.UserPrompt)
 	}
 }
 
@@ -443,20 +468,22 @@ func TestIELTSEvaluatorUsesTaggedFullRawFallbackPayload(t *testing.T) {
 	); err != nil {
 		t.Fatalf("EvaluateIELTS() error = %v", err)
 	}
-	var payload fallbackIELTSProviderInputV4
+	var payload fallbackIELTSProviderInputV5
 	if err := evaluation.DecodeStrict(
 		json.RawMessage(generator.last.UserPrompt), &payload,
 	); err != nil {
-		t.Fatalf("decode fallback v4 payload: %v: %s", err, generator.last.UserPrompt)
+		t.Fatalf("decode fallback v5 payload: %v: %s", err, generator.last.UserPrompt)
 	}
 	if payload.SchemaVersion != ieltsInputSchemaVersionV4 ||
 		payload.EvidenceMode != ieltsInputFullRawFallback ||
-		len(payload.Questions) != 2 || len(payload.Turns) != 1 ||
+		payload.EvaluatedParticipantRole != "LEARNER" ||
+		!payload.EffectiveTurnsAreConfirmedEvaluatedResponses ||
+		len(payload.Questions) != 1 || len(payload.Turns) != 1 ||
 		payload.Turns[0].Transcript != snapshot.Turns[0].Transcript ||
 		strings.Contains(generator.last.UserPrompt, "INEFFECTIVE_RAW_TRANSCRIPT") ||
 		strings.Contains(generator.last.UserPrompt, `"cumulative_profile"`) ||
 		strings.Contains(generator.last.UserPrompt, `"part_3_effective_turns"`) {
-		t.Fatalf("fallback v4 payload = %#v: %s", payload, generator.last.UserPrompt)
+		t.Fatalf("fallback v5 payload = %#v: %s", payload, generator.last.UserPrompt)
 	}
 }
 
@@ -690,15 +717,263 @@ func TestGeneralEvaluatorRejectsPolicyCategoryMismatch(t *testing.T) {
 	}
 }
 
+func TestGeneralEvaluatorPassesExactReportContract(t *testing.T) {
+	generator := &reportGeneratorFake{}
+	evaluators, err := New(generator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lineages, err := Lineages("qianwen", "qwen-plus")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := sessionSnapshotFixture()
+	snapshot.EvaluationPolicyRef = evaluation.WorkplaceEvaluationPolicyRef
+	snapshot.PracticeExperience = "WORKPLACE"
+	snapshot.SceneCategory = "WORKPLACE_GENERAL"
+	snapshot.PracticeMode = "GUIDED"
+	if _, err := evaluators.EvaluateGeneral(
+		context.Background(), evaluation.Record{}, snapshot, lineages.General,
+	); err != nil {
+		t.Fatalf("EvaluateGeneral() error = %v", err)
+	}
+	want := []string{
+		"TASK_ACHIEVEMENT", "CLARITY_COHERENCE", "LANGUAGE_CONTROL", "INTERACTION",
+	}
+	if !slices.Equal(generator.last.Report.DimensionKeys, want) ||
+		generator.last.Report.ScoreMaximum != 100 {
+		t.Fatalf("report contract = %#v", generator.last.Report)
+	}
+	var input providerInputV3
+	if err := json.Unmarshal([]byte(generator.last.UserPrompt), &input); err != nil {
+		t.Fatal(err)
+	}
+	if input.EvaluatedParticipantRole != "LEARNER" ||
+		!input.EffectiveTurnsAreConfirmedEvaluatedResponses {
+		t.Fatalf("learner evidence semantics = %#v", input)
+	}
+	for _, requirement := range []string{
+		"confirmed response by the LEARNER being evaluated",
+		"never use question speaker metadata to reassign response authorship",
+	} {
+		if !strings.Contains(generator.last.SystemPrompt, requirement) {
+			t.Fatalf("system prompt omitted learner evidence rule %q", requirement)
+		}
+	}
+}
+
+func TestGeneralV3ProjectsAnsweredQuestionsButReportKeepsPending(t *testing.T) {
+	generator := &reportGeneratorFake{}
+	evaluators, err := New(generator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lineages, err := Lineages("qianwen", "qwen-plus")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := generalSnapshotFixture()
+	appendPendingQuestions(&snapshot, 5)
+
+	encoded, err := evaluators.EvaluateGeneral(
+		context.Background(), evaluation.Record{}, snapshot, lineages.General,
+	)
+	if err != nil {
+		t.Fatalf("EvaluateGeneral() error = %v", err)
+	}
+	assertJSONKeys(t, generator.last.UserPrompt, []string{
+		"evaluated_participant_role",
+		"effective_turns_are_confirmed_evaluated_responses",
+		"confirmed_learner_response_count",
+		"scene_type", "practice_mode", "dimension_keys", "questions", "effective_turns",
+	})
+	var input providerInputV3
+	if err := evaluation.DecodeStrict(json.RawMessage(generator.last.UserPrompt), &input); err != nil {
+		t.Fatal(err)
+	}
+	if len(input.Questions) != 1 || input.Questions[0].ID != snapshot.Turns[0].QuestionID {
+		t.Fatalf("provider questions = %#v", input.Questions)
+	}
+	if input.ConfirmedLearnerResponseCount != 1 {
+		t.Fatalf("confirmed learner response count = %d, want 1", input.ConfirmedLearnerResponseCount)
+	}
+
+	var formal report.FormalReport
+	if err := evaluation.DecodeStrict(encoded, &formal); err != nil {
+		t.Fatal(err)
+	}
+	if len(formal.Questions) != 5 || formal.Questions[4].Text != snapshot.Questions[4].Text ||
+		formal.Questions[4].Answer != nil {
+		t.Fatalf("report questions = %#v", formal.Questions)
+	}
+}
+
+func TestInterviewV2AndV3ProviderInputContracts(t *testing.T) {
+	evaluators, err := New(&reportGeneratorFake{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lineages, err := Lineages("qianwen", "qwen-plus")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := interviewSnapshotFixture()
+	appendPendingQuestions(&snapshot, 2)
+	tests := []struct {
+		name          string
+		version       string
+		wantKeys      []string
+		wantQuestions int
+	}{
+		{
+			name: "v2 preserves historical input", version: interviewPromptVersionV2,
+			wantKeys:      []string{"scene_type", "practice_mode", "dimension_keys", "questions", "effective_turns"},
+			wantQuestions: 2,
+		},
+		{
+			name: "v3 adds learner semantics and projects answered questions", version: interviewPromptVersionV3,
+			wantKeys: []string{
+				"evaluated_participant_role", "effective_turns_are_confirmed_evaluated_responses",
+				"confirmed_learner_response_count",
+				"scene_type", "practice_mode", "dimension_keys", "questions", "effective_turns",
+			},
+			wantQuestions: 1,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			generator := &reportGeneratorFake{}
+			evaluators.interview.generator = generator
+			lineage := lineages.Interview
+			lineage.PromptVersion = test.version
+			if _, err := evaluators.EvaluateInterview(
+				context.Background(), evaluation.Record{}, snapshot, lineage,
+			); err != nil {
+				t.Fatalf("EvaluateInterview() error = %v", err)
+			}
+			assertJSONKeys(t, generator.last.UserPrompt, test.wantKeys)
+			var input struct {
+				Questions []evaluation.SessionEvidenceQuestion `json:"questions"`
+			}
+			if err := json.Unmarshal([]byte(generator.last.UserPrompt), &input); err != nil {
+				t.Fatal(err)
+			}
+			if len(input.Questions) != test.wantQuestions {
+				t.Fatalf("provider question count = %d, want %d", len(input.Questions), test.wantQuestions)
+			}
+		})
+	}
+}
+
+func TestIELTSProviderInputKeysAndQuestionProjectionByRecordedVersion(t *testing.T) {
+	lineages, err := Lineages("qianwen", "qwen-plus")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldRawKeys := []string{
+		"scene_type", "practice_mode", "dimension_keys", "questions", "effective_turns",
+	}
+	currentRawKeys := []string{
+		"evaluated_participant_role", "effective_turns_are_confirmed_evaluated_responses",
+		"confirmed_learner_response_count",
+		"schema_version", "evidence_mode", "scene_type", "practice_mode", "dimension_keys",
+		"questions", "effective_turns",
+	}
+	v4FallbackKeys := []string{
+		"schema_version", "evidence_mode", "scene_type", "practice_mode", "dimension_keys",
+		"questions", "effective_turns",
+	}
+	oldIncrementalKeys := []string{
+		"scene_type", "practice_mode", "dimension_keys", "cumulative_profile",
+		"part_3_questions", "part_3_effective_turns",
+	}
+	v4ResolvedKeys := []string{
+		"schema_version", "evidence_mode", "scene_type", "practice_mode", "dimension_keys",
+		"cumulative_profile", "part_3_questions", "part_3_effective_turns",
+	}
+	v5ResolvedKeys := append([]string{
+		"evaluated_participant_role", "effective_turns_are_confirmed_evaluated_responses",
+		"confirmed_learner_response_count",
+	}, v4ResolvedKeys...)
+
+	run := func(
+		t *testing.T,
+		lineage evaluation.ConfigLineage,
+		snapshot evaluation.SessionInputSnapshot,
+		wantKeys []string,
+		questionField string,
+		wantQuestions int,
+	) {
+		t.Helper()
+		generator := &reportGeneratorFake{}
+		evaluators, err := New(generator)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := evaluators.EvaluateIELTS(
+			context.Background(), evaluation.Record{}, snapshot, lineage,
+		); err != nil {
+			t.Fatalf("EvaluateIELTS() error = %v", err)
+		}
+		assertJSONKeys(t, generator.last.UserPrompt, wantKeys)
+		var object map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(generator.last.UserPrompt), &object); err != nil {
+			t.Fatal(err)
+		}
+		var questions []evaluation.SessionEvidenceQuestion
+		if err := json.Unmarshal(object[questionField], &questions); err != nil {
+			t.Fatalf("decode %s: %v", questionField, err)
+		}
+		if len(questions) != wantQuestions {
+			t.Fatalf("%s count = %d, want %d: %s", questionField, len(questions), wantQuestions, generator.last.UserPrompt)
+		}
+	}
+
+	fallback := sessionSnapshotFixture()
+	appendPendingQuestions(&fallback, 2)
+	for _, test := range []struct {
+		name    string
+		lineage evaluation.ConfigLineage
+		keys    []string
+		count   int
+	}{
+		{name: "v1 fallback", lineage: withPromptVersion(lineages.IELTS, ieltsPromptVersionV1), keys: oldRawKeys, count: 2},
+		{name: "IELTS practice v2 fallback", lineage: lineages.IELTSPractice, keys: oldRawKeys, count: 2},
+		{name: "v3 fallback", lineage: withPromptVersion(lineages.IELTS, ieltsPromptVersionV3), keys: oldRawKeys, count: 2},
+		{name: "v4 fallback", lineage: withPromptVersion(lineages.IELTS, ieltsPromptVersionV4), keys: v4FallbackKeys, count: 2},
+		{name: "v5 fallback", lineage: lineages.IELTS, keys: currentRawKeys, count: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			run(t, test.lineage, fallback, test.keys, "questions", test.count)
+		})
+	}
+
+	resolved := resolvedFullMockSnapshot()
+	appendPendingQuestions(&resolved, 4)
+	for _, test := range []struct {
+		name    string
+		lineage evaluation.ConfigLineage
+		keys    []string
+	}{
+		{name: "v3 cumulative", lineage: withPromptVersion(lineages.IELTS, ieltsPromptVersionV3), keys: oldIncrementalKeys},
+		{name: "v4 resolved", lineage: withPromptVersion(lineages.IELTS, ieltsPromptVersionV4), keys: v4ResolvedKeys},
+		{name: "v5 resolved", lineage: lineages.IELTS, keys: v5ResolvedKeys},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			run(t, test.lineage, resolved, test.keys, "part_3_questions", 1)
+		})
+	}
+}
+
 func TestSessionEvaluationPromptsRequireChineseFeedbackAndOriginalEvidence(t *testing.T) {
 	tests := []struct {
 		name    string
 		prompt  string
 		version string
 	}{
-		{name: "interview", prompt: interviewSystemPromptV2, version: interviewPromptVersionV2},
-		{name: "IELTS", prompt: ieltsSystemPromptV4, version: ieltsPromptVersionV4},
-		{name: "general", prompt: generalSystemPromptV2, version: generalPromptVersionV2},
+		{name: "interview", prompt: interviewSystemPromptV3, version: interviewPromptVersionV3},
+		{name: "IELTS", prompt: ieltsSystemPromptV5, version: ieltsPromptVersionV5},
+		{name: "general", prompt: generalSystemPromptV3, version: generalPromptVersionV3},
 	}
 	lineages, err := Lineages("qianwen", "qwen-plus")
 	if err != nil {
@@ -716,6 +991,8 @@ func TestSessionEvaluationPromptsRequireChineseFeedbackAndOriginalEvidence(t *te
 				"suggestions for strengths and improvements in Simplified Chinese",
 				"directly reusable English expression in suggestion",
 				"question, answer, and evidence quote in its original language",
+				"confirmed response by the LEARNER being evaluated",
+				"never use question speaker metadata to reassign response authorship",
 			} {
 				if !strings.Contains(test.prompt, requirement) {
 					t.Fatalf("prompt omitted language requirement %q: %s", requirement, test.prompt)
@@ -894,9 +1171,9 @@ func (generator *repairReportGeneratorFake) Generate(
 		dimensionKeys = repair.Input.DimensionKeys
 	}
 	score := 7.0
-	dimensions := make([]providerDimension, len(dimensionKeys))
+	dimensions := make(map[string]providerDimension, len(dimensionKeys))
 	for index, key := range dimensionKeys {
-		dimensions[index] = providerDimensionFixture(key, &score)
+		dimensions[providerDimensionSlot(index)] = providerDimensionFixture(key, &score)
 	}
 	actions := []providerPriorityAction{}
 	if len(generator.requests) == 1 {
@@ -927,6 +1204,14 @@ func providerDimensionFixture(key string, score *float64) providerDimension {
 	}
 }
 
+func providerDimensions(values ...providerDimension) map[string]providerDimension {
+	dimensions := make(map[string]providerDimension, len(values))
+	for index, value := range values {
+		dimensions[providerDimensionSlot(index)] = value
+	}
+	return dimensions
+}
+
 func mustProviderResult(t *testing.T, value providerReport) textgeneration.Result {
 	t.Helper()
 	content, err := json.Marshal(value)
@@ -951,7 +1236,7 @@ func (generator *reportGeneratorFake) Generate(
 	if err := json.Unmarshal([]byte(request.UserPrompt), &input); err != nil {
 		return textgeneration.Result{}, err
 	}
-	dimensions := make([]map[string]any, len(input.DimensionKeys))
+	dimensions := make(map[string]any, len(input.DimensionKeys))
 	for index, key := range input.DimensionKeys {
 		strengths := []any{}
 		if index == 0 && generator.evidence != nil {
@@ -960,7 +1245,7 @@ func (generator *reportGeneratorFake) Generate(
 				"evidence": []providerEvidence{*generator.evidence},
 			}}
 		}
-		dimensions[index] = map[string]any{
+		dimensions[providerDimensionSlot(index)] = map[string]any{
 			"key": key, "score": 7.0, "coverage": 1.0, "confidence": 0.8,
 			"reason_codes": []string{}, "strengths": strengths,
 			"improvements": []any{}, "recommended_examples": []any{},
@@ -1047,6 +1332,60 @@ func sessionSnapshotFixture() evaluation.SessionInputSnapshot {
 			Transcript:              "I work with a small engineering team.", Effective: true,
 			ConfirmedAt: now,
 		}},
+	}
+}
+
+func generalSnapshotFixture() evaluation.SessionInputSnapshot {
+	snapshot := sessionSnapshotFixture()
+	snapshot.EvaluationPolicyRef = evaluation.WorkplaceEvaluationPolicyRef
+	snapshot.PracticeExperience = "WORKPLACE"
+	snapshot.SceneCategory = "WORKPLACE_GENERAL"
+	snapshot.PracticeMode = "GUIDED"
+	return snapshot
+}
+
+func interviewSnapshotFixture() evaluation.SessionInputSnapshot {
+	snapshot := sessionSnapshotFixture()
+	snapshot.EvaluationPolicyRef = evaluation.InterviewEvaluationPolicyRef
+	snapshot.PracticeExperience = "INTERVIEW"
+	snapshot.SceneCategory = "INTERVIEW_RECRUITER"
+	snapshot.PracticeMode = "FULL_SIMULATION"
+	return snapshot
+}
+
+func appendPendingQuestions(snapshot *evaluation.SessionInputSnapshot, wantCount int) {
+	for position := len(snapshot.Questions) + 1; position <= wantCount; position++ {
+		snapshot.Questions = append(snapshot.Questions, evaluation.SessionEvidenceQuestion{
+			ID:                      fmt.Sprintf("40000000-0000-4000-8000-%012d", position),
+			Position:                position,
+			Text:                    fmt.Sprintf("Pending question %d", position),
+			SpeakerParticipantID:    "assistant-1",
+			AddresseeParticipantIDs: []string{"user-1"},
+		})
+	}
+}
+
+func withPromptVersion(
+	lineage evaluation.ConfigLineage,
+	version string,
+) evaluation.ConfigLineage {
+	lineage.PromptVersion = version
+	return lineage
+}
+
+func assertJSONKeys(t *testing.T, source string, want []string) {
+	t.Helper()
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(source), &object); err != nil {
+		t.Fatal(err)
+	}
+	if len(object) != len(want) {
+		t.Fatalf("JSON keys = %#v, want exactly %#v", object, want)
+	}
+	for _, key := range want {
+		if _, exists := object[key]; !exists {
+			t.Fatalf("JSON keys = %#v, missing %q", object, key)
+		}
 	}
 }
 
