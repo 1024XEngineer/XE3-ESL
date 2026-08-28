@@ -319,7 +319,7 @@ jq --exit-status \
   .services.grafana.environment.OBSERVABILITY_PRODUCT_HEALTH_DATABASE == "speakup" and
   ([.services.grafana.secrets[] |
     select(.source == "product_health_reader_pgpass" and
-      .target == "/home/grafana/.pgpass")
+      .target == "/usr/share/grafana/.pgpass")
   ] | length) == 1 and
   .secrets.product_health_reader_pgpass.file ==
     $product_health_pgpass_file and

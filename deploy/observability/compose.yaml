@@ -85,7 +85,7 @@ services:
     secrets:
       - grafana_admin_password
       - source: product_health_reader_pgpass
-        target: /home/grafana/.pgpass
+        target: /usr/share/grafana/.pgpass
     ports:
       - "127.0.0.1:13000:3000"
     volumes:
