@@ -171,7 +171,7 @@ func TestPracticeVoiceObserverClassifiesCallbackFailureAsCancelled(t *testing.T)
 
 func TestPracticeVoiceStreamingRejectsNonRealtimeModel(t *testing.T) {
 	recognizer := &PracticeVoiceRecognizer{
-		recognizer: &speechRecognizer{model: "qwen-audio-3.0-asr-flash"},
+		recognizer: &speechRecognizer{model: "fun-asr-flash-2026-06-15"},
 	}
 	_, err := recognizer.TranscribeStream(
 		context.Background(),
@@ -187,20 +187,20 @@ func TestPracticeRecordedVoiceRecognizerRequiresFlashModel(t *testing.T) {
 	recorded, err := NewPracticeRecordedVoiceRecognizer(
 		ASRConfig{
 			BaseURL: "https://dashscope.aliyuncs.com/api/v1",
-			Model:   "qwen-audio-3.0-asr-flash",
+			Model:   "fun-asr-flash-2026-06-15",
 			Timeout: time.Second,
 		},
 		"test-key",
 	)
 	if err != nil || recorded == nil || recorded.recognizer == nil ||
-		recorded.recognizer.model != "qwen-audio-3.0-asr-flash" {
+		recorded.recognizer.model != "fun-asr-flash-2026-06-15" {
 		t.Fatalf("recorded recognizer = %#v, %v", recorded, err)
 	}
 
 	_, err = NewPracticeRecordedVoiceRecognizer(
 		ASRConfig{
 			BaseURL: "https://dashscope.aliyuncs.com/api/v1",
-			Model:   "qwen-audio-3.0-asr-flash-streaming",
+			Model:   "fun-asr-realtime",
 			Timeout: time.Second,
 		},
 		"test-key",
