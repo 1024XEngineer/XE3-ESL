@@ -5,6 +5,10 @@ directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 temporary_directory="$(mktemp -d)"
 trap 'rm -rf "$temporary_directory"' EXIT
 
+readonly ghcr_repository='ghcr.io/1024xengineer/xe3-esl-server'
+readonly acr_repository='crpi-uzndbvgv3nza56mp.cn-beijing.personal.cr.aliyuncs.com/speakup/xe3-esl-server'
+readonly server_digest='sha256:77718703587e0ad027c7b4d15856dbddfb40554946a935de26dc4ac6500428c5'
+
 bash -n "$directory/smoke-current-providers.sh"
 bash -n "$directory/observability/export-host-metrics.sh"
 bash -n "$directory/backup/xe3-speakup-cn-experiment-postgres-backup"
@@ -22,49 +26,78 @@ printf '%s\n' 'TEXT_GENERATION_PROVIDER=test-fixture' >"$server_env"
 
 write_runtime() {
   local password="$1"
+  local repository="$2"
+  local digest="$3"
   printf '%s\n' \
-    'SERVER_IMAGE_DIGEST=sha256:77718703587e0ad027c7b4d15856dbddfb40554946a935de26dc4ac6500428c5' \
+    "SERVER_IMAGE_REPOSITORY=$repository" \
+    "SERVER_IMAGE_DIGEST=$digest" \
     'EXPERIMENT_POSTGRES_DB=speakup_cn_experiment' \
     'EXPERIMENT_POSTGRES_USER=speakup_cn_experiment' \
     "EXPERIMENT_POSTGRES_PASSWORD=$password" \
     "EXPERIMENT_SERVER_ENV_FILE=$server_env" >"$runtime_env"
 }
 
-write_runtime '0123456789abcdef_ABCDEF-'
+write_runtime '0123456789abcdef_ABCDEF-' "$ghcr_repository" "$server_digest"
 "$directory/validate-runtime.sh" "$runtime_env" >/dev/null
 
-write_runtime 'contains-url-unsafe-@-delimiter'
+write_runtime '0123456789abcdef_ABCDEF-' "$acr_repository" "$server_digest"
+"$directory/validate-runtime.sh" "$runtime_env" >/dev/null
+
+write_runtime '0123456789abcdef_ABCDEF-' "$acr_repository" "$server_digest"
+awk '$0 !~ /^SERVER_IMAGE_REPOSITORY=/' "$runtime_env" >"$runtime_env.missing"
+mv "$runtime_env.missing" "$runtime_env"
+if "$directory/validate-runtime.sh" "$runtime_env" >/dev/null 2>&1; then
+  printf 'validator accepted a missing Server repository\n' >&2
+  exit 1
+fi
+
+write_runtime '0123456789abcdef_ABCDEF-' \
+  'registry.example.com/speakup/xe3-esl-server' "$server_digest"
+if "$directory/validate-runtime.sh" "$runtime_env" >/dev/null 2>&1; then
+  printf 'validator accepted an unapproved Server repository\n' >&2
+  exit 1
+fi
+
+write_runtime '0123456789abcdef_ABCDEF-' "$acr_repository" 'v0.1.9'
+if "$directory/validate-runtime.sh" "$runtime_env" >/dev/null 2>&1; then
+  printf 'validator accepted a Server image tag instead of a digest\n' >&2
+  exit 1
+fi
+
+write_runtime 'contains-url-unsafe-@-delimiter' "$ghcr_repository" "$server_digest"
 if "$directory/validate-runtime.sh" "$runtime_env" >/dev/null 2>&1; then
   printf 'validator accepted a URL-unsafe password\n' >&2
   exit 1
 fi
 
-write_runtime 'too-short'
+write_runtime 'too-short' "$ghcr_repository" "$server_digest"
 if "$directory/validate-runtime.sh" "$runtime_env" >/dev/null 2>&1; then
   printf 'validator accepted a short password\n' >&2
   exit 1
 fi
 
-write_runtime 'replace-with-at-least-24-url-safe-characters'
+write_runtime 'replace-with-at-least-24-url-safe-characters' \
+  "$ghcr_repository" "$server_digest"
 if "$directory/validate-runtime.sh" "$runtime_env" >/dev/null 2>&1; then
   printf 'validator accepted the documented placeholder password\n' >&2
   exit 1
 fi
 
 printf '%s\n' 'DATABASE_URL=postgres://forbidden' >>"$server_env"
-write_runtime '0123456789abcdef_ABCDEF-'
+write_runtime '0123456789abcdef_ABCDEF-' "$ghcr_repository" "$server_digest"
 if "$directory/validate-runtime.sh" "$runtime_env" >/dev/null 2>&1; then
   printf 'validator accepted a Compose-owned server key\n' >&2
   exit 1
 fi
 
 printf '%s\n' 'TEXT_GENERATION_PROVIDER=test-fixture' >"$server_env"
-write_runtime '0123456789abcdef_ABCDEF-'
+write_runtime '0123456789abcdef_ABCDEF-' "$acr_repository" "$server_digest"
 rendered="$temporary_directory/rendered.json"
 docker compose \
   --env-file "$runtime_env" \
   --file "$directory/compose.yaml" \
   --file "$directory/compose.observability.yaml" \
+  --profile migration \
   config --format json >"$rendered"
 
 jq --exit-status '
@@ -74,6 +107,9 @@ jq --exit-status '
   .services.postgres.cpus == 1 and
   .services.postgres.pids_limit == 128 and
   .services.server.mem_limit == "3221225472" and
+  .services.server.image ==
+    "crpi-uzndbvgv3nza56mp.cn-beijing.personal.cr.aliyuncs.com/speakup/xe3-esl-server@sha256:77718703587e0ad027c7b4d15856dbddfb40554946a935de26dc4ac6500428c5" and
+  .services.migrate.image == .services.server.image and
   .services.server.cpus == 2 and
   .services.server.pids_limit == 256 and
   .services.server.environment.METRICS_HOST == "0.0.0.0" and

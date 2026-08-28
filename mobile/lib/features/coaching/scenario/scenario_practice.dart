@@ -11,6 +11,7 @@ import 'package:speakup/features/coaching/practice/question_tip_sheet.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_message_bubble.dart';
 import 'package:speakup/features/coaching/practice/practice_completion_sheet.dart';
+import 'package:speakup/features/coaching/practice/practice_conversation_scroll.dart';
 import 'package:speakup/features/coaching/practice/practice_stage.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
@@ -365,23 +366,11 @@ class _ScenarioPracticePageState extends State<ScenarioPracticePage> {
   }
 
   void _scheduleConversationScrollToBottom({bool animated = true}) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_conversationScrollController.hasClients) {
-        return;
-      }
-      final target = _conversationScrollController.position.maxScrollExtent;
-      if (!animated) {
-        _conversationScrollController.jumpTo(target);
-        return;
-      }
-      unawaited(
-        _conversationScrollController.animateTo(
-          target,
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOutCubic,
-        ),
-      );
-    });
+    schedulePracticeConversationScrollToBottom(
+      controller: _conversationScrollController,
+      isMounted: () => mounted,
+      animated: animated,
+    );
   }
 
   void _syncSpeechFeedbackSources() {

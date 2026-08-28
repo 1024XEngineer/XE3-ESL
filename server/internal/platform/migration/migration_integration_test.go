@@ -40,6 +40,8 @@ var cleanBaselineTables = []string{
 	"agent_threads",
 	"agent_voice_drafts",
 	"auth_sessions",
+	"coach_avatar_options",
+	"coach_voice_options",
 	"coaching_user_profiles",
 	"credentials",
 	"evaluation_feedback_items",
@@ -51,6 +53,7 @@ var cleanBaselineTables = []string{
 	"practice_questions",
 	"practice_sessions",
 	"practice_turns",
+	"user_coach_presentation_preferences",
 	"users",
 }
 
@@ -74,51 +77,87 @@ func TestMigrationHistoryFreshUpDownUp(t *testing.T) {
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
-		t.Fatalf("DownOne to v8 Product health views = %t, %v", changed, err)
+		t.Fatalf("DownOne to v14 expanded voice catalog = %t, %v", changed, err)
 	}
 	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables))
+
+	changed, err = runner.DownOne()
+	if err != nil || !changed {
+		t.Fatalf("DownOne to v13 Lisa avatar asset = %t, %v", changed, err)
+	}
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables))
+
+	changed, err = runner.DownOne()
+	if err != nil || !changed {
+		t.Fatalf("DownOne to v12 qualified model IDs = %t, %v", changed, err)
+	}
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables))
+
+	changed, err = runner.DownOne()
+	if err != nil || !changed {
+		t.Fatalf("DownOne to v11 presentation runtime = %t, %v", changed, err)
+	}
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables))
+
+	changed, err = runner.DownOne()
+	if err != nil || !changed {
+		t.Fatalf("DownOne to v10 presentation preferences = %t, %v", changed, err)
+	}
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables))
+
+	changed, err = runner.DownOne()
+	if err != nil || !changed {
+		t.Fatalf("DownOne to v9 IELTS profiles = %t, %v", changed, err)
+	}
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-3)
+
+	changed, err = runner.DownOne()
+	if err != nil || !changed {
+		t.Fatalf("DownOne to v8 Product health views = %t, %v", changed, err)
+	}
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-3)
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
 		t.Fatalf("DownOne to v7 Pending Practice actions = %t, %v", changed, err)
 	}
-	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables))
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-3)
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
 		t.Fatalf("DownOne to v6 User profile avatar = %t, %v", changed, err)
 	}
-	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-1)
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-4)
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
 		t.Fatalf("DownOne to v5 Scene selection source = %t, %v", changed, err)
 	}
-	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-1)
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-4)
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
 		t.Fatalf("DownOne to v4 Question Tip translation = %t, %v", changed, err)
 	}
-	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-1)
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-4)
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
 		t.Fatalf("DownOne to v3 Practice Plan archive = %t, %v", changed, err)
 	}
-	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-1)
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-4)
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
 		t.Fatalf("DownOne to v2 Agent domain completion = %t, %v", changed, err)
 	}
-	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-1)
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-4)
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
 		t.Fatalf("DownOne to v1 baseline = %t, %v", changed, err)
 	}
-	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-1)
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables)-4)
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
@@ -133,6 +172,330 @@ func TestMigrationHistoryFreshUpDownUp(t *testing.T) {
 	assertCleanBaselineSchema(t, admin, schema)
 }
 
+func TestLisaAvatarAssetMigrationUpdatesBindingAndPreservesPreference(t *testing.T) {
+	config, _, _ := isolatedMigrationConfig(t)
+	runner, err := openConfig(config)
+	if err != nil {
+		t.Fatalf("open migration runner: %v", err)
+	}
+	t.Cleanup(func() { _ = runner.Close() })
+	if changed, upErr := runner.Up(); upErr != nil || !changed {
+		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+
+	database, err := pgx.ConnectConfig(context.Background(), config)
+	if err != nil {
+		t.Fatalf("connect Lisa avatar migration database: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close(context.Background()) })
+
+	assertAvatarBinding := func(optionID, avatarID string, bindingVersion int64) {
+		t.Helper()
+		var actualAvatarID string
+		var actualBindingVersion int64
+		if err := database.QueryRow(context.Background(), `
+SELECT provider_avatar_id, binding_version
+FROM coach_avatar_options
+WHERE id = $1
+`, optionID).Scan(&actualAvatarID, &actualBindingVersion); err != nil {
+			t.Fatalf("read %s avatar binding: %v", optionID, err)
+		}
+		if actualAvatarID != avatarID || actualBindingVersion != bindingVersion {
+			t.Fatalf(
+				"%s binding = %q v%d, want %q v%d",
+				optionID,
+				actualAvatarID,
+				actualBindingVersion,
+				avatarID,
+				bindingVersion,
+			)
+		}
+	}
+
+	assertAvatarBinding(
+		"avatar_lisa",
+		"ca9c5c22-6dba-4b59-ae3b-d26066f8c017",
+		2,
+	)
+	assertAvatarBinding(
+		"avatar_nathan",
+		"1843ff9f-db3a-45de-be28-9c2b9d6412a3",
+		1,
+	)
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v14 expanded voice catalog = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v13 Lisa avatar asset = %t, %v", changed, downErr)
+	}
+	assertAvatarBinding(
+		"avatar_lisa",
+		"ca9c5c22-6dba-4b59-ae3b-d26066f8c017",
+		2,
+	)
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v12 qualified model IDs = %t, %v", changed, downErr)
+	}
+	assertAvatarBinding(
+		"avatar_lisa",
+		"94a60c13-e835-4bde-aa93-00a1cf178dcd",
+		1,
+	)
+
+	const userID = "10000000-0000-4000-8000-000000000022"
+	if _, err := database.Exec(context.Background(), `
+INSERT INTO users (id, canonical_email)
+VALUES ($1, 'lisa-avatar-migration@example.com')
+`, userID); err != nil {
+		t.Fatalf("seed Lisa avatar preference owner: %v", err)
+	}
+	if _, err := database.Exec(context.Background(), `
+INSERT INTO user_coach_presentation_preferences (
+    user_id, avatar_option_id, voice_option_id
+) VALUES ($1, 'avatar_lisa', 'voice_ava')
+`, userID); err != nil {
+		t.Fatalf("seed Lisa avatar preference: %v", err)
+	}
+	if changed, upErr := runner.Up(); upErr != nil || !changed {
+		t.Fatalf("reapply Lisa avatar migration = %t, %v", changed, upErr)
+	}
+	assertAvatarBinding(
+		"avatar_lisa",
+		"ca9c5c22-6dba-4b59-ae3b-d26066f8c017",
+		2,
+	)
+	var preferenceAvatarID string
+	if err := database.QueryRow(context.Background(), `
+SELECT avatar_option_id
+FROM user_coach_presentation_preferences
+WHERE user_id = $1
+`, userID).Scan(&preferenceAvatarID); err != nil {
+		t.Fatalf("read preserved Lisa avatar preference: %v", err)
+	}
+	if preferenceAvatarID != "avatar_lisa" {
+		t.Fatalf("preserved avatar preference = %q", preferenceAvatarID)
+	}
+}
+
+func TestExpandedCoachVoiceMigrationSeedsCatalogAndSafelyRollsBackPreference(
+	t *testing.T,
+) {
+	config, _, _ := isolatedMigrationConfig(t)
+	runner, err := openConfig(config)
+	if err != nil {
+		t.Fatalf("open migration runner: %v", err)
+	}
+	t.Cleanup(func() { _ = runner.Close() })
+	if changed, upErr := runner.Up(); upErr != nil || !changed {
+		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v14 expanded voice catalog = %t, %v", changed, downErr)
+	}
+
+	database, err := pgx.ConnectConfig(context.Background(), config)
+	if err != nil {
+		t.Fatalf("connect expanded voice migration database: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close(context.Background()) })
+
+	var addedCount int
+	var maryLocale, maryVoiceID string
+	if err := database.QueryRow(context.Background(), `
+SELECT
+    count(*) FILTER (WHERE id LIKE 'voice_%'),
+    max(locale) FILTER (WHERE id = 'voice_mary'),
+    max(provider_voice_id) FILTER (WHERE id = 'voice_mary')
+FROM coach_voice_options
+`).Scan(&addedCount, &maryLocale, &maryVoiceID); err != nil {
+		t.Fatalf("read expanded voice catalog: %v", err)
+	}
+	if addedCount != 9 || maryLocale != "en-GB" || maryVoiceID != "loongmary" {
+		t.Fatalf(
+			"expanded catalog = count %d, Mary %q %q",
+			addedCount,
+			maryLocale,
+			maryVoiceID,
+		)
+	}
+
+	const userID = "10000000-0000-4000-8000-000000000023"
+	if _, err := database.Exec(context.Background(), `
+INSERT INTO users (id, canonical_email)
+VALUES ($1, 'expanded-voice-migration@example.com')
+`, userID); err != nil {
+		t.Fatalf("seed expanded voice preference owner: %v", err)
+	}
+	if _, err := database.Exec(context.Background(), `
+INSERT INTO user_coach_presentation_preferences (
+    user_id, avatar_option_id, voice_option_id
+) VALUES ($1, 'avatar_lisa', 'voice_ivy')
+`, userID); err != nil {
+		t.Fatalf("seed expanded voice preference: %v", err)
+	}
+
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("roll back expanded voice catalog = %t, %v", changed, downErr)
+	}
+	var voiceOptionID string
+	var version int64
+	if err := database.QueryRow(context.Background(), `
+SELECT voice_option_id, version
+FROM user_coach_presentation_preferences
+WHERE user_id = $1
+`, userID).Scan(&voiceOptionID, &version); err != nil {
+		t.Fatalf("read rolled back voice preference: %v", err)
+	}
+	if voiceOptionID != "voice_ava" || version != 2 {
+		t.Fatalf("rolled back preference = %q v%d", voiceOptionID, version)
+	}
+	if err := database.QueryRow(context.Background(), `
+SELECT count(*) FROM coach_voice_options
+`).Scan(&addedCount); err != nil {
+		t.Fatalf("count rolled back voice catalog: %v", err)
+	}
+	if addedCount != 2 {
+		t.Fatalf("rolled back voice count = %d", addedCount)
+	}
+}
+
+func TestAgentRunQualifiedModelMigrationEnforcesDomainAndRollbackGuard(
+	t *testing.T,
+) {
+	config, _, _ := isolatedMigrationConfig(t)
+	runner, err := openConfig(config)
+	if err != nil {
+		t.Fatalf("open migration runner: %v", err)
+	}
+	t.Cleanup(func() { _ = runner.Close() })
+	if changed, upErr := runner.Up(); upErr != nil || !changed {
+		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v14 expanded voice catalog = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v13 Lisa avatar asset = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v12 qualified model IDs = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v11 presentation runtime = %t, %v", changed, downErr)
+	}
+
+	database, err := pgx.ConnectConfig(context.Background(), config)
+	if err != nil {
+		t.Fatalf("connect qualified model migration database: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close(context.Background()) })
+	const (
+		userID    = "10000000-0000-4000-8000-000000000021"
+		threadID  = "20000000-0000-4000-8000-000000000021"
+		messageID = "30000000-0000-4000-8000-000000000021"
+		runID     = "40000000-0000-4000-8000-000000000021"
+	)
+	if _, err := database.Exec(context.Background(), `
+INSERT INTO users (id, canonical_email)
+VALUES ($1, 'qualified-model-migration@example.com')
+`, userID); err != nil {
+		t.Fatalf("seed qualified model migration owner: %v", err)
+	}
+	if _, err := database.Exec(context.Background(), `
+INSERT INTO agent_threads (id, user_id) VALUES ($1, $2)
+`, threadID, userID); err != nil {
+		t.Fatalf("seed qualified model migration thread: %v", err)
+	}
+	if _, err := database.Exec(context.Background(), `
+INSERT INTO agent_messages (
+    id, thread_id, sequence_no, role, client_message_id, content
+) VALUES ($1, $2, 1, 'user', 'qualified-model-message', 'Hello')
+`, messageID, threadID); err != nil {
+		t.Fatalf("seed qualified model migration message: %v", err)
+	}
+	if _, err := database.Exec(context.Background(), `
+INSERT INTO agent_runs (
+    id, thread_id, input_message_id, attempt_no, status, phase,
+    model_configuration, model_result, usage, started_at, completed_at
+) VALUES (
+    $1, $2, $3, 1, 'completed', 'completed',
+    '{"provider":"qiniu","model":"qwen3.7-plus","max_output_tokens":1024,"max_input_characters":5000}'::jsonb,
+    '{"completion_id":"completion-1","provider":"qiniu","model":"qwen3.7-plus","finish_reason":"stop"}'::jsonb,
+    '{"input_tokens":1,"output_tokens":1,"total_tokens":2}'::jsonb,
+    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+)
+`, runID, threadID, messageID); err != nil {
+		t.Fatalf("seed plain model Agent Run: %v", err)
+	}
+
+	updateModel := func(configurationModel, resultModel string) error {
+		t.Helper()
+		_, updateErr := database.Exec(context.Background(), `
+UPDATE agent_runs
+SET model_configuration = jsonb_set(
+        model_configuration, '{model}', to_jsonb($2::text)
+    ),
+    model_result = jsonb_set(model_result, '{model}', to_jsonb($3::text))
+WHERE id = $1
+`, runID, configurationModel, resultModel)
+		return updateErr
+	}
+
+	expectPostgresCode(
+		t,
+		updateModel("qwen/qwen3.7-plus", "qwen/qwen3.7-plus"),
+		"23514",
+	)
+	if changed, upErr := runner.Up(); upErr != nil || !changed {
+		t.Fatalf("apply qualified model migration = %t, %v", changed, upErr)
+	}
+	if err := updateModel("qwen/qwen3.7-plus", "qwen/qwen3.7-plus"); err != nil {
+		t.Fatalf("store qualified model IDs: %v", err)
+	}
+	expectPostgresCode(
+		t,
+		updateModel("qwen/a..b", "qwen/qwen3.7-plus"),
+		"23514",
+	)
+	expectPostgresCode(
+		t,
+		updateModel("qwen/qwen3.7-plus", "qwen/a..b"),
+		"23514",
+	)
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v14 expanded voice catalog = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v13 Lisa avatar asset = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v12 qualified model IDs = %t, %v", changed, downErr)
+	}
+
+	changed, downErr := runner.DownOne()
+	if downErr == nil || changed || !strings.Contains(
+		downErr.Error(),
+		"cannot roll back qualified Agent model IDs while qualified values exist",
+	) {
+		t.Fatalf("DownOne with qualified model IDs = %t, %v", changed, downErr)
+	}
+	var configurationModel, resultModel string
+	if err := database.QueryRow(context.Background(), `
+SELECT model_configuration->>'model', model_result->>'model'
+FROM agent_runs WHERE id = $1
+`, runID).Scan(&configurationModel, &resultModel); err != nil {
+		t.Fatalf("read Agent Run after rejected DownOne: %v", err)
+	}
+	if configurationModel != "qwen/qwen3.7-plus" ||
+		resultModel != "qwen/qwen3.7-plus" {
+		t.Fatalf(
+			"qualified model IDs after rejected DownOne = %q, %q",
+			configurationModel,
+			resultModel,
+		)
+	}
+}
+
 func TestSceneSelectionSourceMigrationTransformsPlansAndPreservesSessions(
 	t *testing.T,
 ) {
@@ -144,6 +507,24 @@ func TestSceneSelectionSourceMigrationTransformsPlansAndPreservesSessions(
 	t.Cleanup(func() { _ = runner.Close() })
 	if changed, upErr := runner.Up(); upErr != nil || !changed {
 		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v14 expanded voice catalog = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v13 Lisa avatar asset = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v12 qualified model IDs = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v11 presentation runtime = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v10 presentation preferences = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v9 IELTS profiles = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("DownOne to v8 Product health views = %t, %v", changed, downErr)
@@ -285,6 +666,24 @@ FROM practice_sessions WHERE session_id = $1
 	}
 
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("roll back v15 = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("roll back v14 = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("roll back v13 = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("roll back v12 = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("roll back v11 = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("roll back v10 = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("roll back v9 = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
@@ -328,6 +727,24 @@ func TestMigratedLegacyCatalogPlanCompletesThroughFormalReport(t *testing.T) {
 	t.Cleanup(func() { _ = runner.Close() })
 	if changed, upErr := runner.Up(); upErr != nil || !changed {
 		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v14 expanded voice catalog = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v13 Lisa avatar asset = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v12 qualified model IDs = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v11 presentation runtime = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v10 presentation preferences = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v9 IELTS profiles = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("DownOne to v8 Product health views = %t, %v", changed, downErr)
@@ -593,6 +1010,24 @@ func TestSceneSelectionSourceMigrationRejectsDownWithCustomPlan(t *testing.T) {
 	t.Cleanup(func() { _ = runner.Close() })
 	if changed, upErr := runner.Up(); upErr != nil || !changed {
 		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v14 expanded voice catalog = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v13 Lisa avatar asset = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v12 qualified model IDs = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v11 presentation runtime = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v10 presentation preferences = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v9 IELTS profiles = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("DownOne to v8 Product health views = %t, %v", changed, downErr)
@@ -1054,11 +1489,12 @@ INSERT INTO practice_plans (
 INSERT INTO practice_sessions (
     session_id, user_id, plan_id, plan_version, practice_experience,
     scene_category, practice_mode, evaluation_policy_ref, status,
-    plan_snapshot, participants, initial_client_request_id,
+    plan_snapshot, participants, presentation_snapshot, initial_client_request_id,
     initial_request_fingerprint
 ) VALUES (
     $1, $2, $3, 1, 'conversation', 'general', 'voice',
     'general.evaluation.v1', 'starting', '{}'::jsonb, '[{}]'::jsonb,
+    '{"schema_version":1,"avatar":{"option_id":"avatar_lisa","provider":"spatialreal","provider_profile":"spatialreal_default","provider_avatar_id":"avatar","binding_version":1},"voice":{"option_id":"voice_ava","provider":"qianwen","provider_profile":"qianwen_default","provider_model":"model","provider_voice_id":"voice","locale":"en-US","binding_version":1}}'::jsonb,
     'request-session-a', decode(repeat('02', 32), 'hex')
 )
 `, sessionA, userA, planA); err != nil {

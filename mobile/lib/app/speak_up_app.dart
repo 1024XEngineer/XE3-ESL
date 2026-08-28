@@ -37,6 +37,7 @@ import 'package:speakup/features/coaching/review/review_history_controller.dart'
 import 'package:speakup/features/coaching/review/session_evaluation_page.dart';
 import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.dart';
 import 'package:speakup/features/coaching/profile/coaching_profile.dart';
+import 'package:speakup/features/profile/coach_presentation_settings.dart';
 import 'package:speakup/features/coaching/scenario/scenario_practice_session.dart';
 import 'package:speakup/features/update/app_update.dart';
 
@@ -57,6 +58,7 @@ class SpeakUpApp extends StatelessWidget {
     this.sessionEvaluationController,
     this.speechFeedbackController,
     this.coachingProfileController,
+    this.coachPresentationSettingsStore,
     this.appUpdateService,
     this.avatarControllerFactory,
     super.key,
@@ -78,6 +80,7 @@ class SpeakUpApp extends StatelessWidget {
     this.sessionEvaluationController,
     this.speechFeedbackController,
     this.coachingProfileController,
+    this.coachPresentationSettingsStore,
     this.appUpdateService,
     this.avatarControllerFactory,
     super.key,
@@ -99,6 +102,7 @@ class SpeakUpApp extends StatelessWidget {
   final SessionEvaluationController? sessionEvaluationController;
   final SpeechFeedbackController? speechFeedbackController;
   final CoachingProfileController? coachingProfileController;
+  final CoachPresentationSettingsStore? coachPresentationSettingsStore;
   final AppUpdateService? appUpdateService;
   final AvatarControllerFactory? avatarControllerFactory;
   final bool _allowFakePreview;
@@ -131,6 +135,7 @@ class SpeakUpApp extends StatelessWidget {
               sessionEvaluationController: sessionEvaluationController,
               speechFeedbackController: speechFeedbackController,
               coachingProfileController: coachingProfileController,
+              coachPresentationSettingsStore: coachPresentationSettingsStore,
               appUpdateService: appUpdateService,
               avatarControllerFactory: avatarControllerFactory,
               allowFakePreview: _allowFakePreview,
@@ -155,6 +160,7 @@ class SpeakUpApp extends StatelessWidget {
                 sessionEvaluationController: sessionEvaluationController,
                 speechFeedbackController: speechFeedbackController,
                 coachingProfileController: coachingProfileController,
+                coachPresentationSettingsStore: coachPresentationSettingsStore,
                 appUpdateService: appUpdateService,
                 avatarControllerFactory: avatarControllerFactory,
                 allowFakePreview: _allowFakePreview,
@@ -182,6 +188,7 @@ class _AuthenticatedNavigator extends StatefulWidget {
     this.sessionEvaluationController,
     this.speechFeedbackController,
     this.coachingProfileController,
+    this.coachPresentationSettingsStore,
     this.appUpdateService,
     this.avatarControllerFactory,
     required this.allowFakePreview,
@@ -203,6 +210,7 @@ class _AuthenticatedNavigator extends StatefulWidget {
   final SessionEvaluationController? sessionEvaluationController;
   final SpeechFeedbackController? speechFeedbackController;
   final CoachingProfileController? coachingProfileController;
+  final CoachPresentationSettingsStore? coachPresentationSettingsStore;
   final AppUpdateService? appUpdateService;
   final AvatarControllerFactory? avatarControllerFactory;
   final bool allowFakePreview;
@@ -412,6 +420,8 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             reviewHistoryController: widget.reviewHistoryController,
             speechFeedbackController: widget.speechFeedbackController,
             coachingProfileController: widget.coachingProfileController,
+            coachPresentationSettingsStore:
+                widget.coachPresentationSettingsStore,
             appUpdateService: widget.appUpdateService,
             routeObserver: _routeObserver,
           ),
@@ -473,6 +483,8 @@ class _AuthenticatedNavigatorState extends State<_AuthenticatedNavigator> {
             reviewHistoryController: widget.reviewHistoryController,
             speechFeedbackController: widget.speechFeedbackController,
             coachingProfileController: widget.coachingProfileController,
+            coachPresentationSettingsStore:
+                widget.coachPresentationSettingsStore,
             appUpdateService: widget.appUpdateService,
             routeObserver: _routeObserver,
           ),

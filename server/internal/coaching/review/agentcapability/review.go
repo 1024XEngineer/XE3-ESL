@@ -102,7 +102,7 @@ func (tool ReviewSearchTool) Definition() capability.Definition {
 			"asked from or exposed to the user. Do not use it for current-turn " +
 			"speech feedback or scenario discovery.",
 		InputSchema: capability.ObjectSchema(map[string]any{
-			"query": capability.TextSchema(
+			"query": capability.OptionalTextSchema(
 				"Optional words describing an older practice report.",
 				500,
 			),

@@ -644,11 +644,15 @@ final class PracticeController extends ChangeNotifier
 
   Future<void> _speakPromptTextWithModel(String text) {
     final speechClient = mediaClient;
-    if (speechClient is! PracticeTextSpeechClient) {
+    final sessionId = _practiceSessionId;
+    if (speechClient is! PracticeTextSpeechClient || sessionId == null) {
       throw const ModelSpeechPlaybackException(audioStarted: false);
     }
     return _playStandaloneModelSpeech(
-      (speechClient as PracticeTextSpeechClient).streamTextSpeech(text),
+      (speechClient as PracticeTextSpeechClient).streamTextSpeech(
+        practiceSessionId: sessionId,
+        text: text,
+      ),
     );
   }
 

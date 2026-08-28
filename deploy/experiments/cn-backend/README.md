@@ -10,8 +10,16 @@ means this stack must remain isolated from Production traffic.
 
 The stack deliberately uses its own Compose project, volume, port, deployment
 directory, runtime file, and Server environment file. It must not reuse a
-Staging or Production database volume. The Server image digest must come from
-the same successful Release Candidate manifest used by the comparison APK.
+Staging or Production database volume. `SERVER_IMAGE_REPOSITORY` must be either
+the official `ghcr.io/1024xengineer/xe3-esl-server` repository or the approved
+China mirror at
+`crpi-uzndbvgv3nza56mp.cn-beijing.personal.cr.aliyuncs.com/speakup/xe3-esl-server`.
+`SERVER_IMAGE_DIGEST` must be the immutable index digest for the selected
+repository. GHCR uses the canonical digest from the successful Release
+Candidate manifest. ACR uses the verified mirror index digest recorded beside
+that canonical digest and the matching `linux/amd64` platform digest. The two
+index digests may differ when provenance is removed during mirroring; tags are
+never accepted.
 
 This stack binds the container API only to host loopback port `28083`; it never
 publishes PostgreSQL or metrics. Do not point the APK at a public plaintext
@@ -48,8 +56,26 @@ Generate a unique experiment password rather than copying a placeholder:
 openssl rand -hex 24
 ```
 
-Both images use `pull_policy: never`. Load the exact Server and PostgreSQL
-digests recorded by the selected Release Candidate before starting the stack.
+Both images use `pull_policy: never`. Load the exact Server repository digest
+from the audited Release Candidate mirror mapping and the PostgreSQL digest
+recorded by the selected Release Candidate before starting the stack.
+For the approved private ACR mirror, authenticate without placing its password
+in either environment file, then pull the immutable reference recorded in the
+validated runtime file:
+
+```sh
+docker login --username "$ACR_USERNAME" \
+  crpi-uzndbvgv3nza56mp.cn-beijing.personal.cr.aliyuncs.com
+
+server_image_repository="$(awk -F= '$1 == "SERVER_IMAGE_REPOSITORY" {print $2}' \
+  /etc/speakup-cn-experiment/runtime.env)"
+server_image_digest="$(awk -F= '$1 == "SERVER_IMAGE_DIGEST" {print $2}' \
+  /etc/speakup-cn-experiment/runtime.env)"
+docker pull "${server_image_repository}@${server_image_digest}"
+```
+
+Enter the ACR access-credential password only at Docker's prompt. Never store
+it in `runtime.env`, `server.env`, the repository, or command-line arguments.
 An offline PostgreSQL import may retain only the image ID; verify that ID is
 `sha256:7d2695c3aa88e792e8b3b233e7e4adb296a20412c6c0ca361e3edaaacfada108`
 before applying the local `postgres:18-bookworm` tag. This keeps the experiment
@@ -231,8 +257,8 @@ optional regional integration explicitly as `china`, `unchanged`, or
 `disabled`:
 
 - avatar: `SPATIUS_ENABLED`, `SPATIUS_REGION`,
-  `SPATIUS_CONSOLE_BASE_URL`, `SPATIUS_APP_ID`, `SPATIUS_AVATAR_ID`,
-  `SPATIUS_API_KEY`, `SPATIUS_TOKEN_TTL`, and `SPATIUS_TIMEOUT`;
+  `SPATIUS_CONSOLE_BASE_URL`, `SPATIUS_APP_ID`, `SPATIUS_API_KEY`,
+  `SPATIUS_TOKEN_TTL`, and `SPATIUS_TIMEOUT`;
 - resume OCR: `RESUME_OCR_ENABLED`, `PADDLEOCR_ACCESS_TOKEN`,
   `PADDLEOCR_BASE_URL`, and `RESUME_OCR_TIMEOUT`.
 

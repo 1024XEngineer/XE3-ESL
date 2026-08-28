@@ -69,8 +69,8 @@ Required provider groups change together:
   limits, and other non-regional runtime values either match the tested
   Singapore baseline or have a separately reviewed reason to change.
 - [ ] Avatar fields (`SPATIUS_ENABLED`, `SPATIUS_REGION`,
-  `SPATIUS_CONSOLE_BASE_URL`, `SPATIUS_APP_ID`, `SPATIUS_AVATAR_ID`,
-  `SPATIUS_API_KEY`, `SPATIUS_TOKEN_TTL`, `SPATIUS_TIMEOUT`) and OCR fields
+  `SPATIUS_CONSOLE_BASE_URL`, `SPATIUS_APP_ID`, `SPATIUS_API_KEY`,
+  `SPATIUS_TOKEN_TTL`, `SPATIUS_TIMEOUT`) and OCR fields
   (`RESUME_OCR_ENABLED`, `PADDLEOCR_ACCESS_TOKEN`, `PADDLEOCR_BASE_URL`,
   `RESUME_OCR_TIMEOUT`) are each classified as `china`, `unchanged`, or
   `disabled`; enabled unchanged services passed China-host latency checks.

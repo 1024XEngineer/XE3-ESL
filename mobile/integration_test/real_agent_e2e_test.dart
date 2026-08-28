@@ -7,13 +7,17 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:speakup/features/agent/client_action/agent_client_action.dart';
-import 'package:speakup/features/agent/conversation/agent_client.dart';
 import 'package:speakup/features/agent/conversation/agent_models.dart';
 import 'package:speakup/features/agent/conversation/conversation_controller.dart';
+import 'package:speakup/features/coaching/evaluation/evaluation_report.dart';
+import 'package:speakup/features/coaching/practice/practice_audio_player.dart';
 import 'package:speakup/features/coaching/practice/practice_controller.dart';
+import 'package:speakup/features/coaching/practice/practice_client_error.dart';
+import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/preparation/practice_plan_client_action.dart';
 import 'package:speakup/app/speak_up_app.dart';
 import 'package:speakup/main.dart' as app;
+import 'package:speakup/features/coaching/evaluation/session_evaluation.dart';
 import 'package:speakup/features/coaching/practice/practice_recording.dart';
 import 'package:speakup/features/coaching/review/review_history_controller.dart';
 import 'package:speakup/identity/session_store.dart';
@@ -24,26 +28,62 @@ void main() {
   testWidgets('real iOS identity, Qianwen Agent, voice, and Review path', (
     tester,
   ) async {
-    const email = String.fromEnvironment('SPEAKUP_E2E_EMAIL');
-    const password = String.fromEnvironment('SPEAKUP_E2E_PASSWORD');
+    final email =
+        'voice-report-${DateTime.now().microsecondsSinceEpoch}@example.com';
+    const password = 'Voice report e2e password 8142';
     const apiBaseUrl = String.fromEnvironment(
       'SPEAKUP_API_BASE_URL',
       defaultValue: 'http://127.0.0.1:8080',
     );
-    const voiceWavBase64 = String.fromEnvironment('SPEAKUP_E2E_WAV_BASE64');
+    const voiceWavBase64 = <String>[
+      String.fromEnvironment('SPEAKUP_E2E_WAV_BASE64'),
+      String.fromEnvironment('SPEAKUP_E2E_WAV_BASE64_2'),
+      String.fromEnvironment('SPEAKUP_E2E_WAV_BASE64_3'),
+      String.fromEnvironment('SPEAKUP_E2E_WAV_BASE64_4'),
+    ];
     const captureHoldMs = int.fromEnvironment('SPEAKUP_E2E_CAPTURE_HOLD_MS');
     const validateAudioMedia = bool.fromEnvironment(
       'SPEAKUP_E2E_VALIDATE_AUDIO_MEDIA',
     );
-    if (email.isEmpty || password.runes.length < 8) {
-      fail('A disposable E2E account with a valid password is required.');
+    final voiceFixtures = <List<int>>[
+      for (var index = 0; index < voiceWavBase64.length; index++)
+        _decodeVoiceFixture(
+          voiceWavBase64[index],
+          variableName: index == 0
+              ? 'SPEAKUP_E2E_WAV_BASE64'
+              : 'SPEAKUP_E2E_WAV_BASE64_${index + 1}',
+        ),
+    ];
+    if ({for (final fixture in voiceFixtures) base64Encode(fixture)}.length !=
+        voiceFixtures.length) {
+      fail('The four voice E2E WAV fixtures must contain distinct speech.');
     }
-    final voiceFixture = _decodeVoiceFixture(voiceWavBase64);
+    final practiceRecorder = _FixturePracticeRecorder(voiceFixtures);
+    final practiceAudioPlayer = _ObservedPracticeAudioPlayer();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
 
     final dependencies = app.createProductionAppDependencies(
       baseUri: Uri.parse(apiBaseUrl),
-      practiceRecorder: _FixturePracticeRecorder(voiceFixture),
+      practiceRecorder: practiceRecorder,
+      practiceAudioPlayer: practiceAudioPlayer,
+      sessionStore: _MemorySessionStore(),
     );
+    final deletedAudioAssetIds = <String>{};
+    addTearDown(() async {
+      final remainingAudioAssetIds = <String>{
+        for (final recording in dependencies.practiceController.recordings)
+          if (!deletedAudioAssetIds.contains(recording.audioAssetId))
+            recording.audioAssetId,
+      };
+      if (remainingAudioAssetIds.isNotEmpty) {
+        await _deleteTestRecordings(
+          dependencies.practiceController,
+          remainingAudioAssetIds.toList(growable: false),
+        );
+      }
+      await practiceRecorder.clearAccountState();
+      await practiceAudioPlayer.dispose();
+    });
     runApp(
       SpeakUpApp(
         authController: dependencies.authController,
@@ -57,6 +97,7 @@ void main() {
         jobPreparationController: dependencies.jobPreparationController,
         preparationLaunchController: dependencies.preparationLaunchController,
         reviewHistoryController: dependencies.reviewHistoryController,
+        sessionEvaluationController: dependencies.sessionEvaluationController,
       ),
     );
     await _waitUntil(
@@ -116,9 +157,10 @@ void main() {
     );
     expect(agentScreenshot, isNotEmpty);
 
-    await _completeRealVoicePractice(
+    final audioAssetIds = await _completeRealVoicePractice(
       tester,
       controller: dependencies.practiceController,
+      practiceAudioPlayer: practiceAudioPlayer,
       validateAudioMedia: validateAudioMedia,
     );
     final completedSessionId =
@@ -126,7 +168,24 @@ void main() {
     if (completedSessionId == null) {
       fail('The completed Practice did not retain its Session identity.');
     }
-    Navigator.of(tester.element(find.byKey(const Key('practice-page')))).pop();
+    await tester.runAsync(
+      () => dependencies.sessionEvaluationController.load(completedSessionId),
+    );
+    expect(
+      dependencies.sessionEvaluationController.evaluation?.status,
+      SessionEvaluationStatus.ready,
+      reason: dependencies.sessionEvaluationController.errorMessage,
+    );
+    _expectScoredPracticeReport(
+      dependencies.sessionEvaluationController.evaluation?.report,
+      expectedAnsweredQuestions: 4,
+    );
+    await _deleteTestRecordings(dependencies.practiceController, audioAssetIds);
+    deletedAudioAssetIds.addAll(audioAssetIds);
+    await dependencies.reviewHistoryController.refresh();
+    Navigator.of(
+      tester.element(find.byKey(const Key('scenario-practice-page'))),
+    ).pop();
     await tester.pumpAndSettle();
     await _tapPrimaryTab(tester, 2);
     await _waitForPersistedSessionReview(
@@ -143,7 +202,6 @@ void main() {
       'ios-real-voice-review-e2e',
     );
     expect(reviewScreenshot, isNotEmpty);
-
     await _signOut(tester);
     await _signIn(tester, email: email, password: password);
     await _tapPrimaryTab(tester, 2);
@@ -180,18 +238,16 @@ void main() {
   testWidgets('real iOS three practice hubs stay focused and reachable', (
     tester,
   ) async {
-    const email = String.fromEnvironment('SPEAKUP_E2E_EMAIL');
-    const password = String.fromEnvironment('SPEAKUP_E2E_PASSWORD');
+    final email =
+        'practice-hubs-${DateTime.now().microsecondsSinceEpoch}@example.com';
+    const password = 'Practice hubs e2e password 526';
     const apiBaseUrl = String.fromEnvironment(
       'SPEAKUP_API_BASE_URL',
       defaultValue: 'http://127.0.0.1:8080',
     );
-    if (email.isEmpty || password.runes.length < 8) {
-      fail('A disposable E2E account with a valid password is required.');
-    }
-
     final dependencies = app.createProductionAppDependencies(
       baseUri: Uri.parse(apiBaseUrl),
+      sessionStore: _MemorySessionStore(),
     );
     runApp(
       SpeakUpApp(
@@ -318,6 +374,7 @@ void main() {
         jobPreparationController: dependencies.jobPreparationController,
         preparationLaunchController: dependencies.preparationLaunchController,
         reviewHistoryController: dependencies.reviewHistoryController,
+        sessionEvaluationController: dependencies.sessionEvaluationController,
       ),
     );
 
@@ -472,6 +529,217 @@ void main() {
       dependencies.practiceController.practiceSessionId,
       isNot(firstSessionId),
     );
+    final secondSessionId = dependencies.practiceController.practiceSessionId!;
+    const answers = <String>[
+      'I prefer happy music because its energetic rhythm improves my mood '
+          'and helps me feel optimistic after a demanding day.',
+      'Yes, happy music usually makes me feel more excited, especially when '
+          'I listen to an upbeat song before exercising or meeting friends.',
+      'I took piano classes for two years at primary school, which taught me '
+          'basic rhythm and helped me appreciate how songs are composed.',
+      'I often listen to quiet instrumental music while reading or doing '
+          'routine work, but I turn it off when a task requires deep '
+          'concentration.',
+    ];
+    await _completeIeltsPart1TextPractice(
+      tester,
+      controller: dependencies.practiceController,
+      answers: answers,
+    );
+    expect(dependencies.practiceController.practiceSessionId, secondSessionId);
+    expect(dependencies.practiceController.hasActivePractice, isFalse);
+    expect(
+      find.byKey(const Key('ielts-section-completion-sheet')),
+      findsOneWidget,
+    );
+    await _tapPracticeControl(tester, const Key('ielts-section-review-action'));
+    await _waitUntil(
+      tester,
+      () =>
+          find
+              .byKey(const Key('evaluation-report-detail-page'))
+              .evaluate()
+              .isNotEmpty ||
+          dependencies.sessionEvaluationController.evaluation?.status ==
+              SessionEvaluationStatus.failed ||
+          dependencies.sessionEvaluationController.errorMessage != null,
+      const Duration(minutes: 5),
+    );
+    expect(
+      find.byKey(const Key('evaluation-report-detail-page')),
+      findsOneWidget,
+      reason: dependencies.sessionEvaluationController.errorMessage,
+    );
+    expect(
+      dependencies.sessionEvaluationController.evaluation?.status,
+      SessionEvaluationStatus.ready,
+      reason: dependencies.sessionEvaluationController.errorMessage,
+    );
+    _expectScoredIeltsPart1Report(
+      dependencies.sessionEvaluationController.evaluation?.report,
+      expectedAnswers: answers,
+    );
+  });
+
+  testWidgets('real iOS Agent distinguishes chat from hotel Practice creation', (
+    tester,
+  ) async {
+    const apiBaseUrl = String.fromEnvironment(
+      'SPEAKUP_API_BASE_URL',
+      defaultValue: 'http://127.0.0.1:8080',
+    );
+    final email =
+        'agent-hotel-${DateTime.now().microsecondsSinceEpoch}@example.com';
+    const password = 'Agent hotel e2e password 731';
+    final dependencies = app.createProductionAppDependencies(
+      baseUri: Uri.parse(apiBaseUrl),
+      sessionStore: _MemorySessionStore(),
+    );
+    runApp(
+      SpeakUpApp(
+        authController: dependencies.authController,
+        conversationController: dependencies.conversationController,
+        composerController: dependencies.composerController,
+        messageAudioController: dependencies.messageAudioController,
+        messageTranslationClient: dependencies.messageTranslationClient,
+        practiceController: dependencies.practiceController,
+        preparationController: dependencies.preparationController,
+        ieltsPreparationController: dependencies.ieltsPreparationController,
+        jobPreparationController: dependencies.jobPreparationController,
+        preparationLaunchController: dependencies.preparationLaunchController,
+        practicePlanClientActionController:
+            dependencies.practicePlanClientActionController,
+        reviewHistoryController: dependencies.reviewHistoryController,
+        sessionEvaluationController: dependencies.sessionEvaluationController,
+      ),
+    );
+
+    await _registerOrSignIn(
+      tester,
+      email: email,
+      password: password,
+      requireFocusedConversation: false,
+    );
+    await _waitUntil(
+      tester,
+      () => !dependencies.conversationController.isBusy,
+      const Duration(seconds: 20),
+    );
+    expect(await dependencies.conversationController.createThread(), isTrue);
+    await _ensureWritableConversation(tester);
+
+    final chat = await _sendRealAgentMessage(
+      tester,
+      controller: dependencies.conversationController,
+      text: '你好，今天先随便聊两句，不要创建练习。',
+    );
+    expect(chat.text.trim(), isNotEmpty);
+    expect(chat.clientActions.where(_isPracticePlanConfirmAction), isEmpty);
+    expect(
+      dependencies.conversationController.messages
+          .expand((message) => message.clientActions)
+          .where(_isPracticePlanConfirmAction),
+      isEmpty,
+    );
+
+    final correction = await _sendRealAgentMessage(
+      tester,
+      controller: dependencies.conversationController,
+      text: '做一个简单纠错练习：请纠正 I am agree with you，只回复正确说法，不要创建练习场景。',
+    );
+    expect(correction.text, contains('I agree with you'));
+    expect(
+      correction.clientActions.where(_isPracticePlanConfirmAction),
+      isEmpty,
+    );
+    expect(
+      dependencies.conversationController.messages
+          .expand((message) => message.clientActions)
+          .where(_isPracticePlanConfirmAction),
+      isEmpty,
+    );
+
+    final hotel = await _sendRealAgentMessage(
+      tester,
+      controller: dependencies.conversationController,
+      text: '明天去酒店办理入住，想练习跟英文前台核对预订和房型，直接创建。',
+    );
+    final hotelActions = hotel.clientActions
+        .where(_isPracticePlanConfirmAction)
+        .map(decodeConfirmPracticePlanClientAction)
+        .toList(growable: false);
+    expect(hotelActions, hasLength(1));
+    final action = hotelActions.single;
+    expect(action.sceneId, 'scn_travel_hotel_checkin');
+    expect(action.practiceExperience, 'LIFE_AND_TRAVEL');
+    expect(action.sceneCategory, 'LIFE_TRAVEL');
+    expect(
+      dependencies.conversationController.messages
+          .expand((message) => message.clientActions)
+          .where(_isPracticePlanConfirmAction),
+      hasLength(1),
+    );
+
+    final card = find.byKey(
+      Key(
+        'agent-client-action-practice-plan-'
+        '${action.practicePlanId}-${action.planVersion}',
+      ),
+    );
+    final confirm = find.byKey(
+      Key(
+        'confirm-practice-plan-'
+        '${action.practicePlanId}-${action.planVersion}',
+      ),
+    );
+    expect(card, findsOneWidget);
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.ensureVisible(confirm);
+    await tester.pumpAndSettle();
+    await _waitUntil(
+      tester,
+      () => confirm.hitTestable().evaluate().length == 1,
+      const Duration(seconds: 10),
+    );
+    await tester.tap(confirm);
+    await _waitForPreparationTarget(
+      tester,
+      target: find.byKey(const Key('scenario-practice-page')),
+      operation: 'open the Agent-created hotel Practice Session',
+      timeout: const Duration(seconds: 90),
+    );
+    expect(dependencies.practiceController.practiceSessionId, isNotNull);
+    expect(
+      dependencies.practiceController.scene?.id,
+      'scn_travel_hotel_checkin',
+    );
+    final sessionId = dependencies.practiceController.practiceSessionId;
+    if (sessionId == null) {
+      fail(
+        'The Agent-created hotel Practice did not retain its Session identity.',
+      );
+    }
+    await _completeTextPractice(
+      tester,
+      controller: dependencies.practiceController,
+      answers: const [
+        'Hello, I have a reservation under the name Li Qiang.',
+        'I booked a quiet non-smoking room for two nights.',
+        'Could you confirm breakfast and the check-out time, please?',
+      ],
+    );
+    await tester.runAsync(
+      () => dependencies.sessionEvaluationController.load(sessionId),
+    );
+    expect(
+      dependencies.sessionEvaluationController.evaluation?.status,
+      SessionEvaluationStatus.ready,
+      reason: dependencies.sessionEvaluationController.errorMessage,
+    );
+    _expectScoredPracticeReport(
+      dependencies.sessionEvaluationController.evaluation?.report,
+      expectedAnsweredQuestions: 3,
+    );
   });
 
   testWidgets('real iOS Agent recovers a short IELTS warm-up answer', (
@@ -516,11 +784,7 @@ void main() {
       const Duration(seconds: 20),
     );
     expect(await dependencies.conversationController.createThread(), isTrue);
-    await _waitUntil(
-      tester,
-      () => _composerIsReady(tester),
-      const Duration(seconds: 20),
-    );
+    await _ensureWritableConversation(tester);
     await _sendRealAgentMessage(
       tester,
       controller: dependencies.conversationController,
@@ -595,6 +859,12 @@ void main() {
       timeout: const Duration(seconds: 90),
     );
     expect(dependencies.practiceController.practiceSessionId, isNotNull);
+    expect(
+      await dependencies.practiceController.endActivePracticeEarly(),
+      isTrue,
+      reason: dependencies.practiceController.errorMessage,
+    );
+    expect(dependencies.practiceController.hasActivePractice, isFalse);
   });
 }
 
@@ -770,7 +1040,8 @@ Future<void> _tapPrimaryTab(WidgetTester tester, int index) async {
   );
   expect(find.byType(UiKitView), findsOneWidget);
   ByteData? response;
-  for (var viewId = 0; viewId < 16 && response == null; viewId++) {
+  // UIKit view IDs increase when auth rebuilds the native tab bar.
+  for (var viewId = 0; viewId < 256 && response == null; viewId++) {
     response = await tester.binding.defaultBinaryMessenger
         .handlePlatformMessage(
           'speakup/native_tab_bar/$viewId',
@@ -785,192 +1056,255 @@ Future<void> _tapPrimaryTab(WidgetTester tester, int index) async {
   await tester.pump();
 }
 
-Future<void> _completeRealVoicePractice(
+Future<List<String>> _completeRealVoicePractice(
   WidgetTester tester, {
   required PracticeController controller,
+  required _ObservedPracticeAudioPlayer practiceAudioPlayer,
   required bool validateAudioMedia,
 }) async {
   FocusManager.instance.primaryFocus?.unfocus();
   await _tapPrimaryTab(tester, 1);
   await tester.pump();
   final interviewHub = find.byKey(const Key('practice-hub-interview'));
+  final workplaceHub = find.byKey(const Key('practice-hub-workplace'));
   await _waitForPreparationTarget(
     tester,
     target: interviewHub,
     operation: 'load the three practice hubs',
     timeout: const Duration(seconds: 30),
   );
-  await _scrollPreparationIntoView(tester, interviewHub);
-  await tester.tap(interviewHub);
+  await _showPracticeHub(tester, workplaceHub);
+  await tester.tap(workplaceHub);
   await tester.pump();
-  final scene = find.byKey(const Key('catalog-scene-scn_programmer_interview'));
-  if (scene.evaluate().isEmpty) {
-    final professionalMode = find.byKey(
-      const Key('interview-mode-professional'),
-    );
-    await _waitForPreparationTarget(
-      tester,
-      target: professionalMode,
-      operation: 'load the direct professional interview entry',
-      timeout: const Duration(seconds: 30),
-    );
-    await _scrollPreparationIntoView(tester, professionalMode);
-    await tester.tap(professionalMode);
-    await tester.pumpAndSettle();
-  }
+  final scene = find.byKey(
+    const Key('catalog-scene-scn_workplace_progress_risk_update'),
+  );
   await _waitForPreparationTarget(
     tester,
     target: scene,
-    operation: 'load the formal preparation catalog',
+    operation: 'load the workplace practice catalog',
     timeout: const Duration(seconds: 30),
   );
   await _scrollPreparationIntoView(tester, scene);
   await tester.tap(scene);
   await tester.pump();
-
-  final role = find.byKey(
-    const Key('preparation-role-role_technical_interviewer'),
-  );
   await _waitForPreparationTarget(
     tester,
-    target: role,
-    operation: 'load the technical interview preparation detail',
-    timeout: const Duration(seconds: 30),
-  );
-  await _scrollPreparationIntoView(tester, role);
-  await tester.tap(role);
-  await tester.pump();
-
-  final option = find.byKey(
-    const Key('preparation-option-option_technical_focus'),
-  );
-  await _scrollPreparationIntoView(tester, option);
-  await tester.tap(option);
-  await tester.pump();
-
-  final background = find.byKey(const Key('preparation-background-summary'));
-  await _scrollPreparationIntoView(tester, background);
-  await tester.enterText(
-    background,
-    'Backend engineer preparing for a technical interview. '
-    'Focus on concise spoken explanations of engineering trade-offs.',
-  );
-  FocusManager.instance.primaryFocus?.unfocus();
-  await tester.pump(const Duration(milliseconds: 300));
-
-  final start = find.byKey(const Key('preparation-start-practice'));
-  await _scrollPreparationIntoView(tester, start);
-  await tester.tap(start);
-  await tester.pump();
-  await _waitForPreparationTarget(
-    tester,
-    target: find.byKey(const Key('practice-page')),
-    operation: 'create and open the formal FOCUS Practice Session',
+    target: find.byKey(const Key('scenario-practice-page')),
+    operation: 'create and open the workplace Practice Session',
     timeout: const Duration(seconds: 90),
   );
   await tester.pumpAndSettle();
 
-  for (var turn = 1; turn <= 3; turn++) {
+  for (var turn = 1; turn <= 4; turn++) {
+    final questionId = controller.questionId;
+    expect(questionId, isNotNull);
     if (validateAudioMedia) {
       await _validateQuestionTts(controller);
     }
-    await _tapPracticeControl(tester, const Key('practice-record'));
+    await _tapPracticeControl(tester, const Key('scenario-record'));
     await _waitUntil(
       tester,
       () =>
           find
-              .byKey(const Key('practice-stop-recording'))
+              .byKey(const Key('scenario-stop-recording'))
               .evaluate()
               .isNotEmpty ||
-          find.byKey(const Key('practice-error-message')).evaluate().isNotEmpty,
+          controller.errorMessage != null,
       const Duration(seconds: 10),
     );
-    _failOnPracticeError(tester, 'start recording for turn $turn');
+    _failOnPracticeControllerError(
+      controller,
+      'start recording for turn $turn',
+    );
 
-    await _tapPracticeControl(tester, const Key('practice-stop-recording'));
+    await _tapPracticeControl(tester, const Key('scenario-stop-recording'));
     await _waitUntil(
       tester,
       () =>
-          find.byKey(const Key('practice-transcript')).evaluate().isNotEmpty ||
-          find.byKey(const Key('practice-error-message')).evaluate().isNotEmpty,
+          controller.completedTurns >= turn || controller.errorMessage != null,
       const Duration(seconds: 90),
     );
-    _failOnPracticeError(tester, 'transcribe turn $turn');
-    expect(
-      tester
-          .widget<Text>(find.byKey(const Key('practice-transcript')))
-          .data
-          ?.trim(),
-      isNotEmpty,
+    _failOnPracticeControllerError(controller, 'send voice turn $turn');
+    expect(controller.hasPendingPracticeAudio, isFalse);
+    final userMessage = controller.practiceMessages.lastWhere(
+      (message) => message.role == PracticeMessageRole.user,
     );
-
-    await _tapPracticeControl(tester, const Key('practice-confirm-turn'));
-    await tester.pump();
-    if (turn < 3) {
-      await _waitUntil(
-        tester,
-        () =>
-            find.byKey(const Key('practice-record')).evaluate().isNotEmpty ||
-            find
-                .byKey(const Key('practice-error-message'))
-                .evaluate()
-                .isNotEmpty,
-        const Duration(seconds: 45),
-      );
-      _failOnPracticeError(tester, 'confirm turn $turn');
-      expect(find.text('$turn / 3'), findsOneWidget);
-    } else {
-      await _waitUntil(
-        tester,
-        () =>
-            find
-                .byKey(const Key('practice-completed-actions'))
-                .evaluate()
-                .isNotEmpty ||
-            find
-                .byKey(const Key('practice-error-message'))
-                .evaluate()
-                .isNotEmpty,
-        const Duration(seconds: 90),
-      );
-      _failOnPracticeError(tester, 'complete turn 3');
-    }
+    expect(userMessage.text.trim(), isNotEmpty);
+    expect(controller.completedTurns, turn);
+    expect(controller.questionId, isNot(questionId));
     if (validateAudioMedia) {
       expect(controller.recordings, hasLength(turn));
       await _validateRecordingPlayback(
         controller,
         controller.recordings.last.audioAssetId,
+        practiceAudioPlayer,
       );
     }
   }
 
-  expect(find.byKey(const Key('practice-page')), findsOneWidget);
-  expect(find.byKey(const Key('practice-completed-actions')), findsOneWidget);
+  await _tapPracticeControl(tester, const Key('scenario-complete-practice'));
+  await _waitForPreparationTarget(
+    tester,
+    target: find.byKey(const Key('scenario-confirm-completion')),
+    operation: 'confirm the user-controlled workplace Practice Session',
+    timeout: const Duration(seconds: 10),
+  );
+  await _tapPracticeControl(tester, const Key('scenario-confirm-completion'));
+  await _waitUntil(
+    tester,
+    () =>
+        find
+            .byKey(const Key('scenario-completion-overlay'))
+            .evaluate()
+            .isNotEmpty ||
+        controller.errorMessage != null,
+    const Duration(seconds: 90),
+  );
+  _failOnPracticeControllerError(controller, 'complete the Practice Session');
+  expect(find.byKey(const Key('scenario-practice-page')), findsOneWidget);
+  expect(find.byKey(const Key('scenario-completion-overlay')), findsOneWidget);
+  final audioAssetIds = [
+    for (final recording in controller.recordings) recording.audioAssetId,
+  ];
   if (validateAudioMedia) {
-    final audioAssetIds = [
-      for (final recording in controller.recordings) recording.audioAssetId,
-    ];
-    expect(audioAssetIds, hasLength(3));
-    expect(audioAssetIds.toSet(), hasLength(3));
-    for (final deletedId in audioAssetIds) {
-      await controller.deleteRecording(deletedId);
-      expect(
-        controller.recordings.any(
-          (recording) => recording.audioAssetId == deletedId,
-        ),
-        isFalse,
-      );
-      await expectLater(
-        controller.mediaClient!.loadRecording(deletedId),
-        throwsA(
-          isA<AgentClientException>().having(
-            (error) => error.kind,
-            'kind',
-            AgentClientFailureKind.notFound,
-          ),
-        ),
-      );
+    expect(audioAssetIds, hasLength(4));
+    expect(audioAssetIds.toSet(), hasLength(4));
+  }
+  return audioAssetIds;
+}
+
+Future<void> _completeTextPractice(
+  WidgetTester tester, {
+  required PracticeController controller,
+  required List<String> answers,
+}) async {
+  for (var index = 0; index < answers.length; index++) {
+    final questionId = controller.questionId;
+    expect(questionId, isNotNull);
+    await _tapPracticeControl(tester, const Key('scenario-open-keyboard'));
+    await _waitForPreparationTarget(
+      tester,
+      target: find.byKey(const Key('scenario-text-answer')),
+      operation: 'open the hotel Practice text composer',
+      timeout: const Duration(seconds: 10),
+    );
+    await tester.enterText(
+      find.byKey(const Key('scenario-text-answer')),
+      answers[index],
+    );
+    await _tapPracticeControl(tester, const Key('scenario-submit-text'));
+    await _waitUntil(
+      tester,
+      () =>
+          controller.completedTurns >= index + 1 ||
+          controller.errorMessage != null,
+      const Duration(seconds: 90),
+    );
+    _failOnPracticeControllerError(
+      controller,
+      'send hotel text turn ${index + 1}',
+    );
+    expect(controller.completedTurns, index + 1);
+    expect(controller.questionId, isNot(questionId));
+  }
+
+  await _tapPracticeControl(tester, const Key('scenario-complete-practice'));
+  await _waitForPreparationTarget(
+    tester,
+    target: find.byKey(const Key('scenario-confirm-completion')),
+    operation: 'confirm the Agent-created hotel Practice Session',
+    timeout: const Duration(seconds: 10),
+  );
+  await _tapPracticeControl(tester, const Key('scenario-confirm-completion'));
+  await _waitUntil(
+    tester,
+    () =>
+        find
+            .byKey(const Key('scenario-completion-overlay'))
+            .evaluate()
+            .isNotEmpty ||
+        controller.errorMessage != null,
+    const Duration(seconds: 90),
+  );
+  _failOnPracticeControllerError(
+    controller,
+    'complete the Agent-created hotel Practice Session',
+  );
+  expect(find.byKey(const Key('scenario-completion-overlay')), findsOneWidget);
+}
+
+Future<void> _completeIeltsPart1TextPractice(
+  WidgetTester tester, {
+  required PracticeController controller,
+  required List<String> answers,
+}) async {
+  expect(answers, hasLength(4));
+  expect(answers.toSet(), hasLength(4));
+  for (var index = 0; index < answers.length; index++) {
+    final questionId = controller.questionId;
+    expect(questionId, isNotNull);
+    await _tapPracticeControl(tester, const Key('ielts-mock-open-keyboard'));
+    await _waitForPreparationTarget(
+      tester,
+      target: find.byKey(const Key('ielts-mock-converted-answer-field')),
+      operation: 'open IELTS Part 1 text answer ${index + 1}',
+      timeout: const Duration(seconds: 10),
+    );
+    await tester.enterText(
+      find.byKey(const Key('ielts-mock-converted-answer-field')),
+      answers[index],
+    );
+    await _tapPracticeControl(
+      tester,
+      const Key('ielts-mock-submit-converted-answer'),
+    );
+    await _waitUntil(
+      tester,
+      () =>
+          controller.completedTurns >= index + 1 ||
+          controller.errorMessage != null,
+      const Duration(seconds: 90),
+    );
+    _failOnPracticeControllerError(
+      controller,
+      'submit IELTS Part 1 text answer ${index + 1}',
+    );
+    expect(controller.completedTurns, index + 1);
+    if (index < answers.length - 1) {
+      expect(controller.questionId, isNot(questionId));
     }
+  }
+  await _waitForPreparationTarget(
+    tester,
+    target: find.byKey(const Key('ielts-section-completion-sheet')),
+    operation: 'show the completed IELTS Part 1 review action',
+    timeout: const Duration(seconds: 20),
+  );
+}
+
+Future<void> _deleteTestRecordings(
+  PracticeController controller,
+  List<String> audioAssetIds,
+) async {
+  for (final deletedId in audioAssetIds) {
+    await controller.deleteRecording(deletedId);
+    expect(
+      controller.recordings.any(
+        (recording) => recording.audioAssetId == deletedId,
+      ),
+      isFalse,
+    );
+    await expectLater(
+      controller.mediaClient!.loadRecording(deletedId),
+      throwsA(
+        isA<PracticeClientException>().having(
+          (error) => error.kind,
+          'kind',
+          PracticeClientFailureKind.notFound,
+        ),
+      ),
+    );
   }
 }
 
@@ -1027,6 +1361,26 @@ Future<void> _scrollPreparationIntoView(
   if (target.hitTestable().evaluate().isEmpty) {
     fail('Preparation control $target is not tappable.');
   }
+}
+
+Future<void> _showPracticeHub(WidgetTester tester, Finder target) async {
+  final carousel = find.byKey(const Key('practice-hub-carousel'));
+  await _waitUntil(
+    tester,
+    () => carousel.evaluate().isNotEmpty,
+    const Duration(seconds: 10),
+  );
+  for (var attempt = 0; attempt < 6; attempt++) {
+    if (target.hitTestable().evaluate().isNotEmpty) {
+      return;
+    }
+    await tester.drag(
+      carousel,
+      Offset(-tester.getSize(carousel).width * 0.8, 0),
+    );
+    await tester.pumpAndSettle();
+  }
+  fail('Practice hub $target is not reachable in the carousel.');
 }
 
 String? _preparationFailure(WidgetTester tester) {
@@ -1089,20 +1443,135 @@ Future<void> _validateQuestionTts(PracticeController controller) async {
   await controller.toggleQuestionAudio();
   expect(controller.isQuestionAudioLoading, isFalse);
   expect(controller.mediaErrorMessage, isNull);
-  expect(controller.isQuestionAudioPlaying, isTrue);
   await controller.stopPracticeAudio();
 }
 
 Future<void> _validateRecordingPlayback(
   PracticeController controller,
   String audioAssetId,
+  _ObservedPracticeAudioPlayer practiceAudioPlayer,
 ) async {
+  final previousPlaybackCount = practiceAudioPlayer.successfulPlaybackCount;
   expect(audioAssetId, isNotEmpty);
+  await controller.stopPracticeAudio();
+  WidgetsBinding.instance.handleAppLifecycleStateChanged(
+    AppLifecycleState.resumed,
+  );
   await controller.toggleRecordingAudio(audioAssetId);
   expect(controller.isRecordingAudioLoading(audioAssetId), isFalse);
   expect(controller.mediaErrorMessage, isNull);
   expect(controller.isRecordingAudioPlaying(audioAssetId), isTrue);
+  expect(
+    practiceAudioPlayer.successfulPlaybackCount,
+    previousPlaybackCount + 1,
+  );
   await controller.stopPracticeAudio();
+}
+
+void _expectScoredPracticeReport(
+  EvaluationReport? report, {
+  required int expectedAnsweredQuestions,
+}) {
+  expect(report, isNotNull);
+  final value = report!;
+  expect(value.scoreability, EvaluationReportScoreability.provisional);
+  expect(value.summary.trim(), isNotEmpty);
+  expect(
+    value.questions.where((question) => question.answer != null),
+    hasLength(expectedAnsweredQuestions),
+  );
+  expect(
+    value.questions.every(
+      (question) => question.answer?.transcript.trim().isNotEmpty ?? false,
+    ),
+    isTrue,
+  );
+  expect(
+    value.dimensions.map((dimension) => dimension.key).toList(growable: false),
+    const [
+      'TASK_ACHIEVEMENT',
+      'CLARITY_COHERENCE',
+      'LANGUAGE_CONTROL',
+      'INTERACTION',
+    ],
+  );
+  expect(
+    value.dimensions.every(
+      (dimension) =>
+          dimension.score != null &&
+          dimension.score! >= 0 &&
+          dimension.score! <= 100,
+    ),
+    isTrue,
+  );
+  expect(
+    value.dimensions.every(
+      (dimension) =>
+          dimension.coverage >= 0 &&
+          dimension.coverage <= 1 &&
+          dimension.confidence >= 0 &&
+          dimension.confidence <= 1,
+    ),
+    isTrue,
+  );
+  final findings = <EvaluationReportFinding>[
+    for (final dimension in value.dimensions) ...[
+      ...dimension.strengths,
+      ...dimension.improvements,
+      ...dimension.recommendedExamples,
+    ],
+  ];
+  expect(
+    findings.any(
+      (finding) =>
+          finding.message.trim().isNotEmpty &&
+          finding.evidence.isNotEmpty &&
+          finding.evidence.every(
+            (evidence) =>
+                evidence.originalExcerpt.trim().isNotEmpty &&
+                evidence.startUtf8Byte >= 0 &&
+                evidence.endUtf8Byte > evidence.startUtf8Byte,
+          ),
+    ),
+    isTrue,
+  );
+}
+
+void _expectScoredIeltsPart1Report(
+  EvaluationReport? report, {
+  required List<String> expectedAnswers,
+}) {
+  expect(report, isNotNull);
+  final value = report!;
+  expect(value.sceneType, EvaluationReportSceneType.ieltsSpeaking);
+  expect(value.scoreability, EvaluationReportScoreability.provisional);
+  expect(value.summary.trim(), isNotEmpty);
+  expect(
+    value.questions.map((question) => question.answer?.transcript).toList(),
+    expectedAnswers,
+  );
+  expect(value.dimensions.map((dimension) => dimension.key).toList(), const [
+    'FLUENCY_COHERENCE',
+    'LEXICAL_RESOURCE',
+    'GRAMMATICAL_RANGE_ACCURACY',
+    'PRONUNCIATION',
+  ]);
+  for (final dimension in value.dimensions) {
+    expect(dimension.scale, EvaluationReportScoreScale.ieltsBand);
+    expect(dimension.coverage, inInclusiveRange(0, 1));
+    expect(dimension.confidence, inInclusiveRange(0, 1));
+    if (dimension.key == 'PRONUNCIATION') {
+      expect(dimension.score, isNull);
+      expect(
+        dimension.reasonCodes,
+        contains('ACOUSTIC_ASSESSMENT_NOT_CONFIGURED'),
+      );
+      continue;
+    }
+    expect(dimension.score, isNotNull);
+    expect(dimension.score!, inInclusiveRange(0, 9));
+    expect(dimension.score! * 2, (dimension.score! * 2).roundToDouble());
+  }
 }
 
 Future<void> _waitForPersistedSessionReview(
@@ -1129,13 +1598,14 @@ Future<void> _waitForPersistedSessionReview(
   fail('Timed out waiting for persisted Review for $practiceSessionId.');
 }
 
-void _failOnPracticeError(WidgetTester tester, String operation) {
-  final error = find.byKey(const Key('practice-error-message'));
-  if (error.evaluate().isEmpty) {
-    return;
+void _failOnPracticeControllerError(
+  PracticeController controller,
+  String operation,
+) {
+  final error = controller.errorMessage ?? controller.mediaErrorMessage;
+  if (error != null && error.isNotEmpty) {
+    fail('Failed to $operation: $error');
   }
-  final message = tester.widget<Text>(error).data ?? 'Unknown practice error';
-  fail('Failed to $operation: $message');
 }
 
 Future<bool> _signedInAccountMatches(
@@ -1223,10 +1693,10 @@ Future<void> _waitUntil(
   }
 }
 
-List<int> _decodeVoiceFixture(String encoded) {
+List<int> _decodeVoiceFixture(String encoded, {required String variableName}) {
   if (encoded.isEmpty) {
     fail(
-      'SPEAKUP_E2E_WAV_BASE64 must contain a private spoken-English WAV '
+      '$variableName must contain a private spoken-English WAV '
       'fixture supplied at test time.',
     );
   }
@@ -1234,12 +1704,12 @@ List<int> _decodeVoiceFixture(String encoded) {
   try {
     bytes = base64Decode(encoded);
   } on FormatException {
-    fail('SPEAKUP_E2E_WAV_BASE64 is not valid Base64.');
+    fail('$variableName is not valid Base64.');
   }
   if (bytes.length <= 44 ||
       ascii.decode(bytes.sublist(0, 4), allowInvalid: true) != 'RIFF' ||
       ascii.decode(bytes.sublist(8, 12), allowInvalid: true) != 'WAVE') {
-    fail('SPEAKUP_E2E_WAV_BASE64 must decode to a non-empty WAV file.');
+    fail('$variableName must decode to a non-empty WAV file.');
   }
   return bytes;
 }
@@ -1258,12 +1728,12 @@ final class _MemorySessionStore implements SessionStore {
 }
 
 final class _FixturePracticeRecorder implements PracticeRecorder {
-  _FixturePracticeRecorder(this._bytes);
+  _FixturePracticeRecorder(this._fixtures);
 
-  final List<int> _bytes;
+  final List<List<int>> _fixtures;
   File? _currentFile;
   bool _recording = false;
-  int _sequence = 0;
+  int _nextFixture = 0;
 
   @override
   Future<void> start() async {
@@ -1283,9 +1753,15 @@ final class _FixturePracticeRecorder implements PracticeRecorder {
       );
     }
     _recording = false;
+    if (_nextFixture >= _fixtures.length) {
+      throw const PracticeRecordingException(
+        PracticeRecordingFailureKind.unavailable,
+      );
+    }
     final directory = await getTemporaryDirectory();
-    final file = File('${directory.path}/speakup-real-e2e-${++_sequence}.wav');
-    await file.writeAsBytes(_bytes, flush: true);
+    final sequence = ++_nextFixture;
+    final file = File('${directory.path}/speakup-real-e2e-$sequence.wav');
+    await file.writeAsBytes(_fixtures[sequence - 1], flush: true);
     _currentFile = file;
     return RecordedPracticeAudio(
       path: file.path,
@@ -1317,4 +1793,30 @@ final class _FixturePracticeRecorder implements PracticeRecorder {
 
   @override
   Future<void> clearAccountState() => discardCurrent();
+}
+
+final class _ObservedPracticeAudioPlayer implements PracticeAudioPlayer {
+  _ObservedPracticeAudioPlayer()
+    : _delegate = AudioplayersPracticeAudioPlayer();
+
+  final PracticeAudioPlayer _delegate;
+  int successfulPlaybackCount = 0;
+
+  @override
+  Stream<void> get onComplete => _delegate.onComplete;
+
+  @override
+  Future<void> playWav(Uint8List bytes) async {
+    await _delegate.playWav(bytes);
+    successfulPlaybackCount++;
+  }
+
+  @override
+  Future<void> stop() => _delegate.stop();
+
+  @override
+  Future<void> clearAccountState() => _delegate.clearAccountState();
+
+  @override
+  Future<void> dispose() => _delegate.dispose();
 }

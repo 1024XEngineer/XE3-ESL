@@ -17,6 +17,7 @@ import 'package:speakup/features/coaching/practice/practice_prompt_speaker.dart'
 import 'package:speakup/features/coaching/ielts/ielts_mock_progress_store.dart';
 import 'package:speakup/features/coaching/practice/practice_models.dart';
 import 'package:speakup/features/coaching/practice/practice_completion_sheet.dart';
+import 'package:speakup/features/coaching/practice/practice_conversation_scroll.dart';
 import 'package:speakup/features/coaching/practice/practice_message_bubble.dart';
 import 'package:speakup/features/coaching/practice/practice_stage.dart';
 import 'package:speakup/features/coaching/practice/question_tip_sheet.dart';
@@ -581,24 +582,17 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
   }
 
   void _jumpToLatestMessage() {
-    if (!mounted || !_conversationScrollController.hasClients) {
-      return;
-    }
-    _conversationScrollController.jumpTo(
-      _conversationScrollController.position.maxScrollExtent,
+    schedulePracticeConversationScrollToBottom(
+      controller: _conversationScrollController,
+      isMounted: () => mounted,
+      animated: false,
     );
   }
 
   void _scrollToLatestMessage() {
-    if (!mounted || !_conversationScrollController.hasClients) {
-      return;
-    }
-    unawaited(
-      _conversationScrollController.animateTo(
-        _conversationScrollController.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOutCubic,
-      ),
+    schedulePracticeConversationScrollToBottom(
+      controller: _conversationScrollController,
+      isMounted: () => mounted,
     );
   }
 
@@ -778,6 +772,7 @@ class _IeltsSpeakingMockPageState extends State<IeltsSpeakingMockPage> {
       return;
     }
     setState(() => _visibleTipQuestionId = tip.questionId);
+    _scrollToLatestMessage();
   }
 
   Future<void> _speakQuestionTip() async {

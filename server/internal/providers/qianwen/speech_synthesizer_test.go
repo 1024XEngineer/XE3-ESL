@@ -484,7 +484,12 @@ func TestSynthesizeUsesDocumentedContractAndOwnsDownloadedAudio(t *testing.T) {
 
 	result, err := synthesizer.Synthesize(
 		context.Background(),
-		protocol.SynthesisRequest{Text: "  Repeat after me.  "},
+		protocol.SynthesisRequest{
+			Text:         "  Repeat after me.  ",
+			Model:        "qwen-audio-3.0-tts-flash",
+			Voice:        "loongjohn",
+			LanguageHint: "en-GB",
+		},
 	)
 	if err != nil {
 		t.Fatalf("synthesize: %v", err)
@@ -492,7 +497,7 @@ func TestSynthesizeUsesDocumentedContractAndOwnsDownloadedAudio(t *testing.T) {
 	defer result.Audio.Close()
 	if received.Model != "qwen-audio-3.0-tts-flash" ||
 		received.Input.Text != "Repeat after me." ||
-		received.Input.Voice != "loongeva_v3.6" ||
+		received.Input.Voice != "loongjohn" ||
 		received.Input.Format != "wav" ||
 		received.Input.SampleRate != 24_000 ||
 		len(received.Input.LanguageHints) != 1 ||

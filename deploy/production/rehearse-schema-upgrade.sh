@@ -12,8 +12,8 @@ readonly run_label='com.xengineer.speakup.production-rehearsal-run-id'
 readonly source_project='xe3-speakup-production'
 readonly source_service='postgres'
 readonly source_volume='xe3-speakup-postgres-data'
-readonly source_schema=7
-readonly target_schema=9
+readonly source_schema=9
+readonly target_schema=15
 readonly container_cpus='1.0'
 readonly container_memory='512m'
 readonly container_memory_bytes=536870912
@@ -62,10 +62,14 @@ forward_server_image_revision=''
 forward_hotfix_status='not_provided'
 schema_verified=false
 views_verified=false
+user_behavior_views_verified=false
+view_privileges_verified=false
+schema_10_14_contracts_verified=false
 constraint_verified=false
 candidate_readiness_verified=false
 previous_readiness_verified=false
 rollback_guard_verified=false
+idempotent_migration_verified=false
 same_schema_candidate_redeploy_verified=false
 
 usage() {
@@ -127,10 +131,15 @@ write_receipt() {
     --argjson total_duration_seconds "$total_duration_seconds" \
     --argjson schema_verified "$schema_verified" \
     --argjson views_verified "$views_verified" \
+    --argjson user_behavior_views_verified "$user_behavior_views_verified" \
+    --argjson view_privileges_verified "$view_privileges_verified" \
+    --argjson schema_10_14_contracts_verified \
+      "$schema_10_14_contracts_verified" \
     --argjson constraint_verified "$constraint_verified" \
     --argjson candidate_readiness_verified "$candidate_readiness_verified" \
     --argjson previous_readiness_verified "$previous_readiness_verified" \
     --argjson rollback_guard_verified "$rollback_guard_verified" \
+    --argjson idempotent_migration_verified "$idempotent_migration_verified" \
     --argjson same_schema_candidate_redeploy_verified \
       "$same_schema_candidate_redeploy_verified" \
     --argjson cleanup_verified "$cleanup_verified" '
@@ -169,11 +178,15 @@ write_receipt() {
         checks: {
           clean_target_schema: $schema_verified,
           product_health_views: $views_verified,
+          user_behavior_views: $user_behavior_views_verified,
+          view_public_privileges_revoked: $view_privileges_verified,
+          schema_10_14_contracts: $schema_10_14_contracts_verified,
           ielts_evaluation_constraint: $constraint_verified,
           candidate_readiness: $candidate_readiness_verified,
           previous_image_readiness_only: $previous_readiness_verified,
           previous_image_profile_processing: "not_verified",
-          schema7_rollback_guard: $rollback_guard_verified,
+          schema9_rollback_guard: $rollback_guard_verified,
+          idempotent_migration: $idempotent_migration_verified,
           same_schema_candidate_redeploy: $same_schema_candidate_redeploy_verified,
           forward_hotfix_image: $forward_hotfix_status,
           owned_resource_cleanup: $cleanup_verified
@@ -460,7 +473,7 @@ validate_backup_metadata() {
       (.size_bytes | type == "number" and floor == . and . > 0) and
       (.sha256 | type == "string" and test("^[a-f0-9]{64}$"))
     ' "$backup_directory/metadata.json" >/dev/null ||
-    fail 'backup metadata is invalid or is not a clean Production schema 7 backup'
+    fail 'backup metadata is invalid or is not a clean Production schema 9 backup'
 
   expected_checksum=$(jq --raw-output '.sha256' "$backup_directory/metadata.json")
   expected_size=$(jq --raw-output '.size_bytes' "$backup_directory/metadata.json")
@@ -734,7 +747,10 @@ run_migration() {
 }
 
 verify_target_database() {
-  local views barrier_count constraint_count expected_views actual_views
+  local barrier_count constraint_count expected_views actual_views
+  local expected_indexes actual_indexes public_grants object_count column_count
+  local expected_constraints actual_constraints lisa_binding_count voice_count
+  local expected_voice_contract voice_contract
 
   [[ "$(schema_state)" == "$target_schema" ]] ||
     fail "candidate migration did not produce clean schema $target_schema"
@@ -744,7 +760,7 @@ verify_target_database() {
     "SELECT c.relname FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind = 'v' AND c.relname LIKE 'product_health_daily_%' ORDER BY c.relname;") ||
     fail 'cannot inspect product health views'
   [[ "$actual_views" == "$expected_views" ]] ||
-    fail 'schema 9 does not contain exactly the five product health views'
+    fail 'schema 15 does not contain exactly the five product health views'
   barrier_count=$(database_query \
     "SELECT count(*) FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind = 'v' AND c.relname LIKE 'product_health_daily_%' AND c.reloptions @> ARRAY['security_barrier=true'];") ||
     fail 'cannot inspect product health view security barriers'
@@ -752,11 +768,73 @@ verify_target_database() {
     fail 'product health views are missing security barriers'
   views_verified=true
 
+  expected_views=$'user_behavior_current_nonterminal_sessions\nuser_behavior_daily_early_end\nuser_behavior_daily_feature_usage\nuser_behavior_daily_repractice\nuser_behavior_daily_retention\nuser_behavior_daily_session_funnel\nuser_behavior_daily_time_to_first_effective_turn'
+  actual_views=$(database_query \
+    "SELECT c.relname FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind = 'v' AND c.relname LIKE 'user_behavior_%' ORDER BY c.relname;") ||
+    fail 'cannot inspect user behavior views'
+  [[ "$actual_views" == "$expected_views" ]] ||
+    fail 'schema 15 does not contain exactly the seven user behavior views'
+  # The rehearsal pins PostgreSQL 18, so its normalized catalog definitions are
+  # stable fingerprints for the table, expression, column order and predicate.
+  expected_indexes=$'user_behavior_confirmed_turns_day_idx|practice_turns|true|true|true|false|false|fb14f0584e55b8235b27df1d15cf882c|301680844dfdda6cb713fd00399e02f7\nuser_behavior_nonterminal_sessions_updated_idx|practice_sessions|true|true|true|false|false|abdea30dc6f0b8ab1bacc26725251cfa|2ed9267ac3e11681d5050bf454787b63\nuser_behavior_ready_session_reports_idx|evaluations|true|true|true|false|false|5bb3c9b107d1e1c16179cac640b8f45c|ff20ea3c635e1dec160eed2b0f5803b4\nuser_behavior_sessions_created_day_idx|practice_sessions|true|true|true|false|false|acdceda1390123c40b36a123f110b2b3|d41d8cd98f00b204e9800998ecf8427e'
+  actual_indexes=$(database_query \
+    "SELECT index_relation.relname || '|' || table_relation.relname || '|' || index_catalog.indisvalid::text || '|' || index_catalog.indisready::text || '|' || index_catalog.indislive::text || '|' || index_catalog.indisunique::text || '|' || index_catalog.indisprimary::text || '|' || md5(pg_catalog.pg_get_indexdef(index_catalog.indexrelid)) || '|' || md5(COALESCE(pg_catalog.pg_get_expr(index_catalog.indpred, index_catalog.indrelid), '')) FROM pg_catalog.pg_index index_catalog JOIN pg_catalog.pg_class index_relation ON index_relation.oid = index_catalog.indexrelid JOIN pg_catalog.pg_namespace index_namespace ON index_namespace.oid = index_relation.relnamespace JOIN pg_catalog.pg_class table_relation ON table_relation.oid = index_catalog.indrelid JOIN pg_catalog.pg_namespace table_namespace ON table_namespace.oid = table_relation.relnamespace WHERE index_namespace.nspname = 'public' AND table_namespace.nspname = 'public' AND index_relation.relname LIKE 'user_behavior_%' ORDER BY index_relation.relname;") ||
+    fail 'cannot inspect user behavior index contracts'
+  [[ "$actual_indexes" == "$expected_indexes" ]] ||
+    fail 'schema 15 user behavior index contracts are invalid'
+  barrier_count=$(database_query \
+    "SELECT count(*) FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind = 'v' AND c.relname LIKE 'user_behavior_%' AND c.reloptions @> ARRAY['security_barrier=true'];") ||
+    fail 'cannot inspect user behavior view security barriers'
+  [[ "$barrier_count" == 7 ]] ||
+    fail 'user behavior views are missing security barriers'
+  user_behavior_views_verified=true
+
+  public_grants=$(database_query \
+    "SELECT count(*) FROM (SELECT 1 FROM pg_catalog.pg_class relation JOIN pg_catalog.pg_namespace namespace ON namespace.oid = relation.relnamespace CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(relation.relacl, pg_catalog.acldefault('r', relation.relowner))) public_acl WHERE namespace.nspname = 'public' AND relation.relkind = 'v' AND relation.relname IN ('product_health_daily_artifact_coverage', 'product_health_daily_evaluation_health', 'product_health_daily_practice_activity', 'product_health_daily_scoreability', 'product_health_daily_session_outcomes', 'user_behavior_current_nonterminal_sessions', 'user_behavior_daily_early_end', 'user_behavior_daily_feature_usage', 'user_behavior_daily_repractice', 'user_behavior_daily_retention', 'user_behavior_daily_session_funnel', 'user_behavior_daily_time_to_first_effective_turn') AND public_acl.grantee = 0 UNION ALL SELECT 1 FROM pg_catalog.pg_class relation JOIN pg_catalog.pg_namespace namespace ON namespace.oid = relation.relnamespace JOIN pg_catalog.pg_attribute attribute ON attribute.attrelid = relation.oid AND attribute.attnum > 0 AND NOT attribute.attisdropped CROSS JOIN LATERAL pg_catalog.aclexplode(attribute.attacl) public_acl WHERE namespace.nspname = 'public' AND relation.relkind = 'v' AND relation.relname IN ('product_health_daily_artifact_coverage', 'product_health_daily_evaluation_health', 'product_health_daily_practice_activity', 'product_health_daily_scoreability', 'product_health_daily_session_outcomes', 'user_behavior_current_nonterminal_sessions', 'user_behavior_daily_early_end', 'user_behavior_daily_feature_usage', 'user_behavior_daily_repractice', 'user_behavior_daily_retention', 'user_behavior_daily_session_funnel', 'user_behavior_daily_time_to_first_effective_turn') AND public_acl.grantee = 0) public_privileges;") ||
+    fail 'cannot inspect aggregate view PUBLIC privileges'
+  [[ "$public_grants" == 0 ]] ||
+    fail 'aggregate views expose privileges to PUBLIC'
+  view_privileges_verified=true
+
+  object_count=$(database_query \
+    "SELECT count(*) FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname IN ('coach_avatar_options', 'coach_voice_options', 'user_coach_presentation_preferences');") ||
+    fail 'cannot inspect schema 10 presentation tables'
+  [[ "$object_count" == 3 ]] ||
+    fail 'schema 10 presentation tables are incomplete'
+  column_count=$(database_query \
+    "SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND is_nullable = 'NO' AND (table_name, column_name) IN (('coach_avatar_options', 'provider_profile'), ('coach_voice_options', 'provider_profile'), ('practice_sessions', 'presentation_snapshot'));") ||
+    fail 'cannot inspect schema 11 runtime columns'
+  [[ "$column_count" == 3 ]] ||
+    fail 'schema 11 presentation runtime columns are incomplete'
+  expected_constraints=$'agent_runs|agent_runs_json_shape_check|c|true|true|f36065a83bac4c34f381540b741436c7|context_snapshot,tool_trace,model_result,usage,error\nagent_runs|agent_runs_model_configuration_check|c|true|true|16e1e11905311b9291cd6b1bcd3d826c|model_configuration\ncoach_avatar_options|coach_avatar_options_provider_binding_unique|u|true|true|5a972ed789cab55701518859c17b8314|provider,provider_profile,provider_avatar_id,binding_version\ncoach_avatar_options|coach_avatar_options_text_check|c|true|true|cacaac8ec461b7e191450e21842629a0|display_name,description,preview_asset_key,provider,provider_profile,provider_avatar_id\ncoach_voice_options|coach_voice_options_provider_binding_unique|u|true|true|7d0360aaaa9eea1997007a99e59ec519|provider,provider_profile,provider_model,provider_voice_id,binding_version\ncoach_voice_options|coach_voice_options_text_check|c|true|true|ea842603d9d2550a2b262fa6458666b6|display_name,description,locale,gender,provider,provider_profile,provider_model,provider_voice_id\npractice_sessions|practice_sessions_presentation_snapshot_check|c|true|true|75db06017f1900ed528d74da92161732|presentation_snapshot'
+  actual_constraints=$(database_query \
+    "SELECT relation.relname || '|' || constraint_catalog.conname || '|' || constraint_catalog.contype::text || '|' || constraint_catalog.convalidated::text || '|' || constraint_catalog.conenforced::text || '|' || md5(pg_catalog.pg_get_constraintdef(constraint_catalog.oid, false)) || '|' || COALESCE((SELECT string_agg(attribute.attname, ',' ORDER BY key_column.key_position) FROM unnest(constraint_catalog.conkey) WITH ORDINALITY AS key_column(attnum, key_position) JOIN pg_catalog.pg_attribute attribute ON attribute.attrelid = constraint_catalog.conrelid AND attribute.attnum = key_column.attnum), '') FROM pg_catalog.pg_constraint constraint_catalog JOIN pg_catalog.pg_class relation ON relation.oid = constraint_catalog.conrelid JOIN pg_catalog.pg_namespace namespace ON namespace.oid = relation.relnamespace WHERE namespace.nspname = 'public' AND constraint_catalog.conname IN ('coach_avatar_options_text_check', 'coach_avatar_options_provider_binding_unique', 'coach_voice_options_text_check', 'coach_voice_options_provider_binding_unique', 'practice_sessions_presentation_snapshot_check', 'agent_runs_model_configuration_check', 'agent_runs_json_shape_check') ORDER BY relation.relname, constraint_catalog.conname;") ||
+    fail 'cannot inspect schema 10 to 12 constraint contracts'
+  [[ "$actual_constraints" == "$expected_constraints" ]] ||
+    fail 'schema 10 to 12 constraint contracts are invalid'
+  lisa_binding_count=$(database_query \
+    "SELECT count(*) FROM public.coach_avatar_options WHERE id = 'avatar_lisa' AND provider = 'spatialreal' AND provider_profile = 'spatialreal_default' AND provider_avatar_id = 'ca9c5c22-6dba-4b59-ae3b-d26066f8c017' AND binding_version = 2;") ||
+    fail 'cannot inspect schema 13 Lisa binding'
+  [[ "$lisa_binding_count" == 1 ]] ||
+    fail 'schema 13 Lisa binding is invalid'
+  voice_count=$(database_query \
+    "SELECT count(*) FROM public.coach_voice_options;") ||
+    fail 'cannot inspect schema 14 voice catalog'
+  [[ "$voice_count" == 9 ]] ||
+    fail 'schema 14 voice catalog size is invalid'
+  expected_voice_contract=$'voice_adrian|en|qianwen|qianwen_default|qwen-audio-3.0-tts-flash|qwen-audio-3.0-tts-flash-loongadriangao|1|true\nvoice_ivy|en|qianwen|qianwen_default|qwen-audio-3.0-tts-flash|qwen-audio-3.0-tts-flash-loongivyhu|1|true\nvoice_james|en|qianwen|qianwen_default|qwen-audio-3.0-tts-flash|qwen-audio-3.0-tts-flash-loongjameszhao|1|true\nvoice_luna|en|qianwen|qianwen_default|qwen-audio-3.0-tts-flash|qwen-audio-3.0-tts-flash-loonglunawang|1|true\nvoice_mary|en-GB|qianwen|qianwen_default|qwen-audio-3.0-tts-flash|loongmary|1|true\nvoice_nora|en|qianwen|qianwen_default|qwen-audio-3.0-tts-flash|qwen-audio-3.0-tts-flash-loongnorahu|1|true\nvoice_olivia|en|qianwen|qianwen_default|qwen-audio-3.0-tts-flash|qwen-audio-3.0-tts-flash-loongolivialin|1|true'
+  voice_contract=$(database_query \
+    "SELECT id || '|' || locale || '|' || provider || '|' || provider_profile || '|' || provider_model || '|' || provider_voice_id || '|' || binding_version::text || '|' || enabled::text FROM public.coach_voice_options WHERE id IN ('voice_adrian', 'voice_ivy', 'voice_james', 'voice_luna', 'voice_mary', 'voice_nora', 'voice_olivia') ORDER BY id;") ||
+    fail 'cannot inspect schema 14 voice bindings'
+  [[ "$voice_contract" == "$expected_voice_contract" ]] ||
+    fail 'schema 14 voice catalog is invalid'
+  schema_10_14_contracts_verified=true
+
   constraint_count=$(database_query \
     "SELECT count(*) FROM pg_catalog.pg_constraint c WHERE c.conrelid = 'public.evaluations'::regclass AND c.conname = 'evaluations_kind_check' AND c.contype = 'c' AND c.convalidated = true AND pg_get_expr(c.conbin, c.conrelid) ~ '^\\(kind = ANY \\(ARRAY\\[' AND (SELECT array_agg((match)[1] ORDER BY (match)[1]) FROM regexp_matches(pg_get_constraintdef(c.oid), '''([^'']+)''', 'g') AS match) = ARRAY['AGENT_MESSAGE_FEEDBACK', 'IELTS_PART1_PROFILE', 'IELTS_PART2_PROFILE', 'PRACTICE_TURN_FEEDBACK', 'SESSION_REPORT']::text[];") ||
     fail 'cannot inspect IELTS evaluation constraint'
   [[ "$constraint_count" == 1 ]] ||
-    fail 'schema 9 IELTS evaluation kind constraint is invalid'
+    fail 'schema 15 IELTS evaluation kind constraint is invalid'
   constraint_verified=true
 }
 
@@ -808,7 +886,7 @@ verify_rollback_guard() {
 
   if output=$("$production_manager" validate-rollback-schema \
     --current-schema "$target_schema" --target-schema "$source_schema" 2>&1); then
-    fail 'Production rollback guard allowed schema 9 to schema 7'
+    fail 'Production rollback guard allowed schema 15 to schema 9'
   fi
   [[ "$output" == *'rollback requires the current database schema to match the target release'* ]] ||
     fail 'Production rollback guard failed for an unexpected reason'
@@ -871,6 +949,7 @@ run_isolated_rehearsal() {
     forward_migration="xe3-speakup-prod-rehearsal-forward-migrate-$run_id"
     run_migration "$forward_migration" "$forward_server_image_id"
     verify_target_database
+    idempotent_migration_verified=true
     forward_server="xe3-speakup-prod-rehearsal-forward-$run_id"
     start_server_and_wait "$forward_server" "$forward_server_image_id"
     stop_server "$last_created_container_id"
@@ -881,6 +960,7 @@ run_isolated_rehearsal() {
     run_migration "$redeploy_migration" "$candidate_server_image_id"
     [[ "$(schema_state)" == "$target_schema" ]] ||
       fail 'same-schema candidate redeploy changed the clean target schema'
+    idempotent_migration_verified=true
     redeploy_server="xe3-speakup-prod-rehearsal-redeploy-$run_id"
     start_server_and_wait "$redeploy_server" "$candidate_server_image_id"
     stop_server "$last_created_container_id"

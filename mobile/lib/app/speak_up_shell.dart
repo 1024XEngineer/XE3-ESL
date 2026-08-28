@@ -35,6 +35,7 @@ import 'package:speakup/features/coaching/evaluation/turn_feedback_controller.da
 import 'package:speakup/features/coaching/evaluation/agent_conversation_feedback_presenter.dart';
 import 'package:speakup/features/coaching/profile/coaching_profile.dart';
 import 'package:speakup/features/profile/profile_page.dart';
+import 'package:speakup/features/profile/coach_presentation_settings.dart';
 import 'package:speakup/features/profile/profile_avatar_view.dart';
 import 'package:speakup/features/update/app_update.dart';
 import 'package:speakup/features/update/app_update_ui.dart';
@@ -53,6 +54,7 @@ class SpeakUpShell extends StatefulWidget {
     this.reviewHistoryController,
     this.speechFeedbackController,
     this.coachingProfileController,
+    this.coachPresentationSettingsStore,
     this.appUpdateService,
     this.routeObserver,
     required this.conversationController,
@@ -80,6 +82,7 @@ class SpeakUpShell extends StatefulWidget {
   final ReviewHistoryController? reviewHistoryController;
   final SpeechFeedbackController? speechFeedbackController;
   final CoachingProfileController? coachingProfileController;
+  final CoachPresentationSettingsStore? coachPresentationSettingsStore;
   final AppUpdateService? appUpdateService;
   final RouteObserver<ModalRoute<Object?>>? routeObserver;
 
@@ -780,6 +783,7 @@ class _SpeakUpShellState extends State<SpeakUpShell>
         onLogout: widget.authController?.logout,
         reviewHistoryController: widget.reviewHistoryController,
         coachingProfileController: widget.coachingProfileController,
+        coachPresentationSettingsStore: widget.coachPresentationSettingsStore,
         appUpdateService: widget.appUpdateService,
         onCheckForUpdate: widget.appUpdateService == null
             ? null

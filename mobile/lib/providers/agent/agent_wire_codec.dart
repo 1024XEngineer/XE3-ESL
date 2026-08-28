@@ -426,7 +426,7 @@ AgentRun decodeAgentWireRun(Object? value) {
     pattern: _providerPattern,
     maxLength: 64,
   );
-  final requestedModel = _strictClientIdentity(object['requested_model']);
+  final requestedModel = _strictModelIdentity(object['requested_model']);
   final maxOutputTokens = _strictInt(object['max_output_tokens'], minimum: 1);
   final createdAt = _strictDateTime(object['created_at']);
   final updatedAt = _strictDateTime(object['updated_at']);
@@ -575,7 +575,7 @@ AgentRunCompletion _decodeRunCompletion(Map<String, Object?> object) {
         providerCompletionId: _strictClientIdentity(
           object['provider_completion_id'],
         ),
-        providerModel: _strictClientIdentity(object['provider_model']),
+        providerModel: _strictModelIdentity(object['provider_model']),
         finishReason: finishReason,
         usage: AgentRunUsage(
           inputTokens: _strictInt(usage['input_tokens'], minimum: 0),
@@ -683,6 +683,18 @@ String _strictClientIdentity(Object? value) => _strictPatternString(
   maxLength: 128,
 );
 
+String _strictModelIdentity(Object? value) {
+  final result = _strictPatternString(
+    value,
+    pattern: _modelIdentityPattern,
+    maxLength: 128,
+  );
+  if (result.contains('..')) {
+    throw const AgentWireCodecException();
+  }
+  return result;
+}
+
 int _strictInt(Object? value, {required int minimum, int? maximum}) {
   if (value is! int ||
       value < minimum ||
@@ -747,6 +759,9 @@ final RegExp _uuidPattern = RegExp(
 );
 final RegExp _clientIdentityPattern = RegExp(
   r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$',
+);
+final RegExp _modelIdentityPattern = RegExp(
+  r'^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._:-]*)*$',
 );
 final RegExp _providerPattern = RegExp(r'^[a-z][a-z0-9_-]{0,63}$');
 final RegExp _failureKindPattern = RegExp(r'^[a-z][a-z0-9_]{0,63}$');

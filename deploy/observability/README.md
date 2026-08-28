@@ -18,8 +18,8 @@ The shared server remains protected by three scope rules:
 - Prometheus: 30-day/8-GB bounded retention.
 - Alertmanager: private SMTP configuration supplied by the server operator.
 - Grafana: provisioned Prometheus and restricted PostgreSQL data sources, with
-  separate system and Product Health dashboards. New users default to the
-  Simplified Chinese (`zh-Hans`) interface.
+  separate system, Product Health, and User Behavior dashboards. New users
+  default to the Simplified Chinese (`zh-Hans`) interface.
 - blackbox_exporter: Portal, API, and Android release HTTPS probes.
 - node_exporter: only the bounded SpeakUp textfile collector. It has no host
   root mount; the reviewed host-side exporter emits root disk and inode values.
@@ -55,8 +55,9 @@ The migration revokes `PUBLIC` access to every view.
 
 `configure-product-health-reader` provisions the login role
 `speakup_product_health_reader` after the migration is applied. It first revokes
-all table access, then grants `SELECT` on exactly those five views. The role is
-non-inheriting, read-only by default, connection-limited, and time-bounded.
+all table access, then grants `SELECT` on exactly the five Product Health views
+and seven User Behavior views. The role is non-inheriting, read-only by default,
+connection-limited, and time-bounded.
 Grafana uses that role only through the existing internal
 `xe3-speakup-production_database` Docker network. PostgreSQL receives no host
 or public port.
@@ -90,6 +91,42 @@ The deterministic migration integration fixture is the canonical
 Staging-compatible seed for reproducing and checking every first-version
 formula; it creates only an isolated test schema and is never loaded into
 Production.
+
+## User Behavior boundary
+
+Migration `000015_user_behavior_views` creates seven anonymous aggregates. The
+User Behavior dashboard reuses the restricted Product Health PostgreSQL
+datasource and reads only those views:
+
+- `user_behavior_daily_session_funnel`;
+- `user_behavior_daily_time_to_first_effective_turn`;
+- `user_behavior_daily_retention`;
+- `user_behavior_daily_repractice`;
+- `user_behavior_current_nonterminal_sessions`;
+- `user_behavior_daily_early_end`;
+- `user_behavior_daily_feature_usage`.
+
+The dashboard tells one product-improvement story in order: practice funnel,
+time to first effective answer, confirmed-answer retention, repractice and
+early-end behavior, non-terminal Session candidates, and feature usage. It
+never queries raw business tables or exposes a user, Session, Turn, Evaluation,
+content, or other identifier. Rates and percentiles remain `NULL` when the
+aggregate view has no valid denominator, and Grafana keeps No Data distinct
+from a measured zero.
+
+Feature panels require one fixed `feature_kind` and one fixed volume measure at
+a time. The default shows `PRACTICE_EXPERIENCE` and `SESSIONS`; even the largest
+closed feature dimension produces at most ten series instead of mixing every
+kind and measure in one chart.
+
+Current server facts can prove that Session Report generation was scheduled or
+became READY; they cannot prove that a user viewed the report or Turn Feedback.
+The User Behavior funnel exposes READY generation, labels it as generation, and
+lists viewing, screen paths, permission denial, and other client-only behavior
+as not observable. Likewise, an old non-terminal Session is a stale candidate,
+not proof that a user abandoned it. Adding those client facts requires a
+separately reviewed, allowlisted event contract; this dashboard does not infer
+them.
 
 ## Application metrics boundary
 
@@ -183,7 +220,35 @@ Keep every reviewed observability source under
 `/opt/xe3-speakup-observability/releases/<full-git-sha>` and make
 `/opt/xe3-speakup-observability/source` a symlink to the selected release.
 Never overwrite a release directory; record the previous symlink target before
-switching it so rollback selects an exact source. Then:
+switching it so rollback selects an exact source. For an existing installation,
+keep that value in the same root shell used for the release:
+
+```bash
+set -euo pipefail
+observability_root=/opt/xe3-speakup-observability
+previous_observability_source="$(readlink -e \
+  "$observability_root/source")"
+new_observability_source="$observability_root/releases/<full-git-sha>"
+
+case "$previous_observability_source" in
+  "$observability_root"/releases/*) ;;
+  *) printf 'unexpected previous source: %s\n' \
+       "$previous_observability_source" >&2; exit 1 ;;
+esac
+test -d "$new_observability_source"
+test "$new_observability_source" != "$previous_observability_source"
+
+next_observability_link="$observability_root/.source.next.$$"
+ln -sT "$new_observability_source" "$next_observability_link"
+mv -Tf "$next_observability_link" "$observability_root/source"
+current_observability_source="$(readlink -e "$observability_root/source")"
+test "$current_observability_source" = "$new_observability_source"
+printf 'previous_observability_source=%s\n' "$previous_observability_source"
+printf 'current_observability_source=%s\n' "$current_observability_source"
+```
+
+This atomically selects and verifies the reviewed release before any command is
+installed from `source`. Then:
 
 1. Install the private files above, install `validate-private-files` as
    `/usr/local/sbin/xe3-speakup-observability-validate-private-files`, and run
@@ -224,8 +289,48 @@ switching it so rollback selects an exact source. Then:
      up --detach --pull always --wait
    ```
 
+   When switching an existing installation to a new immutable release, the
+   successful reader configuration in step 2 must happen before Grafana is
+   touched. After the `source` symlink points at the reviewed full Git SHA,
+   explicitly recreate only Grafana:
+
+   ```bash
+   set -euo pipefail
+   current_observability_source="$(readlink -e \
+     /opt/xe3-speakup-observability/source)"
+   case "$previous_observability_source" in
+     /opt/xe3-speakup-observability/releases/*) ;;
+     *) printf 'unexpected previous source: %s\n' \
+          "$previous_observability_source" >&2; exit 1 ;;
+   esac
+   test "$current_observability_source" = "$new_observability_source"
+   test "$current_observability_source" != "$previous_observability_source"
+   printf 'previous_observability_source=%s\n' \
+     "$previous_observability_source"
+   printf 'current_observability_source=%s\n' \
+     "$current_observability_source"
+   docker compose \
+     --project-name xe3-speakup-observability \
+     --env-file /etc/speakup/observability.env \
+     --file /opt/xe3-speakup-observability/source/compose.yaml \
+     up --detach --no-deps --force-recreate --wait grafana
+   ```
+
+   `--force-recreate` is required even when Compose reports no configuration
+   change: the dashboard bind mount must resolve against the new immutable
+   release directory. Do not use `down`, recreate another service, or remove a
+   named volume. Record the previous and current symlink targets with the
+   release receipt.
+
+   If reader configuration fails, restore the previous `source` symlink and do
+   not touch Grafana. If Grafana fails after recreation, restore that symlink,
+   validate the private files again, and run only the same Grafana recreation
+   command. Keep the current database schema, the aggregate views, the reader
+   role, its PGPASSFILE, and all Grafana volumes in place.
+
 9. Confirm every Prometheus target is up and the Product Health datasource can
-   query only its five views from a loopback Grafana session.
+   query only the five Product Health and seven User Behavior aggregate views
+   from a loopback Grafana session.
 10. After DNS/TLS validation, install `monitor-nginx.conf`, run
    `/usr/local/nginx/sbin/nginx -t`, and reload only after it succeeds.
 
@@ -305,10 +410,11 @@ are installed; do not commit those settings.
   curl --fail http://127.0.0.1:13000/api/health
   ```
 
-  Keep the Product Health role, views, and root-private PGPASSFILE in place.
-  They are additive and cannot read raw tables; Production rollback never runs
-  a down migration. Removing them belongs to a separately reviewed database
-  change, not an availability rollback.
+  Keep the Product Health reader role, the Product Health and User Behavior
+  views, and the root-private PGPASSFILE in place. They are additive and cannot
+  read raw tables; Production rollback never runs a down migration. Removing
+  them belongs to a separately reviewed database change, not an availability
+  rollback.
 - If the stack fails, keep its volumes and stop only the
   `xe3-speakup-observability` Compose project.
 - Restore the previous SpeakUp Compose files and recreate only those services if

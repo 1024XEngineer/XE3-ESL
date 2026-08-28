@@ -1,0 +1,16 @@
+BEGIN;
+
+DROP VIEW user_behavior_daily_feature_usage;
+DROP VIEW user_behavior_current_nonterminal_sessions;
+DROP VIEW user_behavior_daily_early_end;
+DROP VIEW user_behavior_daily_repractice;
+DROP VIEW user_behavior_daily_retention;
+DROP VIEW user_behavior_daily_time_to_first_effective_turn;
+DROP VIEW user_behavior_daily_session_funnel;
+
+DROP INDEX user_behavior_nonterminal_sessions_updated_idx;
+DROP INDEX user_behavior_ready_session_reports_idx;
+DROP INDEX user_behavior_confirmed_turns_day_idx;
+DROP INDEX user_behavior_sessions_created_day_idx;
+
+COMMIT;

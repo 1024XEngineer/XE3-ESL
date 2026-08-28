@@ -51,17 +51,18 @@ type Participant struct {
 }
 
 type SessionSnapshot struct {
-	SessionID          string              `json:"practice_session_id"`
-	PlanVersion        int                 `json:"plan_version"`
-	Experience         PracticeExperience  `json:"practice_experience"`
-	Category           SceneCategory       `json:"scene_category"`
-	PracticeMode       PracticeMode        `json:"practice_mode"`
-	SceneSelection     SceneSelection      `json:"scene_selection"`
-	Preparation        PreparationSnapshot `json:"preparation_snapshot"`
-	Participants       []Participant       `json:"participants"`
-	SessionPolicy      SessionPolicy       `json:"session_policy"`
-	PracticeObjectives []PracticeObjective `json:"practice_objectives"`
-	IELTSAssignment    *IELTSAssignment    `json:"ielts_assignment,omitempty"`
+	SessionID          string               `json:"practice_session_id"`
+	PlanVersion        int                  `json:"plan_version"`
+	Experience         PracticeExperience   `json:"practice_experience"`
+	Category           SceneCategory        `json:"scene_category"`
+	PracticeMode       PracticeMode         `json:"practice_mode"`
+	SceneSelection     SceneSelection       `json:"scene_selection"`
+	Preparation        PreparationSnapshot  `json:"preparation_snapshot"`
+	Participants       []Participant        `json:"participants"`
+	SessionPolicy      SessionPolicy        `json:"session_policy"`
+	PracticeObjectives []PracticeObjective  `json:"practice_objectives"`
+	IELTSAssignment    *IELTSAssignment     `json:"ielts_assignment,omitempty"`
+	Presentation       PresentationSnapshot `json:"-"`
 }
 
 type SessionBootstrap struct {

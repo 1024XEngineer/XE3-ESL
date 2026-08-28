@@ -63,7 +63,10 @@ type TranscriptionResult struct {
 }
 
 type SynthesisRequest struct {
-	Text string
+	Text         string
+	Model        string
+	Voice        string
+	LanguageHint string
 }
 
 type SynthesisResult struct {

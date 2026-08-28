@@ -29,7 +29,6 @@ type SpatiusConfig struct {
 	Enabled        bool
 	ConsoleBaseURL string
 	AppID          string
-	AvatarID       string
 	Region         string
 	APIKey         Secret
 	TokenTTL       time.Duration
@@ -100,17 +99,12 @@ func LoadSpatius() (SpatiusConfig, error) {
 	}
 
 	appID := strings.TrimSpace(os.Getenv("SPATIUS_APP_ID"))
-	avatarID := strings.TrimSpace(os.Getenv("SPATIUS_AVATAR_ID"))
 	rawAPIKey := strings.TrimSpace(os.Getenv("SPATIUS_API_KEY"))
 	if enabled {
 		switch {
 		case !validSpatiusIdentifier(appID):
 			return SpatiusConfig{}, errors.New(
 				"SPATIUS_APP_ID is required and must be a valid identifier",
-			)
-		case !validSpatiusIdentifier(avatarID):
-			return SpatiusConfig{}, errors.New(
-				"SPATIUS_AVATAR_ID is required and must be a valid identifier",
 			)
 		case !validSpatiusSecret(rawAPIKey):
 			return SpatiusConfig{}, errors.New(
@@ -122,7 +116,6 @@ func LoadSpatius() (SpatiusConfig, error) {
 		Enabled:        enabled,
 		ConsoleBaseURL: baseURL,
 		AppID:          appID,
-		AvatarID:       avatarID,
 		Region:         region,
 		APIKey:         Secret{value: rawAPIKey},
 		TokenTTL:       tokenTTL,

@@ -59,6 +59,7 @@ components:
         - account_unavailable
         - profile_not_found
         - profile_version_conflict
+        - coach_presentation_version_conflict
         - rate_limited
         - resource_not_found
         - resource_conflict
@@ -91,6 +92,7 @@ components:
         profile_not_found: 404
         account_registration_unavailable: 409
         profile_version_conflict: 409
+        coach_presentation_version_conflict: 409
         idempotency_key_conflict: 409
         resource_conflict: 409
         resource_processing: 409

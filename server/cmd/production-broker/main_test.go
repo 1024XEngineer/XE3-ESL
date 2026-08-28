@@ -157,7 +157,7 @@ func initializeTestState(t *testing.T, config Config) {
 	}
 }
 
-func stagingResponseJSON(manifest releaseManifest, candidateRunID, stagingRunID int64) []byte {
+func stagingResponseJSON(manifest releaseManifest, candidateRunID, stagingRunID, deploymentRunAttempt int64) []byte {
 	receipt := map[string]any{
 		"receipt_version": 2, "environment": "staging", "operation": "deploy", "repository": officialRepository,
 		"manifest_sha256": manifest.SHA256, "version": manifest.Version, "version_code": manifest.VersionCode,
@@ -165,7 +165,7 @@ func stagingResponseJSON(manifest releaseManifest, candidateRunID, stagingRunID 
 		"portal_image_digest": manifest.PortalImageDigest, "server_image_digest": manifest.ServerImageDigest,
 		"portal_container_id": strings.Repeat("4", 64), "server_container_id": strings.Repeat("5", 64),
 		"postgres_container_id": strings.Repeat("6", 64), "candidate_run_id": candidateRunID,
-		"deployment_run_id": stagingRunID, "deployment_run_attempt": 1,
+		"deployment_run_id": stagingRunID, "deployment_run_attempt": deploymentRunAttempt,
 		"previous_receipt_sha256": strings.Repeat("7", 64), "rollback_target_receipt_sha256": nil,
 		"recorded_at_utc": "2026-08-26T09:00:00Z",
 	}
@@ -192,7 +192,7 @@ func deploymentPayload(t *testing.T, currentSHA string, mutateStaging bool, atte
 	if mutateStaging {
 		stagingCandidate = 999
 	}
-	stagingContents := stagingResponseJSON(manifest, stagingCandidate, 700)
+	stagingContents := stagingResponseJSON(manifest, stagingCandidate, 700, 1)
 	apk := []byte("signed-production-apk\n")
 	published := "2026-08-26T09:05:00Z"
 	prefix := "downloads/android/v" + manifest.Version + "/"
@@ -331,6 +331,40 @@ func TestRejectsMismatchedStagingReceiptBeforeManage(t *testing.T) {
 	}
 	if len(runner.calls) != 0 {
 		t.Fatal("manage ran for mismatched Staging evidence")
+	}
+}
+
+func TestStagingReceiptAttemptMatchesWorkflowRerun(t *testing.T) {
+	manifestContents := manifestJSON("0.1.8", 9, 124)
+	manifest, err := parseReleaseManifest(manifestContents, 124)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name            string
+		receiptAttempt  int64
+		workflowAttempt int64
+		want            bool
+	}{
+		{name: "same attempt", receiptAttempt: 1, workflowAttempt: 1, want: true},
+		{name: "earlier successful deployment reused by rerun", receiptAttempt: 1, workflowAttempt: 2, want: true},
+		{name: "future receipt", receiptAttempt: 2, workflowAttempt: 1, want: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			contents := stagingResponseJSON(manifest, 124, 700, test.receiptAttempt)
+			staging, err := parseStagingReceipt(contents)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req := request{
+				CandidateRunID:    124,
+				StagingRunID:      700,
+				StagingRunAttempt: test.workflowAttempt,
+			}
+			if got := stagingMatches(staging, manifest, req); got != test.want {
+				t.Fatalf("stagingMatches() = %t, want %t", got, test.want)
+			}
+		})
 	}
 }
 

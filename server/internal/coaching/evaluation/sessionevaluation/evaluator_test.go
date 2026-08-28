@@ -16,6 +16,9 @@ import (
 )
 
 func TestInvalidProviderReportRemainsRetryableAtTheJobBoundary(t *testing.T) {
+	if ErrProviderResponse.Error() != "evaluation: report provider response invalid" {
+		t.Fatalf("provider response error = %q", ErrProviderResponse.Error())
+	}
 	var failure interface {
 		StableCategory() string
 		Retryable() bool
@@ -26,6 +29,44 @@ func TestInvalidProviderReportRemainsRetryableAtTheJobBoundary(t *testing.T) {
 		failure.EvaluationNormalizeReason() != "normalized_report_invalid" ||
 		!failure.Retryable() {
 		t.Fatalf("provider response failure = %#v", failure)
+	}
+	invalidReason := providerResponseError("unknown")
+	if normalizeReasonFromError(invalidReason) != normalizeReasonNormalizedReportInvalid ||
+		normalizeReasonFromError(errors.New("unrelated")) != normalizeReasonNormalizedReportInvalid {
+		t.Fatalf("invalid provider response reason was not normalized")
+	}
+}
+
+func TestEvaluatorsRejectMissingDependenciesAndDispatchTargets(t *testing.T) {
+	if _, err := New(nil); err != evaluation.ErrInvalidRequest {
+		t.Fatalf("New(nil) error = %v", err)
+	}
+	var evaluators *Evaluators
+	for name, evaluate := range map[string]func() error{
+		"interview": func() error {
+			_, err := evaluators.EvaluateInterview(
+				context.Background(), evaluation.Record{}, evaluation.SessionInputSnapshot{}, evaluation.ConfigLineage{},
+			)
+			return err
+		},
+		"IELTS": func() error {
+			_, err := evaluators.EvaluateIELTS(
+				context.Background(), evaluation.Record{}, evaluation.SessionInputSnapshot{}, evaluation.ConfigLineage{},
+			)
+			return err
+		},
+		"general": func() error {
+			_, err := evaluators.EvaluateGeneral(
+				context.Background(), evaluation.Record{}, evaluation.SessionInputSnapshot{}, evaluation.ConfigLineage{},
+			)
+			return err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := evaluate(); err != evaluation.ErrInvalidRequest {
+				t.Fatalf("dispatch error = %v", err)
+			}
+		})
 	}
 }
 

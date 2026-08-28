@@ -166,7 +166,6 @@ class ConversationPage extends StatefulWidget {
       backgroundColor: Colors.transparent,
       body: Stack(
         children: [
-          const Positioned.fill(child: _AgentBackground()),
           Positioned.fill(
             child: SafeArea(
               bottom: false,
@@ -758,15 +757,6 @@ final class _ConversationScrollAnchor {
   final int messageCount;
   final double pixels;
   final double maxScrollExtent;
-}
-
-class _AgentBackground extends StatelessWidget {
-  const _AgentBackground();
-
-  @override
-  Widget build(BuildContext context) {
-    return const SpeakUpAmbientBackground();
-  }
 }
 
 class _AgentTopBar extends StatelessWidget {

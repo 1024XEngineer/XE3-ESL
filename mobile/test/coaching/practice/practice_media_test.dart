@@ -115,6 +115,73 @@ void main() {
     },
   );
 
+  test('text realtime TTS is scoped to the active practice session', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(server.close);
+    final handled = Completer<void>();
+    server.listen((request) async {
+      expect(
+        request.uri.path,
+        '/v1/practice-sessions/session-1/speech/realtime',
+      );
+      final socket = await WebSocketTransformer.upgrade(
+        request,
+        protocolSelector: (_) => 'speakup.practice-question-speech.v1',
+      );
+      socket.add(
+        jsonEncode(const <String, Object>{
+          'type': 'stream.ready',
+          'data': <String, Object>{
+            'content_type': 'audio/pcm',
+            'sample_rate': 24000,
+            'channel_count': 1,
+            'bits_per_sample': 16,
+          },
+        }),
+      );
+      expect(jsonDecode(await socket.first as String), <String, Object>{
+        'type': 'speak',
+        'text': 'Try again.',
+      });
+      socket.add(Uint8List.fromList(<int>[7, 8]));
+      socket.add(
+        jsonEncode(const <String, Object>{
+          'type': 'stream.completed',
+          'data': <String, Object>{},
+        }),
+      );
+      await socket.close();
+      handled.complete();
+    });
+    final client = WirePracticeMediaClient(
+      baseUri: Uri.parse('http://${server.address.address}:${server.port}'),
+      credentialProvider: () => const AuthSessionCredential(
+        sessionToken: 'sess_practice-media',
+        generation: 1,
+      ),
+      invalidateSession:
+          ({
+            required expectedSessionToken,
+            required expectedGeneration,
+          }) async {},
+      apiTransport: _Transport(const <_Response>[]),
+      signedAudioTransport: _Transport(const <_Response>[]),
+    );
+    addTearDown(client.dispose);
+
+    await expectLater(
+      client.streamTextSpeech(
+        practiceSessionId: 'session-1',
+        text: 'Try again.',
+      ),
+      emitsInOrder(<Object>[
+        <int>[7, 8],
+        emitsDone,
+      ]),
+    );
+    await handled.future;
+  });
+
   test('question realtime TTS preserves retryable synthesis failure', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(server.close);

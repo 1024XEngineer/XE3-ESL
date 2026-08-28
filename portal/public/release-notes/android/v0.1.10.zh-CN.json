@@ -1,0 +1,24 @@
+{
+  "release_notes_version": 1,
+  "locale": "zh-CN",
+  "version": "0.1.10",
+  "published_at": "2026-08-28T13:22:15Z",
+  "changes": [
+    {
+      "type": "feature",
+      "text": "选择陪练音色时会自动试听并即时保存，切换后即可直接用于练习。"
+    },
+    {
+      "type": "fix",
+      "text": "修复录音停止后偶发卡住及语音识别异常的问题，提升连续练习的语音稳定性。"
+    },
+    {
+      "type": "improvement",
+      "text": "统一主导航页面的 Ambient 背景，切换首页、练习和个人页时视觉更连贯。"
+    },
+    {
+      "type": "improvement",
+      "text": "扩充英文陪练音色并完善音色图标、头像轮播与整卡选择体验，让陪练形象更易辨认和切换。"
+    }
+  ]
+}

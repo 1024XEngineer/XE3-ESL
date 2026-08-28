@@ -139,7 +139,21 @@ type TranscriptionUpdate struct {
 }
 
 type SynthesisRequest struct {
-	Text string
+	Text    string
+	Profile SynthesisProfile
+}
+
+type SynthesisProfile struct {
+	Provider        string
+	ProviderProfile string
+	Model           string
+	VoiceID         string
+	Locale          string
+}
+
+func (profile SynthesisProfile) Valid() bool {
+	return profile.Provider != "" && profile.ProviderProfile != "" &&
+		profile.Model != "" && profile.VoiceID != "" && profile.Locale != ""
 }
 
 type SynthesisResult struct {
@@ -156,6 +170,20 @@ type SpeechSynthesizer interface {
 		context.Context,
 		SynthesisRequest,
 	) (SynthesisResult, error)
+}
+
+type StreamingSpeechSynthesizer interface {
+	OpenPracticeSpeech(
+		context.Context,
+		SynthesisProfile,
+		func([]byte) error,
+	) (StreamingSpeechSession, error)
+}
+
+type StreamingSpeechSession interface {
+	AppendText(string) error
+	Finish() error
+	Close() error
 }
 
 type QuestionGenerationRequest struct {

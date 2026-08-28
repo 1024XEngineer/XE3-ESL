@@ -16,6 +16,11 @@ type AgentSpeechSynthesizer interface {
 	agentconversation.AssistantSpeechSynthesizer
 }
 
+type PracticeSpeechSynthesizer interface {
+	practiceinteraction.SpeechSynthesizer
+	practiceinteraction.StreamingSpeechSynthesizer
+}
+
 // NewAgentSpeechRecognizer selects the Agent Voice ASR implementation.
 func NewAgentSpeechRecognizer(
 	configuration config.SpeechRecognitionConfig,
@@ -155,20 +160,20 @@ func newPracticeRecordedSpeechRecognizer(
 // NewPracticeSpeechSynthesizer selects the Practice Voice TTS adapter.
 func NewPracticeSpeechSynthesizer(
 	configuration config.SpeechSynthesisConfig,
-) (practiceinteraction.SpeechSynthesizer, error) {
+) (PracticeSpeechSynthesizer, error) {
 	return newPracticeSpeechSynthesizer(configuration, nil)
 }
 
 func (factory *ProviderFactory) PracticeSpeechSynthesizer(
 	configuration config.SpeechSynthesisConfig,
-) (practiceinteraction.SpeechSynthesizer, error) {
+) (PracticeSpeechSynthesizer, error) {
 	return newPracticeSpeechSynthesizer(configuration, factory.observer)
 }
 
 func newPracticeSpeechSynthesizer(
 	configuration config.SpeechSynthesisConfig,
 	observer providerobservability.Recorder,
-) (practiceinteraction.SpeechSynthesizer, error) {
+) (PracticeSpeechSynthesizer, error) {
 	if configuration.Provider != config.SpeechProviderQianwen {
 		return nil, errors.New(
 			"bootstrap: Practice speech synthesis provider is not registered",

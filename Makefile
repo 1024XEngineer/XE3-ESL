@@ -31,6 +31,8 @@ SHELL := /bin/bash
 	check-android-download \
 	check-tls-lifecycle \
 	check-observability \
+	check-spatialreal-avatar-tool \
+	check-spatialreal-avatars \
 	check-production-deploy \
 	check-production-nginx \
 	check-cn-backend-experiment \
@@ -43,7 +45,12 @@ SHELL := /bin/bash
 	build-android-release-production \
 	verify-android-release-staging \
 	verify-android-release-production \
-	test-ios-simulator-scenes
+	test-ios-simulator-scenes \
+	test-ios-simulator-practice-hubs \
+	test-ios-simulator-agent-hotel \
+	test-ios-simulator-agent-ielts \
+	test-ios-simulator-voice-report \
+	test-ios-simulator-product-e2e
 
 help:
 	@printf '%s\n' \
@@ -61,11 +68,13 @@ help:
 		'  make check-api      Validate OpenAPI, JSON Schema, and contract fixtures' \
 		'  make check-release-candidate  Validate release metadata and manifest tooling' \
 		'  make check-production-backup  Exercise PostgreSQL backup and isolated restore' \
-		'  make check-production-rehearsal  Validate the isolated schema 7 to 9 rehearsal' \
+		'  make check-production-rehearsal  Validate the isolated schema 9 to 15 rehearsal' \
 		'  make check-offline-release  Validate offline image build/load contracts' \
 		'  make check-android-download  Validate the public Android bundle and publish contract' \
 		'  make check-tls-lifecycle  Validate TLS issuance and renewal contracts' \
 		'  make check-observability  Validate monitoring, alert, and log rotation contracts' \
+		'  make check-spatialreal-avatar-tool  Test the SpatialReal metadata checker offline' \
+		'  make check-spatialreal-avatars  Check configured avatars against the live metadata API' \
 		'  make check-production-deploy  Validate the immutable Production contract' \
 		'  make check-production-nginx  Run nginx -t against the Production template' \
 		'  make check-cn-backend-experiment  Validate the isolated China backend experiment contract' \
@@ -78,7 +87,12 @@ help:
 		'  make build-android-release-production  Build the signed production arm64 APK'
 	@printf '%s\n' \
 		'  make verify-android-release-{staging,production}  Verify a release APK' \
-		'  make test-ios-simulator-scenes  Verify real scene and IELTS launch flows on an iOS Simulator'
+		'  make test-ios-simulator-scenes  Verify real scene and IELTS launch flows on an iOS Simulator' \
+		'  make test-ios-simulator-practice-hubs  Verify all real Practice hubs on an iOS Simulator' \
+		'  make test-ios-simulator-agent-hotel  Verify Agent chat, hotel card, and scene launch on an iOS Simulator' \
+		'  make test-ios-simulator-agent-ielts  Verify Agent IELTS warm-up recovery on an iOS Simulator' \
+		'  make test-ios-simulator-voice-report  Verify real voice, report, and persisted Review on an iOS Simulator' \
+		'  make test-ios-simulator-product-e2e  Run the complete real product E2E matrix serially'
 
 check: check-flutter check-go check-api
 
@@ -242,7 +256,7 @@ check-oss-live-go:
 
 check-kodo-live:
 	@set -euo pipefail; \
-	required=(OSS_ENABLED OBJECT_STORAGE_PROVIDER QINIU_KODO_S3_REGION QINIU_KODO_S3_ENDPOINT QINIU_KODO_S3_BUCKET QINIU_KODO_SERVER_SIDE_ENCRYPTION QINIU_ACCESS_KEY QINIU_SECRET_KEY KODO_LIVE_TEST); \
+	required=(OSS_ENABLED OBJECT_STORAGE_PROVIDER QINIU_KODO_S3_REGION QINIU_KODO_S3_ENDPOINT QINIU_KODO_S3_BUCKET QINIU_ACCESS_KEY QINIU_SECRET_KEY KODO_LIVE_TEST); \
 	missing=(); \
 	for name in "$${required[@]}"; do \
 		if [[ -z "$${!name:-}" ]]; then missing+=("$$name"); fi; \
@@ -260,10 +274,6 @@ check-kodo-live:
 	fi; \
 	if [[ "$${OBJECT_STORAGE_PROVIDER}" != "qiniu_kodo" ]]; then \
 		printf '%s\n' 'Set and export OBJECT_STORAGE_PROVIDER=qiniu_kodo.'; \
-		exit 1; \
-	fi; \
-	if [[ "$${QINIU_KODO_SERVER_SIDE_ENCRYPTION}" != "1" && "$${QINIU_KODO_SERVER_SIDE_ENCRYPTION}" != "true" ]]; then \
-		printf '%s\n' 'Enable Kodo server-side encryption, then attest it with QINIU_KODO_SERVER_SIDE_ENCRYPTION=1.'; \
 		exit 1; \
 	fi; \
 	if [[ "$${KODO_LIVE_TEST}" != "1" ]]; then \
@@ -336,6 +346,12 @@ check-offline-release:
 
 check-android-download:
 	node --test tools/android-download/*.test.mjs
+
+check-spatialreal-avatar-tool:
+	node --test tools/spatialreal-avatar-check/*.test.mjs
+
+check-spatialreal-avatars:
+	node tools/spatialreal-avatar-check/check.mjs
 	./deploy/android-download/test.sh
 
 check-tls-lifecycle:
@@ -410,6 +426,58 @@ verify-android-release-production:
 		mobile/build/app/outputs/flutter-apk/app-production-release.apk
 
 test-ios-simulator-scenes:
-	./tools/ios-simulator-dev/run.sh test \
+	SPEAKUP_DEV_PORT=18082 ./tools/ios-simulator-dev/run.sh test \
 		integration_test/real_agent_e2e_test.dart \
 		--plain-name 'real iOS IELTS Part 1 creates a Practice Session'
+
+test-ios-simulator-practice-hubs:
+	SPEAKUP_DEV_PORT=18082 ./tools/ios-simulator-dev/run.sh test \
+		integration_test/real_agent_e2e_test.dart \
+		--plain-name 'real iOS three practice hubs stay focused and reachable'
+
+test-ios-simulator-agent-hotel:
+	SPEAKUP_DEV_PORT=18082 ./tools/ios-simulator-dev/run.sh test \
+		integration_test/real_agent_e2e_test.dart \
+		--plain-name 'real iOS Agent distinguishes chat from hotel Practice creation'
+
+test-ios-simulator-agent-ielts:
+	SPEAKUP_DEV_PORT=18082 ./tools/ios-simulator-dev/run.sh test \
+		integration_test/real_agent_e2e_test.dart \
+		--plain-name 'real iOS Agent recovers a short IELTS warm-up answer'
+
+test-ios-simulator-voice-report:
+	@for variable in \
+		SPEAKUP_E2E_WAV_BASE64 \
+		SPEAKUP_E2E_WAV_BASE64_2 \
+		SPEAKUP_E2E_WAV_BASE64_3 \
+		SPEAKUP_E2E_WAV_BASE64_4; do \
+		test -n "$${!variable:-}" || { \
+			echo "缺少 $$variable：请导出四段不同的私有英文 WAV Base64。" >&2; \
+			exit 1; \
+		}; \
+	done
+	SPEAKUP_DEV_PORT=18082 ./tools/ios-simulator-dev/run.sh test \
+		integration_test/real_agent_e2e_test.dart \
+		--plain-name 'real iOS identity, Qianwen Agent, voice, and Review path' \
+		--dart-define="SPEAKUP_E2E_WAV_BASE64=$${SPEAKUP_E2E_WAV_BASE64}" \
+		--dart-define="SPEAKUP_E2E_WAV_BASE64_2=$${SPEAKUP_E2E_WAV_BASE64_2}" \
+		--dart-define="SPEAKUP_E2E_WAV_BASE64_3=$${SPEAKUP_E2E_WAV_BASE64_3}" \
+		--dart-define="SPEAKUP_E2E_WAV_BASE64_4=$${SPEAKUP_E2E_WAV_BASE64_4}" \
+		--dart-define="SPEAKUP_E2E_VALIDATE_AUDIO_MEDIA=$${SPEAKUP_E2E_VALIDATE_AUDIO_MEDIA:-true}"
+
+test-ios-simulator-product-e2e:
+	@for variable in \
+		SPEAKUP_E2E_WAV_BASE64 \
+		SPEAKUP_E2E_WAV_BASE64_2 \
+		SPEAKUP_E2E_WAV_BASE64_3 \
+		SPEAKUP_E2E_WAV_BASE64_4; do \
+		test -n "$${!variable:-}" || { \
+			echo "缺少 $$variable：完整产品 E2E 需要四段不同的私有英文 WAV Base64。" >&2; \
+			exit 1; \
+		}; \
+	done
+	+$(MAKE) test-ios-simulator-practice-hubs
+	+$(MAKE) test-ios-simulator-agent-hotel
+	+$(MAKE) test-ios-simulator-agent-ielts
+	+$(MAKE) test-ios-simulator-scenes
+	+$(MAKE) test-ios-simulator-voice-report

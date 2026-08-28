@@ -159,7 +159,14 @@ GRANT SELECT ON public.product_health_daily_practice_activity,
                 public.product_health_daily_session_outcomes,
                 public.product_health_daily_artifact_coverage,
                 public.product_health_daily_evaluation_health,
-                public.product_health_daily_scoreability
+                public.product_health_daily_scoreability,
+                public.user_behavior_daily_session_funnel,
+                public.user_behavior_daily_time_to_first_effective_turn,
+                public.user_behavior_daily_retention,
+                public.user_behavior_daily_repractice,
+                public.user_behavior_current_nonterminal_sessions,
+                public.user_behavior_daily_early_end,
+                public.user_behavior_daily_feature_usage
 TO speakup_product_health_reader;
 COMMIT;
 SQL

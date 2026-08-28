@@ -41,7 +41,6 @@ var (
 	ErrObjectStorageQiniuS3Region   = errors.New("QINIU_KODO_S3_REGION must be a valid Qiniu S3 region")
 	ErrObjectStorageQiniuS3Endpoint = errors.New("QINIU_KODO_S3_ENDPOINT must be the official HTTPS endpoint for QINIU_KODO_S3_REGION")
 	ErrObjectStorageQiniuBucket     = errors.New("QINIU_KODO_S3_BUCKET is required when Qiniu Kodo is enabled")
-	ErrObjectStorageEncryption      = errors.New("QINIU_KODO_SERVER_SIDE_ENCRYPTION must be 1 or true when Qiniu Kodo is enabled")
 )
 
 var (
@@ -53,18 +52,17 @@ var (
 // Access credentials stay in the SDK credential provider so Config values can
 // be logged during local debugging without disclosing an AccessKey secret.
 type ObjectStorageConfig struct {
-	Enabled              bool
-	Provider             string
-	Region               string
-	Endpoint             string
-	Bucket               string
-	ServerSideEncryption bool
-	AudioPrefix          string
-	ImagePrefix          string
-	ResumePrefix         string
-	SignedURLTTL         time.Duration
-	CredentialsProvider  ObjectStorageCredentialsProvider
-	RAMRoleName          string
+	Enabled             bool
+	Provider            string
+	Region              string
+	Endpoint            string
+	Bucket              string
+	AudioPrefix         string
+	ImagePrefix         string
+	ResumePrefix        string
+	SignedURLTTL        time.Duration
+	CredentialsProvider ObjectStorageCredentialsProvider
+	RAMRoleName         string
 }
 
 // LoadObjectStorage reads and validates the server-only OSS configuration.
@@ -136,20 +134,11 @@ func LoadObjectStorage() (ObjectStorageConfig, error) {
 		config.Region = strings.TrimSpace(os.Getenv("QINIU_KODO_S3_REGION"))
 		config.Endpoint = strings.TrimSpace(os.Getenv("QINIU_KODO_S3_ENDPOINT"))
 		config.Bucket = strings.TrimSpace(os.Getenv("QINIU_KODO_S3_BUCKET"))
-		// Kodo's bucket-info API does not expose the console-level encryption
-		// switch. Require an explicit operator attestation so startup fails
-		// closed until bucket-level AES-256 encryption has been enabled.
-		config.ServerSideEncryption = enabledValue(
-			os.Getenv("QINIU_KODO_SERVER_SIDE_ENCRYPTION"),
-		)
 		if config.Bucket == "" {
 			return ObjectStorageConfig{}, ErrObjectStorageQiniuBucket
 		}
 		if err := validateQiniuS3Endpoint(config.Region, config.Endpoint); err != nil {
 			return ObjectStorageConfig{}, err
-		}
-		if !config.ServerSideEncryption {
-			return ObjectStorageConfig{}, ErrObjectStorageEncryption
 		}
 		return config, nil
 	}
@@ -181,15 +170,6 @@ func LoadObjectStorage() (ObjectStorageConfig, error) {
 	}
 
 	return config, nil
-}
-
-func enabledValue(raw string) bool {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "1", "true":
-		return true
-	default:
-		return false
-	}
 }
 
 func validateQiniuS3Endpoint(region string, raw string) error {

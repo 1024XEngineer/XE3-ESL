@@ -330,6 +330,15 @@ func TestClientPreflightRequiresPrivateBucket(t *testing.T) {
 	}
 }
 
+func TestClientPreflightAcceptsPrivateBucket(t *testing.T) {
+	client := newTestClient(&apiStub{acl: &s3.GetBucketAclOutput{Grants: []types.Grant{{
+		Grantee: &types.Grantee{URI: aws.String("private-owner")},
+	}}}}, &presignerStub{})
+	if err := client.Preflight(context.Background()); err != nil {
+		t.Fatalf("Preflight() error = %v", err)
+	}
+}
+
 func TestClientOpenReturnsOnlyPDF(t *testing.T) {
 	api := &apiStub{get: &s3.GetObjectOutput{
 		Body:        io.NopCloser(strings.NewReader("%PDF fixture")),
@@ -357,10 +366,52 @@ func TestNewRejectsMissingCredentialsBeforeNetwork(t *testing.T) {
 		Region: "cn-east-1", Endpoint: "https://s3.cn-east-1.qiniucs.com",
 		Bucket:      "private-bucket",
 		AudioPrefix: "audio/v1", ImagePrefix: "image/v1", ResumePrefix: "resume/v1",
-		SignedURLTTL: 2 * time.Minute, ServerSideEncryption: true,
+		SignedURLTTL: 2 * time.Minute,
 	})
 	if client != nil || !errors.Is(err, objectstore.ErrCredentials) {
 		t.Fatalf("New() = %#v, %v", client, err)
+	}
+}
+
+func TestNewForPrefixRejectsInvalidConfigurationBeforeCredentials(t *testing.T) {
+	testCases := []struct {
+		name          string
+		configuration config.ObjectStorageConfig
+		prefix        string
+		expected      error
+	}{
+		{
+			name: "disabled",
+			configuration: config.ObjectStorageConfig{
+				Provider: config.ObjectStorageProviderQiniuKodo,
+			},
+			prefix: "audio/v1", expected: objectstore.ErrDisabled,
+		},
+		{
+			name: "wrong provider",
+			configuration: config.ObjectStorageConfig{
+				Enabled: true, Provider: config.ObjectStorageProviderAliyunOSS,
+			},
+			prefix: "audio/v1", expected: objectstore.ErrOperationFailed,
+		},
+		{
+			name: "unknown prefix",
+			configuration: config.ObjectStorageConfig{
+				Enabled: true, Provider: config.ObjectStorageProviderQiniuKodo,
+				AudioPrefix: "audio/v1", ImagePrefix: "image/v1", ResumePrefix: "resume/v1",
+			},
+			prefix: "other/v1", expected: objectstore.ErrInvalidKey,
+		},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			client, err := NewForPrefix(
+				context.Background(), testCase.configuration, testCase.prefix,
+			)
+			if client != nil || !errors.Is(err, testCase.expected) {
+				t.Fatalf("NewForPrefix() = %#v, %v; want %v", client, err, testCase.expected)
+			}
+		})
 	}
 }
 

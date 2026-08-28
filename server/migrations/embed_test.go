@@ -52,6 +52,18 @@ func TestEveryMigrationPairIsEmbedded(t *testing.T) {
 		"000008_product_health_views.up.sql",
 		"000009_ielts_incremental_profile.down.sql",
 		"000009_ielts_incremental_profile.up.sql",
+		"000010_coach_presentation_preferences.down.sql",
+		"000010_coach_presentation_preferences.up.sql",
+		"000011_coach_presentation_runtime.down.sql",
+		"000011_coach_presentation_runtime.up.sql",
+		"000012_agent_run_qualified_model_ids.down.sql",
+		"000012_agent_run_qualified_model_ids.up.sql",
+		"000013_lisa_avatar_asset.down.sql",
+		"000013_lisa_avatar_asset.up.sql",
+		"000014_expand_coach_voice_catalog.down.sql",
+		"000014_expand_coach_voice_catalog.up.sql",
+		"000015_user_behavior_views.down.sql",
+		"000015_user_behavior_views.up.sql",
 	}
 	slices.Sort(files)
 	if !slices.Equal(files, want) {
@@ -79,6 +91,18 @@ func TestMigrationsAreTransactional(t *testing.T) {
 		"000008_product_health_views.down.sql",
 		"000009_ielts_incremental_profile.up.sql",
 		"000009_ielts_incremental_profile.down.sql",
+		"000010_coach_presentation_preferences.up.sql",
+		"000010_coach_presentation_preferences.down.sql",
+		"000011_coach_presentation_runtime.up.sql",
+		"000011_coach_presentation_runtime.down.sql",
+		"000012_agent_run_qualified_model_ids.up.sql",
+		"000012_agent_run_qualified_model_ids.down.sql",
+		"000013_lisa_avatar_asset.up.sql",
+		"000013_lisa_avatar_asset.down.sql",
+		"000014_expand_coach_voice_catalog.up.sql",
+		"000014_expand_coach_voice_catalog.down.sql",
+		"000015_user_behavior_views.up.sql",
+		"000015_user_behavior_views.down.sql",
 	} {
 		sql := readMigration(t, name)
 		if !strings.HasPrefix(sql, "BEGIN;") {
@@ -87,6 +111,85 @@ func TestMigrationsAreTransactional(t *testing.T) {
 		if !strings.HasSuffix(sql, "COMMIT;") {
 			t.Errorf("%s must end with COMMIT", name)
 		}
+	}
+}
+
+func TestLisaAvatarAssetMigrationChangesOnlyTheReviewedBinding(t *testing.T) {
+	up := readMigration(t, "000013_lisa_avatar_asset.up.sql")
+	for _, required := range []string{
+		"WHERE id = 'avatar_lisa'",
+		"current_provider <> 'spatialreal'",
+		"current_profile <> 'spatialreal_default'",
+		"current_avatar_id <> '94a60c13-e835-4bde-aa93-00a1cf178dcd'",
+		"provider_avatar_id = 'ca9c5c22-6dba-4b59-ae3b-d26066f8c017'",
+		"binding_version = 2",
+	} {
+		if !strings.Contains(up, required) {
+			t.Errorf("Lisa avatar up migration is missing %q", required)
+		}
+	}
+	down := readMigration(t, "000013_lisa_avatar_asset.down.sql")
+	for _, required := range []string{
+		"current_avatar_id <> 'ca9c5c22-6dba-4b59-ae3b-d26066f8c017'",
+		"provider_avatar_id = '94a60c13-e835-4bde-aa93-00a1cf178dcd'",
+		"binding_version = 1",
+	} {
+		if !strings.Contains(down, required) {
+			t.Errorf("Lisa avatar down migration is missing %q", required)
+		}
+	}
+}
+
+func TestExpandedCoachVoiceMigrationUsesReviewedBindingsAndSafeRollback(
+	t *testing.T,
+) {
+	up := readMigration(t, "000014_expand_coach_voice_catalog.up.sql")
+	for _, required := range []string{
+		"'voice_mary'",
+		"'loongmary'",
+		"'en-GB'",
+		"'voice_olivia'",
+		"'qwen-audio-3.0-tts-flash-loongolivialin'",
+		"'voice_ivy'",
+		"'qwen-audio-3.0-tts-flash-loongivyhu'",
+	} {
+		if !strings.Contains(up, required) {
+			t.Errorf("expanded voice up migration is missing %q", required)
+		}
+	}
+	down := readMigration(t, "000014_expand_coach_voice_catalog.down.sql")
+	for _, required := range []string{
+		"reviewed_binding_count <> 7",
+		"cannot roll back expanded coach voices: reviewed bindings have changed",
+		"SET voice_option_id = 'voice_ava'",
+		"version = version + 1",
+		"DELETE FROM coach_voice_options",
+	} {
+		if !strings.Contains(down, required) {
+			t.Errorf("expanded voice down migration is missing %q", required)
+		}
+	}
+}
+
+func TestAgentRunQualifiedModelMigrationMatchesDomainValidation(t *testing.T) {
+	up := readMigration(t, "000012_agent_run_qualified_model_ids.up.sql")
+	for _, required := range []string{
+		"octet_length(model_configuration->>'model') <= 128",
+		"octet_length(model_result->>'model') <= 128",
+		"position('..' IN model_configuration->>'model') = 0",
+		"position('..' IN model_result->>'model') = 0",
+		"*(/[A-Za-z0-9][A-Za-z0-9._:-]*)*",
+	} {
+		if !strings.Contains(up, required) {
+			t.Errorf("qualified model migration is missing %q", required)
+		}
+	}
+	down := readMigration(t, "000012_agent_run_qualified_model_ids.down.sql")
+	if !strings.Contains(
+		down,
+		"cannot roll back qualified Agent model IDs while qualified values exist",
+	) {
+		t.Error("qualified model rollback must fail closed while incompatible rows exist")
 	}
 }
 

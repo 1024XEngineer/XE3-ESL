@@ -16,6 +16,7 @@ readonly probe_workflow="$observability_directory/../../.github/workflows/produc
 readonly metrics_service="$observability_directory/xe3-speakup-observability-metrics.service"
 readonly metrics_environment_example="$observability_directory/observability-metrics.env.example"
 readonly product_health_dashboard="$observability_directory/grafana/dashboards/speakup-product-health.json"
+readonly user_behavior_dashboard="$observability_directory/grafana/dashboards/speakup-user-behavior.json"
 readonly product_health_datasource="$observability_directory/grafana/provisioning/datasources/product-health.yml"
 
 fail() {
@@ -463,6 +464,142 @@ jq --exit-status '
 ' "$product_health_dashboard" >/dev/null ||
   fail 'Product Health Grafana dashboard violates its anonymous SQL contract'
 
+jq --exit-status '
+  .uid == "speakup-user-behavior" and
+  .title == "SpeakUp 用户行为" and
+  (.description | contains("UTC")) and
+  (.description | contains("No Data")) and
+  .timezone == "utc" and
+  .editable == false and
+  .refresh == "5m" and
+  .time.from == "now-30d" and
+  ([.panels[].title] == [
+    "练习漏斗",
+    "所选时段总漏斗",
+    "漏斗转化与提前结束率",
+    "首次有效回答",
+    "首次有效回答覆盖率",
+    "首次有效回答耗时 P50 / P95",
+    "练习留存",
+    "留存人数（按首次有效回答日）",
+    "D1 / D7 确认回答留存率",
+    "重练、提前结束与未终态",
+    "重练结果",
+    "重练结果占比",
+    "提前结束深度",
+    "当前未终态练习（候选，不等于放弃）",
+    "功能使用",
+    "功能使用用户（${feature_kind:text}）",
+    "功能使用行为量（${feature_metric:text}）",
+    "数据边界",
+    "暂不可观测（不是 0）"
+  ]) and
+  ([.panels[] | select(.type != "row") |
+    (.description | type == "string" and length > 0)
+  ] | all) and
+  ([.panels[].targets[]? |
+    .datasource.uid == "speakup-product-health-postgres" and
+    .datasource.type == "grafana-postgresql-datasource"
+  ] | all) and
+  ([.panels[].targets[]?.rawSql // "" |
+    test("FROM public\\.user_behavior_(daily_session_funnel|daily_time_to_first_effective_turn|daily_retention|daily_repractice|current_nonterminal_sessions|daily_early_end|daily_feature_usage)\\b")
+  ] | all) and
+  ([.panels[].targets[]?.rawSql // "" |
+    test("JOIN[[:space:]]+public\\."; "i")
+  ] | any | not) and
+  ([.panels[].targets[]?.rawSql // "" |
+    test("FROM public\\.(users|practice_sessions|practice_turns|evaluations|evaluation_feedback_items)")
+  ] | any | not) and
+  ([.panels[].targets[]? |
+    select(.rawSql | contains("current_nonterminal_sessions") | not) |
+    (.rawSql | contains("$__timeFilter("))
+  ] | all) and
+  ([.panels[].targets[]? |
+    select(.rawSql | contains("current_nonterminal_sessions")) |
+    (.format == "table" and
+      (.rawSql | contains("$__timeFilter(") | not))
+  ] | all) and
+  (.panels[] | select(.id == 2) |
+    .type == "bargauge" and
+    .options.displayMode == "basic" and
+    .targets[0].format == "table" and
+    (.targets[0].rawSql | contains("sum(created_sessions)")) and
+    (.targets[0].rawSql | contains("sum(ready_session_report_sessions)"))
+  ) and
+  (.panels[] | select(.id == 14) | .targets[0].rawSql |
+    contains("WHEN '\''UNDER_1H'\'' THEN 1") and
+    contains("WHEN '\''1H_TO_24H'\'' THEN 2") and
+    contains("WHEN '\''1D_TO_7D'\'' THEN 3") and
+    contains("WHEN '\''7D_PLUS'\'' THEN 4")
+  ) and
+  ([.templating.list[].name] == ["feature_kind", "feature_metric"]) and
+  ([.templating.list[] | select(.name == "feature_kind") |
+    .options[].value
+  ] == [
+    "PRACTICE_EXPERIENCE",
+    "SCENE_CATEGORY",
+    "PRACTICE_MODE",
+    "INTERACTION_MODE"
+  ]) and
+  ([.templating.list[] | select(.name == "feature_metric") |
+    .options[].value
+  ] == ["SESSIONS", "CONFIRMED_TURNS"]) and
+  (.templating.list[] | select(.name == "feature_kind") |
+    .current == {
+      "selected": true,
+      "text": "练习体验",
+      "value": "PRACTICE_EXPERIENCE"
+    } and
+    .query == "练习体验 : PRACTICE_EXPERIENCE,场景 : SCENE_CATEGORY,练习模式 : PRACTICE_MODE,交互方式 : INTERACTION_MODE"
+  ) and
+  (.templating.list[] | select(.name == "feature_metric") |
+    .current == {
+      "selected": true,
+      "text": "练习数",
+      "value": "SESSIONS"
+    } and
+    .query == "练习数 : SESSIONS,确认回答数 : CONFIRMED_TURNS"
+  ) and
+  ([.templating.list[] |
+    .includeAll == false and .multi == false
+  ] | all) and
+  ([.panels[] | select(.id == 16 or .id == 17) |
+    .targets[0].rawSql |
+    contains("feature_kind = ${feature_kind:sqlstring}")
+  ] | all) and
+  (.panels[] | select(.id == 17) | .targets[0].rawSql |
+    contains("CASE ${feature_metric:sqlstring}")
+  ) and
+  ([.panels[].targets[]?.rawSql // ""] |
+    any(contains("user_behavior_daily_session_funnel"))) and
+  ([.panels[].targets[]?.rawSql // ""] |
+    any(contains("user_behavior_daily_time_to_first_effective_turn"))) and
+  ([.panels[].targets[]?.rawSql // ""] |
+    any(contains("user_behavior_daily_retention"))) and
+  ([.panels[].targets[]?.rawSql // ""] |
+    any(contains("user_behavior_daily_repractice"))) and
+  ([.panels[].targets[]?.rawSql // ""] |
+    any(contains("user_behavior_current_nonterminal_sessions"))) and
+  ([.panels[].targets[]?.rawSql // ""] |
+    any(contains("user_behavior_daily_early_end"))) and
+  ([.panels[].targets[]?.rawSql // ""] |
+    any(contains("user_behavior_daily_feature_usage"))) and
+  ([.. | strings] | any(test("COALESCE"; "i")) | not) and
+  ([.. | objects | select(has("spanNulls")) | .spanNulls == false] | all) and
+  ([.panels[] | select(.type == "timeseries") |
+    .fieldConfig.defaults.custom.showPoints == "auto"
+  ] | all) and
+  ([.. | objects | select(has("noValue")) | .noValue] |
+    any(. == "0" or . == 0) | not) and
+  ([.panels[] | select(.type == "text") | .options.content] |
+    any(contains("报告与逐轮反馈实际查看"))) and
+  ([.panels[] | select(.type == "text") | .options.content] |
+    any(contains("stale candidate"))) and
+  ([.panels[] | select(.type == "text") | .options.content] |
+    any(contains("No Data 表示尚无可证明样本，不等于测得 0")))
+' "$user_behavior_dashboard" >/dev/null ||
+  fail 'User Behavior Grafana dashboard violates its anonymous behavior contract'
+
 grep -Fxq '    uid: speakup-product-health-postgres' "$product_health_datasource" ||
   fail 'Product Health datasource UID is not fixed'
 grep -Fxq '    url: postgres:5432' "$product_health_datasource" ||
@@ -596,6 +733,19 @@ grep -Fq 'FROM pg_catalog.pg_auth_members AS membership' "$role_sql" ||
   fail 'Product Health reader does not reject role memberships'
 [[ $(grep -Fc 'public.product_health_daily_' "$role_sql") -eq 5 ]] ||
   fail 'Product Health reader grant is not the exact five-view set'
+[[ $(grep -Fc 'public.user_behavior_' "$role_sql") -eq 7 ]] ||
+  fail 'Product Health reader grant is not the exact seven-view behavior set'
+for behavior_view in \
+  user_behavior_daily_session_funnel \
+  user_behavior_daily_time_to_first_effective_turn \
+  user_behavior_daily_retention \
+  user_behavior_daily_repractice \
+  user_behavior_current_nonterminal_sessions \
+  user_behavior_daily_early_end \
+  user_behavior_daily_feature_usage; do
+  grep -Fq "public.$behavior_view" "$role_sql" ||
+    fail "Product Health reader does not grant $behavior_view"
+done
 ! grep -Eq 'GRANT SELECT ON public\.(users|practice_sessions|practice_turns|evaluations)' \
   "$role_sql" || fail 'Product Health reader grants a raw business table'
 

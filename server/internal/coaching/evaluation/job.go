@@ -11,6 +11,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/modelid"
 )
 
 const (
@@ -85,7 +87,7 @@ func (lineage ConfigLineage) Valid() bool {
 		validVersion(lineage.PromptVersion) &&
 		validVersion(lineage.ResultSchema) &&
 		validIdentifier(lineage.Provider) &&
-		validIdentifier(lineage.Model)
+		modelid.Valid(lineage.Model)
 }
 
 type JobError struct {
