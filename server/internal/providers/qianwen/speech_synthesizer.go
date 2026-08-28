@@ -721,7 +721,7 @@ func normalizeTTSVoice(raw string) (string, error) {
 
 func normalizeTTSLanguage(raw string) (string, error) {
 	language := strings.ToLower(strings.TrimSpace(raw))
-	if language != "en" && language != "en-us" {
+	if language != "en" && language != "en-us" && language != "en-gb" {
 		return "", errors.New("Qianwen TTS adapter currently accepts only English")
 	}
 	return "en", nil

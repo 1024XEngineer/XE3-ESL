@@ -45,15 +45,21 @@ void main() {
     expect(find.byKey(const Key('coach-voice-selection-page')), findsOneWidget);
     expect(find.text('艾娃'), findsOneWidget);
     expect(find.text('约翰'), findsOneWidget);
+    expect(find.text('玛丽'), findsOneWidget);
     expect(find.text('清晰自然 · 美式英语 · 女声'), findsOneWidget);
-    await tester.tap(find.byKey(const Key('coach-voice-option-voice_john')));
+    await tester.ensureVisible(
+      find.byKey(const Key('coach-voice-option-voice_ivy')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('艾薇'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('coach-voice-option-voice_ivy')));
     await tester.tap(find.byKey(const Key('coach-voice-selection-complete')));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('coach-presentation-page')), findsOneWidget);
-    expect(find.text('约翰'), findsOneWidget);
+    expect(find.text('艾薇'), findsOneWidget);
     expect(store.avatarId, 'avatar_nathan');
-    expect(store.voiceId, 'voice_john');
+    expect(store.voiceId, 'voice_ivy');
     expect(find.byKey(const Key('coach-presentation-save')), findsNothing);
   });
 

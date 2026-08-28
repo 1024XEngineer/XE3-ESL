@@ -488,7 +488,7 @@ func TestSynthesizeUsesDocumentedContractAndOwnsDownloadedAudio(t *testing.T) {
 			Text:         "  Repeat after me.  ",
 			Model:        "qwen-audio-3.0-tts-flash",
 			Voice:        "loongjohn",
-			LanguageHint: "en-US",
+			LanguageHint: "en-GB",
 		},
 	)
 	if err != nil {
