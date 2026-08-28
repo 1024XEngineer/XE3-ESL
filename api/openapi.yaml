@@ -89,6 +89,8 @@ paths:
     $ref: ./modules/coaching-profile.yaml#/paths/~1v1~1me~1coaching-profile
   /v1/coach-presentation-catalog:
     $ref: ./modules/coach-presentation.yaml#/paths/~1v1~1coach-presentation-catalog
+  /v1/coach-presentation/voices/{voice_option_id}/previews:
+    $ref: ./modules/coach-presentation.yaml#/paths/~1v1~1coach-presentation~1voices~1{voice_option_id}~1previews
   /v1/me/coach-presentation:
     $ref: ./modules/coach-presentation.yaml#/paths/~1v1~1me~1coach-presentation
   /v1/scenes:

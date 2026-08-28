@@ -6,6 +6,7 @@ import 'package:speakup/design/speak_up_design.dart';
 import 'package:speakup/features/profile/coach_presentation_settings.dart';
 import 'package:speakup/features/profile/coach_voice_gaze_avatar.dart';
 import 'package:speakup/features/profile/coach_voice_selection_page.dart';
+import 'package:speakup/platform/audio/ephemeral_wav_audio_player.dart';
 
 const _avatarCarouselInitialPage = 1000;
 
@@ -13,11 +14,13 @@ class CoachPresentationPage extends StatefulWidget {
   const CoachPresentationPage({
     this.accountId = 'preview',
     this.store = const PreviewCoachPresentationSettingsStore(),
+    this.voicePreviewPlayerFactory,
     super.key,
   });
 
   final String accountId;
   final CoachPresentationSettingsStore store;
+  final EphemeralWavAudioPlayer Function()? voicePreviewPlayerFactory;
 
   @override
   State<CoachPresentationPage> createState() => _CoachPresentationPageState();
@@ -178,22 +181,31 @@ class _CoachPresentationPageState extends State<CoachPresentationPage> {
   }
 
   Future<void> _selectVoice() async {
-    final selectedVoiceId = await Navigator.of(context).push<String>(
-      MaterialPageRoute<String>(
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
         builder: (_) => CoachVoiceSelectionPage(
           options: _voiceOptions,
           initialVoiceId: _voiceId,
+          onSelected: _selectVoiceId,
+          loadPreview: (voiceOptionId) => widget.store.previewVoice(
+            accountId: widget.accountId,
+            voiceOptionId: voiceOptionId,
+          ),
+          audioPlayerFactory:
+              widget.voicePreviewPlayerFactory ?? _createVoicePreviewPlayer,
         ),
       ),
     );
-    if (!mounted || selectedVoiceId == null || selectedVoiceId == _voiceId) {
-      return;
-    }
+  }
+
+  Future<String> _selectVoiceId(String selectedVoiceId) async {
+    if (!mounted || selectedVoiceId == _voiceId) return _voiceId;
     setState(() {
       _voiceId = selectedVoiceId;
       _error = null;
     });
     await _save();
+    return _voiceId;
   }
 
   @override
@@ -315,6 +327,9 @@ class _CoachPresentationPageState extends State<CoachPresentationPage> {
     });
   }
 }
+
+EphemeralWavAudioPlayer _createVoicePreviewPlayer() =>
+    AudioplayersEphemeralWavAudioPlayer();
 
 class _AvatarCarousel extends StatelessWidget {
   const _AvatarCarousel({

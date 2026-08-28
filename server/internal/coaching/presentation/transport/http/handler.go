@@ -11,6 +11,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/apperror"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpinput"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/httpresponse"
+	platformmedia "github.com/1024XEngineer/XE3-ESL/server/internal/platform/media"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
 	"github.com/gin-gonic/gin"
 )
@@ -20,6 +21,11 @@ const maxRequestBody = int64(8 * 1024)
 type Application interface {
 	GetCatalog(context.Context, requestcontext.Actor) (presentation.Catalog, error)
 	GetPreference(context.Context, requestcontext.Actor) (presentation.Preference, error)
+	CreateVoicePreview(
+		context.Context,
+		requestcontext.Actor,
+		string,
+	) (platformmedia.ManagedAudioSource, error)
 	UpdatePreference(
 		context.Context,
 		requestcontext.Actor,
@@ -47,8 +53,43 @@ func New(
 
 func (handler *Handler) RegisterRoutes(routes gin.IRoutes) {
 	routes.GET("/v1/coach-presentation-catalog", handler.getCatalog)
+	routes.POST(
+		"/v1/coach-presentation/voices/:voice_option_id/previews",
+		handler.createVoicePreview,
+	)
 	routes.GET("/v1/me/coach-presentation", handler.getPreference)
 	routes.PATCH("/v1/me/coach-presentation", handler.patchPreference)
+}
+
+func (handler *Handler) createVoicePreview(c *gin.Context) {
+	actor, ok := requestcontext.ActorFromContext(c.Request.Context())
+	if !ok {
+		handler.writeError(c, authenticationRequired())
+		return
+	}
+	audio, err := handler.application.CreateVoicePreview(
+		c.Request.Context(), actor, c.Param("voice_option_id"),
+	)
+	if err != nil {
+		handler.writeError(c, mapError(err))
+		return
+	}
+	defer audio.Close()
+	reader, err := audio.Open()
+	if err != nil {
+		handler.writeError(c, mapError(presentation.ErrVoicePreviewUnavailable))
+		return
+	}
+	defer reader.Close()
+	c.Header("Cache-Control", "private, no-store")
+	c.Header("Pragma", "no-cache")
+	c.DataFromReader(
+		basehttp.StatusOK,
+		audio.Size(),
+		platformmedia.ContentTypeWAV,
+		reader,
+		nil,
+	)
 }
 
 func (handler *Handler) getCatalog(c *gin.Context) {
@@ -166,6 +207,19 @@ func mapError(err error) error {
 			apperror.Conflict,
 			"coach_presentation_version_conflict",
 			"Coach presentation version conflicts with this update.",
+		)
+	case errors.Is(err, presentation.ErrNotFound):
+		return apperror.New(
+			apperror.NotFound,
+			"resource_not_found",
+			"Coach voice option was not found.",
+		)
+	case errors.Is(err, presentation.ErrVoicePreviewUnavailable):
+		return apperror.New(
+			apperror.Unavailable,
+			"provider_unavailable",
+			"Coach voice preview is temporarily unavailable.",
+			apperror.WithRetryable(true),
 		)
 	default:
 		return apperror.New(

@@ -196,7 +196,22 @@ func buildIdentityAgentComposition(
 	if err != nil {
 		return nil, err
 	}
-	presentationService, err := coachpresentation.NewService(presentationRepository)
+	presentationOptions := make([]coachpresentation.Option, 0, 1)
+	if len(voiceConfigurations) == 1 &&
+		voiceConfigurations[0].PracticeInteraction.Synthesizer != nil {
+		presentationOptions = append(
+			presentationOptions,
+			coachpresentation.WithVoicePreviewSynthesizer(
+				practiceVoicePreviewSynthesizer{
+					synthesizer: voiceConfigurations[0].PracticeInteraction.Synthesizer,
+				},
+			),
+		)
+	}
+	presentationService, err := coachpresentation.NewService(
+		presentationRepository,
+		presentationOptions...,
+	)
 	if err != nil {
 		return nil, err
 	}
