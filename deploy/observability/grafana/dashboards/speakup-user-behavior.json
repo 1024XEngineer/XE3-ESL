@@ -1,0 +1,547 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Production 匿名聚合用户行为基线。所有日期与看板时区均为 UTC；No Data 表示当前没有可证明的样本，不等于 0。",
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "id": 1,
+      "panels": [],
+      "title": "练习漏斗",
+      "type": "row"
+    },
+    {
+      "description": "汇总所选时间范围内创建的练习 cohort，依次展示已开始、已确认首次有效回答、已完成，以及练后报告已生成 READY 的数量。报告 READY 不代表用户查看过报告；空范围保持 No Data。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "decimals": 0,
+          "min": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 16, "x": 0, "y": 1},
+      "id": 2,
+      "options": {
+        "displayMode": "basic",
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "namePlacement": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "showUnfilled": true,
+        "sizing": "auto",
+        "valueMode": "color"
+      },
+      "targets": [
+        {
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "speakup-product-health-postgres"},
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT sum(created_sessions)::double precision AS \"1 创建练习\",\n       sum(started_sessions)::double precision AS \"2 开始练习\",\n       sum(first_effective_confirmed_sessions)::double precision AS \"3 首次有效回答\",\n       sum(completed_sessions)::double precision AS \"4 完成练习\",\n       sum(ready_session_report_sessions)::double precision AS \"5 练后报告 READY\"\nFROM public.user_behavior_daily_session_funnel\nWHERE $__timeFilter(day_utc)",
+          "refId": "A"
+        }
+      ],
+      "title": "所选时段总漏斗",
+      "type": "bargauge"
+    },
+    {
+      "description": "开始率分母为已创建练习；首次有效回答率分母为已开始练习；完成率分母为已有首次有效回答的练习；报告 READY 率分母为已完成练习；提前结束率分母为已开始练习。分母为 0 时保持 No Data。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "showPoints": "auto",
+            "spanNulls": false
+          },
+          "max": 1,
+          "min": 0,
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 1},
+      "id": 3,
+      "options": {
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      },
+      "targets": [
+        {
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "speakup-product-health-postgres"},
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT day_utc AS time,\n       started_from_created_rate AS \"创建 → 开始\",\n       first_effective_from_started_rate AS \"开始 → 首次有效回答\",\n       completed_from_first_effective_rate AS \"首次有效回答 → 完成\",\n       ready_report_from_completed_rate AS \"完成 → 报告 READY\",\n       ended_early_from_started_rate AS \"开始 → 提前结束\"\nFROM public.user_behavior_daily_session_funnel\nWHERE $__timeFilter(day_utc)\nORDER BY day_utc",
+          "refId": "A"
+        }
+      ],
+      "title": "漏斗转化与提前结束率",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 9},
+      "id": 4,
+      "panels": [],
+      "title": "首次有效回答",
+      "type": "row"
+    },
+    {
+      "description": "ACCOUNT 按账户创建 UTC 日形成 cohort；SESSION 按练习创建 UTC 日形成 cohort。分别展示 cohort 到达首次有效回答的比例；无有效分母时保持 No Data。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "showPoints": "auto",
+            "spanNulls": false
+          },
+          "max": 1,
+          "min": 0,
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 10},
+      "id": 5,
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      },
+      "targets": [
+        {
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "speakup-product-health-postgres"},
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT day_utc AS time, scope AS metric, reach_rate AS value\nFROM public.user_behavior_daily_time_to_first_effective_turn\nWHERE $__timeFilter(day_utc)\nORDER BY day_utc, scope",
+          "refId": "A"
+        }
+      ],
+      "title": "首次有效回答覆盖率",
+      "type": "timeseries"
+    },
+    {
+      "description": "仅统计已到达首次有效回答的 cohort：ACCOUNT 从账户创建计时，SESSION 从练习创建计时，分别展示耗时中位数和 P95；没有到达样本时保持 No Data。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "showPoints": "auto",
+            "spanNulls": false
+          },
+          "min": 0,
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 16, "x": 8, "y": 10},
+      "id": 6,
+      "options": {
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      },
+      "targets": [
+        {
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "speakup-product-health-postgres"},
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT day_utc AS time,\n       max(p50_seconds) FILTER (WHERE scope = 'ACCOUNT') AS \"账户 P50\",\n       max(p95_seconds) FILTER (WHERE scope = 'ACCOUNT') AS \"账户 P95\",\n       max(p50_seconds) FILTER (WHERE scope = 'SESSION') AS \"练习 P50\",\n       max(p95_seconds) FILTER (WHERE scope = 'SESSION') AS \"练习 P95\"\nFROM public.user_behavior_daily_time_to_first_effective_turn\nWHERE $__timeFilter(day_utc)\nGROUP BY day_utc\nORDER BY day_utc",
+          "refId": "A"
+        }
+      ],
+      "title": "首次有效回答耗时 P50 / P95",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 18},
+      "id": 7,
+      "panels": [],
+      "title": "练习留存",
+      "type": "row"
+    },
+    {
+      "description": "按账户全历史首次有效回答 UTC 日形成 cohort，展示 cohort 人数以及在 D1、D7 再次确认任一回答的人数。尚未成熟的 cohort 保持 No Data。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 18,
+            "lineWidth": 1,
+            "showPoints": "auto",
+            "spanNulls": false
+          },
+          "decimals": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 19},
+      "id": 8,
+      "options": {
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      },
+      "targets": [
+        {
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "speakup-product-health-postgres"},
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT cohort_day_utc AS time,\n       cohort_users AS \"首次有效回答账户\",\n       d1_returned_users AS \"D1 再次确认回答\",\n       d7_returned_users AS \"D7 再次确认回答\"\nFROM public.user_behavior_daily_retention\nWHERE $__timeFilter(cohort_day_utc)\nORDER BY cohort_day_utc",
+          "refId": "A"
+        }
+      ],
+      "title": "留存人数（按首次有效回答日）",
+      "type": "timeseries"
+    },
+    {
+      "description": "D1 与 D7 留存都要求账户在目标 UTC 日再次确认任一回答；尚未到达观察窗口的 cohort 为 No Data，不显示为 0%。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "showPoints": "auto",
+            "spanNulls": false
+          },
+          "max": 1,
+          "min": 0,
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 19},
+      "id": 9,
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      },
+      "targets": [
+        {
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "speakup-product-health-postgres"},
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT cohort_day_utc AS time,\n       d1_retention_rate AS \"D1 确认回答留存\",\n       d7_retention_rate AS \"D7 确认回答留存\"\nFROM public.user_behavior_daily_retention\nWHERE $__timeFilter(cohort_day_utc)\nORDER BY cohort_day_utc",
+          "refId": "A"
+        }
+      ],
+      "title": "D1 / D7 确认回答留存率",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 27},
+      "id": 10,
+      "panels": [],
+      "title": "重练、提前结束与未终态",
+      "type": "row"
+    },
+    {
+      "description": "展示创建的重练回答中已确认、失败和非终态超过 24 小时的数量。stale 是停滞候选，不代表用户明确放弃。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 18,
+            "lineWidth": 1,
+            "showPoints": "auto",
+            "spanNulls": false
+          },
+          "decimals": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 14, "x": 0, "y": 28},
+      "id": 11,
+      "options": {
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      },
+      "targets": [
+        {
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "speakup-product-health-postgres"},
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT day_utc AS time,\n       created_retry_turns AS \"创建重练回答\",\n       confirmed_retry_turns AS \"确认重练回答\",\n       failed_retry_turns AS \"失败重练回答\",\n       stale_retry_turns AS \"停滞候选\"\nFROM public.user_behavior_daily_repractice\nWHERE $__timeFilter(day_utc)\nORDER BY day_utc",
+          "refId": "A"
+        }
+      ],
+      "title": "重练结果",
+      "type": "timeseries"
+    },
+    {
+      "description": "以当日创建的重练回答为分母；确认、失败和停滞候选分别统计。无重练样本时保持 No Data。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "showPoints": "auto",
+            "spanNulls": false
+          },
+          "max": 1,
+          "min": 0,
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 10, "x": 14, "y": 28},
+      "id": 12,
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      },
+      "targets": [
+        {
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "speakup-product-health-postgres"},
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT day_utc AS time,\n       confirmation_rate AS \"确认率\",\n       failure_rate AS \"失败率\",\n       stale_rate AS \"停滞候选率\"\nFROM public.user_behavior_daily_repractice\nWHERE $__timeFilter(day_utc)\nORDER BY day_utc",
+          "refId": "A"
+        }
+      ],
+      "title": "重练结果占比",
+      "type": "timeseries"
+    },
+    {
+      "description": "按提前结束前已经确认的有效回答数分层；5_PLUS 表示 5 个及以上。占比只在提前结束练习内计算。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "showPoints": "auto",
+            "spanNulls": false
+          },
+          "max": 1,
+          "min": 0,
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 14, "x": 0, "y": 36},
+      "id": 13,
+      "options": {
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      },
+      "targets": [
+        {
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "speakup-product-health-postgres"},
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT day_utc AS time, effective_turn_depth AS metric, ended_early_share AS value\nFROM public.user_behavior_daily_early_end\nWHERE $__timeFilter(day_utc)\nORDER BY day_utc, effective_turn_depth",
+          "refId": "A"
+        }
+      ],
+      "title": "提前结束深度",
+      "type": "timeseries"
+    },
+    {
+      "description": "当前仍处于非终态的练习，按状态与停滞时间桶聚合。它们只是需要调查的 stale candidates，不能直接解释为用户放弃。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "custom": {"align": "auto", "cellOptions": {"type": "auto"}, "inspect": false},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 10, "x": 14, "y": 36},
+      "id": 14,
+      "options": {"cellHeight": "sm", "showHeader": true},
+      "targets": [
+        {
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "speakup-product-health-postgres"},
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n    CASE session_status\n        WHEN 'STARTING' THEN '启动中'\n        WHEN 'IN_PROGRESS' THEN '进行中'\n        WHEN 'PAUSED' THEN '已暂停'\n        ELSE session_status\n    END AS \"练习状态\",\n    CASE staleness_bucket\n        WHEN 'UNDER_1H' THEN '< 1 小时'\n        WHEN '1H_TO_24H' THEN '1–24 小时'\n        WHEN '1D_TO_7D' THEN '1–7 天'\n        WHEN '7D_PLUS' THEN '≥ 7 天'\n        ELSE staleness_bucket\n    END AS \"停滞时长\",\n    sessions AS \"练习数\"\nFROM public.user_behavior_current_nonterminal_sessions\nORDER BY\n    CASE session_status\n        WHEN 'STARTING' THEN 1\n        WHEN 'IN_PROGRESS' THEN 2\n        WHEN 'PAUSED' THEN 3\n        ELSE 4\n    END,\n    CASE staleness_bucket\n        WHEN 'UNDER_1H' THEN 1\n        WHEN '1H_TO_24H' THEN 2\n        WHEN '1D_TO_7D' THEN 3\n        WHEN '7D_PLUS' THEN 4\n        ELSE 5\n    END",
+          "refId": "A"
+        }
+      ],
+      "title": "当前未终态练习（候选，不等于放弃）",
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 44},
+      "id": 15,
+      "panels": [],
+      "title": "功能使用",
+      "type": "row"
+    },
+    {
+      "description": "使用顶部“功能维度”选择器，按已确认回答所在练习的功能值展示每日去重账户数。单次只展示一个闭集维度，避免系列混杂；不含用户标识。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "showPoints": "auto",
+            "spanNulls": false
+          },
+          "decimals": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 45},
+      "id": 16,
+      "options": {
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      },
+      "targets": [
+        {
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "speakup-product-health-postgres"},
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT day_utc AS time,\n       feature_value AS metric,\n       active_users::double precision AS value\nFROM public.user_behavior_daily_feature_usage\nWHERE $__timeFilter(day_utc)\n  AND feature_kind = ${feature_kind:sqlstring}\nORDER BY day_utc, feature_value",
+          "refId": "A"
+        }
+      ],
+      "title": "功能使用用户（${feature_kind:text}）",
+      "type": "timeseries"
+    },
+    {
+      "description": "使用顶部选择器切换功能维度与行为量口径。SESSIONS 是每日去重练习数，CONFIRMED_TURNS 是每日已确认回答数；单次最多展示所选维度的 10 个闭集值。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "showPoints": "auto",
+            "spanNulls": false
+          },
+          "decimals": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 45},
+      "id": 17,
+      "options": {
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      },
+      "targets": [
+        {
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "speakup-product-health-postgres"},
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT day_utc AS time,\n       feature_value AS metric,\n       CASE ${feature_metric:sqlstring}\n           WHEN 'SESSIONS' THEN sessions::double precision\n           WHEN 'CONFIRMED_TURNS' THEN confirmed_turns::double precision\n       END AS value\nFROM public.user_behavior_daily_feature_usage\nWHERE $__timeFilter(day_utc)\n  AND feature_kind = ${feature_kind:sqlstring}\nORDER BY day_utc, feature_value",
+          "refId": "A"
+        }
+      ],
+      "title": "功能使用行为量（${feature_metric:text}）",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 53},
+      "id": 18,
+      "panels": [],
+      "title": "数据边界",
+      "type": "row"
+    },
+    {
+      "description": "列出当前服务端事实无法回答的问题，避免路演或产品复盘时把缺失观测解释成用户行为。",
+      "gridPos": {"h": 7, "w": 24, "x": 0, "y": 54},
+      "id": 19,
+      "options": {
+        "content": "### 暂不可观测（不是 0）\n\n- **报告与逐轮反馈实际查看**：当前只能证明生成已调度或 READY，不能证明用户打开或阅读。\n- **页面路径与入口选择**：当前没有 App 端页面浏览、点击或路径事件。\n- **权限拒绝与前端中途退出**：服务端没有收到请求时无法识别。\n- **明确放弃**：未终态且停滞的练习只是 stale candidate，不能等同于用户放弃。\n\n如需回答这些问题，应另行设计严格白名单、无内容字段的客户端行为事件；本看板不从服务端事实猜测。No Data 表示尚无可证明样本，不等于测得 0。",
+        "mode": "markdown"
+      },
+      "title": "暂不可观测（不是 0）",
+      "type": "text"
+    }
+  ],
+  "refresh": "5m",
+  "schemaVersion": 42,
+  "tags": ["speakup", "user-behavior", "production"],
+  "templating": {
+    "list": [
+      {
+        "current": {"selected": true, "text": "练习体验", "value": "PRACTICE_EXPERIENCE"},
+        "hide": 0,
+        "includeAll": false,
+        "label": "功能维度",
+        "multi": false,
+        "name": "feature_kind",
+        "options": [
+          {"selected": true, "text": "练习体验", "value": "PRACTICE_EXPERIENCE"},
+          {"selected": false, "text": "场景", "value": "SCENE_CATEGORY"},
+          {"selected": false, "text": "练习模式", "value": "PRACTICE_MODE"},
+          {"selected": false, "text": "交互方式", "value": "INTERACTION_MODE"}
+        ],
+        "query": "练习体验 : PRACTICE_EXPERIENCE,场景 : SCENE_CATEGORY,练习模式 : PRACTICE_MODE,交互方式 : INTERACTION_MODE",
+        "skipUrlSync": false,
+        "type": "custom"
+      },
+      {
+        "current": {"selected": true, "text": "练习数", "value": "SESSIONS"},
+        "hide": 0,
+        "includeAll": false,
+        "label": "行为量口径",
+        "multi": false,
+        "name": "feature_metric",
+        "options": [
+          {"selected": true, "text": "练习数", "value": "SESSIONS"},
+          {"selected": false, "text": "确认回答数", "value": "CONFIRMED_TURNS"}
+        ],
+        "query": "练习数 : SESSIONS,确认回答数 : CONFIRMED_TURNS",
+        "skipUrlSync": false,
+        "type": "custom"
+      }
+    ]
+  },
+  "time": {"from": "now-30d", "to": "now"},
+  "timepicker": {},
+  "timezone": "utc",
+  "title": "SpeakUp 用户行为",
+  "uid": "speakup-user-behavior",
+  "version": 1,
+  "weekStart": ""
+}

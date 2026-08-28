@@ -62,6 +62,8 @@ func TestEveryMigrationPairIsEmbedded(t *testing.T) {
 		"000013_lisa_avatar_asset.up.sql",
 		"000014_expand_coach_voice_catalog.down.sql",
 		"000014_expand_coach_voice_catalog.up.sql",
+		"000015_user_behavior_views.down.sql",
+		"000015_user_behavior_views.up.sql",
 	}
 	slices.Sort(files)
 	if !slices.Equal(files, want) {
@@ -99,6 +101,8 @@ func TestMigrationsAreTransactional(t *testing.T) {
 		"000013_lisa_avatar_asset.down.sql",
 		"000014_expand_coach_voice_catalog.up.sql",
 		"000014_expand_coach_voice_catalog.down.sql",
+		"000015_user_behavior_views.up.sql",
+		"000015_user_behavior_views.down.sql",
 	} {
 		sql := readMigration(t, name)
 		if !strings.HasPrefix(sql, "BEGIN;") {
