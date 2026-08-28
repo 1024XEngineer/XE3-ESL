@@ -214,13 +214,21 @@ void main() {
     await tester.pumpWidget(const SpeakUpApp.preview());
     final semantics = tester.ensureSemantics();
 
-    expect(find.byType(SpeakUpAmbientBackground), findsWidgets);
+    final ambientBackground = find.byType(SpeakUpAmbientBackground);
+    expect(ambientBackground, findsOneWidget);
+    final ambientBackgroundElement = tester.element(ambientBackground);
+
+    void expectStableAmbientBackground() {
+      expect(ambientBackground, findsOneWidget);
+      expect(tester.element(ambientBackground), same(ambientBackgroundElement));
+    }
 
     await _tapPrimaryDestination(
       tester,
       key: 'primary-tab-scenes',
       expectedPageKey: 'scenes-page',
     );
+    expectStableAmbientBackground();
     expect(find.text('Practice'), findsOneWidget);
     expect(
       find.descendant(
@@ -249,6 +257,7 @@ void main() {
       key: 'primary-tab-review',
       expectedPageKey: 'review-page',
     );
+    expectStableAmbientBackground();
     expect(find.text('Review'), findsOneWidget);
     expect(find.byKey(const Key('review-exit-button')), findsNothing);
     expect(find.byKey(const Key('primary-navigation')), findsOneWidget);
@@ -257,6 +266,7 @@ void main() {
       key: 'primary-tab-profile',
       expectedPageKey: 'profile-page',
     );
+    expectStableAmbientBackground();
     expect(find.byKey(const Key('profile-avatar')), findsOneWidget);
     expect(find.byKey(const Key('profile-display-name')), findsOneWidget);
     expect(
@@ -276,6 +286,7 @@ void main() {
       key: 'primary-tab-agent',
       expectedPageKey: 'agent-home-page',
     );
+    expectStableAmbientBackground();
     semantics.dispose();
   });
 
