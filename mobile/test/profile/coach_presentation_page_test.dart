@@ -70,6 +70,13 @@ void main() {
     expect(store.voiceId, 'voice_ivy');
     expect(store.previewVoiceIds, <String>['voice_ivy']);
     expect(player.playCount, 1);
+    expect(
+      find.byKey(const Key('coach-voice-preview-playing')),
+      findsOneWidget,
+    );
+    player.complete();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('coach-voice-preview-playing')), findsNothing);
     await tester.tap(find.byKey(const Key('coach-voice-option-voice_ivy')));
     await tester.pumpAndSettle();
     expect(store.previewVoiceIds, <String>['voice_ivy', 'voice_ivy']);
@@ -262,6 +269,110 @@ void main() {
     await tester.pumpAndSettle();
     expect(player.playCount, 1);
   });
+
+  testWidgets('restores the initial voice when save and preview fail', (
+    tester,
+  ) async {
+    final player = _FakePreviewPlayer();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: SpeakUpTheme.light,
+        home: CoachVoiceSelectionPage(
+          options: const <CoachVoiceOption>[
+            CoachVoiceOption(
+              id: 'voice_ava',
+              name: '艾娃',
+              description: '清晰自然 · 美式英语 · 女声',
+              gender: 'female',
+            ),
+            CoachVoiceOption(
+              id: 'voice_john',
+              name: '约翰',
+              description: '温暖沉稳 · 美式英语 · 男声',
+              gender: 'male',
+            ),
+          ],
+          initialVoiceId: 'voice_ava',
+          onSelected: (_) async => throw StateError('save failed'),
+          loadPreview: (_) async => throw StateError('preview failed'),
+          audioPlayerFactory: () => player,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('coach-voice-option-voice_john')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('保存失败，请稍后重试。 试听暂时不可用，请稍后重试。'), findsOneWidget);
+    expect(
+      tester
+          .widget<ListTile>(
+            find.byKey(const Key('coach-voice-option-voice_ava')),
+          )
+          .selected,
+      isTrue,
+    );
+    expect(
+      tester
+          .widget<ListTile>(
+            find.byKey(const Key('coach-voice-option-voice_john')),
+          )
+          .selected,
+      isFalse,
+    );
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byKey(const Key('coach-voice-preview-playing')), findsNothing);
+  });
+
+  testWidgets('clears preview state when playback is interrupted', (
+    tester,
+  ) async {
+    final player = _FakePreviewPlayer(
+      playError: const EphemeralWavPlaybackInterruptedException(),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: SpeakUpTheme.light,
+        home: CoachVoiceSelectionPage(
+          options: const <CoachVoiceOption>[
+            CoachVoiceOption(
+              id: 'voice_ava',
+              name: '艾娃',
+              description: '清晰自然 · 美式英语 · 女声',
+              gender: 'female',
+            ),
+            CoachVoiceOption(
+              id: 'voice_john',
+              name: '约翰',
+              description: '温暖沉稳 · 美式英语 · 男声',
+              gender: 'male',
+            ),
+          ],
+          initialVoiceId: 'voice_ava',
+          onSelected: (voiceOptionId) async => voiceOptionId,
+          loadPreview: (_) async => Uint8List.fromList(_previewWav),
+          audioPlayerFactory: () => player,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('coach-voice-option-voice_john')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('coach-voice-selection-error')), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byKey(const Key('coach-voice-preview-playing')), findsNothing);
+    expect(
+      tester
+          .widget<ListTile>(
+            find.byKey(const Key('coach-voice-option-voice_john')),
+          )
+          .selected,
+      isTrue,
+    );
+  });
 }
 
 final class _Store implements CoachPresentationSettingsStore {
@@ -435,8 +546,11 @@ final class _ConflictStore implements CoachPresentationSettingsStore {
 }
 
 final class _FakePreviewPlayer implements EphemeralWavAudioPlayer {
+  _FakePreviewPlayer({this.playError});
+
   final StreamController<void> _completions =
       StreamController<void>.broadcast();
+  final Object? playError;
   int playCount = 0;
 
   @override
@@ -445,6 +559,8 @@ final class _FakePreviewPlayer implements EphemeralWavAudioPlayer {
   @override
   Future<void> play(Uint8List bytes) async {
     playCount++;
+    final error = playError;
+    if (error != null) throw error;
   }
 
   @override
@@ -454,6 +570,8 @@ final class _FakePreviewPlayer implements EphemeralWavAudioPlayer {
   Future<void> dispose() async {
     await _completions.close();
   }
+
+  void complete() => _completions.add(null);
 }
 
 const _previewWav = <int>[

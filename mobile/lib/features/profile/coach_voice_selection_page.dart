@@ -182,6 +182,12 @@ class _CoachVoiceSelectionPageState extends State<CoachVoiceSelectionPage> {
         _loadingVoiceId = null;
         _playingVoiceId = voiceOptionId;
       });
+    } on EphemeralWavPlaybackInterruptedException {
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        _loadingVoiceId = null;
+        _playingVoiceId = null;
+      });
     } catch (_) {
       if (!mounted || generation != _generation) return;
       setState(() {
