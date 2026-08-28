@@ -31,6 +31,8 @@ SHELL := /bin/bash
 	check-android-download \
 	check-tls-lifecycle \
 	check-observability \
+	check-spatialreal-avatar-tool \
+	check-spatialreal-avatars \
 	check-production-deploy \
 	check-production-nginx \
 	check-cn-backend-experiment \
@@ -71,6 +73,8 @@ help:
 		'  make check-android-download  Validate the public Android bundle and publish contract' \
 		'  make check-tls-lifecycle  Validate TLS issuance and renewal contracts' \
 		'  make check-observability  Validate monitoring, alert, and log rotation contracts' \
+		'  make check-spatialreal-avatar-tool  Test the SpatialReal metadata checker offline' \
+		'  make check-spatialreal-avatars  Check configured avatars against the live metadata API' \
 		'  make check-production-deploy  Validate the immutable Production contract' \
 		'  make check-production-nginx  Run nginx -t against the Production template' \
 		'  make check-cn-backend-experiment  Validate the isolated China backend experiment contract' \
@@ -342,6 +346,12 @@ check-offline-release:
 
 check-android-download:
 	node --test tools/android-download/*.test.mjs
+
+check-spatialreal-avatar-tool:
+	node --test tools/spatialreal-avatar-check/*.test.mjs
+
+check-spatialreal-avatars:
+	node tools/spatialreal-avatar-check/check.mjs
 	./deploy/android-download/test.sh
 
 check-tls-lifecycle:
