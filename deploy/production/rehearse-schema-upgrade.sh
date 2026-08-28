@@ -20,12 +20,15 @@ readonly container_memory_bytes=536870912
 readonly container_pids_limit=256
 readonly container_log_max_size='10m'
 readonly container_log_max_file='3'
+readonly server_readiness_profile='core_database_external_integrations_disabled'
+readonly production_provider_readiness='not_verified'
 
 execute=false
 backup_directory=''
 manifest=''
-manifest_snapshot_directory=''
+input_snapshot_directory=''
 manifest_snapshot=''
+server_environment_snapshot=''
 previous_server_image=''
 forward_server_image=''
 validated_forward_server_image=''
@@ -122,6 +125,8 @@ write_receipt() {
     --arg forward_server_image_version "$forward_server_image_version" \
     --arg forward_server_image_revision "$forward_server_image_revision" \
     --arg forward_hotfix_status "$forward_hotfix_status" \
+    --arg server_readiness_profile "$server_readiness_profile" \
+    --arg production_provider_readiness "$production_provider_readiness" \
     --arg recorded_at "$recorded_at" \
     --argjson source_schema "$source_schema" \
     --argjson target_schema "$target_schema" \
@@ -169,6 +174,8 @@ write_receipt() {
         forward_server_image_revision:
           (if $forward_server_image_revision == "" then null
            else $forward_server_image_revision end),
+        server_readiness_profile: $server_readiness_profile,
+        production_provider_readiness: $production_provider_readiness,
         source_schema: $source_schema,
         target_schema: $target_schema,
         lock_timeout_seconds: $lock_timeout_seconds,
@@ -212,8 +219,13 @@ write_receipt() {
 cleanup_on_exit() {
   local status=$?
 
-  trap - EXIT INT HUP TERM
+  trap - EXIT
+  trap '' INT HUP TERM
   set +e
+  if ! cleanup_input_snapshots; then
+    status=1
+    phase='cleanup'
+  fi
   if [[ "$docker_touched" == true ]]; then
     if cleanup_owned_resources; then
       cleanup_verified=true
@@ -225,19 +237,16 @@ cleanup_on_exit() {
   elif [[ "$execute" == true ]]; then
     cleanup_verified=true
   fi
-  if ! cleanup_manifest_snapshot; then
-    status=1
-    phase='cleanup'
-  fi
   if ((started_at_seconds > 0)); then
     total_duration_seconds=$(( $(now_seconds) - started_at_seconds ))
   fi
   if [[ "$execute" == true && "$receipt_ready" == true ]]; then
     if ((status == 0)); then
       if write_receipt succeeded; then
-        printf 'backup_id=%s version=%s source_schema=%s target_schema=%s receipt=%s rehearsal=verified\n' \
+        printf 'backup_id=%s version=%s source_schema=%s target_schema=%s readiness_profile=%s production_provider_readiness=%s receipt=%s rehearsal=verified\n' \
           "$selected_backup_id" "$release_version" "$source_schema" \
-          "$target_schema" "$receipt"
+          "$target_schema" "$server_readiness_profile" \
+          "$production_provider_readiness" "$receipt"
       else
         status=1
       fi
@@ -248,23 +257,30 @@ cleanup_on_exit() {
   exit "$status"
 }
 
-cleanup_manifest_snapshot() {
+cleanup_input_snapshots() {
   local name
 
-  [[ -n "$manifest_snapshot_directory" ]] || return 0
-  name=${manifest_snapshot_directory##*/}
-  [[ "$name" == xe3-production-rehearsal-manifest.* &&
-    -d "$manifest_snapshot_directory" && ! -L "$manifest_snapshot_directory" &&
-    "$(path_owner "$manifest_snapshot_directory")" == "$EUID" ]] || return 1
+  [[ -n "$input_snapshot_directory" ]] || return 0
+  name=${input_snapshot_directory##*/}
+  [[ "$name" == xe3-production-rehearsal-inputs.* &&
+    -d "$input_snapshot_directory" && ! -L "$input_snapshot_directory" &&
+    "$(path_owner "$input_snapshot_directory")" == "$EUID" ]] || return 1
+  if [[ -e "$server_environment_snapshot" || -L "$server_environment_snapshot" ]]; then
+    [[ "$server_environment_snapshot" == "$input_snapshot_directory/server.env" &&
+      -f "$server_environment_snapshot" && ! -L "$server_environment_snapshot" &&
+      "$(path_owner "$server_environment_snapshot")" == "$EUID" ]] || return 1
+    rm -- "$server_environment_snapshot" || return 1
+  fi
   if [[ -e "$manifest_snapshot" || -L "$manifest_snapshot" ]]; then
-    [[ "$manifest_snapshot" == "$manifest_snapshot_directory/release-manifest.json" &&
+    [[ "$manifest_snapshot" == "$input_snapshot_directory/release-manifest.json" &&
       -f "$manifest_snapshot" && ! -L "$manifest_snapshot" &&
       "$(path_owner "$manifest_snapshot")" == "$EUID" ]] || return 1
     rm -- "$manifest_snapshot" || return 1
   fi
-  rmdir -- "$manifest_snapshot_directory" || return 1
-  manifest_snapshot_directory=''
+  rmdir -- "$input_snapshot_directory" || return 1
+  input_snapshot_directory=''
   manifest_snapshot=''
+  server_environment_snapshot=''
 }
 
 require_command() {
@@ -366,12 +382,12 @@ validate_manifest() {
 
   temporary_base=${TMPDIR:-/tmp}
   temporary_base=${temporary_base%/}
-  manifest_snapshot_directory=$(mktemp -d \
-    "$temporary_base/xe3-production-rehearsal-manifest.XXXXXX") ||
-    fail 'cannot create private manifest snapshot directory'
-  chmod 0700 "$manifest_snapshot_directory" ||
-    fail 'cannot protect manifest snapshot directory'
-  manifest_snapshot="$manifest_snapshot_directory/release-manifest.json"
+  input_snapshot_directory=$(mktemp -d \
+    "$temporary_base/xe3-production-rehearsal-inputs.XXXXXX") ||
+    fail 'cannot create private input snapshot directory'
+  chmod 0700 "$input_snapshot_directory" ||
+    fail 'cannot protect input snapshot directory'
+  manifest_snapshot="$input_snapshot_directory/release-manifest.json"
   cp "$manifest" "$manifest_snapshot" || fail 'cannot freeze release manifest snapshot'
   chmod 0600 "$manifest_snapshot" || fail 'cannot protect release manifest snapshot'
 
@@ -386,6 +402,59 @@ validate_manifest() {
   release_manifest_sha256=${BASH_REMATCH[4]}
   candidate_server_image="$server_repository@$(jq --raw-output \
     '.server_image_digest' "$manifest_snapshot")"
+}
+
+freeze_server_environment() {
+  server_environment_snapshot="$input_snapshot_directory/server.env"
+  awk '
+    BEGIN {
+      split("OSS_ENABLED RESUME_OCR_ENABLED APPID APIKey APISecret HTTP_PROXY HTTPS_PROXY FTP_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy ftp_proxy all_proxy no_proxy DATABASE_URL SERVER_HOST SERVER_PORT METRICS_HOST", names)
+      for (position in names) {
+        controlled[names[position]] = 1
+      }
+    }
+    index($0, "\r") != 0 {
+      exit 2
+    }
+    $0 == "" || substr($0, 1, 1) == "#" {
+      print
+      next
+    }
+    $0 !~ /^[A-Za-z_][A-Za-z0-9_]*=/ {
+      exit 3
+    }
+    {
+      key = $0
+      sub(/=.*/, "", key)
+      if (++seen[key] != 1) {
+        exit 4
+      }
+      if (!(key in controlled)) {
+        print
+      }
+    }
+    END {
+      print "OSS_ENABLED=0"
+      print "RESUME_OCR_ENABLED=0"
+      print "APPID="
+      print "APIKey="
+      print "APISecret="
+      print "HTTP_PROXY="
+      print "HTTPS_PROXY="
+      print "FTP_PROXY="
+      print "ALL_PROXY="
+      print "NO_PROXY="
+      print "http_proxy="
+      print "https_proxy="
+      print "ftp_proxy="
+      print "all_proxy="
+      print "no_proxy="
+    }
+  ' "$server_environment" >"$server_environment_snapshot" ||
+    fail 'cannot freeze isolated Server environment'
+  chmod 0600 "$server_environment_snapshot" ||
+    fail 'cannot protect isolated Server environment'
+  require_private_file 'isolated Server environment' "$server_environment_snapshot"
 }
 
 validate_previous_server_image() {
@@ -853,13 +922,14 @@ start_server_and_wait() {
     --log-opt "max-file=$container_log_max_file" \
     --label "$resource_label=true" \
     --label "$run_label=$run_id" \
-    --env-file "$server_environment" \
+    --env-file "$server_environment_snapshot" \
     --env "DATABASE_URL=postgres://$selected_database_user@$postgres_container:5432/$selected_database?sslmode=disable" \
     --env SERVER_HOST=0.0.0.0 \
     --env SERVER_PORT=8080 \
     --env METRICS_HOST=127.0.0.1 \
     "$image_id") || fail 'cannot create isolated Server image'
   record_created_container "$name" "$created_id"
+  verify_server_environment_profile "$created_id"
   docker container start "$created_id" >/dev/null ||
     fail 'cannot start isolated Server image'
   for ((attempt = 1; attempt <= 60; attempt += 1)); do
@@ -874,6 +944,37 @@ start_server_and_wait() {
     sleep 1
   done
   fail 'isolated Server image did not pass readiness'
+}
+
+verify_server_environment_profile() {
+  local database_url
+
+  database_url="postgres://$selected_database_user@$postgres_container:5432/$selected_database?sslmode=disable"
+  docker container inspect "$1" | jq --exit-status \
+    --arg database_url "$database_url" '
+    def exact_env($key; $value):
+      [.[] | .Config.Env[]? | select(startswith($key + "="))] ==
+        [($key + "=" + $value)];
+    exact_env("OSS_ENABLED"; "0") and
+    exact_env("RESUME_OCR_ENABLED"; "0") and
+    exact_env("APPID"; "") and
+    exact_env("APIKey"; "") and
+    exact_env("APISecret"; "") and
+    exact_env("HTTP_PROXY"; "") and
+    exact_env("HTTPS_PROXY"; "") and
+    exact_env("FTP_PROXY"; "") and
+    exact_env("ALL_PROXY"; "") and
+    exact_env("NO_PROXY"; "") and
+    exact_env("http_proxy"; "") and
+    exact_env("https_proxy"; "") and
+    exact_env("ftp_proxy"; "") and
+    exact_env("all_proxy"; "") and
+    exact_env("no_proxy"; "") and
+    exact_env("DATABASE_URL"; $database_url) and
+    exact_env("SERVER_HOST"; "0.0.0.0") and
+    exact_env("SERVER_PORT"; "8080") and
+    exact_env("METRICS_HOST"; "127.0.0.1")
+  ' >/dev/null || fail 'isolated Server readiness profile is invalid'
 }
 
 stop_server() {
@@ -1144,6 +1245,9 @@ validate_inputs() {
   require_private_file 'server environment file' "$server_environment"
   phase='manifest_validation'
   validate_manifest
+  phase='environment_validation'
+  freeze_server_environment
+  phase='manifest_validation'
   validate_previous_server_image
   validate_forward_server_image
   phase='backup_metadata_validation'
@@ -1158,9 +1262,10 @@ main() {
   trap 'exit 130' INT HUP TERM
   validate_inputs
   if [[ "$execute" == false ]]; then
-    printf 'backup_id=%s version=%s source_schema=%s target_schema=%s forward_hotfix=%s dry_run=true docker_touched=false\n' \
+    printf 'backup_id=%s version=%s source_schema=%s target_schema=%s forward_hotfix=%s readiness_profile=%s production_provider_readiness=%s dry_run=true docker_touched=false\n' \
       "$selected_backup_id" "$release_version" "$source_schema" "$target_schema" \
-      "$forward_hotfix_status"
+      "$forward_hotfix_status" "$server_readiness_profile" \
+      "$production_provider_readiness"
     return
   fi
 

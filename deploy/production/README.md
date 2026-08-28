@@ -335,6 +335,18 @@ failure produces a mode `0600`, redacted receipt after owned-resource cleanup;
 failure or interruption never removes unlabeled or differently labeled Docker
 resources.
 
+Server readiness loads the supplied environment through Docker's `--env-file`
+parser. The source file must use unique, canonical `KEY=value` lines, with only
+empty lines or column-one `#` comments. The rehearsal then explicitly disables
+object storage, Resume OCR, ISE credentials
+and all Docker-supported proxy variables. Together with the internal network,
+this prevents a restored job from reaching a real third-party service. The
+receipt records the `core_database_external_integrations_disabled` readiness
+profile and `production_provider_readiness=not_verified`: this proves core
+Server boot and database compatibility, not Production Provider availability.
+Staging UAT covers Staging business paths; exact Production Provider business
+calls require a separate authorized smoke or UAT.
+
 This repository test uses a synthetic schema-9 backup, the real schema 10
 through 15 migrations and local fixture images. It does not replace the required
 runtime evidence from the selected finalized Production backup and the actual
