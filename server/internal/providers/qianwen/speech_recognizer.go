@@ -20,11 +20,6 @@ import (
 
 const maxASRDataURLBytes = 10_000_000
 
-const (
-	realtimeASRModel = "qwen-audio-3.0-asr-flash-streaming"
-	recordedASRModel = "qwen-audio-3.0-asr-flash"
-)
-
 type ASRConfig struct {
 	BaseURL  string
 	Model    string
@@ -44,10 +39,10 @@ type speechRecognizer struct {
 
 func (recognizer *speechRecognizer) String() string {
 	if recognizer == nil {
-		return "QianwenASRRecognizer(<nil>)"
+		return "FunASRRecognizer(<nil>)"
 	}
 	return fmt.Sprintf(
-		"QianwenASRRecognizer(model=%q, timeout=%s, api_key=[REDACTED])",
+		"FunASRRecognizer(model=%q, timeout=%s, api_key=[REDACTED])",
 		recognizer.model,
 		recognizer.timeout,
 	)
@@ -85,10 +80,10 @@ func newRecognizerWithClient(
 		return nil, err
 	}
 	if config.Timeout <= 0 || config.Timeout > maxTimeout {
-		return nil, fmt.Errorf("Qianwen ASR timeout must be greater than zero and at most %s", maxTimeout)
+		return nil, fmt.Errorf("Fun-ASR timeout must be greater than zero and at most %s", maxTimeout)
 	}
 	if client == nil {
-		return nil, errors.New("Qianwen ASR HTTP client is required")
+		return nil, errors.New("Fun-ASR HTTP client is required")
 	}
 	return &speechRecognizer{
 		endpoint:   baseURL + multimodalGenerationPath,
@@ -105,7 +100,7 @@ func (recognizer *speechRecognizer) Transcribe(
 	ctx context.Context,
 	request protocol.TranscriptionRequest,
 ) (protocol.TranscriptionResult, error) {
-	if isRealtimeASRModel(recognizer.model) {
+	if recognizer.model == "fun-asr-realtime" {
 		return recognizer.transcribeRealtime(ctx, request, nil)
 	}
 	if ctx == nil {
@@ -148,7 +143,7 @@ func (recognizer *speechRecognizer) Transcribe(
 			0,
 			"",
 			"",
-			errors.New("encoded audio exceeds the Qianwen ASR input limit"),
+			errors.New("encoded audio exceeds the Fun-ASR input limit"),
 		)
 	}
 
@@ -178,7 +173,7 @@ func (recognizer *speechRecognizer) Transcribe(
 			0,
 			"",
 			"",
-			errors.New("encode Qianwen ASR request"),
+			errors.New("encode Fun-ASR request"),
 		)
 	}
 
@@ -197,7 +192,7 @@ func (recognizer *speechRecognizer) Transcribe(
 			0,
 			"",
 			"",
-			errors.New("create Qianwen ASR request"),
+			errors.New("create Fun-ASR request"),
 		)
 	}
 	httpRequest.Header.Set(
@@ -221,7 +216,7 @@ func (recognizer *speechRecognizer) Transcribe(
 			protocol.SpeechOperationTranscription,
 			0,
 			"",
-			"Qianwen ASR returned a nil HTTP response",
+			"Fun-ASR returned a nil HTTP response",
 		)
 	}
 	if response.Body == nil {
@@ -229,7 +224,7 @@ func (recognizer *speechRecognizer) Transcribe(
 			protocol.SpeechOperationTranscription,
 			response.StatusCode,
 			response.Header.Get("X-Request-Id"),
-			"Qianwen ASR returned an HTTP response without a body",
+			"Fun-ASR returned an HTTP response without a body",
 		)
 	}
 	defer response.Body.Close()
@@ -245,7 +240,7 @@ func (recognizer *speechRecognizer) Transcribe(
 			protocol.SpeechOperationTranscription,
 			response.StatusCode,
 			response.Header.Get("X-Request-Id"),
-			"Qianwen ASR response exceeds the accepted limit",
+			"Fun-ASR response exceeds the accepted limit",
 		)
 	}
 	var completion asrResponse
@@ -254,7 +249,7 @@ func (recognizer *speechRecognizer) Transcribe(
 			protocol.SpeechOperationTranscription,
 			response.StatusCode,
 			response.Header.Get("X-Request-Id"),
-			"decode Qianwen ASR response",
+			"decode Fun-ASR response",
 		)
 	}
 	result, err := completion.result(recognizer.model)
@@ -274,7 +269,7 @@ func (recognizer *speechRecognizer) TranscribeStream(
 	request protocol.TranscriptionRequest,
 	observer protocol.TranscriptionObserver,
 ) (protocol.TranscriptionResult, error) {
-	if !isRealtimeASRModel(recognizer.model) || observer == nil {
+	if recognizer.model != "fun-asr-realtime" || observer == nil {
 		return recognizer.Transcribe(ctx, request)
 	}
 	return recognizer.transcribeRealtime(ctx, request, observer)
@@ -312,12 +307,7 @@ type asrParameters struct {
 type asrResponse struct {
 	RequestID string `json:"request_id"`
 	Output    struct {
-		Text   string `json:"text"`
-		Output struct {
-			Sentence struct {
-				Text string `json:"text"`
-			} `json:"sentence"`
-		} `json:"output"`
+		Text     string `json:"text"`
 		Sentence struct {
 			Text string `json:"text"`
 		} `json:"sentence"`
@@ -330,10 +320,10 @@ type asrResponse struct {
 func (response asrResponse) result(model string) (protocol.TranscriptionResult, error) {
 	requestID := sanitizeIdentifier(response.RequestID)
 	if requestID == "" {
-		return protocol.TranscriptionResult{}, errors.New("Qianwen ASR response has no valid request ID")
+		return protocol.TranscriptionResult{}, errors.New("Fun-ASR response has no valid request ID")
 	}
 	if response.Usage.Duration < 0 {
-		return protocol.TranscriptionResult{}, errors.New("Qianwen ASR response has invalid audio usage")
+		return protocol.TranscriptionResult{}, errors.New("Fun-ASR response has invalid audio usage")
 	}
 	text := strings.TrimSpace(response.Output.Text)
 	sentenceText := strings.TrimSpace(response.Output.Sentence.Text)
@@ -343,10 +333,7 @@ func (response asrResponse) result(model string) (protocol.TranscriptionResult, 
 		text = sentenceText
 	}
 	if text == "" {
-		text = strings.TrimSpace(response.Output.Output.Sentence.Text)
-	}
-	if text == "" {
-		return protocol.TranscriptionResult{}, errors.New("Qianwen ASR response has no transcript")
+		return protocol.TranscriptionResult{}, errors.New("Fun-ASR response has no transcript")
 	}
 	return protocol.TranscriptionResult{
 		ID:         requestID,
@@ -385,18 +372,10 @@ func readAudioSource(source platformmedia.AudioSource) ([]byte, error) {
 
 func normalizeASRModel(raw string) (string, error) {
 	model := strings.ToLower(strings.TrimSpace(raw))
-	if model != realtimeASRModel && model != recordedASRModel {
-		return "", fmt.Errorf(
-			"Qianwen ASR adapter only accepts %s or %s",
-			realtimeASRModel,
-			recordedASRModel,
-		)
+	if model != "fun-asr-realtime" && model != "fun-asr-flash-2026-06-15" {
+		return "", errors.New("Fun-ASR adapter only accepts fun-asr-realtime or fun-asr-flash-2026-06-15")
 	}
 	return model, nil
-}
-
-func isRealtimeASRModel(model string) bool {
-	return model == realtimeASRModel
 }
 
 func invalidSpeechResponse(

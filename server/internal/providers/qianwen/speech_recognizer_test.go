@@ -17,7 +17,7 @@ import (
 	protocol "github.com/1024XEngineer/XE3-ESL/server/internal/providers/qianwen/internal/protocol"
 )
 
-func TestTranscribeUsesDocumentedQwenAudioASRFlashContract(t *testing.T) {
+func TestTranscribeUsesDocumentedFunASRFlashContract(t *testing.T) {
 	t.Parallel()
 
 	const apiKey = "test-api-key"
@@ -53,7 +53,7 @@ func TestTranscribeUsesDocumentedQwenAudioASRFlashContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("transcribe: %v", err)
 	}
-	if received.Model != "qwen-audio-3.0-asr-flash" ||
+	if received.Model != "fun-asr-flash-2026-06-15" ||
 		received.Parameters.Format != "wav" ||
 		received.Parameters.SampleRate != "16000" ||
 		len(received.Input.Messages) != 1 ||
@@ -68,7 +68,7 @@ func TestTranscribeUsesDocumentedQwenAudioASRFlashContract(t *testing.T) {
 	expected := protocol.TranscriptionResult{
 		ID:         "fun-asr-safe-1",
 		Provider:   providerName,
-		Model:      "qwen-audio-3.0-asr-flash",
+		Model:      "fun-asr-flash-2026-06-15",
 		Transcript: "I am preparing for an interview.",
 		Usage: protocol.SpeechUsage{
 			AudioSeconds: 4,
@@ -86,10 +86,6 @@ func TestTranscribeAcceptsDocumentedTranscriptLocations(t *testing.T) {
 		"top-level output text": `{
 			"output":{"text":"Hello from the top level."},
 			"request_id":"fun-asr-top"
-		}`,
-		"documented nested sentence text": `{
-			"output":{"output":{"sentence":{"text":"Hello from the nested sentence."}}},
-			"request_id":"qwen-audio-asr-sentence"
 		}`,
 		"documented sentence text": `{
 			"output":{"sentence":{"text":"Hello from the sentence."}},
@@ -256,7 +252,7 @@ func TestRecognizerTimeoutAndFormattingAreSafe(t *testing.T) {
 	})
 	recognizer, err := newRecognizerWithClient(ASRConfig{
 		BaseURL: "https://dashscope.aliyuncs.com/api/v1",
-		Model:   "qwen-audio-3.0-asr-flash",
+		Model:   "fun-asr-flash-2026-06-15",
 		Timeout: 10 * time.Millisecond,
 	}, apiKey, blocking)
 	if err != nil {
@@ -302,7 +298,7 @@ func TestNewRecognizerRejectsUnsupportedModelAndEndpoint(t *testing.T) {
 
 	valid := ASRConfig{
 		BaseURL: "https://dashscope.aliyuncs.com/api/v1",
-		Model:   "qwen-audio-3.0-asr-flash",
+		Model:   "fun-asr-flash-2026-06-15",
 		Timeout: time.Second,
 	}
 	tests := []struct {
@@ -336,7 +332,7 @@ func mustRecognizer(t *testing.T, client httpDoer, apiKey string) *speechRecogni
 	t.Helper()
 	recognizer, err := newRecognizerWithClient(ASRConfig{
 		BaseURL: "https://dashscope.aliyuncs.com/api/v1",
-		Model:   "qwen-audio-3.0-asr-flash",
+		Model:   "fun-asr-flash-2026-06-15",
 		Timeout: time.Second,
 	}, apiKey, client)
 	if err != nil {
