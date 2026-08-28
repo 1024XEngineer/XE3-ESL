@@ -77,6 +77,12 @@ func TestMigrationHistoryFreshUpDownUp(t *testing.T) {
 
 	changed, err = runner.DownOne()
 	if err != nil || !changed {
+		t.Fatalf("DownOne to v14 expanded voice catalog = %t, %v", changed, err)
+	}
+	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables))
+
+	changed, err = runner.DownOne()
+	if err != nil || !changed {
 		t.Fatalf("DownOne to v13 Lisa avatar asset = %t, %v", changed, err)
 	}
 	assertApplicationTableCount(t, admin, schema, len(cleanBaselineTables))
@@ -217,6 +223,9 @@ WHERE id = $1
 		1,
 	)
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v14 expanded voice catalog = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("DownOne to v13 Lisa avatar asset = %t, %v", changed, downErr)
 	}
 	assertAvatarBinding(
@@ -279,6 +288,9 @@ func TestExpandedCoachVoiceMigrationSeedsCatalogAndSafelyRollsBackPreference(
 	t.Cleanup(func() { _ = runner.Close() })
 	if changed, upErr := runner.Up(); upErr != nil || !changed {
 		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v14 expanded voice catalog = %t, %v", changed, downErr)
 	}
 
 	database, err := pgx.ConnectConfig(context.Background(), config)
@@ -358,6 +370,9 @@ func TestAgentRunQualifiedModelMigrationEnforcesDomainAndRollbackGuard(
 	t.Cleanup(func() { _ = runner.Close() })
 	if changed, upErr := runner.Up(); upErr != nil || !changed {
 		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v14 expanded voice catalog = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("DownOne to v13 Lisa avatar asset = %t, %v", changed, downErr)
@@ -448,6 +463,9 @@ WHERE id = $1
 		"23514",
 	)
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v14 expanded voice catalog = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("DownOne to v13 Lisa avatar asset = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
@@ -489,6 +507,9 @@ func TestSceneSelectionSourceMigrationTransformsPlansAndPreservesSessions(
 	t.Cleanup(func() { _ = runner.Close() })
 	if changed, upErr := runner.Up(); upErr != nil || !changed {
 		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v14 expanded voice catalog = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("DownOne to v13 Lisa avatar asset = %t, %v", changed, downErr)
@@ -645,6 +666,9 @@ FROM practice_sessions WHERE session_id = $1
 	}
 
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("roll back v15 = %t, %v", changed, downErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("roll back v14 = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
@@ -703,6 +727,9 @@ func TestMigratedLegacyCatalogPlanCompletesThroughFormalReport(t *testing.T) {
 	t.Cleanup(func() { _ = runner.Close() })
 	if changed, upErr := runner.Up(); upErr != nil || !changed {
 		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v14 expanded voice catalog = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("DownOne to v13 Lisa avatar asset = %t, %v", changed, downErr)
@@ -983,6 +1010,9 @@ func TestSceneSelectionSourceMigrationRejectsDownWithCustomPlan(t *testing.T) {
 	t.Cleanup(func() { _ = runner.Close() })
 	if changed, upErr := runner.Up(); upErr != nil || !changed {
 		t.Fatalf("initial Up = %t, %v", changed, upErr)
+	}
+	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
+		t.Fatalf("DownOne to v14 expanded voice catalog = %t, %v", changed, downErr)
 	}
 	if changed, downErr := runner.DownOne(); downErr != nil || !changed {
 		t.Fatalf("DownOne to v13 Lisa avatar asset = %t, %v", changed, downErr)
