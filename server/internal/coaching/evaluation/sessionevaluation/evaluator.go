@@ -234,7 +234,9 @@ func (evaluator *IELTSEvaluator) Evaluate(
 	var evidencePolicy *providerEvidencePolicy
 	if lineage.PromptVersion == ieltsPromptVersionV4 ||
 		lineage.PromptVersion == ieltsPromptVersionV5 {
-		payloadOverride, evidencePolicy, err = ieltsV4Payload(snapshot, dimensions)
+		payloadOverride, evidencePolicy, err = ieltsV4Payload(
+			snapshot, dimensions, lineage.PromptVersion == ieltsPromptVersionV5,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -334,12 +336,23 @@ func evaluate(
 	}
 	payloadSource := payloadOverride
 	if payloadSource == nil {
-		payloadSource = providerInput{
-			EvaluatedParticipantRole:                     "LEARNER",
-			EffectiveTurnsAreConfirmedEvaluatedResponses: true,
-			SceneType: sceneType, PracticeMode: snapshot.PracticeMode,
-			DimensionKeys: dimensionKeys, Questions: snapshot.Questions,
-			Turns: effectiveTurns,
+		if lineage.PromptVersion == interviewPromptVersionV3 ||
+			lineage.PromptVersion == generalPromptVersionV3 {
+			payloadSource = providerInputV3{
+				EvaluatedParticipantRole:                     "LEARNER",
+				EffectiveTurnsAreConfirmedEvaluatedResponses: true,
+				ConfirmedLearnerResponseCount:                len(effectiveTurns),
+				SceneType:                                    sceneType, PracticeMode: snapshot.PracticeMode,
+				DimensionKeys: dimensionKeys,
+				Questions:     referencedQuestions(snapshot.Questions, effectiveTurns),
+				Turns:         effectiveTurns,
+			}
+		} else {
+			payloadSource = providerInput{
+				SceneType: sceneType, PracticeMode: snapshot.PracticeMode,
+				DimensionKeys: dimensionKeys, Questions: snapshot.Questions,
+				Turns: effectiveTurns,
+			}
 		}
 	}
 	payload, err := json.Marshal(payloadSource)
@@ -415,8 +428,17 @@ func evaluate(
 }
 
 type providerInput struct {
+	SceneType     evaluation.SceneType                 `json:"scene_type"`
+	PracticeMode  string                               `json:"practice_mode"`
+	DimensionKeys []string                             `json:"dimension_keys"`
+	Questions     []evaluation.SessionEvidenceQuestion `json:"questions"`
+	Turns         []evaluation.SessionEvidenceTurn     `json:"effective_turns"`
+}
+
+type providerInputV3 struct {
 	EvaluatedParticipantRole                     string                               `json:"evaluated_participant_role"`
 	EffectiveTurnsAreConfirmedEvaluatedResponses bool                                 `json:"effective_turns_are_confirmed_evaluated_responses"`
+	ConfirmedLearnerResponseCount                int                                  `json:"confirmed_learner_response_count"`
 	SceneType                                    evaluation.SceneType                 `json:"scene_type"`
 	PracticeMode                                 string                               `json:"practice_mode"`
 	DimensionKeys                                []string                             `json:"dimension_keys"`
@@ -425,19 +447,29 @@ type providerInput struct {
 }
 
 type incrementalIELTSProviderInput struct {
-	EvaluatedParticipantRole                     string                               `json:"evaluated_participant_role"`
-	EffectiveTurnsAreConfirmedEvaluatedResponses bool                                 `json:"effective_turns_are_confirmed_evaluated_responses"`
-	SceneType                                    evaluation.SceneType                 `json:"scene_type"`
-	PracticeMode                                 string                               `json:"practice_mode"`
-	DimensionKeys                                []string                             `json:"dimension_keys"`
-	CumulativeProfile                            evaluation.IELTSCumulativeProfile    `json:"cumulative_profile"`
-	Questions                                    []evaluation.SessionEvidenceQuestion `json:"part_3_questions"`
-	Turns                                        []evaluation.SessionEvidenceTurn     `json:"part_3_effective_turns"`
+	SceneType         evaluation.SceneType                 `json:"scene_type"`
+	PracticeMode      string                               `json:"practice_mode"`
+	DimensionKeys     []string                             `json:"dimension_keys"`
+	CumulativeProfile evaluation.IELTSCumulativeProfile    `json:"cumulative_profile"`
+	Questions         []evaluation.SessionEvidenceQuestion `json:"part_3_questions"`
+	Turns             []evaluation.SessionEvidenceTurn     `json:"part_3_effective_turns"`
 }
 
 type resolvedIELTSProviderInputV4 struct {
+	SchemaVersion     string                               `json:"schema_version"`
+	EvidenceMode      string                               `json:"evidence_mode"`
+	SceneType         evaluation.SceneType                 `json:"scene_type"`
+	PracticeMode      string                               `json:"practice_mode"`
+	DimensionKeys     []string                             `json:"dimension_keys"`
+	CumulativeProfile evaluation.IELTSCumulativeProfile    `json:"cumulative_profile"`
+	Questions         []evaluation.SessionEvidenceQuestion `json:"part_3_questions"`
+	Turns             []evaluation.SessionEvidenceTurn     `json:"part_3_effective_turns"`
+}
+
+type resolvedIELTSProviderInputV5 struct {
 	EvaluatedParticipantRole                     string                               `json:"evaluated_participant_role"`
 	EffectiveTurnsAreConfirmedEvaluatedResponses bool                                 `json:"effective_turns_are_confirmed_evaluated_responses"`
+	ConfirmedLearnerResponseCount                int                                  `json:"confirmed_learner_response_count"`
 	SchemaVersion                                string                               `json:"schema_version"`
 	EvidenceMode                                 string                               `json:"evidence_mode"`
 	SceneType                                    evaluation.SceneType                 `json:"scene_type"`
@@ -449,8 +481,19 @@ type resolvedIELTSProviderInputV4 struct {
 }
 
 type fallbackIELTSProviderInputV4 struct {
+	SchemaVersion string                               `json:"schema_version"`
+	EvidenceMode  string                               `json:"evidence_mode"`
+	SceneType     evaluation.SceneType                 `json:"scene_type"`
+	PracticeMode  string                               `json:"practice_mode"`
+	DimensionKeys []string                             `json:"dimension_keys"`
+	Questions     []evaluation.SessionEvidenceQuestion `json:"questions"`
+	Turns         []evaluation.SessionEvidenceTurn     `json:"effective_turns"`
+}
+
+type fallbackIELTSProviderInputV5 struct {
 	EvaluatedParticipantRole                     string                               `json:"evaluated_participant_role"`
 	EffectiveTurnsAreConfirmedEvaluatedResponses bool                                 `json:"effective_turns_are_confirmed_evaluated_responses"`
+	ConfirmedLearnerResponseCount                int                                  `json:"confirmed_learner_response_count"`
 	SchemaVersion                                string                               `json:"schema_version"`
 	EvidenceMode                                 string                               `json:"evidence_mode"`
 	SceneType                                    evaluation.SceneType                 `json:"scene_type"`
@@ -463,6 +506,7 @@ type fallbackIELTSProviderInputV4 struct {
 func ieltsV4Payload(
 	snapshot evaluation.SessionInputSnapshot,
 	dimensionKeys []string,
+	includeLearnerSemantics bool,
 ) (any, *providerEvidencePolicy, error) {
 	switch snapshot.ProfileResolution {
 	case evaluation.IELTSFinalProfileResolved:
@@ -471,15 +515,30 @@ func ieltsV4Payload(
 			return nil, nil, err
 		}
 		policy := resolvedIELTSProviderEvidencePolicy(snapshot, incremental)
+		if includeLearnerSemantics {
+			return resolvedIELTSProviderInputV5{
+				EvaluatedParticipantRole:                     "LEARNER",
+				EffectiveTurnsAreConfirmedEvaluatedResponses: true,
+				ConfirmedLearnerResponseCount:                len(incremental.Turns),
+				SchemaVersion:                                ieltsInputSchemaVersionV4,
+				EvidenceMode:                                 ieltsInputCumulativeParts12PlusPart3,
+				SceneType:                                    incremental.SceneType,
+				PracticeMode:                                 incremental.PracticeMode,
+				DimensionKeys:                                incremental.DimensionKeys,
+				CumulativeProfile:                            incremental.CumulativeProfile,
+				Questions:                                    incremental.Questions,
+				Turns:                                        incremental.Turns,
+			}, &policy, nil
+		}
 		return resolvedIELTSProviderInputV4{
-			EvaluatedParticipantRole:                     "LEARNER",
-			EffectiveTurnsAreConfirmedEvaluatedResponses: true,
-			SchemaVersion:                                ieltsInputSchemaVersionV4,
-			EvidenceMode:                                 ieltsInputCumulativeParts12PlusPart3,
-			SceneType:                                    incremental.SceneType, PracticeMode: incremental.PracticeMode,
+			SchemaVersion:     ieltsInputSchemaVersionV4,
+			EvidenceMode:      ieltsInputCumulativeParts12PlusPart3,
+			SceneType:         incremental.SceneType,
+			PracticeMode:      incremental.PracticeMode,
 			DimensionKeys:     incremental.DimensionKeys,
 			CumulativeProfile: incremental.CumulativeProfile,
-			Questions:         incremental.Questions, Turns: incremental.Turns,
+			Questions:         incremental.Questions,
+			Turns:             incremental.Turns,
 		}, &policy, nil
 	case evaluation.IELTSFinalProfileFallback:
 		effectiveTurns := make([]evaluation.SessionEvidenceTurn, 0, len(snapshot.Turns))
@@ -488,14 +547,28 @@ func ieltsV4Payload(
 				effectiveTurns = append(effectiveTurns, turn)
 			}
 		}
+		if includeLearnerSemantics {
+			return fallbackIELTSProviderInputV5{
+				EvaluatedParticipantRole:                     "LEARNER",
+				EffectiveTurnsAreConfirmedEvaluatedResponses: true,
+				ConfirmedLearnerResponseCount:                len(effectiveTurns),
+				SchemaVersion:                                ieltsInputSchemaVersionV4,
+				EvidenceMode:                                 ieltsInputFullRawFallback,
+				SceneType:                                    evaluation.SceneIELTSSpeaking,
+				PracticeMode:                                 snapshot.PracticeMode,
+				DimensionKeys:                                dimensionKeys,
+				Questions:                                    referencedQuestions(snapshot.Questions, effectiveTurns),
+				Turns:                                        effectiveTurns,
+			}, nil, nil
+		}
 		return fallbackIELTSProviderInputV4{
-			EvaluatedParticipantRole:                     "LEARNER",
-			EffectiveTurnsAreConfirmedEvaluatedResponses: true,
-			SchemaVersion:                                ieltsInputSchemaVersionV4,
-			EvidenceMode:                                 ieltsInputFullRawFallback,
-			SceneType:                                    evaluation.SceneIELTSSpeaking,
-			PracticeMode:                                 snapshot.PracticeMode, DimensionKeys: dimensionKeys,
-			Questions: snapshot.Questions, Turns: effectiveTurns,
+			SchemaVersion: ieltsInputSchemaVersionV4,
+			EvidenceMode:  ieltsInputFullRawFallback,
+			SceneType:     evaluation.SceneIELTSSpeaking,
+			PracticeMode:  snapshot.PracticeMode,
+			DimensionKeys: dimensionKeys,
+			Questions:     snapshot.Questions,
+			Turns:         effectiveTurns,
 		}, nil, nil
 	default:
 		return nil, nil, evaluation.ErrInvalidRequest
@@ -547,14 +620,29 @@ func incrementalIELTSPayload(
 		}
 	}
 	return incrementalIELTSProviderInput{
-		EvaluatedParticipantRole:                     "LEARNER",
-		EffectiveTurnsAreConfirmedEvaluatedResponses: true,
 		SceneType:         evaluation.SceneIELTSSpeaking,
 		PracticeMode:      snapshot.PracticeMode,
 		DimensionKeys:     dimensionKeys,
 		CumulativeProfile: *snapshot.CumulativeProfile,
 		Questions:         questions, Turns: turns,
 	}, nil
+}
+
+func referencedQuestions(
+	questions []evaluation.SessionEvidenceQuestion,
+	turns []evaluation.SessionEvidenceTurn,
+) []evaluation.SessionEvidenceQuestion {
+	questionIDs := make(map[string]struct{}, len(turns))
+	for _, turn := range turns {
+		questionIDs[turn.QuestionID] = struct{}{}
+	}
+	result := make([]evaluation.SessionEvidenceQuestion, 0, len(questionIDs))
+	for _, question := range questions {
+		if _, exists := questionIDs[question.ID]; exists {
+			result = append(result, question)
+		}
+	}
+	return result
 }
 
 type providerReport struct {
@@ -1056,7 +1144,7 @@ const interviewSystemPromptV1 = `You are an evidence-bound job interview English
 
 const interviewSystemPromptV2 = `You are an evidence-bound job interview English evaluator. Score only the requested interview dimensions on PERCENTAGE_100. Return one JSON object only, with exactly: scoreability_status, summary, dimensions, priority_actions. Use dimension_keys in the input in the same order. Each dimension must contain key, score, coverage, confidence, reason_codes, strengths, improvements, recommended_examples. Each finding must contain message, suggestion, evidence. Each evidence item must contain turn_id, an exact quote copied from that turn, and its 1-based occurrence. priority_actions contains dimension_key and 1-based improvement_index. Arrays must be present even when empty. Write summary and every finding message in Simplified Chinese. Write suggestions for strengths and improvements in Simplified Chinese. For each recommended_examples finding, write its message in Simplified Chinese and put only the directly reusable English expression in suggestion. Keep every question, answer, and evidence quote in its original language; never translate or rewrite them. Do not infer voice qualities from text.`
 
-const evaluatedLearnerEvidenceInstruction = ` Every item in effective_turns or part_3_effective_turns is a confirmed response by the LEARNER being evaluated. Treat its transcript as the learner's answer. Questions are prompts; never use question speaker metadata to reassign response authorship or conclude that learner responses are absent.`
+const evaluatedLearnerEvidenceInstruction = ` Every item in effective_turns or part_3_effective_turns is a confirmed response by the LEARNER being evaluated. Treat its transcript as the learner's answer. confirmed_learner_response_count is authoritative: when it is greater than zero, never claim that learner responses are absent. This count alone does not guarantee sufficient evidence; judge scoreability from the substance of those transcripts. Questions are prompts; never use question speaker metadata to reassign response authorship.`
 
 const interviewSystemPromptV3 = interviewSystemPromptV2 + evaluatedLearnerEvidenceInstruction
 
