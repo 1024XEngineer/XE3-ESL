@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:speakup/design/speak_up_theme.dart';
 import 'package:speakup/features/profile/coach_presentation_page.dart';
 import 'package:speakup/features/profile/coach_presentation_settings.dart';
+import 'package:speakup/features/profile/coach_voice_gaze_avatar.dart';
 
 void main() {
   testWidgets('selects and saves the configured avatar and voice ids', (
@@ -60,6 +61,19 @@ void main() {
     expect(find.text('艾薇'), findsOneWidget);
     expect(store.avatarId, 'avatar_nathan');
     expect(store.voiceId, 'voice_ivy');
+    final selectedVoiceAvatar = tester.widget<CoachVoiceGazeAvatar>(
+      find.byKey(const Key('coach-selected-voice-gaze')),
+    );
+    expect(selectedVoiceAvatar.voiceId, 'voice_ivy');
+    expect(
+      CoachVoiceGazeAvatar.bodyColors,
+      contains(selectedVoiceAvatar.bodyColor),
+    );
+    final selectedVoiceGender = tester.widget<CoachVoiceGenderIcon>(
+      find.byKey(const Key('coach-selected-voice-gender')),
+    );
+    expect(selectedVoiceGender.gender, 'female');
+    expect(selectedVoiceGender.icon, Icons.female_rounded);
     expect(find.byKey(const Key('coach-presentation-save')), findsNothing);
   });
 

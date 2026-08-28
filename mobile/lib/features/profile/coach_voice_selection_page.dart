@@ -1,16 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:speakup/design/speak_up_design.dart';
+import 'package:speakup/features/profile/coach_voice_gaze_avatar.dart';
 
 final class CoachVoiceOption {
   const CoachVoiceOption({
     required this.id,
     required this.name,
     required this.description,
+    required this.gender,
   });
 
   final String id;
   final String name;
   final String description;
+  final String gender;
 }
 
 class CoachVoiceSelectionPage extends StatefulWidget {
@@ -126,12 +129,20 @@ class _VoiceOptionRow extends StatelessWidget {
         horizontal: SpeakUpDesign.space16,
         vertical: SpeakUpDesign.space8,
       ),
-      leading: const CircleAvatar(
-        backgroundColor: Color(0xFFF0F3F5),
-        foregroundColor: SpeakUpDesign.ink,
-        child: Icon(Icons.graphic_eq_rounded),
+      leading: CoachVoiceGazeAvatar(
+        key: Key('coach-voice-gaze-${option.id}'),
+        voiceId: option.id,
       ),
-      title: Text(option.name, style: SpeakUpDesign.cardTitle),
+      title: Row(
+        children: [
+          Flexible(child: Text(option.name, style: SpeakUpDesign.cardTitle)),
+          const SizedBox(width: SpeakUpDesign.space4),
+          CoachVoiceGenderIcon(
+            key: Key('coach-voice-gender-${option.id}'),
+            gender: option.gender,
+          ),
+        ],
+      ),
       subtitle: Text(
         option.description,
         style: SpeakUpDesign.body.copyWith(fontSize: 13),
