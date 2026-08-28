@@ -68,7 +68,7 @@ help:
 		'  make check-api      Validate OpenAPI, JSON Schema, and contract fixtures' \
 		'  make check-release-candidate  Validate release metadata and manifest tooling' \
 		'  make check-production-backup  Exercise PostgreSQL backup and isolated restore' \
-		'  make check-production-rehearsal  Validate the isolated schema 7 to 9 rehearsal' \
+		'  make check-production-rehearsal  Validate the isolated schema 9 to 15 rehearsal' \
 		'  make check-offline-release  Validate offline image build/load contracts' \
 		'  make check-android-download  Validate the public Android bundle and publish contract' \
 		'  make check-tls-lifecycle  Validate TLS issuance and renewal contracts' \
