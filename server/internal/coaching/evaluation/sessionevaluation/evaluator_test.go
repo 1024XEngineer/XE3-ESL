@@ -16,6 +16,9 @@ import (
 )
 
 func TestInvalidProviderReportRemainsRetryableAtTheJobBoundary(t *testing.T) {
+	if ErrProviderResponse.Error() != "evaluation: report provider response invalid" {
+		t.Fatalf("provider response error = %q", ErrProviderResponse.Error())
+	}
 	var failure interface {
 		StableCategory() string
 		Retryable() bool
@@ -26,6 +29,11 @@ func TestInvalidProviderReportRemainsRetryableAtTheJobBoundary(t *testing.T) {
 		failure.EvaluationNormalizeReason() != "normalized_report_invalid" ||
 		!failure.Retryable() {
 		t.Fatalf("provider response failure = %#v", failure)
+	}
+	invalidReason := providerResponseError("unknown")
+	if normalizeReasonFromError(invalidReason) != normalizeReasonNormalizedReportInvalid ||
+		normalizeReasonFromError(errors.New("unrelated")) != normalizeReasonNormalizedReportInvalid {
+		t.Fatalf("invalid provider response reason was not normalized")
 	}
 }
 
