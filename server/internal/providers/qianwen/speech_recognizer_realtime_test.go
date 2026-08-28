@@ -24,8 +24,8 @@ func TestAgentVoiceRecognizerExposesRealtimePCMCapabilityOnlyForRealtime(
 		model string
 		want  bool
 	}{
-		{model: "qwen-audio-3.0-asr-flash-streaming", want: true},
-		{model: "qwen-audio-3.0-asr-flash", want: false},
+		{model: "fun-asr-realtime", want: true},
+		{model: "fun-asr-flash-2026-06-15", want: false},
 	} {
 		t.Run(test.model, func(t *testing.T) {
 			recognizer, err := NewAgentVoiceRecognizer(ASRConfig{
@@ -86,7 +86,7 @@ func TestRealtimeTranscribeUsesDocumentedWebSocketSequence(t *testing.T) {
 			return
 		}
 		if run.Header.Action != "run-task" ||
-			run.Payload.Model != "qwen-audio-3.0-asr-flash-streaming" ||
+			run.Payload.Model != "fun-asr-realtime" ||
 			run.Payload.Parameters.SampleRate != 16_000 {
 			t.Errorf("unexpected run-task: %#v", run)
 			return
@@ -177,7 +177,7 @@ func TestRealtimeTranscribeUsesDocumentedWebSocketSequence(t *testing.T) {
 		t.Fatal("realtime recognition must not use HTTP generation")
 		return nil, nil
 	}), apiKey)
-	recognizer.model = "qwen-audio-3.0-asr-flash-streaming"
+	recognizer.model = "fun-asr-realtime"
 	recognizer.wsEndpoint = "ws" + strings.TrimPrefix(server.URL, "http")
 	observer := &recordingTranscriptionObserver{}
 	result, err := recognizer.TranscribeStream(
@@ -192,7 +192,7 @@ func TestRealtimeTranscribeUsesDocumentedWebSocketSequence(t *testing.T) {
 		t.Fatalf("validated source format = %q, want wav", format)
 	}
 	if result.Transcript != "I practice English for interviews." ||
-		result.Model != "qwen-audio-3.0-asr-flash-streaming" ||
+		result.Model != "fun-asr-realtime" ||
 		result.Usage.AudioSeconds != 4 {
 		t.Fatalf("result = %#v", result)
 	}
@@ -282,7 +282,7 @@ func TestRealtimeTranscribeClosesProviderConnectionOnCancellation(t *testing.T) 
 		t.Fatal("realtime recognition must not use HTTP generation")
 		return nil, nil
 	}), "test-realtime-key")
-	recognizer.model = "qwen-audio-3.0-asr-flash-streaming"
+	recognizer.model = "fun-asr-realtime"
 	recognizer.wsEndpoint = "ws" + strings.TrimPrefix(server.URL, "http")
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)

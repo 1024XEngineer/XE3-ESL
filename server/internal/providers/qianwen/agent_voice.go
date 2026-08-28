@@ -62,7 +62,7 @@ func NewAgentVoiceRecognizer(
 		return nil, err
 	}
 	agentRecognizer := &AgentVoiceRecognizer{recognizer: recognizer}
-	if isRealtimeASRModel(recognizer.model) {
+	if recognizer.model == "fun-asr-realtime" {
 		return &agentRealtimeVoiceRecognizer{
 			AgentVoiceRecognizer: agentRecognizer,
 		}, nil
@@ -151,7 +151,7 @@ func (recognizer *agentRealtimeVoiceRecognizer) TranscribePCMStream(
 ) (agentvoice.TranscriptionResult, error) {
 	if recognizer == nil || recognizer.AgentVoiceRecognizer == nil ||
 		recognizer.recognizer == nil || observer == nil ||
-		!isRealtimeASRModel(recognizer.recognizer.model) {
+		recognizer.recognizer.model != "fun-asr-realtime" {
 		return agentvoice.TranscriptionResult{}, agentvoice.NewSpeechError(
 			agentvoice.SpeechOperationTranscription,
 			agentvoice.ErrorConfiguration,

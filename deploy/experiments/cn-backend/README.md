@@ -228,9 +228,8 @@ China candidate changes and validates these groups together:
   - `SPEECH_RECOGNITION_PROVIDER=qianwen`;
   - `QIANWEN_ASR_BASE_URL`, `QIANWEN_ASR_MODEL`, `QIANWEN_ASR_TIMEOUT`,
     `QIANWEN_ASR_RECORDED_MODEL`, and `QIANWEN_ASR_RECORDED_TIMEOUT`.
-    The current Server requires `qwen-audio-3.0-asr-flash-streaming` with a
-    timeout of at least `150s`, and `qwen-audio-3.0-asr-flash` for recorded
-    audio.
+    The current Server requires `fun-asr-realtime` with a timeout of at least
+    `150s`, and `fun-asr-flash-2026-06-15` for recorded audio.
 - Qianwen speech synthesis:
   - `SPEECH_SYNTHESIS_PROVIDER=qianwen`;
   - `QIANWEN_TTS_BASE_URL`, `QIANWEN_TTS_MODEL`, `QIANWEN_TTS_VOICE`,
