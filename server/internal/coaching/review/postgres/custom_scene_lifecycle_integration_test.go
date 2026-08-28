@@ -8,8 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/1024XEngineer/XE3-ESL/server/internal/agent/capability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation"
 	evaluationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/postgres"
+	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/report"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/sessionevaluation"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/speechfeedback"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/evaluation/textgeneration"
@@ -21,6 +23,7 @@ import (
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation"
 	preparationpostgres "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/repository/postgres"
 	preparationservice "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/preparation/service"
+	reviewagentcapability "github.com/1024XEngineer/XE3-ESL/server/internal/coaching/review/agentcapability"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/coaching/scene"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/identity"
 	"github.com/1024XEngineer/XE3-ESL/server/internal/platform/requestcontext"
@@ -200,6 +203,42 @@ INSERT INTO agent_threads (id,user_id) VALUES ($2,$1)
 		formal.PracticeSessionID != customLifecycleSessionID ||
 		formal.Report.SceneCategory != string(scene.SceneCategoryWorkplaceGeneral) {
 		t.Fatalf("read Custom formal Report = %#v, %v", formal, err)
+	}
+	history, err := evaluationStore.ListFormalReports(
+		ctx,
+		customLifecycleUserID,
+		report.HistoryQuery{Limit: 20},
+	)
+	if err != nil || history.HasMore || len(history.Items) != 1 ||
+		history.Items[0].ReportID != formal.ReportID ||
+		history.Items[0].PracticeSessionID != customLifecycleSessionID {
+		t.Fatalf("list Custom formal Reports = %#v, %v", history, err)
+	}
+	reviewPort, err := reviewagentcapability.NewServicePort(evaluationStore)
+	if err != nil {
+		t.Fatalf("compose Review Agent capability: %v", err)
+	}
+	call := capability.CallContext{Actor: actor}
+	summaries, err := reviewPort.SearchReviews(
+		ctx,
+		call,
+		reviewagentcapability.ReviewSearchInput{},
+	)
+	if err != nil || len(summaries) != 1 ||
+		summaries[0].ID != formal.ReportID ||
+		summaries[0].PracticeSessionID != customLifecycleSessionID {
+		t.Fatalf("search Custom formal Reports = %#v, %v", summaries, err)
+	}
+	detail, err := reviewPort.GetReview(
+		ctx,
+		call,
+		reviewagentcapability.ReviewGetInput{ReportID: formal.ReportID},
+	)
+	if err != nil || detail.ID != formal.ReportID ||
+		detail.PracticeSessionID != customLifecycleSessionID ||
+		detail.Summary != formal.Report.Summary ||
+		len(detail.Dimensions) != len(formal.Report.Dimensions) {
+		t.Fatalf("get Custom formal Report through Agent = %#v, %v", detail, err)
 	}
 	feedback := createCustomLifecycleFeedback(t, evaluationStore)
 	retryService, err := New(pool, evaluationStore, practiceRepository)

@@ -246,6 +246,47 @@ func TestParsePreviewToolInputsAcceptRequiredShapes(t *testing.T) {
 	}
 }
 
+func TestPreviewToolSchemaAcceptsEmptyOptionalText(t *testing.T) {
+	tool := newTestPreviewTool(t)
+	raw := json.RawMessage(`{
+  "resolution_kind":"NEEDS_CLARIFICATION",
+  "catalog_scene_ids":["scn_ielts_speaking"],
+  "custom_scenario":"",
+  "custom_experience_hint":"NONE",
+  "user_role":"",
+  "ai_role":"",
+  "practice_goal":"",
+  "background_summary":""
+}`)
+	normalized, err := capability.NormalizeInput(tool.Definition().InputSchema, raw)
+	if err != nil {
+		t.Fatalf("NormalizeInput() error = %v", err)
+	}
+	parsed, err := parseUnifiedPreviewToolInput(normalized)
+	if err != nil || !validPreviewInputShape(parsed.previewInput()) {
+		t.Fatalf("parseUnifiedPreviewToolInput() = %#v, %v", parsed, err)
+	}
+}
+
+func TestParsePreviewToolInputCanonicalizesClarificationContext(t *testing.T) {
+	parsed, err := parseUnifiedPreviewToolInput(json.RawMessage(`{
+  "resolution_kind":"NEEDS_CLARIFICATION",
+  "catalog_scene_ids":["scn_ielts_speaking"],
+  "custom_scenario":"",
+  "custom_experience_hint":"NONE",
+  "user_role":"",
+  "background_summary":"User wants to practise IELTS Speaking.",
+  "ielts_practice_mode":"PART_1"
+}`))
+	if err != nil {
+		t.Fatalf("parseUnifiedPreviewToolInput() error = %v", err)
+	}
+	if parsed.BackgroundSummary != "" || parsed.IELTSPracticeMode != "" ||
+		parsed.UserRole != "" || !validPreviewInputShape(parsed.previewInput()) {
+		t.Fatalf("clarification input was not canonicalized: %#v", parsed)
+	}
+}
+
 func TestParsePreviewToolInputRejectsInconsistentSelection(t *testing.T) {
 	inputs := map[string]string{
 		"missing required":            `{"scene_query":"酒店入住","resolution_kind":"CATALOG","catalog_scene_ids":["scene_a"]}`,

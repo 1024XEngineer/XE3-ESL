@@ -158,3 +158,24 @@ func TestTextSchemaCountsUnicodeCharacters(t *testing.T) {
 		t.Fatalf("long text error = %v, want %v", err, ErrInvalidInput)
 	}
 }
+
+func TestOptionalTextSchemaAcceptsOmittedAndEmptyValues(t *testing.T) {
+	schema := ObjectSchema(map[string]any{
+		"query": OptionalTextSchema("Optional query.", 4),
+	}, nil)
+	for _, input := range []json.RawMessage{
+		json.RawMessage(`{}`),
+		json.RawMessage(`{"query":""}`),
+		json.RawMessage(`{"query":"text"}`),
+	} {
+		if _, err := NormalizeInput(schema, input); err != nil {
+			t.Fatalf("NormalizeInput(%s) error = %v", input, err)
+		}
+	}
+	if _, err := NormalizeInput(
+		schema,
+		json.RawMessage(`{"query":"longer"}`),
+	); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("long optional text error = %v, want %v", err, ErrInvalidInput)
+	}
+}

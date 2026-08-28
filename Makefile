@@ -43,7 +43,12 @@ SHELL := /bin/bash
 	build-android-release-production \
 	verify-android-release-staging \
 	verify-android-release-production \
-	test-ios-simulator-scenes
+	test-ios-simulator-scenes \
+	test-ios-simulator-practice-hubs \
+	test-ios-simulator-agent-hotel \
+	test-ios-simulator-agent-ielts \
+	test-ios-simulator-voice-report \
+	test-ios-simulator-product-e2e
 
 help:
 	@printf '%s\n' \
@@ -78,7 +83,12 @@ help:
 		'  make build-android-release-production  Build the signed production arm64 APK'
 	@printf '%s\n' \
 		'  make verify-android-release-{staging,production}  Verify a release APK' \
-		'  make test-ios-simulator-scenes  Verify real scene and IELTS launch flows on an iOS Simulator'
+		'  make test-ios-simulator-scenes  Verify real scene and IELTS launch flows on an iOS Simulator' \
+		'  make test-ios-simulator-practice-hubs  Verify all real Practice hubs on an iOS Simulator' \
+		'  make test-ios-simulator-agent-hotel  Verify Agent chat, hotel card, and scene launch on an iOS Simulator' \
+		'  make test-ios-simulator-agent-ielts  Verify Agent IELTS warm-up recovery on an iOS Simulator' \
+		'  make test-ios-simulator-voice-report  Verify real voice, report, and persisted Review on an iOS Simulator' \
+		'  make test-ios-simulator-product-e2e  Run the complete real product E2E matrix serially'
 
 check: check-flutter check-go check-api
 
@@ -406,6 +416,58 @@ verify-android-release-production:
 		mobile/build/app/outputs/flutter-apk/app-production-release.apk
 
 test-ios-simulator-scenes:
-	./tools/ios-simulator-dev/run.sh test \
+	SPEAKUP_DEV_PORT=18082 ./tools/ios-simulator-dev/run.sh test \
 		integration_test/real_agent_e2e_test.dart \
 		--plain-name 'real iOS IELTS Part 1 creates a Practice Session'
+
+test-ios-simulator-practice-hubs:
+	SPEAKUP_DEV_PORT=18082 ./tools/ios-simulator-dev/run.sh test \
+		integration_test/real_agent_e2e_test.dart \
+		--plain-name 'real iOS three practice hubs stay focused and reachable'
+
+test-ios-simulator-agent-hotel:
+	SPEAKUP_DEV_PORT=18082 ./tools/ios-simulator-dev/run.sh test \
+		integration_test/real_agent_e2e_test.dart \
+		--plain-name 'real iOS Agent distinguishes chat from hotel Practice creation'
+
+test-ios-simulator-agent-ielts:
+	SPEAKUP_DEV_PORT=18082 ./tools/ios-simulator-dev/run.sh test \
+		integration_test/real_agent_e2e_test.dart \
+		--plain-name 'real iOS Agent recovers a short IELTS warm-up answer'
+
+test-ios-simulator-voice-report:
+	@for variable in \
+		SPEAKUP_E2E_WAV_BASE64 \
+		SPEAKUP_E2E_WAV_BASE64_2 \
+		SPEAKUP_E2E_WAV_BASE64_3 \
+		SPEAKUP_E2E_WAV_BASE64_4; do \
+		test -n "$${!variable:-}" || { \
+			echo "缺少 $$variable：请导出四段不同的私有英文 WAV Base64。" >&2; \
+			exit 1; \
+		}; \
+	done
+	SPEAKUP_DEV_PORT=18082 ./tools/ios-simulator-dev/run.sh test \
+		integration_test/real_agent_e2e_test.dart \
+		--plain-name 'real iOS identity, Qianwen Agent, voice, and Review path' \
+		--dart-define="SPEAKUP_E2E_WAV_BASE64=$${SPEAKUP_E2E_WAV_BASE64}" \
+		--dart-define="SPEAKUP_E2E_WAV_BASE64_2=$${SPEAKUP_E2E_WAV_BASE64_2}" \
+		--dart-define="SPEAKUP_E2E_WAV_BASE64_3=$${SPEAKUP_E2E_WAV_BASE64_3}" \
+		--dart-define="SPEAKUP_E2E_WAV_BASE64_4=$${SPEAKUP_E2E_WAV_BASE64_4}" \
+		--dart-define="SPEAKUP_E2E_VALIDATE_AUDIO_MEDIA=$${SPEAKUP_E2E_VALIDATE_AUDIO_MEDIA:-true}"
+
+test-ios-simulator-product-e2e:
+	@for variable in \
+		SPEAKUP_E2E_WAV_BASE64 \
+		SPEAKUP_E2E_WAV_BASE64_2 \
+		SPEAKUP_E2E_WAV_BASE64_3 \
+		SPEAKUP_E2E_WAV_BASE64_4; do \
+		test -n "$${!variable:-}" || { \
+			echo "缺少 $$variable：完整产品 E2E 需要四段不同的私有英文 WAV Base64。" >&2; \
+			exit 1; \
+		}; \
+	done
+	+$(MAKE) test-ios-simulator-practice-hubs
+	+$(MAKE) test-ios-simulator-agent-hotel
+	+$(MAKE) test-ios-simulator-agent-ielts
+	+$(MAKE) test-ios-simulator-scenes
+	+$(MAKE) test-ios-simulator-voice-report

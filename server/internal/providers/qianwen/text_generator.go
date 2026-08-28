@@ -490,16 +490,50 @@ func (generator *textClient) providerRequest(
 		payload.Messages = append(payload.Messages, providerMessage)
 	}
 	for _, definition := range request.Tools {
+		parameters := definition.InputSchema
+		if generator.provider == qiniuProviderName {
+			parameters = qiniuToolSchema(definition.InputSchema)
+		}
 		payload.Tools = append(payload.Tools, chatTool{
 			Type: "function",
 			Function: chatToolFunction{
 				Name:        internalToProvider[definition.Name],
 				Description: definition.Description,
-				Parameters:  definition.InputSchema,
+				Parameters:  parameters,
 			},
 		})
 	}
 	return payload, nil
+}
+
+// qiniuToolSchema removes application-only JSON Schema formats that Qiniu's
+// upstream rejects. The authoritative capability schema remains unchanged and
+// still validates tool arguments after generation.
+func qiniuToolSchema(schema map[string]any) map[string]any {
+	cleaned, _ := qiniuSchemaValue(schema).(map[string]any)
+	return cleaned
+}
+
+func qiniuSchemaValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		cleaned := make(map[string]any, len(typed))
+		for key, item := range typed {
+			if key == "format" && (item == "non-empty-text" || item == "agent-id") {
+				continue
+			}
+			cleaned[key] = qiniuSchemaValue(item)
+		}
+		return cleaned
+	case []any:
+		cleaned := make([]any, len(typed))
+		for index, item := range typed {
+			cleaned[index] = qiniuSchemaValue(item)
+		}
+		return cleaned
+	default:
+		return value
+	}
 }
 
 type chatCompletionRequest struct {

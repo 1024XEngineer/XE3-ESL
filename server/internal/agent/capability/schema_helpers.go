@@ -39,6 +39,17 @@ func TextSchema(description string, maximumLength int) map[string]any {
 	}
 }
 
+// OptionalTextSchema allows an omitted field or an empty string while still
+// bounding non-empty content. Domain parsers remain responsible for trimming
+// and any field-specific semantic validation.
+func OptionalTextSchema(description string, maximumLength int) map[string]any {
+	return map[string]any{
+		"type":        "string",
+		"description": description,
+		"maxLength":   maximumLength,
+	}
+}
+
 // IdentifierSchema 构造 Agent 领域 ID Schema，允许字母、数字和常用分隔符。
 func IdentifierSchema(description string) map[string]any {
 	return map[string]any{

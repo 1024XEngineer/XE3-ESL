@@ -23,6 +23,7 @@ func TestLiveSummaryGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 	generator, err := qianwen.NewSummaryGenerator(qianwen.TextConfig{
+		Provider:        configuration.Provider,
 		BaseURL:         configuration.BaseURL,
 		Model:           configuration.Model,
 		Timeout:         configuration.Timeout,
