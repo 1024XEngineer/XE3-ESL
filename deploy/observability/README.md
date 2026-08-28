@@ -220,7 +220,35 @@ Keep every reviewed observability source under
 `/opt/xe3-speakup-observability/releases/<full-git-sha>` and make
 `/opt/xe3-speakup-observability/source` a symlink to the selected release.
 Never overwrite a release directory; record the previous symlink target before
-switching it so rollback selects an exact source. Then:
+switching it so rollback selects an exact source. For an existing installation,
+keep that value in the same root shell used for the release:
+
+```bash
+set -euo pipefail
+observability_root=/opt/xe3-speakup-observability
+previous_observability_source="$(readlink -e \
+  "$observability_root/source")"
+new_observability_source="$observability_root/releases/<full-git-sha>"
+
+case "$previous_observability_source" in
+  "$observability_root"/releases/*) ;;
+  *) printf 'unexpected previous source: %s\n' \
+       "$previous_observability_source" >&2; exit 1 ;;
+esac
+test -d "$new_observability_source"
+test "$new_observability_source" != "$previous_observability_source"
+
+next_observability_link="$observability_root/.source.next.$$"
+ln -sT "$new_observability_source" "$next_observability_link"
+mv -Tf "$next_observability_link" "$observability_root/source"
+current_observability_source="$(readlink -e "$observability_root/source")"
+test "$current_observability_source" = "$new_observability_source"
+printf 'previous_observability_source=%s\n' "$previous_observability_source"
+printf 'current_observability_source=%s\n' "$current_observability_source"
+```
+
+This atomically selects and verifies the reviewed release before any command is
+installed from `source`. Then:
 
 1. Install the private files above, install `validate-private-files` as
    `/usr/local/sbin/xe3-speakup-observability-validate-private-files`, and run
@@ -260,6 +288,45 @@ switching it so rollback selects an exact source. Then:
      --file /opt/xe3-speakup-observability/source/compose.yaml \
      up --detach --pull always --wait
    ```
+
+   When switching an existing installation to a new immutable release, the
+   successful reader configuration in step 2 must happen before Grafana is
+   touched. After the `source` symlink points at the reviewed full Git SHA,
+   explicitly recreate only Grafana:
+
+   ```bash
+   set -euo pipefail
+   current_observability_source="$(readlink -e \
+     /opt/xe3-speakup-observability/source)"
+   case "$previous_observability_source" in
+     /opt/xe3-speakup-observability/releases/*) ;;
+     *) printf 'unexpected previous source: %s\n' \
+          "$previous_observability_source" >&2; exit 1 ;;
+   esac
+   test "$current_observability_source" = "$new_observability_source"
+   test "$current_observability_source" != "$previous_observability_source"
+   printf 'previous_observability_source=%s\n' \
+     "$previous_observability_source"
+   printf 'current_observability_source=%s\n' \
+     "$current_observability_source"
+   docker compose \
+     --project-name xe3-speakup-observability \
+     --env-file /etc/speakup/observability.env \
+     --file /opt/xe3-speakup-observability/source/compose.yaml \
+     up --detach --no-deps --force-recreate --wait grafana
+   ```
+
+   `--force-recreate` is required even when Compose reports no configuration
+   change: the dashboard bind mount must resolve against the new immutable
+   release directory. Do not use `down`, recreate another service, or remove a
+   named volume. Record the previous and current symlink targets with the
+   release receipt.
+
+   If reader configuration fails, restore the previous `source` symlink and do
+   not touch Grafana. If Grafana fails after recreation, restore that symlink,
+   validate the private files again, and run only the same Grafana recreation
+   command. Keep the current database schema, the aggregate views, the reader
+   role, its PGPASSFILE, and all Grafana volumes in place.
 
 9. Confirm every Prometheus target is up and the Product Health datasource can
    query only the five Product Health and seven User Behavior aggregate views
