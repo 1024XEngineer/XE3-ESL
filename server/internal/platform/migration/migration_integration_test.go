@@ -1311,9 +1311,9 @@ func (migrationReportGenerator) Generate(
 	if err := json.Unmarshal([]byte(request.UserPrompt), &input); err != nil {
 		return textgeneration.Result{}, err
 	}
-	dimensions := make(map[string]map[string]any, len(input.DimensionKeys))
+	dimensions := make([]map[string]any, len(input.DimensionKeys))
 	for index, key := range input.DimensionKeys {
-		dimensions[fmt.Sprintf("dimension_%d", index+1)] = map[string]any{
+		dimensions[index] = map[string]any{
 			"key":                  key,
 			"score":                75.0,
 			"coverage":             1.0,

@@ -315,6 +315,36 @@ void main() {
     await tester.pump();
   });
 
+  testWidgets('pending cancel fences a new capture until cleanup completes', (
+    tester,
+  ) async {
+    final cancelCompleter = Completer<void>();
+    final harness = GlobalKey<_VoiceCaptureHarnessState>();
+    await tester.pumpWidget(
+      _VoiceCaptureHarness(
+        key: harness,
+        showTapActions: true,
+        cancelCompleter: cancelCompleter,
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('voice-capture-target')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('voice-cancel-action')));
+    await tester.pump();
+    expect(harness.currentState?.cancels, 1);
+
+    await tester.tap(find.byKey(const Key('voice-capture-target')));
+    await tester.pump();
+    expect(harness.currentState?.starts, 1);
+
+    cancelCompleter.complete();
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('voice-capture-target')));
+    await tester.pump();
+    expect(harness.currentState?.starts, 2);
+  });
+
   testWidgets('left release during preparation never starts microphone', (
     tester,
   ) async {
@@ -350,6 +380,7 @@ class _VoiceCaptureHarness extends StatefulWidget {
     this.startCompleter,
     this.beforeStartCompleter,
     this.sendCompleter,
+    this.cancelCompleter,
     this.showTapActions = false,
     this.detachTargetWhileRecording = false,
     this.upwardCancelOnly = false,
@@ -358,6 +389,7 @@ class _VoiceCaptureHarness extends StatefulWidget {
   final Completer<void>? startCompleter;
   final Completer<void>? beforeStartCompleter;
   final Completer<void>? sendCompleter;
+  final Completer<void>? cancelCompleter;
   final bool showTapActions;
   final bool detachTargetWhileRecording;
   final bool upwardCancelOnly;
@@ -396,9 +428,10 @@ class _VoiceCaptureHarnessState extends State<_VoiceCaptureHarness> {
     setState(() => phase = VoiceCapturePhase.busy);
   }
 
-  void _cancel() {
+  Future<void> _cancel() async {
     cancels++;
     setState(() => phase = VoiceCapturePhase.idle);
+    await widget.cancelCompleter?.future;
   }
 
   void reset() {
