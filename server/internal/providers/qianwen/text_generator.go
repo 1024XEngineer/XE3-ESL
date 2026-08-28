@@ -437,13 +437,10 @@ func (generator *textClient) providerRequest(
 		disabled := false
 		payload.EnableThinking = &disabled
 	case qiniuProviderName:
-		// Qiniu fronts heterogeneous upstream APIs. Kimi uses Qiniu's generic
-		// thinking control, Qwen uses enable_thinking, and other upstreams omit both.
+		// Qiniu fronts heterogeneous upstream APIs. Kimi needs Qiniu's generic
+		// thinking control, while existing Gemini configurations must omit it.
 		if generator.model == qiniuKimiK26Model {
 			payload.Thinking = &chatThinking{Type: "disabled"}
-		} else if strings.HasPrefix(strings.ToLower(generator.model), "qwen") {
-			disabled := false
-			payload.EnableThinking = &disabled
 		}
 	}
 	if request.ResponseFormat == protocol.TextResponseFormatJSON {
@@ -490,50 +487,16 @@ func (generator *textClient) providerRequest(
 		payload.Messages = append(payload.Messages, providerMessage)
 	}
 	for _, definition := range request.Tools {
-		parameters := definition.InputSchema
-		if generator.provider == qiniuProviderName {
-			parameters = qiniuToolSchema(definition.InputSchema)
-		}
 		payload.Tools = append(payload.Tools, chatTool{
 			Type: "function",
 			Function: chatToolFunction{
 				Name:        internalToProvider[definition.Name],
 				Description: definition.Description,
-				Parameters:  parameters,
+				Parameters:  definition.InputSchema,
 			},
 		})
 	}
 	return payload, nil
-}
-
-// qiniuToolSchema removes application-only JSON Schema formats that Qiniu's
-// upstream rejects. The authoritative capability schema remains unchanged and
-// still validates tool arguments after generation.
-func qiniuToolSchema(schema map[string]any) map[string]any {
-	cleaned, _ := qiniuSchemaValue(schema).(map[string]any)
-	return cleaned
-}
-
-func qiniuSchemaValue(value any) any {
-	switch typed := value.(type) {
-	case map[string]any:
-		cleaned := make(map[string]any, len(typed))
-		for key, item := range typed {
-			if key == "format" && (item == "non-empty-text" || item == "agent-id") {
-				continue
-			}
-			cleaned[key] = qiniuSchemaValue(item)
-		}
-		return cleaned
-	case []any:
-		cleaned := make([]any, len(typed))
-		for index, item := range typed {
-			cleaned[index] = qiniuSchemaValue(item)
-		}
-		return cleaned
-	default:
-		return value
-	}
 }
 
 type chatCompletionRequest struct {
@@ -864,11 +827,6 @@ func decodeCompletionStream(
 	}
 	if !sawDone || !sawUsage || finishReason == "" {
 		return protocol.TextResult{}, errors.New("Qianwen stream ended before completion")
-	}
-	if provider == qiniuProviderName &&
-		(mode == streamModeTools || mode == streamModeMixed) &&
-		finishReason == "stop" && len(tools) > 0 {
-		finishReason = "tool_calls"
 	}
 	result := protocol.TextResult{
 		ID: completionID, Provider: provider, Model: model,

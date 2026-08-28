@@ -170,7 +170,7 @@ class _VoiceCaptureControlState extends State<VoiceCaptureControl> {
   }
 
   void _handlePointerDown(PointerDownEvent event) {
-    if (!widget.enabled || _pointerActive) {
+    if (!widget.enabled || _pointerActive || _actionInFlight) {
       return;
     }
     final startingCapture = widget.phase == VoiceCapturePhase.idle;
@@ -302,7 +302,8 @@ class _VoiceCaptureControlState extends State<VoiceCaptureControl> {
   Future<void> _beginCapture({required bool tapMode}) async {
     if (!widget.enabled ||
         widget.phase != VoiceCapturePhase.idle ||
-        _startInFlight) {
+        _startInFlight ||
+        _actionInFlight) {
       return;
     }
     final generation = ++_operationGeneration;
@@ -374,7 +375,7 @@ class _VoiceCaptureControlState extends State<VoiceCaptureControl> {
   }
 
   void _handleSemanticTap() {
-    if (!widget.enabled) {
+    if (!widget.enabled || _actionInFlight) {
       return;
     }
     if (widget.phase == VoiceCapturePhase.idle) {
@@ -391,9 +392,9 @@ class _VoiceCaptureControlState extends State<VoiceCaptureControl> {
   }) {
     return Semantics(
       button: true,
-      enabled: widget.enabled,
+      enabled: widget.enabled && !_actionInFlight,
       label: semanticsLabel,
-      onTap: widget.enabled ? _handleSemanticTap : null,
+      onTap: widget.enabled && !_actionInFlight ? _handleSemanticTap : null,
       child: ExcludeSemantics(
         child: Listener(
           key: key,
