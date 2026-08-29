@@ -448,6 +448,7 @@ test("accepts an untagged Candidate from the exact main checkout", () => {
       mainRef: "main",
     }),
     {
+      status: "candidate",
       version: "0.1.0",
       version_code: "1",
       git_sha: candidateSha,
@@ -455,6 +456,29 @@ test("accepts an untagged Candidate from the exact main checkout", () => {
     },
   );
   assert.equal(git(repo, "tag", "--list"), tagsBefore);
+});
+
+test("marks a Candidate as already released when its stable Tag exists", () => {
+  const repo = createRepository();
+  const candidateSha = git(repo, "rev-parse", "HEAD");
+  git(repo, "tag", "v0.1.0");
+
+  assert.deepEqual(
+    collectCandidateMetadata({
+      repoDir: repo,
+      candidateSha,
+      mainRef: "main",
+      existingTagPolicy: "skip",
+    }),
+    {
+      status: "already-released",
+      tag: "v0.1.0",
+      version: "0.1.0",
+      version_code: "1",
+      git_sha: candidateSha,
+      database_schema_version: "7",
+    },
+  );
 });
 
 test("accepts a Candidate newer than the complete stable release history", () => {
@@ -823,6 +847,9 @@ test("Release Candidate workflow is automatic, official-main-only, and Tag-free"
   assert.match(workflow, /refs\/heads\/main/);
   assert.match(workflow, /CANDIDATE_EVENT" != "push"/);
   assert.match(workflow, /--candidate-sha "\$GITHUB_SHA"/);
+  assert.match(workflow, /--existing-tag-policy skip/);
+  assert.match(workflow, /name: release-candidate-skipped/);
+  assert.match(workflow, /status == 'candidate'/);
   assert.doesNotMatch(workflow, /workflow_dispatch/);
   assert.doesNotMatch(workflow, /push:\n\s+tags:/);
   assert.doesNotMatch(workflow, /GITHUB_REF_NAME/);
@@ -880,6 +907,14 @@ test("Staging deploy accepts only a successful official Candidate artifact", () 
   assert.match(workflow, /https:\/\/staging-api\.speak-up\.top\/health/);
   assert.match(workflow, /staging-deployment-\$\{\{ github\.run_id \}\}/);
   assert.doesNotMatch(workflow, /deploy\/production/);
+});
+
+test("Staging deploy skips an already released Candidate run", () => {
+  const workflow = readFileSync(stagingDeployWorkflow, "utf8");
+  assert.match(workflow, /status: \$\{\{ steps\.artifact\.outputs\.status \}\}/);
+  assert.match(workflow, /release-candidate-skipped/);
+  assert.match(workflow, /core\.setOutput\("status", "skipped"\)/);
+  assert.match(workflow, /if: needs\.authorize\.outputs\.status == 'candidate'/);
 });
 
 test("rejects a release tag that is not contained in main", () => {

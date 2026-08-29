@@ -22,6 +22,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
+      status: ${{ steps.artifact.outputs.status }}
       candidate_run_id: ${{ steps.candidate.outputs.run_id }}
       candidate_sha: ${{ steps.candidate.outputs.sha }}
       android_artifact: ${{ steps.artifact.outputs.android_name }}
@@ -70,6 +71,13 @@ jobs:
                 per_page: 100,
               },
             );
+            const skipped = artifacts.find(
+              (artifact) => artifact.name === "release-candidate-skipped",
+            );
+            if (skipped) {
+              core.setOutput("status", "skipped");
+              return;
+            }
             const manifests = artifacts.filter(
               (artifact) =>
                 !artifact.expired &&
@@ -100,12 +108,14 @@ jobs:
               core.setFailed(`Candidate run ${runId} artifact versions differ.`);
               return;
             }
+            core.setOutput("status", "candidate");
             core.setOutput("name", manifests[0].name);
             core.setOutput("android_name", androidArtifacts[0].name);
 
   deploy:
     name: Deploy immutable Candidate to Staging
     needs: authorize
+    if: needs.authorize.outputs.status == 'candidate'
     environment:
       name: staging
       url: https://staging.speak-up.top
