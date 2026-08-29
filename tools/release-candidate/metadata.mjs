@@ -13,6 +13,7 @@ const migrationPattern = /^server\/migrations\/(\d{6})_[^/]+\.up\.sql$/;
 const tagRemotePattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const gitShaPattern = /^[0-9a-f]{40}$/;
 const officialUpstreamUrl = "https://github.com/1024XEngineer/XE3-ESL.git";
+const existingTagPolicies = new Set(["reject", "skip"]);
 
 export function parseStableTag(tag) {
   const match = stableTagPattern.exec(tag);
@@ -341,7 +342,13 @@ export function collectCandidateMetadata({
   candidateSha,
   mainRef,
   tagRemote = "origin",
+  existingTagPolicy = "reject",
 }) {
+  if (!existingTagPolicies.has(existingTagPolicy)) {
+    throw new Error(
+      `existingTagPolicy must be one of: ${[...existingTagPolicies].join(", ")}`,
+    );
+  }
   if (!gitShaPattern.test(candidateSha)) {
     throw new Error("candidateSha must be a full lowercase Git commit SHA");
   }
@@ -365,6 +372,12 @@ export function collectCandidateMetadata({
   const parsedVersion = parseStableTag(expectedTag);
   validateVersionCode(current.versionCode, "Candidate");
   if (history.allStableTags.includes(expectedTag)) {
+    if (existingTagPolicy === "skip") {
+      return metadataForCommit(repoDir, candidateSha, current, {
+        status: "already-released",
+        tag: expectedTag,
+      });
+    }
     throw new Error(`Candidate stable Tag already exists: ${expectedTag}`);
   }
   const tagOnCandidate = history.releasesOnMain.find(
@@ -384,17 +397,27 @@ export function collectCandidateMetadata({
     history.historyOrder,
     { tag: expectedTag, commit: candidateSha, version: current },
   );
-  return metadataForCommit(repoDir, candidateSha, current);
+  return metadataForCommit(repoDir, candidateSha, current, {
+    status: "candidate",
+  });
 }
 
 function main() {
   const usage =
     "Usage: metadata.mjs (--tag <vX.Y.Z> | --candidate-sha <sha>) " +
     "--main-ref <ref> " +
-    "[--repo <path>] [--tag-remote <name>]";
+    "[--repo <path>] [--tag-remote <name>] " +
+    "[--existing-tag-policy <reject|skip>]";
   const arguments_ = readArguments(
     process.argv.slice(2),
-    ["tag", "candidate-sha", "main-ref", "repo", "tag-remote"],
+    [
+      "tag",
+      "candidate-sha",
+      "main-ref",
+      "repo",
+      "tag-remote",
+      "existing-tag-policy",
+    ],
     usage,
   );
   if (!arguments_["main-ref"]) {
@@ -402,6 +425,9 @@ function main() {
   }
   if (Boolean(arguments_.tag) === Boolean(arguments_["candidate-sha"])) {
     throw new Error("Exactly one of --tag or --candidate-sha is required");
+  }
+  if (arguments_.tag && arguments_["existing-tag-policy"] !== undefined) {
+    throw new Error("--existing-tag-policy requires --candidate-sha");
   }
   const common = {
     repoDir: path.resolve(arguments_.repo ?? "."),
@@ -413,6 +439,7 @@ function main() {
     : collectCandidateMetadata({
         ...common,
         candidateSha: arguments_["candidate-sha"],
+        existingTagPolicy: arguments_["existing-tag-policy"],
       });
   const output = Object.entries(metadata)
     .map(([key, value]) => `${key}=${value}`)

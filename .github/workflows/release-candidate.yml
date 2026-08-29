@@ -23,6 +23,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
+      status: ${{ steps.release.outputs.status }}
       version: ${{ steps.release.outputs.version }}
       version_code: ${{ steps.release.outputs.version_code }}
       git_sha: ${{ steps.release.outputs.git_sha }}
@@ -65,8 +66,10 @@ jobs:
           node tools/release-candidate/metadata.mjs
           --candidate-sha "$GITHUB_SHA"
           --main-ref refs/remotes/origin/main
+          --existing-tag-policy skip
 
       - name: Record Candidate identity
+        if: steps.release.outputs.status == 'candidate'
         env:
           CANDIDATE_VERSION: ${{ steps.release.outputs.version }}
           CANDIDATE_VERSION_CODE: ${{ steps.release.outputs.version_code }}
@@ -81,9 +84,39 @@ jobs:
             printf -- '- Run: %s\n' "$CANDIDATE_RUN_URL"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Record already released Candidate skip
+        if: steps.release.outputs.status == 'already-released'
+        env:
+          CANDIDATE_SHA: ${{ steps.release.outputs.git_sha }}
+          CANDIDATE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          {
+            printf '## Release Candidate skipped\n\n'
+            printf -- '- Stable Tag already exists: `%s`\n' "$CANDIDATE_TAG"
+            printf -- '- Commit: `%s`\n' "$CANDIDATE_SHA"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload already released Candidate marker
+        if: steps.release.outputs.status == 'already-released'
+        run: |
+          printf 'status=already-released\ntag=%s\ncommit=%s\n' \
+            '${{ steps.release.outputs.tag }}' \
+            '${{ steps.release.outputs.git_sha }}' \
+            > "$RUNNER_TEMP/release-candidate-skipped.txt"
+
+      - name: Store already released Candidate marker
+        if: steps.release.outputs.status == 'already-released'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-candidate-skipped
+          path: ${{ runner.temp }}/release-candidate-skipped.txt
+          if-no-files-found: error
+          retention-days: 90
+
   quality:
     name: Full quality checks
     needs: metadata
+    if: needs.metadata.outputs.status == 'candidate'
     permissions:
       actions: read
       contents: read
@@ -92,6 +125,7 @@ jobs:
   database:
     name: Database checks
     needs: metadata
+    if: needs.metadata.outputs.status == 'candidate'
     permissions:
       contents: read
     uses: ./.github/workflows/database.yml
@@ -102,6 +136,7 @@ jobs:
       - metadata
       - quality
       - database
+    if: needs.metadata.outputs.status == 'candidate'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -175,6 +210,7 @@ jobs:
       - metadata
       - quality
       - database
+    if: needs.metadata.outputs.status == 'candidate'
     environment:
       name: android-release-signing
       deployment: false
@@ -317,6 +353,7 @@ jobs:
       - metadata
       - images
       - android
+    if: needs.metadata.outputs.status == 'candidate'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
