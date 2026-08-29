@@ -315,11 +315,11 @@ jq --exit-status \
   .services.grafana.platform == "linux/amd64" and
   .services.grafana.environment.GF_AUTH_ANONYMOUS_ENABLED == "false" and
   .services.grafana.environment.GF_USERS_DEFAULT_LANGUAGE == "zh-Hans" and
-  (.services.grafana.environment | has("PGPASSFILE") | not) and
+  .services.grafana.environment.PGPASSFILE == "/run/secrets/product_health_reader_pgpass" and
   .services.grafana.environment.OBSERVABILITY_PRODUCT_HEALTH_DATABASE == "speakup" and
   ([.services.grafana.secrets[] |
     select(.source == "product_health_reader_pgpass" and
-      .target == "/home/grafana/.pgpass")
+      .target == "/run/secrets/product_health_reader_pgpass")
   ] | length) == 1 and
   .secrets.product_health_reader_pgpass.file ==
     $product_health_pgpass_file and
