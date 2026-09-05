@@ -14,7 +14,8 @@ metadata:
 - 保留用户现有进程、容器、工作区修改和 `.env`；先检查再启动，不重复叠加同一服务。
 - 不输出、复制到命令行参数或提交任何密钥。后端会向上查找最近的 `.env`，但已有进程环境变量优先，必须防止父进程中的旧变量遮蔽项目配置。
 - 本项目固定使用 Compose 项目名 `xe3-esl`、PostgreSQL 主机端口 `55432`、后端地址 `127.0.0.1:18080`。不要停止或删除占用其他端口的无关服务。
-- 本地普通联调默认不依赖对象存储、简历 OCR、SpatialWalk 或讯飞声学评分；只有用户明确要调试这些能力时才保留其配置。
+- Android 全栈联调默认包含录音消息上传，因此必须启用对象存储。纯文字、无 OSS 的精简联调只能在用户明确要求时使用，并提前说明录音草稿、持久化录音、图片和文件上传不可用。
+- 简历 OCR、SpatialWalk 和讯飞声学评分仍是按需能力；用户未要求调试时仅对本次后端子进程禁用，不修改 `.env`。
 - 保持 Go、Flutter 及可选的 ADB reverse 守护会话运行，并记录会话，方便读取日志和正常停止。
 
 ## 1. 启动 PostgreSQL
@@ -33,7 +34,11 @@ docker compose -p xe3-esl -f compose.yaml ps
 
 Go module 位于 `server`，必须从 `<REPO_ROOT>\server` 运行 `go run ./cmd/server`。
 
-先确认仓库根目录存在 `.env`，只报告关键配置为 `missing`、`empty`、`set` 或 `shadowed`，绝不打印值。特别检查 `DASHSCOPE_API_KEY`：如果父进程值与 `.env` 不同，后端会使用父进程值。对本次后端子进程移除下列外部覆盖，让项目 `.env` 成为这些配置的来源；不要修改用户级或系统级环境变量：
+先确认仓库根目录存在 `.env`，只报告关键配置为 `missing`、`empty`、`set` 或 `shadowed`，绝不打印值。特别检查 `DASHSCOPE_API_KEY` 和所有 `OSS_*` 配置：如果父进程值与 `.env` 不同，后端会使用父进程值。
+
+默认录音联调要求 `.env` 中的 `OSS_REGION`、`OSS_ENDPOINT`、`OSS_BUCKET` 和 `OSS_CREDENTIALS_PROVIDER` 均为 `set`；使用 environment credentials 时，访问凭据也必须为 `set`。缺少依赖时停止并报告，不能静默关闭 OSS 后继续启动。
+
+对本次后端子进程移除下列外部覆盖，让项目 `.env` 成为详细配置的来源；`Remove-Item Env:` 只改变当前 PowerShell 会话及随后创建的子进程，不修改 `.env`、Windows 用户级或系统级环境变量：
 
 ```powershell
 @(
@@ -41,7 +46,20 @@ Go module 位于 `server`，必须从 `<REPO_ROOT>\server` 运行 `go run ./cmd/
   'DASHSCOPE_API_KEY',
   'QIANWEN_BASE_URL',
   'QIANWEN_MODEL',
-  'QIANWEN_SPEECH_FEEDBACK_MODEL'
+  'QIANWEN_SPEECH_FEEDBACK_MODEL',
+  'OSS_ENABLED',
+  'OSS_REGION',
+  'OSS_ENDPOINT',
+  'OSS_BUCKET',
+  'OSS_AUDIO_PREFIX',
+  'OSS_IMAGE_PREFIX',
+  'OSS_RESUME_PREFIX',
+  'OSS_SIGNED_URL_TTL',
+  'OSS_CREDENTIALS_PROVIDER',
+  'OSS_RAM_ROLE_NAME',
+  'OSS_ACCESS_KEY_ID',
+  'OSS_ACCESS_KEY_SECRET',
+  'OSS_SESSION_TOKEN'
 ) | ForEach-Object {
   Remove-Item -Path "Env:$_" -ErrorAction SilentlyContinue
 }
@@ -55,7 +73,7 @@ $env:QIANWEN_EVALUATION_MODEL='qwen3.7-plus-2026-05-26'
 $env:QIANWEN_ASR_RECORDED_MODEL='fun-asr-flash-2026-06-15'
 $env:QIANWEN_ASR_RECORDED_TIMEOUT='150s'
 $env:QIANWEN_ASR_TIMEOUT='150s'
-$env:OSS_ENABLED='0'
+$env:OSS_ENABLED='1'
 $env:RESUME_OCR_ENABLED='0'
 $env:SPATIUS_ENABLED='false'
 $env:APPID=''
@@ -67,7 +85,9 @@ Set-Location '<REPO_ROOT>\server'
 go run ./cmd/server
 ```
 
-若 `.env` 使用了非默认 PostgreSQL 用户、密码或数据库名，不要把密钥打印出来；应从 `.env` 安全构造本次 `DATABASE_URL`，仅将端口替换为 `55432`。用户明确调试 OSS、OCR、SpatialWalk 或声学评分时，不要应用对应的禁用覆盖，并验证其依赖已配置。
+若 `.env` 使用了非默认 PostgreSQL 用户、密码或数据库名，不要把密钥打印出来；应从 `.env` 安全构造本次 `DATABASE_URL`，仅将端口替换为 `55432`。用户明确调试 OCR、SpatialWalk 或声学评分时，不要应用对应的禁用覆盖，并验证其依赖已配置。
+
+只有用户明确要求纯文字、无 OSS 的精简联调时，才将本次子进程改为 `$env:OSS_ENABLED='0'`；必须同时说明该模式不支持录音草稿、持久化录音、图片和文件上传。
 
 等待日志出现 `server started`，再验证：
 
@@ -75,7 +95,22 @@ go run ./cmd/server
 Invoke-WebRequest -UseBasicParsing http://127.0.0.1:18080/readyz
 ```
 
-必须返回 `200`。`readyz` 只证明基础服务就绪，不证明模型密钥有效。
+必须返回 `200`。`readyz` 只证明基础服务就绪，不证明模型密钥或录音上传路由有效。
+
+默认录音联调还要用不含真实令牌的 WebSocket 握手确认语音草稿路由已注册：
+
+```powershell
+$probeThreadId = '00000000-0000-4000-8000-000000000001'
+curl.exe --max-time 5 -sS -D - -o NUL `
+  -H 'Connection: Upgrade' `
+  -H 'Upgrade: websocket' `
+  -H 'Sec-WebSocket-Version: 13' `
+  -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' `
+  -H 'Sec-WebSocket-Protocol: speakup.voice-input.v1' `
+  "http://127.0.0.1:18080/v1/agent-threads/$probeThreadId/voice-drafts/realtime"
+```
+
+无令牌探测返回 `401 Unauthorized` 是预期结果，证明路由存在且认证层生效；`404 Not Found` 表示语音草稿服务未装配，应先检查 OSS 是否实际启用以及媒体依赖是否启动，不能归因于手机网络。
 
 ## 3. 连接 Android 真机
 
@@ -143,6 +178,15 @@ Set-Location X:\mobile
 ### 手机到后端
 
 让用户在 App 中触发一个请求，同时读取后端日志。出现对应 `/v1/...` 请求即证明手机已连接本地后端；没有请求时再检查 API base URL、reverse 和设备状态。不要用真实密码做诊断，也不要自动创建测试账号。
+
+### 录音上传与语音草稿
+
+App 显示“录音尚未上传，请检查网络后重试”只是客户端对 WebSocket 失败的通用分类，不足以证明网络断开。文字 HTTP 请求成功而录音失败时，按以下顺序判断：
+
+1. 探测 `/v1/agent-threads/<UUID>/voice-drafts/realtime`；`404` 表示 OSS 或语音草稿服务未装配，`401` 表示路由正常存在。
+2. 用户触发重试时读取后端日志；完全没有对应 WebSocket 请求才检查 API base URL、ADB reverse 和设备状态。
+3. 查询是否新建 `agent_voice_drafts`；没有记录说明失败发生在草稿创建或 ASR 之前，不能归因于 ASR 模型。
+4. 已有草稿且为 `failed` 或日志出现提供商错误时，再检查 ASR 认证、模型、超时和提供商响应。
 
 ### 模型与语音提供商
 
