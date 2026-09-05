@@ -82,8 +82,11 @@ $env:APISecret=''
 $env:SERVER_HOST='127.0.0.1'
 $env:SERVER_PORT='18080'
 Set-Location '<REPO_ROOT>\server'
+go run ./cmd/migrate up
 go run ./cmd/server
 ```
+
+数据库迁移必须在启动后端前成功；这与仓库 `tools/android-dev/run.sh` 的启动顺序一致。`readyz=200` 只检查数据库可连接，不能替代迁移，也不能证明注册等依赖数据表的业务可用。
 
 若 `.env` 使用了非默认 PostgreSQL 用户、密码或数据库名，不要把密钥打印出来；应从 `.env` 安全构造本次 `DATABASE_URL`，仅将端口替换为 `55432`。用户明确调试 OCR、SpatialWalk 或声学评分时，不要应用对应的禁用覆盖，并验证其依赖已配置。
 
